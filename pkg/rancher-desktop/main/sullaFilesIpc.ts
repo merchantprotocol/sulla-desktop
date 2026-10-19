@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import { app, BrowserWindow, dialog, protocol, shell } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
+import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { pickAndImportChatFiles } from './sullaFilesChatImport';
 import { getSullaFilesClient } from './sullaFilesClient';
@@ -24,27 +25,8 @@ import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSour
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
-const MAX_NATIVE_SOURCE_BYTES = 64 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const filesClient = getSullaFilesClient();
-
-async function boundedBytes(response:Response, limit = MAX_NATIVE_SOURCE_BYTES):Promise<Buffer> {
-  const declared = Number(response.headers.get('content-length') ?? 0);
-  if (!response.ok) throw new Error(`Files content request failed (${ response.status })`);
-  if (!Number.isSafeInteger(declared) || declared < 0 || declared > limit) throw new Error('Files content exceeds the native source size bound');
-  if (!response.body) return Buffer.alloc(0);
-  const reader = response.body.getReader(); const chunks:Buffer[] = []; let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read(); if (done) break;
-      total += value.byteLength;
-      if (total > limit) throw new Error('Files content exceeds the native source size bound');
-      chunks.push(Buffer.from(value));
-    }
-  } catch (error) { await reader.cancel().catch(() => undefined); throw error }
-  if (declared && declared !== total) throw new Error('Files content length changed during native publication');
-  return Buffer.concat(chunks, total);
-}
 
 async function cloudFilesAvailable():Promise<boolean> {
   try {
@@ -458,7 +440,7 @@ export function initSullaFilesIpc():void {
     if (!/^[A-Za-z0-9_-]{43}$/.test(input.handle) || !/^[a-f0-9]{64}$/i.test(input.sourceRevision) ||
         !UUID.test(input.fileId) || !UUID.test(input.versionId)) throw new Error('Native Files publication input is invalid');
     const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/download?versionId=${ encodeURIComponent(input.versionId) }`);
-    const bytes = await boundedBytes(response);
+    const bytes = await readBoundedResponse(response);
     const contentHash = createHash('sha256').update(bytes).digest('hex');
     const operationId = randomUUID();
     const watcher = getSullaFilesWatcher();

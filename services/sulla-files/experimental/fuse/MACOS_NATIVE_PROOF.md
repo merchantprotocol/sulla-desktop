@@ -11,8 +11,9 @@ wallet/vault data, existing Files data, or Sulla/PostgreSQL application data.
 The harness is `live-proof.mjs`; native mode does not launch Sulla Desktop or
 its production bootstrap. It creates a fresh `mkdtemp` root, a sub-kilobyte
 synthetic file, an ephemeral PostgreSQL cluster bound to loopback, the real
-`LocalFilesManager`/HTTP API, the real `SullaFilesSourceGateway`, and the real
-Python FUSE adapter in a disposable Docker container. The macOS chooser must
+`LocalFilesManager`/HTTP API, the production `SullaFilesNativeBroker`, the real
+`SullaFilesSourceGateway`, and the real Python FUSE adapter in a disposable
+Docker container. The macOS chooser must
 return a security-scoped bookmark for the one file the harness created. Every
 other selection is rejected. It never reads a configured database URL, Sulla
 home, Desktop user-data directory, Files root, Vault, or wallet path.
@@ -86,15 +87,26 @@ credentials, bookmarks, capabilities, database credentials, or host paths.
 5. **Lock and drain:** begin a publication, lock Files, and confirm lock rejects
    new broker requests and does not complete until in-flight source and Files
    operations have drained or reached durable recovery. The old opaque handle
-   must fail after lock.
+   must fail after lock. Use **Lock + drain** after traces 1–4. This control
+   pauses an in-flight external refresh at the production broker's injected
+   Files boundary, starts the production lock order, proves the drain waits,
+   releases the operation to its durable Files commit, and then verifies the
+   old handle is revoked.
 6. **Session recovery:** unlock/relaunch without reusing the old handle. Files
    must show **Reselect source**. Reselect the same disposable file, confirm a
-   new handle is indexed, and confirm the revoked handle remains unusable.
+   new handle is indexed, and confirm the revoked handle remains unusable. Use
+   **Reselect + recover** immediately after trace 5; the chooser must be used a
+   second time for the same generated file.
 7. **Interrupted publication:** stop the isolated proof instance after source
    publication but before acknowledgement, then relaunch and reselect. Recovery
    may complete only after comparing the revalidated source revision/hash with
    the exact Files base/result versions; an operation receipt alone is not
-   sufficient.
+   sufficient. **This harness does not yet make trace 7 exercisable across an
+   actual process relaunch:** its temporary root and synthetic key are removed
+   on exit by design. Do not cite `live-proof.mjs`, Linux results, or the
+   in-process lock/reselect controls as evidence for trace 7. Native acceptance
+   remains incomplete until a reviewed synthetic-only restart fixture retains
+   its isolated state across two proof-process launches and then removes it.
 
 ## Exit criteria
 
@@ -104,9 +116,14 @@ or FUSE-to-host path exists, and all temporary synthetic data is removed. Any
 unexpected acknowledgement, missing visible conflict, reused revoked handle,
 or source/Files hash mismatch fails the proof.
 
+At this revision, trace 7 is explicitly unsupported by the harness, so this
+document is a staging checklist rather than completed native acceptance
+evidence. `SULLA_FILES_NATIVE_SOURCE_READY` must remain `false`.
+
 ## Cleanup and evidence isolation
 
-Press `Ctrl-C` once. The signal handler unmounts/stops the named proof
+Use **Stop + clean** on the control page (or press `Ctrl-C` once when running
+the proof directly). The cleanup handler unmounts/stops the named proof
 container, stops the ephemeral PostgreSQL process, closes the gateway (which
 releases the security scope and revokes handles), and removes the entire
 temporary root. Then verify cleanup without inspecting any data:

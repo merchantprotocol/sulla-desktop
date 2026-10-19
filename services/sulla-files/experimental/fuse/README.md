@@ -18,9 +18,9 @@ Electron ingests bounded bytes through the authenticated local Files API.
 watched-root configuration, and `files_native_source_operations` records each
 source revision, Files base/result version, desired hash, and recovery state.
 For FUSE writes, Files commits the new encrypted version and publication action
-in one transaction. Electron then reads that exact version, conditionally
-writes the pinned source, verifies the result, and completes the action before
-FUSE `flush` or `fsync` can succeed. Lock rejects new broker operations, waits
+in one transaction. The production `SullaFilesNativeBroker` then reads that
+exact version, conditionally writes the pinned source, verifies the result, and
+completes the action before FUSE `flush` or `fsync` can succeed. Lock rejects new broker operations, waits
 for active requests and publication work to drain, then closes descriptors and
 revokes every session.
 
@@ -88,15 +88,17 @@ window.postMessage({ type: 'sulla:files-session', token: SYNTHETIC_TOKEN, orgId:
 
 For a reusable isolated demonstration, build the web bundle, then run
 `../../node_modules/.bin/tsx experimental/fuse/live-proof.mjs` from
-`services/sulla-files`. It loads the current TypeScript service and source
-gateway, creates a temporary Postgres cluster, stored-only Files runtime,
-synthetic exact-file source, broker loop, and FUSE mount. The printed
+`services/sulla-files`. It loads the current TypeScript service, production
+broker, and source gateway, then creates a temporary Postgres cluster,
+stored-only Files runtime, synthetic exact-file source, and FUSE mount. The
+printed
 `/proof-control/` URL embeds the short-lived capability only in its same-origin
 HTML response and provides controls for an ordinary FUSE file-descriptor edit,
-an external source edit, reset, and status. Status output contains hashes and
+an external source edit, deterministic lock/drain and session reselection,
+reset, and status. Status output contains hashes and
 Files ids/versions, not source contents or paths. Stop it with `SIGINT` or
-`SIGTERM`; the runtime unmounts FUSE and removes its synthetic files and
-database.
+`SIGTERM`, or use **Stop + clean** when a command wrapper does not forward
+signals; the runtime unmounts FUSE and removes its synthetic files and database.
 
 On macOS, the same harness has a native mode that runs the source gateway in a
 dedicated Electron process, requires the chooser-issued security-scoped
@@ -105,3 +107,6 @@ adapter inside a disposable resource-capped Docker container. It does not
 launch Desktop or read application data. The exact prerequisites, build/run
 commands, evidence restrictions, and cleanup checks are in
 [`MACOS_NATIVE_PROOF.md`](./MACOS_NATIVE_PROOF.md).
+The harness still cannot retain its isolated state across an actual process
+relaunch, so it does not prove the interrupted-publication restart trace and
+must not be treated as complete native acceptance evidence.

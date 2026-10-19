@@ -133,6 +133,8 @@ async function onVaultUnlocked(): Promise<void> {
   try {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     await getDesktopVaultClient().status();
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    await getSullaFilesWatcher().unlockService();
   } catch (err) {
     console.warn('[Vault] Container state is unavailable:', (err as Error).message);
   }
@@ -371,7 +373,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const unlocked = await vaultKeyService.initialize();
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
-      await onVaultUnlocked();
+      if (unlocked) await onVaultUnlocked();
     },
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');

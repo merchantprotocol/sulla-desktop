@@ -15,6 +15,8 @@ import { createApp } from '../../src/app.ts';
 import { migrate } from '../../src/db.ts';
 import { FilesKeyring } from '../../src/keyring.ts';
 import { LocalFilesManager } from '../../src/localManager.ts';
+import { readBoundedResponse } from '../../../../pkg/rancher-desktop/main/sullaFilesBoundedResponse.ts';
+import { SullaFilesNativeBroker } from '../../../../pkg/rancher-desktop/main/sullaFilesNativeBroker.ts';
 import { SullaFilesSourceGateway } from '../../../../pkg/rancher-desktop/main/sullaFilesSourceGateway.ts';
 
 const run = promisify(execFile);
@@ -38,13 +40,22 @@ let fuse;
 let keyring;
 let manager;
 let gateway;
+let broker;
 let brokerTimer;
 let server;
 let stopping = false;
 let releaseNativeAccess;
+let sourceHandle;
+let lockedSourceHandle;
 
 const nativeMacProof = process.env.SULLA_FILES_MACOS_NATIVE_PROOF === '1';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(resolvePromise => { resolve = resolvePromise });
+  return { promise, resolve };
+}
 
 function reachableAddress() {
   for (const addresses of Object.values(networkInterfaces())) {
@@ -131,13 +142,14 @@ async function selectNativeSource() {
 async function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
+  if (brokerTimer) clearInterval(brokerTimer);
   if (nativeMacProof) await run('docker', ['stop', '--time', '5', fuseContainer]).catch(() => undefined);
   else {
     await run('fusermount3', ['-u', mountRoot]).catch(() => undefined);
     if (fuse?.exitCode === null) fuse.kill('SIGTERM');
   }
+  await broker?.suspendAndDrain(() => gateway.lock()).catch(() => undefined);
   await manager?.close().catch(() => undefined);
-  if (brokerTimer) clearInterval(brokerTimer);
   await gateway?.stop().catch(() => undefined);
   await new Promise(resolvePromise => server ? server.close(resolvePromise) : resolvePromise());
   keyring?.close();
@@ -163,6 +175,7 @@ try {
   db = new pg.Pool({ connectionString: databaseUrl });
   await migrate(db);
   const master = randomBytes(32);
+  const proofMaster = Buffer.from(master);
   const signingKey = randomBytes(32);
   keyring = new FilesKeyring(db);
   await keyring.unlock(master, signingKey);
@@ -196,12 +209,14 @@ try {
   const filesApp = createApp(db, config, manager);
   const app = express();
   let runConcurrentConflict;
+  let runLockDrain;
+  let runSessionRecovery;
 
   app.get('/proof-control/', (_request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444;flex-wrap:wrap}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 96px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="conflict">Concurrent conflict</button><button id="reset">Reset source</button><button id="status">Status</button><span id="result">Ready</span></header><iframe id="files"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const session=()=>frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin);const call=async path=>{result.textContent='Running…';const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#conflict').onclick=()=>call('concurrent-conflict');document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')session()});frame.addEventListener('load',session,{once:true});frame.src='/files-proof/';</script></body></html>`);
+    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444;flex-wrap:wrap}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 96px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="conflict">Concurrent conflict</button><button id="lock">Lock + drain</button><button id="recover">Reselect + recover</button><button id="reset">Reset source</button><button id="status">Status</button><button id="stop">Stop + clean</button><span id="result">Ready</span></header><iframe id="files"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const session=()=>frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin);const call=async path=>{result.textContent='Running…';const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#conflict').onclick=()=>call('concurrent-conflict');document.querySelector('#lock').onclick=()=>call('lock-drain');document.querySelector('#recover').onclick=()=>call('session-recovery');document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');document.querySelector('#stop').onclick=()=>call('stop');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')session()});frame.addEventListener('load',session,{once:true});frame.src='/files-proof/';</script></body></html>`);
   });
   app.post('/proof-control/fuse-edit', async(_request, response, next) => {
     try { await ordinaryFuseEdit(`ordinary FUSE edit ${ new Date().toISOString() }\n`); response.json(await snapshot(collectionId)) } catch (error) { next(error) }
@@ -221,6 +236,22 @@ try {
       response.status(500).json({ error: error instanceof Error ? error.message : 'concurrent_conflict_failed' });
     }
   });
+  app.post('/proof-control/lock-drain', async(_request, response) => {
+    if (!runLockDrain) return response.status(503).json({ error: 'proof_not_ready' });
+    try { response.json(await runLockDrain()) } catch (error) {
+      response.status(500).json({ error: error instanceof Error ? error.message : 'lock_drain_failed' });
+    }
+  });
+  app.post('/proof-control/session-recovery', async(_request, response) => {
+    if (!runSessionRecovery) return response.status(503).json({ error: 'proof_not_ready' });
+    try { response.json(await runSessionRecovery()) } catch (error) {
+      response.status(500).json({ error: error instanceof Error ? error.message : 'session_recovery_failed' });
+    }
+  });
+  app.post('/proof-control/stop', (_request, response) => {
+    response.json({ stopping: true });
+    setTimeout(() => void stop(), 50);
+  });
   app.use(filesApp);
 
   server = app.listen(port, '0.0.0.0');
@@ -230,11 +261,18 @@ try {
   gateway.unlock();
   const selected = await selectNativeSource();
   releaseNativeAccess = selected.release;
-  const sourceHandle = await gateway.registerExactFile(selected.sourcePath, selected.release);
+  sourceHandle = await gateway.registerExactFile(selected.sourcePath, selected.release);
   releaseNativeAccess = undefined;
   const initial = await gateway.read(sourceHandle);
   const localHeaders = { 'x-sulla-files-token': localToken };
+  let ingestGate;
   const ingest = async({ operationId = randomUUID(), handle = sourceHandle, snapshot: source, fileId, baseVersionId, filesPath = 'Native Sources/round-trip.txt' }) => {
+    if (ingestGate) {
+      const gate = ingestGate;
+      gate.entered.resolve();
+      await gate.release.promise;
+      if (ingestGate === gate) ingestGate = undefined;
+    }
     const query = new URLSearchParams({ collectionId, path: filesPath });
     if (fileId) query.set('fileId', fileId);
     const response = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/ingest?${ query }`, {
@@ -248,48 +286,71 @@ try {
     return response.json();
   };
   await ingest({ snapshot: initial });
-  let brokerBusy = false;
-  const brokerCycle = async() => {
-    if (brokerBusy) return;
-    brokerBusy = true;
-    try {
-      const actionResponse = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/actions`, { headers: localHeaders });
-      const actions = await actionResponse.json();
-      for (const action of actions) {
-        try {
-          const content = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/actions/${ action.operationId }/content`, { headers: localHeaders });
-          const bytes = Buffer.from(await content.arrayBuffer());
-          const before = await gateway.read(action.handle);
-          const result = before.contentHash === action.desiredHash ? before : await gateway.write(action.handle, action.sourceRevision, bytes);
-          const finished = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ action.operationId }/finish`, {
-            method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ nextSourceRevision: result.revision }),
-          });
-          if (!finished.ok) throw new Error(`native finish failed ${ finished.status }: ${ await finished.text() }`);
-        } catch (error) {
-          if (!error?.conflictHandle) throw error;
-          const source = (await manager.listNativeSources()).find(item => item.handle === action.handle);
-          const conflict = await gateway.read(error.conflictHandle);
-          const conflictFile = await ingest({ handle: error.conflictHandle, snapshot: conflict, filesPath: 'Native Sources/round-trip (conflicted copy Files).txt' });
-          const external = await gateway.read(source.handle);
-          const currentFile = await ingest({ snapshot: external, fileId: source.fileId, baseVersionId: source.versionId, filesPath: source.path });
-          await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ action.operationId }/finish`, {
-            method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify({
-              conflictFileId: conflictFile.id, currentSourceRevision: external.revision, currentSourceHash: external.contentHash,
-              currentFilesVersionId: currentFile.current_version_id,
-            }),
-          });
-        }
-      }
-      if (!actions.length) {
-        const [source] = await manager.listNativeSources();
-        if (source?.state === 'active') {
-          const current = await gateway.read(source.handle);
-          if (current.revision !== source.sourceRevision) await ingest({ snapshot: current, fileId: source.fileId, baseVersionId: source.versionId, filesPath: source.path });
-        }
-      }
-    } finally { brokerBusy = false }
+  const createBroker = () => new SullaFilesNativeBroker({
+    actions: () => manager.nativePublicationActions(),
+    sources: () => manager.listNativeSources(),
+    content: async(operationId) => {
+      const response = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/actions/${ operationId }/content`, { headers: localHeaders });
+      return readBoundedResponse(response);
+    },
+    read:  handle => gateway.read(handle),
+    write: (handle, revision, bytes) => gateway.write(handle, revision, bytes),
+    ingest: input => ingest({
+      operationId: input.operationId, handle: input.handle, snapshot: { bytes: input.bytes, revision: input.sourceRevision, contentHash: input.contentHash },
+      fileId: input.fileId, baseVersionId: input.baseVersionId, filesPath: input.filesPath,
+    }),
+    finish: async(operationId, result) => {
+      const finished = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ operationId }/finish`, {
+        method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify(result),
+      });
+      if (!finished.ok) throw new Error(`native finish failed ${ finished.status }: ${ await finished.text() }`);
+    },
+    logError: (message, error) => console.error('[synthetic-broker]', message, error instanceof Error ? error.message : String(error)),
+  });
+  broker = createBroker();
+  broker.resume();
+  brokerTimer = setInterval(() => broker.poll().catch(error => console.error('[synthetic-broker]', error.message)), 25);
+  runLockDrain = async() => {
+    if (lockedSourceHandle) throw new Error('Synthetic source session is already locked');
+    const [source] = await manager.listNativeSources();
+    const entered = deferred(); const release = deferred();
+    ingestGate = { entered, release };
+    await writeFile(proofPath, `lock drain source edit ${ new Date().toISOString() }\n`);
+    const poll = broker.poll();
+    await entered.promise;
+    let drained = false;
+    const oldHandle = sourceHandle;
+    const lock = broker.suspendAndDrain(() => gateway.lock()).then(() => { drained = true });
+    await Promise.resolve();
+    const waitedForInflight = !drained;
+    release.resolve();
+    await Promise.all([poll, lock]);
+    const locked = await fetch(`http://127.0.0.1:${ port }/v1/local/lock`, { method: 'POST', headers: localHeaders });
+    if (!locked.ok) throw new Error(`Files lock failed (${ locked.status })`);
+    const oldHandleRevoked = await gateway.read(oldHandle).then(() => false, () => true);
+    lockedSourceHandle = oldHandle;
+    return { waitedForInflight, oldHandleRevoked, sourceState: (await manager.listNativeSources())[0]?.state, priorVersionId: source.versionId };
   };
-  brokerTimer = setInterval(() => brokerCycle().catch(error => console.error('[synthetic-broker]', error.message)), 25);
+  runSessionRecovery = async() => {
+    if (!lockedSourceHandle) throw new Error('Run lock + drain before session recovery');
+    await keyring.unlock(Buffer.from(proofMaster), signingKey);
+    await manager.initialize();
+    await manager.revalidateNativeSessions([]);
+    const [detached] = await manager.listNativeSources();
+    if (detached?.state !== 'reselect-required') throw new Error('Locked source did not require reselection');
+    gateway.unlock();
+    const reselected = await selectNativeSource();
+    releaseNativeAccess = reselected.release;
+    const nextHandle = await gateway.registerExactFile(reselected.sourcePath, reselected.release);
+    releaseNativeAccess = undefined;
+    const current = await gateway.read(nextHandle);
+    const result = await ingest({ handle: nextHandle, snapshot: current, fileId: detached.fileId, baseVersionId: detached.versionId, filesPath: detached.path });
+    const oldHandleRevoked = await gateway.read(lockedSourceHandle).then(() => false, () => true);
+    sourceHandle = nextHandle;
+    lockedSourceHandle = undefined;
+    broker.resume();
+    return { reselectRequired: true, oldHandleRevoked, newHandleActive: true, fileId: result.id, versionId: result.current_version_id };
+  };
   runConcurrentConflict = async() => {
     const program = 'import base64,os,sys;p=sys.argv[1];b=base64.b64decode(sys.argv[2]);f=open(p,"r+b");f.truncate(0);f.write(b);f.flush();print("READY",flush=True);sys.stdin.readline();errno=0\ntry: os.fsync(f.fileno())\nexcept OSError as e: errno=e.errno\ntry: f.close()\nexcept OSError as e: errno=errno or e.errno\nprint("ERRNO="+str(errno),flush=True)';
     const staleBytes = Buffer.from(`stale FUSE edit ${ new Date().toISOString() }\n`).toString('base64');
@@ -340,7 +401,7 @@ try {
     fixture: basename(root),
     sourceHandle: `${ sourceHandle.slice(0, 6) }…`,
     isolation: nativeMacProof ? 'native macOS gateway + disposable Docker FUSE + temporary PostgreSQL' : 'temporary Linux gateway/FUSE/PostgreSQL',
-    controls: ['fuse-edit', 'external-edit', 'concurrent-conflict', 'reset', 'status'],
+    controls: ['fuse-edit', 'external-edit', 'concurrent-conflict', 'lock-drain', 'session-recovery', 'reset', 'status', 'stop'],
   }));
 } catch (error) {
   console.error(error instanceof Error ? error.stack : String(error));
