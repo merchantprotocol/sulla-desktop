@@ -706,10 +706,6 @@ export class ChatController {
     this.sidebar.value = { ...this.sidebar.value, historyOpen: !this.sidebar.value.historyOpen };
   }
 
-  toggleFileTree(): void {
-    this.sidebar.value = { ...this.sidebar.value, fileTreeOpen: !this.sidebar.value.fileTreeOpen };
-  }
-
   // ─── Model ──────────────────────────────────────────────────────
   switchModel(model: ModelDescriptor): void {
     this.model.value = model;
@@ -850,7 +846,7 @@ export class ChatController {
       activeArtifactId: null,
       popover:          popoverClosed(),
       modals:           { which: null },
-      sidebar:          { historyOpen: false, fileTreeOpen: false },
+      sidebar:          { historyOpen: false },
       connection:       'online',
       model:            DEFAULT_MODEL,
       heartbeat:        defaultChatHeartbeatConfig(),
