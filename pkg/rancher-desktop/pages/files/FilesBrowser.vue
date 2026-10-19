@@ -149,7 +149,16 @@
       </div>
       <div v-else class="content">
         <div class="toolbar">
-          <h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
+          <button
+            v-if="section === 'files' && currentPath"
+            class="folder-up"
+            type="button"
+            :aria-label="`Back to ${parentFolderLabel}`"
+            :title="`Back to ${parentFolderLabel}`"
+            @click="openParent"
+          >
+            <span v-html="icons.arrowLeft" />
+          </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           <div class="right">
             <button
               v-if="snapshot?.collection.memberCount !== undefined"
@@ -624,6 +633,7 @@ const icons = {
   agent:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>',
   trash:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
   search:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>',
+  arrowLeft:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   plus:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   upload:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M4 19h16"/></svg>',
   share:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/></svg>',
@@ -689,6 +699,7 @@ const syncLine = computed(() => {
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
 const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
+const parentFolderLabel = computed(() => currentPath.value.split('/').filter(Boolean).at(-2) ?? rootLabel.value);
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
 const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.partial } partial · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
@@ -821,6 +832,7 @@ async function togglePause() { if (!snapshot.value) return; snapshot.value.statu
 function selectSection(next:Section) { closeActions(false); selectionAnchor.value = null; section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
 function openRoot() { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }
 function openPath(next:string) { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = next; selected.value = null; selectedKeys.value = new Set() }
+function openParent() { openPath(currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/')) }
 function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
   closeActions(false);
   if (event.shiftKey && selectionAnchor.value) {
@@ -1112,6 +1124,10 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .content { padding: 20px 28px 60px; }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .toolbar h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0; font-family: var(--sans); color: var(--text); }
+.folder-up { width: 30px; height: 30px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid var(--line-2); border-radius: 8px; background: var(--card-solid); color: var(--muted); }
+.folder-up:hover { border-color: var(--accent-line); color: var(--accent-2); }
+.folder-up span { display: grid; width: 18px; height: 18px; }
+.folder-up span :deep(svg) { width: 18px; height: 18px; }
 .toolbar .meta { color: var(--dim); font-size: 12px; }
 .toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
