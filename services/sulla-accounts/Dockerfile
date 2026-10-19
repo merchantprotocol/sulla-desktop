@@ -37,6 +37,7 @@ COPY services/sulla-accounts/package-lock.json ./package-lock.json
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY --from=build /opt/sulla-accounts/dist ./dist
 COPY services/sulla-accounts/migrations ./migrations
+COPY services/sulla-accounts/console ./console
 COPY services/sulla-accounts/entrypoint.sh /usr/local/bin/sulla-accounts-entrypoint
 COPY services/sulla-accounts/keycloak-config.mjs /usr/local/lib/sulla-accounts/keycloak-config.mjs
 COPY services/sulla-accounts/THIRD_PARTY_NOTICES.md /licenses/THIRD_PARTY_NOTICES.md

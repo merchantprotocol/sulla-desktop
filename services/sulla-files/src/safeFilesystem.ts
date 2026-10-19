@@ -384,7 +384,7 @@ export class FilesMutationCoordinator {
   }
 
   /** Both old and incoming bytes remain retained for a guarded inverse. */
-  async replaceVerified(input:{ staged:string; target:string; backup:string; verify:Verify; verifyDisplaced:Verify }):Promise<{ publication:PublicationReceipt; displaced:EvictionReceipt }> {
+  async replaceWithRetainedDisplacement(input:{ staged:string; target:string; backup:string; verify:Verify; verifyDisplaced:Verify }):Promise<{ publication:PublicationReceipt; displaced:EvictionReceipt }> {
     return this.runExclusive([input.staged,input.target,input.backup],async() => {
       const displaced = await this.evictVerified({ source:input.target,quarantine:input.backup,verify:input.verifyDisplaced });
       try { return { publication:await this.publishVerified(input),displaced } }

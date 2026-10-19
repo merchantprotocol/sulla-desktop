@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { adminRoutes, bootstrapRoutes, errorHandler, ownerRoutes, privateRoutes, publicAuthorityRoutes } from './routes.js';
+import { adminRoutes, bootstrapRoutes, errorHandler, ownerRoutes, privateRoutes, publicAuthorityRoutes, webRoutes } from './routes.js';
 
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
@@ -22,6 +22,10 @@ export function createApp(db: Database, config: AccountsConfig) {
   });
 
   app.use(publicAuthorityRoutes(db, config));
+  if (config.mode === 'server') {
+    app.use('/ui', express.static('/opt/sulla-accounts/console', { fallthrough: false, index: 'index.html' }));
+    app.use('/v1/web', webRoutes(db, config));
+  }
   if (config.mode === 'desktop') app.use('/v1/private', bootstrapRoutes(db, config));
   app.use('/v1/private', privateRoutes(db, config));
   if (config.mode === 'server') app.use('/v1/admin', adminRoutes(db, config));

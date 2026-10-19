@@ -7,6 +7,7 @@ import {
 
 type Json = Record<string, any>;
 type AuthMode = 'signin' | 'join';
+type AccountsOnboardingStatus = 'initialize-owner' | 'initialize-member' | 'request-member' | 'pending' | 'ready';
 type RightKey = 'can_view' | 'can_use_by_agents' | 'can_edit' | 'can_manage';
 const text = new TextEncoder(); const decoder = new TextDecoder();
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -20,16 +21,20 @@ const state: {
 } = { token:'',email:'',user:null,userKey:null,privateKey:null,org:null,orgKey:null,members:[],groups:[],collections:[],selected:null,access:{members:[],groups:[]},collectionKeys:new Map(),itemNames:new Map(),audit:[],auditOffset:0,authMode:'signin',recovery:null };
 
 let idleTimer = 0;
+let accountsOrganizationId = '';
+let accountsSession = false;
+let accountsOnboarding: AccountsOnboardingStatus = 'ready';
+const service = 'vault';
+const parentOrigin = window.location.origin;
 function armIdle(): void { window.clearTimeout(idleTimer); if (state.token) idleTimer = window.setTimeout(() => lock('Locked after 15 minutes of inactivity.'), 15 * 60 * 1000); }
 for (const event of ['pointerdown','keydown','scroll']) window.addEventListener(event, armIdle, { passive:true });
 window.addEventListener('pagehide', clearKeys);
-function filesFrame(): HTMLIFrameElement { return $<HTMLIFrameElement>('files-frame'); }
-function sendFilesSession(): void { if (state.token && state.org?.id) filesFrame().contentWindow?.postMessage({ type:'sulla:files-session', token:state.token, email:state.email, orgId:state.org.id, orgName:state.org.name ?? 'Sulla Server' }, window.location.origin); }
-function clearKeys(): void { filesFrame().contentWindow?.postMessage({ type:'sulla:files-lock' }, window.location.origin); for (const key of [state.userKey,state.privateKey,state.orgKey,...state.collectionKeys.values()]) key?.fill(0); state.userKey=state.privateKey=state.orgKey=null; state.collectionKeys.clear(); state.token=''; }
-function lock(message = ''): void { clearKeys(); state.org=null; state.user=null; state.members=[]; state.groups=[]; state.collections=[]; state.selected=null; state.audit=[]; state.itemNames.clear(); state.auditOffset=0; document.querySelectorAll('.page').forEach(x=>x.setAttribute('hidden','')); $('modal').hasAttribute('open') && $<HTMLDialogElement>('modal').close(); $('modal-body').replaceChildren();$<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-join-password').value=''; $('shell').hidden=true; $('auth').hidden=false; setAuthMode('signin'); if (message) $('auth-error').textContent=message; }
+function clearKeys(): void { for (const key of [state.userKey,state.privateKey,state.orgKey,...state.collectionKeys.values()]) key?.fill(0); state.userKey=state.privateKey=state.orgKey=null; state.collectionKeys.clear(); state.token=''; }
+function lock(message = ''): void { clearKeys(); accountsSession=false;accountsOrganizationId='';accountsOnboarding='ready';state.org=null; state.user=null; state.members=[]; state.groups=[]; state.collections=[]; state.selected=null; state.audit=[]; state.itemNames.clear(); state.auditOffset=0; document.querySelectorAll('.page').forEach(x=>x.setAttribute('hidden','')); $('modal').hasAttribute('open') && $<HTMLDialogElement>('modal').close(); $('modal-body').replaceChildren();$<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value='';$<HTMLInputElement>('auth-join-password').value=''; $('shell').hidden=true; $('auth').hidden=false; setAuthMode('signin'); if (message) $('auth-error').textContent=message; }
 
 async function api<T = Json>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...options, headers:{ 'Content-Type':'application/json', ...(state.token ? { Authorization:`Bearer ${state.token}` } : {}), ...(options.headers ?? {}) } });
+  const target = window.location.pathname.startsWith('/services/vault/') && path.startsWith('/v1/') ? `/services/vault/api${path.slice(3)}` : path;
+  const response = await fetch(target, { ...options, headers:{ 'Content-Type':'application/json', ...(state.token ? { Authorization:`Bearer ${state.token}` } : {}), ...(options.headers ?? {}) } });
   if (!response.ok) { if(response.status===401 && state.token) lock('Your session ended. Sign in again.'); const body = await response.json().catch(() => ({})); const error = new Error(body.reason || body.error || `Request failed (${response.status})`) as Error & { status?:number }; error.status=response.status; throw error; }
   return (response.status === 204 ? null : await response.json()) as T;
 }
@@ -62,6 +67,27 @@ async function establishSession(email: string, password: string): Promise<void> 
     state.privateKey=await unwrapUserPrivateKey(session.user.encryptedPrivateKey,state.userKey!);
   } finally { master.key.fill(0); }
 }
+async function unlockAccountsSession(password:string):Promise<void>{
+  const user=await api<Json>('/v1/unlock-material');state.email=user.email;state.user=user;
+  const parameters=kdf(user.kdf);const master=await deriveMasterKey(password,parameters.salt,parameters.parameters);
+  try{state.userKey=await unwrapUserKey(user.encryptedUserKey,master.key);state.privateKey=await unwrapUserPrivateKey(user.encryptedPrivateKey,state.userKey!)}finally{master.key.fill(0)}
+}
+async function initializeAccountsSession(password:string):Promise<'pending'|'ready'>{
+  if(accountsOnboarding==='request-member')return (await api<{status:'pending'|'ready'}>('/v1/accounts/onboarding',{method:'POST',body:'{}'})).status;
+  if(accountsOnboarding!=='initialize-owner'&&accountsOnboarding!=='initialize-member')throw new Error('Vault onboarding is not available');
+  if(password!==$<HTMLInputElement>('auth-password-confirm').value)throw new Error('Master passwords do not match');
+  const account=await makeAccount(password);let orgKey:Uint8Array|null=null;
+  try{
+    const body:Json={loginHash:account.loginHash,publicKey:account.publicKey,encryptedPrivateKey:account.encryptedPrivateKey,encryptedUserKey:account.encryptedUserKey,kdf:account.kdf};
+    if(accountsOnboarding==='initialize-owner'){
+      const name=$<HTMLInputElement>('auth-org-name').value.trim();if(!name)throw new Error('Enter an organization name');
+      orgKey=await generateKey();body.encryptedOrgName=await encryptText(name,orgKey,'sulla:org-name:v1');body.wrappedOrgKey=await wrapOrgKeyForMember(orgKey,account.publicKey);
+    }
+    const result=await api<{status:'pending'|'ready'}>('/v1/accounts/onboarding',{method:'POST',body:JSON.stringify(body)});
+    if(result.status==='ready')await unlockAccountsSession(password);
+    return result.status;
+  }finally{account.userKey.fill(0);account.privateKey.fill(0);orgKey?.fill(0)}
+}
 async function register(_mode: 'join', email: string, password: string): Promise<void> {
   const account = await makeAccount(password);
   try {
@@ -74,14 +100,34 @@ async function register(_mode: 'join', email: string, password: string): Promise
 
 async function onAuth(event: SubmitEvent): Promise<void> {
   event.preventDefault(); const email=$<HTMLInputElement>('auth-email').value.trim().toLowerCase(); const password=$<HTMLInputElement>('auth-password').value; const button=$<HTMLButtonElement>('auth-submit'); $('auth-error').textContent=''; button.disabled=true; button.textContent='Working…';
-  try { if(state.authMode==='signin') await establishSession(email,password); else await register(state.authMode,email,password); $<HTMLInputElement>('auth-password').value=''; $<HTMLInputElement>('auth-join-password').value=''; await openConsole(); }
-  catch(error){ lock(); $('auth-error').textContent=error instanceof Error?error.message:'Could not unlock the vault'; }
-  finally { button.disabled=false; button.textContent=state.authMode==='signin'?'Unlock console':'Create account & request access'; }
+  try { if(accountsSession){if(accountsOnboarding==='pending')return;const status=accountsOnboarding==='ready'?(await unlockAccountsSession(password),'ready'):await initializeAccountsSession(password);if(status==='pending'){showAccountsPending();return}}else if(state.authMode==='signin') await establishSession(email,password); else await register(state.authMode,email,password); $<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value=''; $<HTMLInputElement>('auth-join-password').value=''; await openConsole(); }
+  catch(error){ if(accountsSession){for(const key of [state.userKey,state.privateKey,state.orgKey,...state.collectionKeys.values()])key?.fill(0);state.userKey=state.privateKey=state.orgKey=null;state.collectionKeys.clear();state.user=null}else lock(); $('auth-error').textContent=error instanceof Error?error.message:'Could not unlock the vault'; }
+  finally { button.disabled=false; button.textContent=accountsSession?accountsSubmitLabel():state.authMode==='signin'?'Unlock console':'Create account & request access'; }
 }
 
-async function openConsole(): Promise<void> { $('auth').hidden=true; $('shell').hidden=false; $('session-email').textContent=state.email; armIdle(); if(await loadAll()){sendFilesSession();showPage('audit')} }
+function showAccountsPending():void{
+  accountsOnboarding='pending';$('auth-title').textContent='Vault access pending';$('auth-lead').textContent='Your browser-encrypted Vault identity is ready. An organization owner must confirm your public key before any organization data or keys become available.';
+  $<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value='';$<HTMLInputElement>('auth-password').closest('label')!.hidden=true;$<HTMLInputElement>('auth-password').required=false;document.querySelectorAll<HTMLElement>('.accounts-setup-field,.accounts-owner-field').forEach(x=>x.hidden=true);$<HTMLButtonElement>('auth-submit').hidden=true;
+}
+function accountsSubmitLabel():string{return accountsOnboarding==='initialize-owner'?'Create & unlock Vault':accountsOnboarding==='initialize-member'?'Create Vault identity':accountsOnboarding==='request-member'?'Request Vault access':'Unlock Vault'}
+async function prepareAccountsSession():Promise<void>{
+  const result=await api<{status:AccountsOnboardingStatus}>('/v1/accounts/onboarding');accountsOnboarding=result.status;
+  document.querySelector<HTMLElement>('.auth-tabs')!.hidden=true;document.querySelectorAll<HTMLElement>('.join-field').forEach(x=>x.hidden=true);
+  $<HTMLInputElement>('auth-email').closest('label')!.hidden=true;$<HTMLInputElement>('auth-email').required=false;
+  if(result.status==='pending'){showAccountsPending();return}
+  const setup=result.status==='initialize-owner'||result.status==='initialize-member';const requestOnly=result.status==='request-member';
+  $<HTMLInputElement>('auth-password').closest('label')!.hidden=requestOnly;$<HTMLInputElement>('auth-password').required=!requestOnly;$<HTMLInputElement>('auth-password').autocomplete=setup?'new-password':'current-password';
+  document.querySelectorAll<HTMLElement>('.accounts-setup-field').forEach(x=>x.hidden=!setup);$<HTMLInputElement>('auth-password-confirm').required=setup;
+  document.querySelectorAll<HTMLElement>('.accounts-owner-field').forEach(x=>x.hidden=result.status!=='initialize-owner');$<HTMLInputElement>('auth-org-name').required=result.status==='initialize-owner';
+  $<HTMLButtonElement>('auth-submit').hidden=false;
+  if(requestOnly){$('auth-title').textContent='Request Vault access';$('auth-lead').textContent='Your Vault identity already exists. Request membership in this organization; an owner must confirm your public key before any organization key becomes available.';$('auth-submit').textContent=accountsSubmitLabel()}
+  else if(setup){$('auth-title').textContent=result.status==='initialize-owner'?'Create your organization Vault':'Create your Vault identity';$('auth-lead').textContent=result.status==='initialize-owner'?'Choose a Vault master password. Encryption keys are created here in your browser and the Vault organization uses the exact organization ID verified by Accounts.':'Choose a Vault master password. Your keys are created here in your browser; an owner must confirm your public key before organization access is granted.';$('auth-submit').textContent=accountsSubmitLabel()}
+  else{$('auth-title').textContent='Unlock Vault';$('auth-lead').textContent='Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.';$('auth-submit').textContent='Unlock Vault'}
+}
+
+async function openConsole(): Promise<void> { $('session-email').textContent=state.email; armIdle(); if(await loadAll())showPage('audit'); $('auth').hidden=true; $('shell').hidden=false }
 async function loadAll(): Promise<boolean> {
-  const orgs=await api<Json>('/v1/orgs'); if(!orgs.orgs.length){$<HTMLButtonElement>('rename-org').disabled=true;$('org-name').textContent='Membership pending';$('org-initials').textContent='S';document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.disabled=true);document.querySelectorAll<HTMLElement>('.page').forEach(x=>x.hidden=true);$('page-title').textContent='Membership pending';$('page-lead').textContent='You are signed in, but no organization data is available until an owner confirms your public key.';return false} document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.disabled=false); const org:Json=orgs.orgs[0]; state.org=org;
+  const orgs=await api<Json>('/v1/orgs'); if(!orgs.orgs.length){$<HTMLButtonElement>('rename-org').disabled=true;$('org-name').textContent='Membership pending';$('org-initials').textContent='S';document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.disabled=true);document.querySelectorAll<HTMLElement>('.page').forEach(x=>x.hidden=true);$('page-title').textContent='Membership pending';$('page-lead').textContent='You are signed in, but no organization data is available until an owner confirms your public key.';return false} document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.disabled=false); const org:Json=orgs.orgs.find((candidate:Json)=>!accountsSession||candidate.id===accountsOrganizationId);if(!org)throw new Error('Accounts organization does not match this Vault membership');state.org=org;
   state.orgKey=await unwrapOrgKeyForMember(org.wrapped_org_key,state.user!.publicKey,state.privateKey!); org.name=await decryptText(org.encrypted_name,state.orgKey,'sulla:org-name:v1');
   const [members,groups,collections]=await Promise.all([api<Json>(`/v1/orgs/${org.id}/members`),api<Json>(`/v1/orgs/${org.id}/groups`),api<Json>(`/v1/orgs/${org.id}/collections`)]); state.members=members.members; state.groups=groups.groups; state.collections=collections.collections;
   await fingerprintMembers();
@@ -95,7 +141,7 @@ async function loadAll(): Promise<boolean> {
 }
 async function safeName(envelope:EncryptedEnvelope,key:Uint8Array,context:string,fallback:string):Promise<string>{try{return await decryptText(envelope,key,context)}catch{return fallback}}
 
-function showPage(page:string):void { document.querySelectorAll<HTMLElement>('.page').forEach(x=>x.hidden=x.id!==page); document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page)); document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.setAttribute('aria-current',x.dataset.page===page?'page':'false')); const copy:Record<string,[string,string]>={files:['Files','Browse server files without leaving Sulla Server.'],collections:['Shared collections','Share passwords with a team. Choose who can see them, and whose agents can use them.'],people:['People & groups','Invite existing accounts, assign roles and organize people into groups.'],audit:['Audit log','Every person and agent action. Secret values are never written here.'],recovery:['Recovery','Members choose whether organization owners can help recover their encrypted account.']}; $('page-title').textContent=copy[page][0]; $('page-lead').textContent=copy[page][1]; if(page==='files')sendFilesSession();if(page==='people') void run(refreshPeople); if(page==='audit') void run(loadAudit); if(page==='recovery') void run(loadRecovery); }
+function showPage(page:string):void { document.querySelectorAll<HTMLElement>('.page').forEach(x=>x.hidden=x.id!==page); document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.classList.toggle('active',x.dataset.page===page)); document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(x=>x.setAttribute('aria-current',x.dataset.page===page?'page':'false')); const copy:Record<string,[string,string]>={collections:['Shared collections','Share passwords with a team. Choose who can see them, and whose agents can use them.'],audit:['Audit log','Every person and agent action. Secret values are never written here.'],recovery:['Recovery','Members choose whether organization owners can help recover their encrypted account.']}; $('page-title').textContent=copy[page][0]; $('page-lead').textContent=copy[page][1]; if(page==='audit') void run(loadAudit); if(page==='recovery') void run(loadRecovery); }
 
 function renderCollections():void { $('collection-count').textContent=String(state.collections.length); const query=$<HTMLInputElement>('collection-search').value.toLowerCase(); const rows=state.collections.filter(c=>c.name.toLowerCase().includes(query)); $('collection-list').innerHTML=rows.length?rows.map(c=>`<div class="collection-row ${state.selected?.id===c.id?'active':''}" data-collection="${esc(c.id)}"><b><span style="color:var(--accent)">▰</span>${esc(c.name)}</b><small>${c.can_use_by_agents?'Agents enabled':c.can_view||['owner','admin'].includes(state.org?.role)?'Shared collection':'Restricted'}</small></div>`).join(''):'<div class="empty" style="min-height:180px"><span>No collections yet</span></div>'; document.querySelectorAll<HTMLElement>('[data-collection]').forEach(x=>x.onclick=()=>void selectCollection(x.dataset.collection!)); if(!state.selected&&state.collections[0]) void selectCollection(state.collections[0].id); }
 async function selectCollection(id:string):Promise<void>{
@@ -137,15 +183,19 @@ function renderAuditDetail(index:number):void{const e=state.audit[index];if(!e)r
 async function loadRecovery():Promise<void>{if(!state.org)return;try{state.recovery=await api<Json>(`/v1/orgs/${state.org.id}/recovery`);const opted=state.recovery.members.some((m:Json)=>m.user_id===state.user!.id);$<HTMLInputElement>('recovery-toggle').checked=opted;$('recovery-status').textContent=opted?'Your encrypted user key is available for recovery.':'You are not opted in.';$('recovery-members').innerHTML=state.recovery.members.length?state.recovery.members.map((m:Json)=>`<div class="recovery-line"><span class="avatar">${esc(initials(m.email))}</span><div><b>${esc(m.email)}</b><small class="muted">Opted in ${esc(new Date(m.created_at).toLocaleDateString())}</small></div></div>`).join(''):'<p class="muted">No members have opted in.</p>';$('recovery-admin').hidden=!['owner','admin'].includes(state.org.role)}catch{$('recovery-admin').hidden=true;$('recovery-status').textContent='Recovery is not configured for this organization.';$<HTMLInputElement>('recovery-toggle').disabled=true;}}
 async function toggleRecovery():Promise<void>{const checkbox=$<HTMLInputElement>('recovery-toggle');if(!state.recovery?.recoveryPublicKey){checkbox.checked=false;return}if(checkbox.checked){await api(`/v1/orgs/${state.org!.id}/recovery/opt-in`,{method:'POST',body:JSON.stringify({wrappedUserKey:await wrapKeyToPublicKey(state.userKey!,state.recovery.recoveryPublicKey)})})}else await api(`/v1/orgs/${state.org!.id}/recovery/opt-in`,{method:'DELETE'});await loadRecovery();notice(`Recovery ${checkbox.checked?'enabled':'disabled'} for your account.`);}
 
-document.querySelectorAll<HTMLButtonElement>('[data-auth]').forEach(b=>b.onclick=()=>setAuthMode(b.dataset.auth as AuthMode));$('auth-form').addEventListener('submit',e=>void onAuth(e as SubmitEvent));$('lock').onclick=()=>lock();document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page!));document.querySelectorAll<HTMLButtonElement>('[data-go]').forEach(b=>b.onclick=()=>showPage(b.dataset.go!));$('collection-search').addEventListener('input',renderCollections);$('new-collection').onclick=()=>void run(createCollection);$('invite').onclick=()=>void run(invite);$('new-group').onclick=()=>void run(createGroup);$('rotate-join').onclick=()=>void run(rotateJoin);$('auto-confirm').onchange=()=>void run(toggleAutoConfirm);$('copy-org').onclick=()=>void navigator.clipboard.writeText(state.org?.id??'').then(()=>notice('Organization ID copied.'));$('apply-audit').onclick=()=>{state.auditOffset=0;void run(loadAudit)};$('audit-prev').onclick=()=>{state.auditOffset=Math.max(0,state.auditOffset-25);void run(loadAudit)};$('audit-next').onclick=()=>{if(state.audit.length===25)state.auditOffset+=25;void run(loadAudit)};$('recovery-toggle').onchange=()=>void run(toggleRecovery);
+document.querySelectorAll<HTMLButtonElement>('[data-auth]').forEach(b=>b.onclick=()=>setAuthMode(b.dataset.auth as AuthMode));$('auth-form').addEventListener('submit',e=>void onAuth(e as SubmitEvent));$('lock').onclick=()=>{const token=state.token;const org=accountsOrganizationId;const shared=accountsSession;lock();if(shared){accountsSession=true;accountsOrganizationId=org;state.token=token;void prepareAccountsSession().catch(()=>lock('Session unavailable. Return to the main menu.'))}};document.querySelectorAll<HTMLButtonElement>('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page!));document.querySelectorAll<HTMLButtonElement>('[data-go]').forEach(b=>b.onclick=()=>showPage(b.dataset.go!));$('collection-search').addEventListener('input',renderCollections);$('new-collection').onclick=()=>void run(createCollection);$('invite').onclick=()=>void run(invite);$('new-group').onclick=()=>void run(createGroup);$('rotate-join').onclick=()=>void run(rotateJoin);$('auto-confirm').onchange=()=>void run(toggleAutoConfirm);$('copy-org').onclick=()=>void navigator.clipboard.writeText(state.org?.id??'').then(()=>notice('Organization ID copied.'));$('apply-audit').onclick=()=>{state.auditOffset=0;void run(loadAudit)};$('audit-prev').onclick=()=>{state.auditOffset=Math.max(0,state.auditOffset-25);void run(loadAudit)};$('audit-next').onclick=()=>{if(state.audit.length===25)state.auditOffset+=25;void run(loadAudit)};$('recovery-toggle').onchange=()=>void run(toggleRecovery);
 setAuthMode('signin');
 
 window.addEventListener('message', event => {
-  if (event.origin !== window.location.origin || event.source !== filesFrame().contentWindow) return;
-  if (event.data?.type === 'sulla:files-ready') sendFilesSession();
-  if (event.data?.type === 'sulla:files-activity') armIdle();
-  if (event.data?.type === 'sulla:files-session-expired') lock('Your Files session ended. Sign in again.');
+  if(event.origin!==parentOrigin||event.source!==window.parent)return;const message=event.data;
+  if(message?.version!==1||message.service!==service)return;
+  if(message.type==='sulla.service.lock'){lock('Vault locked.');return}
+  if(message.type!=='sulla.service.session'||typeof message.token!=='string'||typeof message.organizationId!=='string')return;
+  if(accountsSession&&accountsOrganizationId===message.organizationId){state.token=message.token;if(state.userKey)armIdle();return}
+  lock();accountsSession=true;accountsOrganizationId=message.organizationId;state.token=message.token;
+  void prepareAccountsSession().catch(error=>{$('auth-title').textContent='Vault unavailable';$('auth-lead').textContent='Vault onboarding could not be loaded.';$('auth-error').textContent=error instanceof Error?error.message:'Could not load Vault onboarding';$<HTMLButtonElement>('auth-submit').hidden=true});
 });
+window.parent.postMessage({type:'sulla.service.ready',version:1,service},parentOrigin);
 
 let auditRequest=0;
 async function run(action:()=>Promise<void>):Promise<void>{try{await action()}catch(error){notice(error instanceof Error?error.message:'The action failed. Please try again.')}}

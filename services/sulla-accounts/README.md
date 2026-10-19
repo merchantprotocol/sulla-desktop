@@ -48,3 +48,9 @@ forwarded directly to `http://127.0.0.1:3020`, matching the native callback exac
 hosted authorities remain on the trusted HTTPS gateway. After readiness,
 `preview-provision.sh` idempotently creates isolated synthetic subjects and memberships in the
 two authorities. Neither script reads or writes any live Vault, wallet, or user data.
+
+Server mode also serves the container-owned Accounts console at `/ui/` and browser-session
+endpoints under `/v1/web/`. The primary console signs in through the confidential `sulla-web`
+OIDC client, keeps its session in an HttpOnly cookie, and exchanges that session for short-lived,
+audience-scoped service tokens. Resource containers resolve those opaque tokens through the
+private Accounts endpoint; no Keycloak admin credential or OIDC token is exposed to browser code.

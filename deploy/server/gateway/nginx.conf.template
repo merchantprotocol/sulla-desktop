@@ -22,45 +22,43 @@ http {
     add_header Referrer-Policy no-referrer always;
     add_header X-Frame-Options SAMEORIGIN always;
 
-    location = /files { return 308 /files/; }
-    location /files/ {
-      proxy_pass http://files:8792;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-Host $host;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-    location ~ ^/files-api/(?:healthz$|v1/(?:local|desktop|bootstrap|admin)(?:/|$)) {
-      return 404;
-    }
-    location /files-api/ {
-      proxy_pass http://files:8792/;
-      proxy_buffering off;
-      proxy_request_buffering off;
-      proxy_cache off;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-Host $host;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-    location /projects-api/v1/ {
-      proxy_pass http://projects:8793/v1/;
-      proxy_buffering off;
-      proxy_cache off;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-Host $host;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-    location /projects-api/ { return 404; }
+    resolver ${DNS_RESOLVER} ipv6=off valid=10s;
+    set $console_upstream ${SULLA_CONSOLE_UPSTREAM};
+    set $accounts_upstream http://accounts:3020;
+    set $identity_upstream http://accounts:8080;
+    set $vault_upstream http://vault:8787;
+    set $files_upstream http://files:8792;
+    set $projects_upstream http://projects:8793;
+    set $agents_upstream http://agents:8789;
+    set $workflows_upstream http://workflows:8788;
+
+    location /accounts-api/v1/web/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /accounts-api/ { return 404; }
+    location ^~ /auth/realms/sulla/ { proxy_pass $identity_upstream; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/resources/ { proxy_pass $identity_upstream; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/ { return 404; }
+    location /services/accounts/ { rewrite ^/services/accounts/(.*)$ /ui/$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/vault/api/ { rewrite ^/services/vault/api/(.*)$ /v1/$1 break; proxy_pass $vault_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/vault/ { rewrite ^/services/vault/(.*)$ /ui/$1 break; proxy_pass $vault_upstream; include /tmp/sulla-proxy-params.conf; }
+    location ~ ^/services/files/api/(?:healthz$|v1/(?:local|desktop|bootstrap|admin)(?:/|$)) { return 404; }
+    location /services/files/api/v1/ { rewrite ^/services/files/api/v1/(.*)$ /v1/$1 break; proxy_pass $files_upstream; proxy_buffering off; proxy_request_buffering off; proxy_cache off; include /tmp/sulla-proxy-params.conf; }
+    location /services/files/api/ { return 404; }
+    location /services/files/ { rewrite ^/services/files/(.*)$ /ui/$1 break; proxy_pass $files_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/projects/api/ { rewrite ^/services/projects/api/(.*)$ /v1/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/projects/ { rewrite ^/services/projects/(.*)$ /ui/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/agents/api/ { rewrite ^/services/agents/api/(.*)$ /v1/$1 break; proxy_pass $agents_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/agents/ { rewrite ^/services/agents/(.*)$ /ui/$1 break; proxy_pass $agents_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/workflows/api/ { rewrite ^/services/workflows/api/(.*)$ /v1/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /services/workflows/ { rewrite ^/services/workflows/(.*)$ /ui/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
+    location = / { return 308 /console/; }
     location / {
-      proxy_pass http://vault:8787;
+      proxy_pass $console_upstream;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-Host $host;
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Proto ${SULLA_PUBLIC_SCHEME};
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
   }

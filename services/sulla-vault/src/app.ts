@@ -14,6 +14,11 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { AccountsIdentityError, resolveAccountsContext } from './accountsIdentity.js';
+import {
+  AccountsOnboardingError,
+  accountsOnboardingStatus,
+  initializeAccountsOnboarding,
+} from './accountsOnboarding.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
@@ -623,7 +628,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     response.json({ bootstrapped: ((await db.query('SELECT 1 FROM users LIMIT 1')).rowCount ?? 0) > 0 });
   });
 
-  app.get('/console', async(_request, response) => {
+  const sendConsole = async(_request: express.Request, response: express.Response) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [resolve(here, '../console/index.html'), resolve(here, '../../console/index.html')]) {
@@ -633,14 +638,21 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       } catch { /* source tree vs image */ }
     }
     response.type('html').send(CONSOLE_HTML);
-  });
+  };
+  app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
+  app.get('/ui/', sendConsole);
+  app.get('/console', (_request, response) => response.redirect(308, '/ui/'));
+  app.use('/ui', (request, response, next) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    next();
+  }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
   app.use('/console', (request, response, next) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     next();
   }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
   app.get('/', (_request, response) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
-    return response.redirect(302, '/console');
+    return response.redirect(302, '/ui/');
   });
 
   // Desktop bootstrap is deliberately limited to the local, single-user
@@ -819,7 +831,46 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     });
   });
 
+  const accountsContext = async(request: express.Request) => {
+    if (config.mode !== 'server' || !config.accounts) {
+      throw new AccountsIdentityError(403, 'Accounts integration is not configured');
+    }
+    const bearerToken = request.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    if (!bearerToken) throw new AccountsIdentityError(401, 'Accounts authentication is required');
+    const context = await resolveAccountsContext(config, { bearerToken });
+    requiredUuid(context.organizationId, 'Accounts organization id');
+    return context;
+  };
+
+  app.get('/v1/accounts/onboarding', async(request, response) => {
+    const context = await accountsContext(request);
+    response.json({ status: await accountsOnboardingStatus(db, context) });
+  });
+
+  app.post('/v1/accounts/onboarding', async(request, response) => {
+    const context = await accountsContext(request);
+    const result = await initializeAccountsOnboarding(db, config.jwtSecret, context, {
+      loginHash:            request.body.loginHash === undefined ? undefined : requiredString(request.body.loginHash, 'loginHash'),
+      publicKey:            request.body.publicKey === undefined ? undefined : requiredString(request.body.publicKey, 'publicKey'),
+      encryptedPrivateKey: request.body.encryptedPrivateKey === undefined ? undefined : requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey'),
+      encryptedUserKey:    request.body.encryptedUserKey === undefined ? undefined : requiredObject(request.body.encryptedUserKey, 'encryptedUserKey'),
+      kdf:                 request.body.kdf === undefined ? undefined : requiredObject(request.body.kdf, 'kdf'),
+      encryptedOrgName:    request.body.encryptedOrgName === undefined ? undefined : requiredObject(request.body.encryptedOrgName, 'encryptedOrgName'),
+      wrappedOrgKey:       request.body.wrappedOrgKey === undefined ? undefined : requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey'),
+    });
+    response.status(result.created ? 201 : 200).json(result);
+  });
+
   app.use('/v1', authenticate(config, db));
+
+  app.get('/v1/unlock-material', async(request: AuthenticatedRequest, response) => {
+    const account = await db.query(`SELECT id,email,public_key,encrypted_private_key,encrypted_user_key,kdf
+      FROM users WHERE id=$1 AND disabled_at IS NULL`, [userId(request)]);
+    if (!account.rows[0]) return response.status(401).json({ error:'invalid_account' });
+    const row = account.rows[0];
+    response.json({ id:row.id, email:row.email, publicKey:row.public_key,
+      encryptedPrivateKey:row.encrypted_private_key, encryptedUserKey:row.encrypted_user_key, kdf:row.kdf });
+  });
 
   app.get('/v1/items', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);
@@ -1022,11 +1073,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (!authorization || !authorityId) {
       throw new HttpError(400, 'Accounts authorization and authority id are required');
     }
-    const context = await resolveAccountsContext(config, {
-      bearerToken: authorization,
-      authorityId: requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id'),
-      organizationId: orgId,
-    });
+    const context = await resolveAccountsContext(config, { bearerToken: authorization });
+    if (context.authorityId !== requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id') || context.organizationId !== orgId) {
+      throw new AccessDenied('Accounts identity does not match this organization');
+    }
     const linked = await db.query(
       `INSERT INTO accounts_identities(issuer, subject, user_id) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING
@@ -1140,7 +1190,14 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const client = await db.connect();
     try {
       await client.query('BEGIN');
-      await requireOrgManager(client, actorId, orgId);
+      const actorRole = await requireOrgManager(client, actorId, orgId);
+      const pending = await client.query<{ role: string }>(
+        `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'pending'`,
+        [orgId, request.params.memberId],
+      );
+      if (pending.rows[0]?.role === 'owner' && actorRole !== 'owner') {
+        throw new AccessDenied('Only owners can confirm another owner');
+      }
       const result = await client.query(
         `UPDATE org_members SET wrapped_org_key = $1, status = 'confirmed', updated_at = now()
           WHERE org_id = $2 AND user_id = $3 AND status = 'pending'
@@ -1584,6 +1641,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     if (error instanceof AccountsIdentityError) {
       response.status(error.status).json({ error: error.status === 401 ? 'invalid_accounts_token' : 'accounts_access_denied' });
+      return;
+    }
+    if (error instanceof AccountsOnboardingError) {
+      response.status(error.status).json({ error: error.message });
       return;
     }
     if (error instanceof HttpError) {

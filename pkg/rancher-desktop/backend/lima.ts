@@ -2549,6 +2549,58 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
   }
 
+  /** Install the main server console as a Lima-native listener, independent of every domain container. */
+  protected async installSullaConsole(): Promise<void> {
+    const packagedRoot = path.join(paths.resources, 'sulla-console');
+    const consoleRoot = '/opt/sulla-console';
+    try {
+      await this.execCommand({ root: true }, 'sh', '-c', `mkdir -p ${ consoleRoot }/public; getent group sulla-console >/dev/null || addgroup -S sulla-console; id sulla-console >/dev/null 2>&1 || adduser -S -D -H -G sulla-console -s /sbin/nologin sulla-console`);
+      for (const name of ['server.mjs', 'public/index.html', 'public/shell.js', 'public/shell.css']) {
+        await this.copyFileIn(path.join(packagedRoot, name), `${ consoleRoot }/${ name }`);
+      }
+      await this.execCommand({ root: true }, 'chown', '-R', 'sulla-console:sulla-console', consoleRoot);
+      await this.execCommand({ root: true }, 'chmod', '-R', 'u=rwX,go=rX', consoleRoot);
+    const initScript = `#!/sbin/openrc-run
+name="sulla-console"
+description="Sulla main server console"
+command="/usr/bin/node"
+command_args="${ consoleRoot }/server.mjs"
+command_background="yes"
+pidfile="/run/sulla-console.pid"
+output_log="/var/log/sulla-console.log"
+error_log="/var/log/sulla-console.error.log"
+command_user="sulla-console:sulla-console"
+export SULLA_CONSOLE_HOST="0.0.0.0"
+export SULLA_CONSOLE_PORT="30121"
+export SULLA_CONSOLE_ROOT="${ consoleRoot }/public"
+export SULLA_CONSOLE_ACCOUNTS_URL="http://127.0.0.1:3020"
+export SULLA_CONSOLE_VAULT_URL="https://127.0.0.1:30135"
+export SULLA_CONSOLE_VAULT_CA_FILE="/etc/sulla-console/vault.crt"
+export SULLA_CONSOLE_FILES_URL="https://127.0.0.1:30124"
+export SULLA_CONSOLE_FILES_CA_FILE="/etc/sulla-console/files.crt"
+export SULLA_CONSOLE_PROJECTS_URL="http://127.0.0.1:30138"
+export SULLA_CONSOLE_WORKFLOWS_URL="http://127.0.0.1:30122"
+depend() { need net; after logger; }
+start_pre() {
+  test -r "${ consoleRoot }/server.mjs" || return 1
+  test -r "${ consoleRoot }/public/index.html" || return 1
+  touch /var/log/sulla-console.log /var/log/sulla-console.error.log
+  chown sulla-console:sulla-console /var/log/sulla-console.log /var/log/sulla-console.error.log
+}
+`;
+
+    await this.writeFile('/etc/init.d/sulla-console', initScript, 0o755);
+    await this.execCommand({ root: true }, 'rc-update', 'add', 'sulla-console', 'default');
+    try {
+      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'restart');
+    } catch {
+      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'start');
+    }
+    } catch (error) {
+      console.warn('[sulla-console] install failed (non-fatal):', error);
+    }
+  }
+
   /**
    * Shell-quote a multi-line string so it survives `sh -c 'printf %s ...'`.
    * Uses single-quote wrapping with `'\''` escapes for embedded singles.
@@ -2863,6 +2915,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
             this.ensureClaudeBinaryInstalled().then(() => this.ensureCodexBinaryInstalled())),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
           this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
+          this.progressTracker.action('Installing Sulla Console', 50, this.installSullaConsole()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));
@@ -3132,6 +3185,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       PROVISION_VAULT_TLS, '--', VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    // The identity directory is 0700 and contains a private key. Publish only
+    // the public certificate for the unprivileged native console proxy.
+    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
+    await this.writeFile('/etc/sulla-console/vault.crt', certificate, 0o644);
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-certificate.pem'), certificate, { mode: 0o600 });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
@@ -3280,6 +3337,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       { capture: true, root: true }, 'sh', '-c', PROVISION_FILES_TLS, '--', FILES_TLS_DIRECTORY, String(uid), String(gid),
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
+    await this.writeFile('/etc/sulla-console/files.crt', certificate, 0o644);
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-certificate.pem'), certificate, { mode: 0o600 });
     await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });

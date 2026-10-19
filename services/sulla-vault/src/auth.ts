@@ -39,14 +39,8 @@ export function authenticate(config: VaultConfig, db: Queryable) {
       response.status(401).json({ error: 'authentication_required' });
       return;
     }
-    const authorityId = request.header('x-sulla-authority-id');
-    const organizationId = request.header('x-sulla-organization-id');
-    if (authorityId || organizationId) {
-      if (config.mode !== 'server' || !authorityId || !organizationId) {
-        response.status(403).json({ error: 'accounts_context_required' });
-        return;
-      }
-      resolveAccountsContext(config, { bearerToken: token, authorityId, organizationId }).then(async(context) => {
+    if (config.mode === 'server' && config.accounts) {
+      resolveAccountsContext(config, { bearerToken: token }).then(async(context) => {
         const mapped = await db.query<{ user_id: string }>(
           `SELECT ai.user_id FROM accounts_identities ai
             JOIN org_members om ON om.user_id=ai.user_id AND om.org_id=$3 AND om.status='confirmed'

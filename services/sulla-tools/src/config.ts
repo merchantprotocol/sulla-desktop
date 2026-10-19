@@ -8,8 +8,8 @@ export const config = {
   databaseUrl:          process.env.SULLA_DATABASE_URL ?? 'postgresql://sulla:sulla_dev_password@postgres:5432/sulla',
   redisUrl:             process.env.SULLA_REDIS_URL ?? 'redis://redis:6379',
   signingKey:           configuredKey || (installationSecret ? deriveCapabilitySigningKey(installationSecret) : ''),
-  desktopExecutorUrl:   process.env.SULLA_DESKTOP_EXECUTOR_URL ?? 'http://host.docker.internal:3000',
-  desktopExecutorToken: process.env.SULLA_DESKTOP_EXECUTOR_TOKEN ?? installationSecret,
+  desktopExecutorUrl:   process.env.SULLA_DESKTOP_EXECUTOR_URL ?? '',
+  desktopExecutorToken: process.env.SULLA_DESKTOP_EXECUTOR_TOKEN ?? '',
   relayUrl:              process.env.SULLA_RELAY_URL ?? '',
   relayToken:            process.env.SULLA_RELAY_TOKEN ?? '',
   relayDeviceId:         process.env.SULLA_RELAY_DEVICE_ID ?? '',
@@ -19,5 +19,5 @@ export const config = {
 export function validateConfig(): void {
   if (Buffer.byteLength(config.signingKey) < 32) throw new Error('SULLA_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
   if (Boolean(config.relayUrl) !== Boolean(config.relayToken)) throw new Error('SULLA_RELAY_URL and SULLA_RELAY_TOKEN must be configured together');
-  if (!config.relayUrl && !config.desktopExecutorToken) throw new Error('SULLA_DESKTOP_EXECUTOR_TOKEN is required when relay forwarding is disabled');
+  if (Boolean(config.desktopExecutorUrl) !== Boolean(config.desktopExecutorToken)) throw new Error('SULLA_DESKTOP_EXECUTOR_URL and SULLA_DESKTOP_EXECUTOR_TOKEN must be configured together');
 }

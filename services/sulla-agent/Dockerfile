@@ -12,7 +12,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 
 RUN useradd --create-home --uid 10001 --shell /bin/bash sulla \
- && install -d -o sulla -g sulla /workspace /home/sulla/.codex /home/sulla/.claude /usr/local/libexec
+ && install -d -o sulla -g sulla /workspace /home/sulla/.codex /home/sulla/.claude /usr/local/libexec \
+      /run/secrets/sulla-agent /run/sulla-bootstrap /run/sulla-control /run/sulla-control/inbox \
+ && chmod 0700 /run/secrets/sulla-agent /run/sulla-bootstrap /run/sulla-control /run/sulla-control/inbox
 
 COPY --chmod=0755 resources/darwin/bin/sulla /usr/local/libexec/sulla-remote
 COPY --chmod=0755 services/sulla-agent/sulla-wrapper.sh /usr/local/bin/sulla

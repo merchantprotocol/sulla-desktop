@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import cronParser from 'cron-parser';
 import express from 'express';
@@ -10,6 +12,7 @@ import {
   identityParams,
   identitySql,
   requestBearer,
+  requireMutationRole,
   requireOwner,
   type AuthenticatedRequest,
   type RequestIdentity,
@@ -22,12 +25,16 @@ import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js'
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
 import { workflowConcurrencyLimit } from '../../../pkg/rancher-desktop/agent/workflow/workflowConcurrency.js';
+import { agentOccurrence } from './agentInvocation.js';
+
 import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 
 import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
+const here = path.dirname(fileURLToPath(import.meta.url));
+const uiRoot = path.resolve(here, '../../../../ui');
 
 const launcher = createWorkflowLauncher();
 const jobs = new Map<string, { job: schedule.Job; identity: RequestIdentity }>();
@@ -53,10 +60,12 @@ function hashToken(token: string): string {
 }
 
 function runnerTools(nodes: any[]): string[] {
-  const allowedTools = new Set<string>(['meta/spawn_agent', 'agents/check_agent_jobs']);
+  const allowedTools = new Set<string>(config.mode === 'desktop' ? ['meta/spawn_agent', 'agents/check_agent_jobs'] : []);
   for (const node of nodes) {
     const toolName = node?.data?.config?.toolName;
-    if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) allowedTools.add(toolName);
+    if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) {
+      allowedTools.add(toolName.includes('/') ? toolName : `meta/${ toolName }`);
+    }
     if (node?.data?.subtype === 'desktop-notification') allowedTools.add('notify/notify_user');
   }
   return [...allowedTools];
@@ -101,6 +110,32 @@ function serviceHeaders(): Record<string, string> {
     'X-Sulla-Service-Id':    config.accountsServiceId,
     'X-Sulla-Service-Token': config.accountsServiceToken,
   };
+}
+
+async function agentsJson(pathname: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const raw = JSON.stringify(body);
+  const timestamp = String(Date.now());
+  const nonce = crypto.randomUUID();
+  const digest = crypto.createHash('sha256').update(raw).digest('hex');
+  const signature = crypto.createHmac('sha256', config.agentsServiceToken)
+    .update(`POST\n${ pathname }\n${ timestamp }\n${ nonce }\n${ digest }`)
+    .digest('base64url');
+  const response = await fetch(`${ config.agentsUrl }${ pathname }`, {
+    method:  'POST',
+    headers: {
+      'Content-Type':              'application/json',
+      'X-Sulla-Service-Id':        'sulla-workflows',
+      'X-Sulla-Service-Timestamp': timestamp,
+      'X-Sulla-Service-Nonce':     nonce,
+      'X-Sulla-Service-Signature': signature,
+    },
+    body: raw,
+    redirect: 'error',
+    signal:  AbortSignal.timeout(30_000),
+  });
+  const json = await boundedJson(response, 512 * 1024);
+  if (!response.ok) throw Object.assign(new Error(`Agents request failed (${ response.status })`), { status: response.status });
+  return json;
 }
 
 async function accountsJson(path: string, init: RequestInit): Promise<Record<string, unknown>> {
@@ -636,7 +671,12 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
   return results;
 }
 
-app.get('/healthz', (_request, response) => response.json({ ok: true }));
+app.get('/healthz', (_request, response) => response.json({ ok: true, service: 'workflows' }));
+app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
+app.use('/ui', (_request, response, next) => {
+  response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
+});
+app.use('/ui', express.static(uiRoot, { index: 'index.html', fallthrough: false }));
 app.use('/v1', authenticateRequest);
 
 app.get('/v1/workflows', requireOwner, async(request: AuthenticatedRequest, response, next) => {
@@ -669,7 +709,7 @@ app.get('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, 
     response.json(row);
   } catch (error) { next(error) }
 });
-app.put('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.put('/v1/workflows/:id', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const workflow = request.body;
     const identity = request.identity!;
@@ -708,7 +748,7 @@ app.put('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, 
     response.json(row);
   } catch (error) { next(error) }
 });
-app.delete('/v1/workflows/:id', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.delete('/v1/workflows/:id', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const identity = request.identity!;
     const workflow = (await pool.query(
@@ -726,7 +766,7 @@ app.delete('/v1/workflows/:id', requireOwner, async(request: AuthenticatedReques
     response.status(204).send();
   } catch (error) { next(error) }
 });
-app.patch('/v1/workflows/:id/location', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.patch('/v1/workflows/:id/location', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const location = request.body.location;
     if (!['desktop', 'server'].includes(location)) return response.status(400).json({ error: 'location must be desktop or server' });
@@ -741,7 +781,7 @@ app.patch('/v1/workflows/:id/location', requireOwner, async(request: Authenticat
     response.json(row);
   } catch (error) { next(error) }
 });
-app.patch('/v1/workflows/:id/status', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.patch('/v1/workflows/:id/status', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const status = request.body.status;
     if (!['draft', 'production', 'archive'].includes(status)) return response.status(400).json({ error: 'invalid workflow status' });
@@ -777,7 +817,7 @@ app.patch('/v1/workflows/:id/status', requireOwner, async(request: Authenticated
     response.json(row);
   } catch (error) { next(error) }
 });
-app.post('/v1/runs', async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs', requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const workflowId = typeof request.body?.workflowId === 'string' ? request.body.workflowId.trim() : '';
     if (!workflowId) return response.status(400).json({ error: 'workflowId is required' });
@@ -788,6 +828,18 @@ app.post('/v1/runs', async(request: AuthenticatedRequest, response, next) => {
       message,
       parentExecutionId: identity.kind === 'runner' ? identity.executionId : undefined,
     }, identity));
+  } catch (error) { next(error) }
+});
+app.get('/v1/runs', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+  try {
+    const limit = Math.min(200, Math.max(1, Number(request.query.limit ?? 100)));
+    const rows = (await pool.query(
+      `SELECT execution_id,workflow_id,workflow_name,status,runner_id,trigger_input,started_at,completed_at,error,
+              wait_kind,resume_at,updated_at
+         FROM workflow_executions WHERE ${ identitySql } ORDER BY started_at DESC LIMIT $5`,
+      [...identityParams(request.identity!), limit],
+    )).rows;
+    response.json(rows);
   } catch (error) { next(error) }
 });
 app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => {
@@ -804,7 +856,22 @@ app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => 
     response.json({ ...publicRun, events });
   } catch (error) { next(error) }
 });
-app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs/:id/stop', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
+  try {
+    const identity = request.identity!;
+    const run = (await pool.query(
+      `UPDATE workflow_executions SET status='failed',auto_restart=FALSE,completed_at=COALESCE(completed_at,NOW()),
+              terminal_at=COALESCE(terminal_at,NOW()),terminal_reason='user_cancelled',error=COALESCE(error,'user_cancelled'),
+              owner_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
+        WHERE execution_id=$5 AND status IN ('running','suspended') AND ${ identitySql } RETURNING runner_id`,
+      [...identityParams(identity), request.params.id],
+    )).rows[0];
+    if (!run) return response.status(409).json({ error: 'run is not active or was not found' });
+    if (run.runner_id) await launcher.stopRunner(run.runner_id);
+    response.status(202).json({ accepted: true });
+  } catch (error) { next(error) }
+});
+app.post('/v1/runs/:id/resume', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const executionId = request.params.id;
     if (typeof executionId !== 'string' || !executionId || executionId.length > 300 || executionId.trim() !== executionId) {
@@ -838,7 +905,7 @@ app.post('/v1/runs/:id/resume', requireOwner, async(request: AuthenticatedReques
     response.status(202).json({ executionId, runnerId: await launch(executionId) });
   } catch (error) { next(error) }
 });
-app.post('/v1/runs/:id/restart', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/runs/:id/restart', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const checkpoint = (await pool.query(
       `SELECT c.playbook_state FROM workflow_checkpoints c
@@ -855,7 +922,7 @@ app.post('/v1/runs/:id/restart', requireOwner, async(request: AuthenticatedReque
     response.status(202).json(await startRun({ workflowId: state.workflowId, message: 'Restarted from checkpoint', playbookState: state }, request.identity!));
   } catch (error) { next(error) }
 });
-app.post('/v1/schedules/refresh', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/schedules/refresh', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try {
     const identity = request.identity!;
     if (config.mode === 'server') {
@@ -865,7 +932,7 @@ app.post('/v1/schedules/refresh', requireOwner, async(request: AuthenticatedRequ
     response.json({ schedules: await refreshSchedules(identity) });
   } catch (error) { next(error) }
 });
-app.post('/v1/schedules/catch-up', requireOwner, async(request: AuthenticatedRequest, response, next) => {
+app.post('/v1/schedules/catch-up', requireOwner, requireMutationRole, async(request: AuthenticatedRequest, response, next) => {
   try { response.json({ results: await catchUp(request.identity!, request.body?.dryRun === true, Number(request.body?.lookbackDays ?? 7)) }) } catch (error) { next(error) }
 });
 
@@ -899,6 +966,105 @@ app.post('/internal/tools/:category/:tool', async(request, response, next) => {
   } catch (error) { next(error) }
 });
 
+app.use('/internal/agents', authenticateRequest);
+app.use('/internal/agents', (request: AuthenticatedRequest, response, next) => {
+  if (request.identity?.kind !== 'runner' || !request.identity.executionId) {
+    response.status(403).json({ error: 'workflow_runner_context_required' }); return;
+  }
+  next();
+});
+
+app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response, next) => {
+  try {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
+    const identity = request.identity!;
+    const agentId = typeof request.body?.agentId === 'string' ? request.body.agentId.trim() : '';
+    const prompt = typeof request.body?.prompt === 'string' ? request.body.prompt.trim() : '';
+    const label = typeof request.body?.label === 'string' ? request.body.label.trim() : '';
+    if (!agentId || agentId.length > 300 || !prompt || prompt.length > 100_000 || label.length > 500) {
+      return response.status(400).json({ error: 'bounded agentId and prompt are required' });
+    }
+    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId : '';
+    const execution = (await pool.query(
+      `SELECT playbook_state FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId],
+    )).rows[0];
+    const occurrence = request.body?.occurrence;
+    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || occurrence !== agentOccurrence(execution?.playbook_state ?? {}, nodeId)) {
+      return response.status(409).json({ error: 'stale workflow agent occurrence' });
+    }
+    const declaredNode = execution?.playbook_state?.definition?.nodes?.find((node: any) => node.id === nodeId);
+    const subtype = declaredNode?.data?.subtype;
+    const expectedAgent = subtype === 'agent' ? (declaredNode.data.config?.agentId || 'sulla-desktop') : 'sulla-desktop';
+    if (!declaredNode || !['agent', 'router', 'condition', 'loop', 'orchestrator-prompt', 'response'].includes(subtype) || agentId !== expectedAgent) {
+      return response.status(403).json({ error: 'agent is outside this workflow node scope' });
+    }
+    const inserted = await pool.query(
+      `INSERT INTO workflow_agent_runs
+         (execution_id,node_id,invocation_id,owner_issuer,owner_subject,authority_id,organization_id,occurrence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (execution_id,node_id,occurrence) DO NOTHING
+       RETURNING invocation_id,agent_run_id`,
+      [identity.executionId, nodeId, crypto.randomUUID(), ...identityParams(identity), occurrence],
+    );
+    const binding = inserted.rows[0] ?? (await pool.query(
+      `SELECT invocation_id,agent_run_id FROM workflow_agent_runs
+        WHERE execution_id=$5 AND node_id=$6 AND occurrence=$7 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId, occurrence],
+    )).rows[0];
+    if (!binding?.invocation_id) throw new Error('Could not bind workflow node to an agent invocation');
+    const invocationId = String(binding.invocation_id);
+    const launched = await agentsJson('/internal/workflow-runs', {
+      invocationId,
+      agentId,
+      prompt,
+      label,
+      workflowExecutionId: identity.executionId,
+      issuer:              identity.issuer,
+      subject:             identity.subject,
+      authorityId:         identity.authorityId,
+      organizationId:      identity.organizationId,
+    });
+    const runId = typeof launched.id === 'string' && launched.id.length <= 300 && launched.id.trim() === launched.id ? launched.id : '';
+    if (!runId) throw new Error('Agents returned an invalid run id');
+    const recorded = await pool.query(
+      `UPDATE workflow_agent_runs SET agent_run_id=$7
+        WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }
+          AND occurrence=$8 AND (agent_run_id IS NULL OR agent_run_id=$7)
+        RETURNING agent_run_id`,
+      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
+    );
+    if (!recorded.rowCount) throw new Error('Agents returned a run outside the workflow node binding');
+    response.status(202).json({ id: runId, status: launched.status ?? 'starting' });
+  } catch (error) { next(error) }
+});
+
+app.post('/internal/agents/runs/status', async(request: AuthenticatedRequest, response, next) => {
+  try {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
+    const identity = request.identity!;
+    const runId = typeof request.body?.runId === 'string' ? request.body.runId.trim() : '';
+    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId.trim() : '';
+    const occurrence = request.body?.occurrence;
+    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || !runId || runId.length > 300 || !nodeId || nodeId.length > 300) {
+      return response.status(400).json({ error: 'bounded runId and nodeId are required' });
+    }
+    const owned = await pool.query(
+      `SELECT 1 FROM workflow_agent_runs
+        WHERE execution_id=$5 AND node_id=$6 AND agent_run_id=$7 AND occurrence=$8 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
+    );
+    if (!owned.rowCount) return response.status(404).json({ error: 'agent run not found' });
+    const run = await agentsJson('/internal/workflow-runs/status', {
+      runId,
+      workflowExecutionId: identity.executionId,
+      authorityId:         identity.authorityId,
+      organizationId:      identity.organizationId,
+    });
+    response.json({ id: runId, status: run.status, output: run.output, error: run.error });
+  } catch (error) { next(error) }
+});
+
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   console.error('[workflow-manager]', error);
   response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
@@ -924,14 +1090,15 @@ async function resumeDueRuns(): Promise<void> {
         [row.execution_id],
       )).rows[0];
       if (config.mode === 'server') {
-        if (!current?.delegated_grant_token || !current?.delegated_grant_workflow_id || !current?.schedule_node_id) {
-          throw new Error('server continuation has no delegated schedule grant');
+        const delegatedFields = [current?.delegated_grant_token, current?.delegated_grant_workflow_id, current?.schedule_node_id];
+        if (delegatedFields.some(Boolean) && !delegatedFields.every(Boolean)) throw new Error('server continuation has an incomplete delegated schedule grant');
+        if (delegatedFields.every(Boolean)) {
+          await resolveScheduleGrant(
+            { ...current, id: current.delegated_grant_workflow_id },
+            current.schedule_node_id,
+            current.delegated_grant_token,
+          );
         }
-        await resolveScheduleGrant(
-          { ...current, id: current.delegated_grant_workflow_id },
-          current.schedule_node_id,
-          current.delegated_grant_token,
-        );
       }
       if (current?.wait_payload?.nodeId) {
         await emitEvent(row.execution_id, current.workflow_id, 'node_completed', { output: 'wait elapsed' }, current.wait_payload.nodeId);

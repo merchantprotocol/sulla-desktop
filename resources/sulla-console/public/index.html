@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Sulla Server Console</title>
+  <link rel="stylesheet" href="/console/shell.css">
+</head>
+<body>
+  <div id="menu" class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">S</span><span><b>Sulla</b><small>Server console</small></span></div>
+      <div class="sidebar-copy"><p class="eyebrow">Main menu</p><h2>Your services</h2><p>Each service keeps its own data and controls. Open one to work full-screen.</p></div>
+      <div class="connection"><span></span><div><b>Console online</b><small>Services connect independently</small></div></div>
+    </aside>
+    <main>
+      <header><div><p class="eyebrow">Sulla Server</p><h1>What do you want to manage?</h1><p class="lead">Choose a service. If one is unavailable, the rest of this console keeps working.</p></div></header>
+      <div class="account-controls"><a id="signin" href="/accounts-api/v1/web/login">Sign in</a><label id="organization-label" hidden>Organization <select id="organization"></select></label><button id="signout" type="button" hidden>Sign out</button><span id="account-status" role="status"></span></div>
+      <section id="services" class="service-grid" aria-label="Server services"></section>
+    </main>
+  </div>
+  <section id="service-view" class="service-view" hidden>
+    <div class="service-bar"><button id="back" type="button">← Back to main menu</button><div><b id="service-title"></b><span id="service-status" role="status">Connecting…</span></div></div>
+    <iframe id="service-frame" title="Sulla service" referrerpolicy="no-referrer"></iframe>
+  </section>
+  <script type="module" src="/console/shell.js"></script>
+</body>
+</html>

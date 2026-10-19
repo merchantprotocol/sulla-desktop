@@ -20,6 +20,7 @@ RUN cd packages/vault-crypto && npm prune --omit=dev \
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app/services/sulla-vault
+RUN apk add --no-cache su-exec
 COPY --from=build /app/services/sulla-vault/package.json ./package.json
 COPY --from=build /app/services/sulla-vault/node_modules ./node_modules
 COPY --from=build /app/services/sulla-vault/dist ./dist
@@ -28,6 +29,8 @@ COPY --from=build /app/services/sulla-vault/console ./console
 COPY --from=build /app/packages/vault-crypto/package.json /app/packages/vault-crypto/package.json
 COPY --from=build /app/packages/vault-crypto/dist /app/packages/vault-crypto/dist
 COPY --from=build /app/packages/vault-crypto/node_modules /app/packages/vault-crypto/node_modules
-USER node
+COPY services/sulla-vault/entrypoint.sh /usr/local/bin/sulla-vault-entrypoint
+RUN chmod 0755 /usr/local/bin/sulla-vault-entrypoint
 EXPOSE 8787
+ENTRYPOINT ["sulla-vault-entrypoint"]
 CMD ["node", "dist/index.js"]

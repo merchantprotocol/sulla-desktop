@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 import tar from 'tar-stream';
 
@@ -23,12 +23,12 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
   async prepareRunner(run: RunLaunch): Promise<string> {
     const safe = run.executionId.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 90);
     const id = await this.docker.create({
-      name:       `sulla-workflow-runner-${ safe }`,
+      name:       `sulla-workflow-runner-${ safe }-${ crypto.randomBytes(3).toString('hex') }`,
       image:      config.workflowImage,
-      entrypoint: ['/bin/sh'],
-      command:    ['-c', 'while [ ! -s /run/secrets/sulla-run-token ]; do sleep 0.05; done; export SULLA_RUN_TOKEN="$(cat /run/secrets/sulla-run-token)"; rm -f /run/secrets/sulla-run-token; exec node dist/services/sulla-workflows/src/runner.js'],
+      command:    ['node', 'dist/services/sulla-workflows/src/runner.js'],
       env:        {
         SULLA_WORKFLOW_ROLE:  'runner',
+        SULLA_WORKFLOW_MODE:  config.mode,
         SULLA_EXECUTION_ID:   run.executionId,
         SULLA_DATABASE_URL:   config.databaseUrl,
         SULLA_REDIS_URL:      config.redisUrl,
@@ -42,15 +42,13 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       network:    config.dockerNetwork,
       autoRemove: true,
       binds:      ['/var/run/docker.sock:/var/run/docker.sock'],
-      groupAdd:   [String(fs.statSync('/var/run/docker.sock').gid)],
-      tmpfs:      { '/run/secrets': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
+      tmpfs:      { '/run/sulla-workflows-private': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
     });
     return id;
   }
 
   async startRunner(runnerId: string, run: RunLaunch): Promise<void> {
     try {
-      await this.docker.start(runnerId);
       const pack = tar.pack();
       pack.entry({ name: 'sulla-run-token', mode: 0o400, uid: 1000, gid: 1000 }, run.runToken);
       pack.finalize();
@@ -58,7 +56,11 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       for await (const chunk of pack) chunks.push(Buffer.from(chunk));
       const archive = Buffer.concat(chunks);
       try {
-        await this.docker.upload(runnerId, '/run/secrets', archive);
+        // Docker's archive endpoint cannot reliably copy into a mounted tmpfs
+        // before start. Stage in the private rootfs, then let the entrypoint
+        // move and unlink the token before the runner process starts.
+        await this.docker.upload(runnerId, '/run/sulla-workflows-bootstrap', archive);
+        await this.docker.start(runnerId);
       } finally {
         archive.fill(0);
         chunks.forEach(chunk => chunk.fill(0));
