@@ -9,8 +9,8 @@ import { app, BrowserWindow, dialog, protocol, shell } from 'electron';
 import { getIpcMainProxy } from './ipcMain';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
-import { pickAndImportChatFiles } from './sullaFilesChatImport';
-import { getSullaFilesClient } from './sullaFilesClient';
+import { importChatFiles, pickAndImportChatFiles, type ChatFilesReference, type PartialChatFilesImport } from './sullaFilesChatImport';
+import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
 import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesRootRegistry } from './sullaFilesRootRegistry';
@@ -137,7 +137,13 @@ async function findReferenceByPath(relativePath:string, collectionId?:string):Pr
   return matches[0];
 }
 
-async function openReference(input:{ fileId: string; versionId?: string }):Promise<void> {
+function pathWithin(root:string, candidate:string):boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`));
+}
+
+async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
   const file = await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
   const versionId = input.versionId || file.current_version_id;
   if (!versionId) throw new Error('This file has no readable version.');
@@ -295,7 +301,49 @@ export function initSullaFilesIpc():void {
     return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, Math.max(1, Math.min(Number(limit), 20)));
   });
-  ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId: string; versionId?: string }) => {
+  ipcMain.handle('files-ui:pick-reference', async(event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const roots = (await getSullaFilesRootRegistry().list()).filter(root => root.activation === 'active' && root.collectionId);
+    const options:Electron.OpenDialogOptions = {
+      title:       'Attach from Sulla Files',
+      defaultPath: roots.find(root => root.id === 'default')?.path,
+      properties:  ['openFile', 'multiSelections'],
+    };
+    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled) return [];
+
+    const references:ChatFilesReference[] = [];
+    const importPaths:string[] = [];
+    for (const selected of picked.filePaths) {
+      const resolved = await fs.promises.realpath(selected);
+      const info = await fs.promises.stat(resolved);
+      if (!info.isFile()) continue;
+      const root = roots.find(candidate => pathWithin(candidate.path, resolved));
+      const existing = root ? await findReferenceByPath(path.relative(root.path, resolved), root.collectionId) : undefined;
+      if (existing?.versionId) references.push(existing);
+      else importPaths.push(resolved);
+    }
+    if (!importPaths.length) return references;
+    const imported = await importChatFiles(importPaths);
+    if (Array.isArray(imported)) return [...references, ...imported];
+
+    return { references: [...references, ...imported.references], error: imported.error } satisfies PartialChatFilesImport;
+  });
+  ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
+    try {
+      const files = await filesClient.json<any[]>('/v1/agent-files/query', { method: 'POST', body: JSON.stringify(input) });
+
+      return files.map(file => reference(file, {
+        id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id,
+      }));
+    } catch (error) {
+      const status = error instanceof FilesApiError ? error.status : 'request-failed';
+
+      console.warn(`[SullaFiles] Chat inventory is temporarily unavailable (status=${ status })`);
+      return [];
+    }
+  });
+  ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId:string; versionId?:string }) => {
     const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
     const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/preview${ query }`);
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);

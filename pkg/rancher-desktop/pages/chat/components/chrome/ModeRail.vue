@@ -56,6 +56,26 @@
 
     <div class="rail-footer">
       <button
+        v-if="active === 'chat'"
+        type="button"
+        :class="['mode-btn', { active: chatFilesOpen }]"
+        data-tooltip="File Explorer"
+        aria-label="File Explorer"
+        :aria-pressed="chatFilesOpen"
+        @click="$emit('toggle-chat-files')"
+      >
+        <span class="icon">
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+        </span>
+        <span class="item-label">File Explorer</span>
+      </button>
+
+      <button
         type="button"
         :class="['mode-btn', { active: bookmarksOpen }]"
         data-tooltip="Bookmarks (⌘⇧B)"
@@ -117,11 +137,13 @@ const props = defineProps<{
   active?:        string;
   activeSubTab?:  string;
   bookmarksOpen?: boolean;
+  chatFilesOpen?: boolean;
 }>();
 
 defineEmits<{
   (e: 'set-mode', mode: string, subTab?: string): void;
   (e: 'toggle-bookmarks'): void;
+  (e: 'toggle-chat-files'): void;
 }>();
 
 interface ModeItem {

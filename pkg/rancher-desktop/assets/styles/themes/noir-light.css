@@ -20,7 +20,7 @@
   --nx-accent: #3a7fa0;
   --nx-accent-2: #5096b3;
   --nx-glow: rgba(58, 127, 160, 0.3);
-  --nx-indicator-bg: #ffffff;
+  --nx-indicator-bg: #eef2f8;
   --nx-indicator-edge: rgba(80, 150, 179, 0.35);
   --nx-shadow-lg: 0 24px 60px rgba(26, 35, 50, 0.14);
   --nx-success: #16a34a;
@@ -426,7 +426,7 @@
 
 /* Chat Canvas — force light background, hide dark elements */
 .theme-noir-light .chat-canvas {
-  background: linear-gradient(135deg, #f4f7fb 0%, #eef2f8 50%, #e4eaf4 100%) !important;
+  background: var(--nx-surface, #ffffff) !important;
 }
 
 .theme-noir-light .chat-stars,
@@ -1077,25 +1077,39 @@
    ═════════════════════════════════════════════════════════════════ */
 
 .theme-noir-light .chat-root {
-  background: var(--bg-page, #f4f7fb) !important;
+  background: var(--nx-surface, #ffffff) !important;
 }
 
 .theme-noir-light .header-backdrop {
   background: linear-gradient(
     to bottom,
-    rgba(238, 242, 248, 0.95) 0%,
-    rgba(238, 242, 248, 0.85) 55%,
-    rgba(238, 242, 248, 0) 100%
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0.85) 55%,
+    rgba(255, 255, 255, 0) 100%
   ) !important;
 }
 
 .theme-noir-light .composer-backdrop {
   background: linear-gradient(
     to top,
-    rgba(238, 242, 248, 0.95) 0%,
-    rgba(238, 242, 248, 0.85) 45%,
-    rgba(238, 242, 248, 0) 100%
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0.85) 45%,
+    rgba(255, 255, 255, 0) 100%
   ) !important;
+}
+
+/* The conversation is the white reading canvas. Navigation chrome and
+   contextual drawers sit one level back on the approved off-white paper. */
+.theme-noir-light .app-titlebar,
+.theme-noir-light .app-titlebar .tab-scroll-wrapper,
+.theme-noir-light .mode-rail,
+.theme-noir-light .chat-root .history,
+.theme-noir-light .chat-root .subagent-rail,
+.theme-noir-light .chat-root .subagent-rail-tab,
+.theme-noir-light .chat-root .artifact,
+.theme-noir-light .chat-root .artifact-tab,
+.theme-noir-light .chat-root .chat-files-drawer {
+  background: var(--nx-paper, #f4f7fb) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
