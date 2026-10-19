@@ -416,7 +416,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   terminal:      'Terminal',
   agents:        'Agents',
   projects:      'Projects',
-  files:         'Files',
+  files:         'File Manager',
   decide:        'Decide',
   usage:         'Usage',
 };
