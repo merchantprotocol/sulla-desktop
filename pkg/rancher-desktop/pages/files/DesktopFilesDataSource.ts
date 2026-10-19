@@ -3,7 +3,7 @@ import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folder
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FilesRevealResult } from './types';
+import type { FilesRevealResult, FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface RemoteCapabilities {
@@ -40,6 +40,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     verifiedRecovery:false,
     nativeFilesystem:true,
     nativeReveal:    true,
+    durableOperations:false,
   };
 
   onlineOnlyReason = '';
@@ -95,6 +96,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot> {
+    this.capabilities.durableOperations = false;
     const capabilitiesGeneration = ++this.capabilitiesGeneration;
     this.resetRemoteCapabilities();
     const [collections, status] = await Promise.all([
@@ -102,14 +104,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
       ipcRenderer.invoke('files-ui:status'),
     ]);
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
-    const availableCollections = roots.filter(root => root.activation === 'active' && root.collectionId)
-      .map(root => ({ id: root.collectionId!, name: root.name }));
+    const availableCollections = collections.map(collection => ({ id: collection.id, name: roots.find(root => root.collectionId === collection.id)?.name ?? collection.name }));
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     this.collectionId = collection.id;
+    const operationCapabilities = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId: collection.id }).catch(() => ({ enabled: false }));
+    if (capabilitiesGeneration === this.capabilitiesGeneration) this.capabilities.durableOperations = operationCapabilities.enabled === true;
     const selectedRoot = roots.find(root => root.collectionId === collection.id);
+    this.capabilities.nativeFilesystem = Boolean(selectedRoot?.activation === 'active');
+    this.capabilities.upload = this.capabilities.nativeFilesystem;
     this.rootId = selectedRoot?.id ?? '';
     if (selectedRoot) {
       status.state = ({ idle: 'synced', scanning: 'syncing', syncing: 'syncing', paused: 'paused', offline: 'error', error: 'error', detached: 'error' } as Record<string, string>)[selectedRoot.state ?? ''] ?? status.state;
@@ -135,6 +140,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
+      folders: await ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id }).catch(() => []),
       collection: {
         id:              collection.id,
         name:            collection.name,
@@ -215,6 +221,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
   listStars(collectionId:string):Promise<{ fileId?:string; folderPath?:string }[]> { return ipcRenderer.invoke('sulla-files:stars', { collectionId }) }
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:set-star', { collectionId, ...target, starred }) }
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void> { return ipcRenderer.invoke('sulla-files:operate', { action, collectionId, items }) }
+  submitOperation(request:FilesOperationRequest):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-submit', request) }
+  getOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-status', { operationId }) }
+  cancelOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-cancel', { operationId }) }
+  retryOperation(operationId:string, request:FilesOperationRetry = {}):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-retry', { operationId, request }) }
+  undoOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-undo', { operationId }) }
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
   updateLifecycle(fileId:string,settings:FilesVersioningSettings):Promise<void> { return ipcRenderer.invoke('sulla-files:lifecycle', { fileId, settings }) }
   checkout(fileId:string,force=false):Promise<void> { return ipcRenderer.invoke('sulla-files:checkout', { fileId, force }) }

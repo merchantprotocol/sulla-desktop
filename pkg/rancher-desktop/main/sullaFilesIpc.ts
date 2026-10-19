@@ -19,7 +19,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
-import type { FilesRevealResult } from '@pkg/pages/files/types';
+import type { FilesRevealResult, FilesOperationRequest, FilesOperationRetry } from '@pkg/pages/files/types';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -300,6 +300,13 @@ function initFilesMediaProtocol():void {
 }
 
 export function initSullaFilesIpc():void {
+  ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:operation-capabilities', (_event, input:{ collectionId:string }) => json(`/v1/database-file-operations/capabilities?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:operation-submit', (_event, input:FilesOperationRequest) => json('/v1/database-file-operations', { method: 'POST', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:operation-status', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }`));
+  ipcMain.handle('sulla-files:operation-cancel', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/cancel`, { method: 'POST', body: '{}' }));
+  ipcMain.handle('sulla-files:operation-retry', (_event, input:{ operationId:string; request:FilesOperationRetry }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/retry`, { method: 'POST', body: JSON.stringify(input.request) }));
+  ipcMain.handle('sulla-files:operation-undo', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/undo`, { method: 'POST', body: '{}' }));
   try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId:string; path?:string; trash?:boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));

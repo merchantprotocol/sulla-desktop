@@ -11,6 +11,7 @@ export interface ExplorerTarget {
   fileId?: string;
   folderPath?: string;
   expectedVersionId?: string;
+  expectedRevision?: string;
   path: string;
   name: string;
   folder: boolean;
@@ -60,10 +61,9 @@ export function useFilesExplorerInteractions(tabId:string) {
     return next;
   }
 
-  function clearForCollection(collectionId:string) {
+  function clearForCollection(_collectionId:string) {
     backStack.value = [];
     forwardStack.value = [];
-    if (clipboard.value?.collectionId !== collectionId) clipboard.value = null;
   }
 
   function setClipboard(collectionId:string, mode:'copy' | 'cut', targets:ExplorerTarget[]) {

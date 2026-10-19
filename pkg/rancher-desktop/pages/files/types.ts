@@ -68,6 +68,8 @@ export interface FilesItem {
   updatedAt: string;
   deletedAt?: string;
   currentVersionId: string;
+  /** Decimal database revision used for receipt-backed mutation CAS. */
+  operationRevision?: string;
   versionCount: number;
   createdByType: string;
   createdById: string;
@@ -132,6 +134,7 @@ export interface FilesVersion {
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
   availableCollections?: { id:string; name:string }[];
+  folders?:string[];
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -156,6 +159,45 @@ export interface FilesPreview {
 export type FilesRevealResult =
   | { status:'revealed'; target:'materialized-copy'; fileId:string; versionId:string }
   | { status:'unavailable'; code:'no-local-copy' | 'local-copy-changed'; reason:string };
+
+export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
+export interface FilesOperationState { fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
+export interface FilesOperationItem {
+  itemId:string;
+  action:'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
+  fileId?:string;
+  expectedVersionId?:string;
+  expectedRevision?:string;
+  targetPath?:string;
+  collisionPolicy?:FilesCollisionPolicy;
+  expectedDestination?:FilesOperationState;
+}
+export interface FilesOperationRequest { idempotencyKey:string; collectionId:string; items:FilesOperationItem[] }
+export interface FilesOperationRetry { items?:{ itemId:string; collisionPolicy?:FilesCollisionPolicy; expectedDestination?:FilesOperationState }[] }
+export interface FilesOperationItemReceipt {
+  itemId:string;
+  action:FilesOperationItem['action'];
+  state:'pending' | 'completed' | 'skipped' | 'failed' | 'cancelled' | 'undone';
+  receiptId:string | null;
+  before:FilesOperationState | null;
+  after:FilesOperationState | { folderId:string; path:string; revision:string } | null;
+  displacedBefore?:FilesOperationState;
+  displacedAfter?:FilesOperationState;
+  error:{ status:number; code:string; message:string; destination?:FilesOperationState } | null;
+  undoSupported:boolean;
+  retryable:boolean;
+}
+export interface FilesOperationReceipt {
+  operationId:string;
+  collectionId:string;
+  state:'pending' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'undone';
+  cancelRequested:boolean;
+  undoSupported:boolean;
+  retryable:boolean;
+  createdAt:string;
+  updatedAt:string;
+  items:FilesOperationItemReceipt[];
+}
 
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
@@ -183,6 +225,7 @@ export interface FilesCapabilities {
   verifiedRecovery?: boolean;
   nativeFilesystem: boolean;
   nativeReveal?: boolean;
+  durableOperations?: boolean;
 }
 
 export type ShareAccessMode = 'view' | 'download';
@@ -276,6 +319,11 @@ export interface ShareActivity {
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
+  submitOperation?(request:FilesOperationRequest):Promise<FilesOperationReceipt>;
+  getOperation?(operationId:string):Promise<FilesOperationReceipt>;
+  cancelOperation?(operationId:string):Promise<FilesOperationReceipt>;
+  retryOperation?(operationId:string, request?:FilesOperationRetry):Promise<FilesOperationReceipt>;
+  undoOperation?(operationId:string):Promise<FilesOperationReceipt>;
   load(): Promise<FilesSnapshot>;
   selectCollection?(collectionId:string):void;
   history(fileId:string, currentVersionId:string): Promise<FilesVersion[]>;
