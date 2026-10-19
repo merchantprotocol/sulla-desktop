@@ -20,7 +20,7 @@ interface OperationCapabilities {
   enabled:boolean;
   folderReceipts?:boolean;
   nativeFolderReceipts?:boolean;
-  folderCollisionPolicies?:('keep-both' | 'skip')[];
+  folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
   crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
 }
 
@@ -75,7 +75,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     durableOperations:false,
     folderReceipts:  false,
     nativeFolderReceipts:false,
-    folderCollisionPolicies:[] as ('keep-both' | 'skip')[],
+    folderCollisionPolicies:[] as ('replace' | 'keep-both' | 'skip')[],
     crossCollectionOperations:'unavailable' as 'unavailable' | 'stored-same-audience-files',
   };
 
@@ -155,7 +155,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       durableOperations:        operationCapabilities.enabled === true,
       folderReceipts:           operationCapabilities.folderReceipts === true,
       nativeFolderReceipts:     operationCapabilities.nativeFolderReceipts === true,
-      folderCollisionPolicies:  Array.isArray(operationCapabilities.folderCollisionPolicies) ? operationCapabilities.folderCollisionPolicies.filter((item:unknown) => item === 'keep-both' || item === 'skip') : [],
+      folderCollisionPolicies:  Array.isArray(operationCapabilities.folderCollisionPolicies) ? operationCapabilities.folderCollisionPolicies.filter((item:unknown) => item === 'replace' || item === 'keep-both' || item === 'skip') : [],
       crossCollectionOperations:operationCapabilities.crossCollectionOperations === 'stored-same-audience-files' ? 'stored-same-audience-files' : 'unavailable',
     });
     const selectedRoot = roots.find(root => root.collectionId === collection.id);

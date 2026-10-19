@@ -163,6 +163,13 @@ export type FilesRevealResult =
 
 export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
 export interface FilesFolderState { folderId:string; path:string; revision:string }
+export interface FilesFolderReplacementDestination extends FilesFolderState { subtreeSignature:string }
+export function isFilesFolderState(value:unknown):value is FilesFolderState {
+  if (!value || typeof value !== 'object') return false;
+  const state=value as Record<string, unknown>;
+
+  return !('fileId' in state) && typeof state.folderId === 'string' && typeof state.path === 'string' && typeof state.revision === 'string';
+}
 export type FilesTrashUndoState = 'available' | 'invalidated' | 'recovery-required' | 'unavailable';
 export interface FilesTrashUndo { state:FilesTrashUndoState; expiresAt?:string }
 export type FilesTrashTombstone =
@@ -193,6 +200,21 @@ export type FilesTrashPurgeResult =
   | { status:'purged'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'complete'; retainedArtifacts:'none' | 'complete'; undo:'invalidated'; receiptId:string }
   | { status:'recovery-required'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'pending' | 'complete'; retainedArtifacts:'preserved' | 'complete'; undo:'invalidated'; receiptId:string; reason?:string };
 export interface FilesOperationState { collectionId?:string; fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
+export type FilesCollisionDestination = FilesOperationState | FilesFolderReplacementDestination;
+export function isFilesOperationState(value:unknown):value is FilesOperationState {
+  if (!value || typeof value !== 'object') return false;
+  const state=value as Record<string, unknown>;
+
+  return !('folderId' in state) && typeof state.fileId === 'string' && typeof state.path === 'string' && typeof state.versionId === 'string' &&
+    typeof state.revision === 'string' && typeof state.deleted === 'boolean' &&
+    (state.collectionId === undefined || typeof state.collectionId === 'string');
+}
+export function isFilesFolderReplacementDestination(value:unknown):value is FilesFolderReplacementDestination {
+  if (!isFilesFolderState(value)) return false;
+  const state=value as FilesFolderReplacementDestination;
+
+  return typeof state.subtreeSignature === 'string' && /^[0-9a-f]{64}$/.test(state.subtreeSignature);
+}
 export interface FilesOperationItem {
   itemId:string;
   action:'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
@@ -205,10 +227,10 @@ export interface FilesOperationItem {
   targetPath?:string;
   targetCollectionId?:string;
   collisionPolicy?:FilesCollisionPolicy;
-  expectedDestination?:FilesOperationState;
+  expectedDestination?:FilesCollisionDestination;
 }
 export interface FilesOperationRequest { idempotencyKey:string; collectionId:string; items:FilesOperationItem[] }
-export interface FilesOperationRetry { items?:{ itemId:string; collisionPolicy?:FilesCollisionPolicy; expectedDestination?:FilesOperationState }[] }
+export interface FilesOperationRetry { items?:{ itemId:string; collisionPolicy?:FilesCollisionPolicy; expectedDestination?:FilesCollisionDestination }[] }
 export interface FilesOperationItemReceipt {
   itemId:string;
   action:FilesOperationItem['action'];
@@ -216,9 +238,9 @@ export interface FilesOperationItemReceipt {
   receiptId:string | null;
   before:FilesOperationState | FilesFolderState | null;
   after:FilesOperationState | FilesFolderState | null;
-  displacedBefore?:FilesOperationState;
-  displacedAfter?:FilesOperationState;
-  error:{ status:number; code:string; message:string; destination?:FilesOperationState } | null;
+  displacedBefore?:FilesOperationState | FilesFolderState;
+  displacedAfter?:FilesOperationState | FilesFolderState;
+  error:{ status:number; code:string; message:string; destination?:FilesCollisionDestination } | null;
   undoSupported:boolean;
   retryable:boolean;
 }
@@ -263,7 +285,7 @@ export interface FilesCapabilities {
   durableOperations?: boolean;
   folderReceipts?: boolean;
   nativeFolderReceipts?: boolean;
-  folderCollisionPolicies?: Exclude<FilesCollisionPolicy, 'replace'>[];
+  folderCollisionPolicies?: FilesCollisionPolicy[];
   crossCollectionOperations?: 'stored-same-audience-files' | 'unavailable';
 }
 
