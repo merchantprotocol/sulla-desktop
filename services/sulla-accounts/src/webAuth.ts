@@ -90,6 +90,9 @@ export async function beginWebLogin(db: Database, config: AccountsConfig, return
   url.searchParams.set('client_id', config.keycloakWebClientId);
   url.searchParams.set('redirect_uri', config.webCallbackUrl);
   url.searchParams.set('scope', `openid profile sulla-audience-${config.keycloakMembershipAudience}`);
+  // A console login must require an explicit credential check even when the
+  // browser still has an authority SSO cookie from a revoked local session.
+  url.searchParams.set('prompt', 'login');
   url.searchParams.set('state', state);
   url.searchParams.set('nonce', nonce);
   url.searchParams.set('code_challenge_method', 'S256');
@@ -175,6 +178,11 @@ export async function webIdentity(db: Database, config: AccountsConfig, request:
   );
   const session = found.rows[0];
   if (!session) throw new Error('authentication_required');
+  await db.query(
+    `UPDATE accounts.web_sessions SET updated_at=now()
+      WHERE id=$1 AND updated_at < now()-interval '1 minute'`,
+    [session.id],
+  );
   if (config.mode === 'server') {
     const user = await getHostedUser(config, session.subject).catch(() => undefined);
     if (!user?.enabled) throw new Error('authentication_required');

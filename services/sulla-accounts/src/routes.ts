@@ -16,7 +16,7 @@ import {
 import { base64url, digest } from './crypto.js';
 import { assertOrganizationUserMutation, organizationUsers } from './consoleAuthorization.js';
 import { fetchJson, object, string, stringArray } from './http.js';
-import { createHostedUser, getHostedUser, resetHostedPassword, updateHostedUser } from './keycloakAdmin.js';
+import { createHostedUser, getHostedUser, resetHostedPassword, updateHostedUser, updateHostedUserProfile } from './keycloakAdmin.js';
 import {
   authorityAccessToken,
   beginAuthorization,
@@ -57,6 +57,11 @@ function membershipRoles(input: unknown): string[] {
   const roles = stringArray(input ?? [], 'roles', 10);
   if (roles.some(role => !MEMBERSHIP_ROLES.has(role))) throw new HttpError(400, 'roles contain an unsupported value');
   return roles;
+}
+
+function profileText(value: unknown, name: string, max: number): string {
+  if (typeof value !== 'string' || value.length > max) throw new HttpError(400, `${name} is invalid`);
+  return value.trim();
 }
 
 async function requireOrganizationAdmin(db: Database, identity: { issuer: string; subject: string }, organizationId: string): Promise<void> {
@@ -616,6 +621,108 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
     response.json({ organizations: found.rows });
   }));
 
+  router.get('/overview', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request).catch(() => { throw new HttpError(401, 'authentication_required'); });
+    const organizationId = uuid(request.query.organizationId, 'organizationId');
+    const organization = await db.query(
+      `SELECT o.id,o.name,o.slug,o.created_at,o.updated_at,m.roles,m.groups
+         FROM accounts.organizations o JOIN accounts.memberships m ON m.organization_id=o.id
+        WHERE o.id=$1 AND m.issuer=$2 AND m.subject=$3 AND m.revoked_at IS NULL`,
+      [organizationId, identity.issuer, identity.subject],
+    );
+    if (!organization.rows[0]) throw new HttpError(403, 'organization membership is not active');
+    const counts = await db.query(
+      `SELECT count(*)::int AS members,
+              (count(*) FILTER (WHERE roles && ARRAY['owner','admin']::text[]))::int AS administrators
+         FROM accounts.memberships WHERE issuer=$1 AND organization_id=$2 AND revoked_at IS NULL`,
+      [config.keycloakIssuer, organizationId],
+    );
+    const sessions = await db.query(
+      `SELECT count(*)::int AS active FROM accounts.web_sessions
+        WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL AND expires_at>now()`,
+      [identity.issuer, identity.subject],
+    );
+    const user = await getHostedUser(config, identity.subject);
+    response.json({
+      organization: organization.rows[0],
+      summary: { members: counts.rows[0].members, administrators: counts.rows[0].administrators, browserSessions: sessions.rows[0].active },
+      user,
+    });
+  }));
+
+  router.get('/profile', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request).catch(() => { throw new HttpError(401, 'authentication_required'); });
+    response.json({ profile: await getHostedUser(config, identity.subject) });
+  }));
+
+  router.patch('/profile', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
+    const input = requestBody(request);
+    const profile: { email?: string; firstName?: string; lastName?: string } = {};
+    if (input.email !== undefined) profile.email = profileText(input.email, 'email', 254);
+    if (input.firstName !== undefined) profile.firstName = profileText(input.firstName, 'firstName', 120);
+    if (input.lastName !== undefined) profile.lastName = profileText(input.lastName, 'lastName', 120);
+    if (!Object.keys(profile).length) throw new HttpError(400, 'a profile field is required');
+    response.json({ profile: await updateHostedUserProfile(config, identity.subject, profile) });
+  }));
+
+  router.get('/sessions', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request).catch(() => { throw new HttpError(401, 'authentication_required'); });
+    const organizationId = uuid(request.query.organizationId, 'organizationId');
+    const membership = await db.query(
+      `SELECT 1 FROM accounts.memberships
+        WHERE issuer=$1 AND subject=$2 AND organization_id=$3 AND revoked_at IS NULL`,
+      [identity.issuer, identity.subject, organizationId],
+    );
+    if (!membership.rowCount) throw new HttpError(403, 'organization membership is not active');
+    const found = await db.query(
+      `SELECT id,created_at,updated_at,expires_at FROM accounts.web_sessions
+        WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL AND expires_at>now()
+        ORDER BY updated_at DESC,created_at DESC`,
+      [identity.issuer, identity.subject],
+    );
+    response.json({
+      organizationId,
+      sessions: found.rows.map(session => ({
+        id: session.id,
+        kind: 'browser_session',
+        current: session.id === identity.id,
+        createdAt: new Date(session.created_at).toISOString(),
+        lastActiveAt: new Date(session.updated_at).toISOString(),
+        expiresAt: new Date(session.expires_at).toISOString(),
+      })),
+    });
+  }));
+
+  router.post('/sessions/:id/revoke', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
+    const sessionId = uuid(request.params.id, 'session id');
+    const organizationId = uuid(requestBody(request).organizationId, 'organizationId');
+    const membership = await db.query(
+      `SELECT 1 FROM accounts.memberships
+        WHERE issuer=$1 AND subject=$2 AND organization_id=$3 AND revoked_at IS NULL`,
+      [identity.issuer, identity.subject, organizationId],
+    );
+    if (!membership.rowCount) throw new HttpError(403, 'organization membership is not active');
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const revoked = await client.query(
+        `UPDATE accounts.web_sessions SET revoked_at=COALESCE(revoked_at,now()),updated_at=now()
+          WHERE id=$1 AND issuer=$2 AND subject=$3 AND revoked_at IS NULL RETURNING id`,
+        [sessionId, identity.issuer, identity.subject],
+      );
+      if (!revoked.rowCount) throw new HttpError(404, 'browser session not found');
+      await client.query(
+        `UPDATE accounts.ui_sessions SET revoked_at=COALESCE(revoked_at,now())
+          WHERE web_session_id=$1 AND revoked_at IS NULL`,
+        [sessionId],
+      );
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    response.status(204).end();
+  }));
+
   router.post('/organizations', route(async(request, response) => {
     let identity;
     try { identity = await webIdentity(db, config, request, true); } catch { throw new HttpError(403, 'web_session_required'); }
@@ -635,6 +742,20 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       await client.query('COMMIT');
       response.status(201).json(created.rows[0]);
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }));
+
+  router.patch('/organizations/:id', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
+    const organizationId = uuid(request.params.id, 'organizationId');
+    await requireOrganizationAdmin(db, identity, organizationId);
+    const name = string(requestBody(request).name, 'name', 120).trim();
+    const changed = await db.query(
+      `UPDATE accounts.organizations SET name=$2,updated_at=now() WHERE id=$1
+        RETURNING id,name,slug,created_at,updated_at`,
+      [organizationId, name],
+    );
+    if (!changed.rowCount) throw new HttpError(404, 'organization not found');
+    response.json({ organization: changed.rows[0] });
   }));
 
   router.get('/users', route(async(request, response) => {

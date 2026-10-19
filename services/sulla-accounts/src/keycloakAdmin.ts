@@ -93,6 +93,21 @@ export async function updateHostedUser(config: AccountsConfig, id: string, enabl
   });
 }
 
+export async function updateHostedUserProfile(config: AccountsConfig, id: string, input: {
+  email?: string; firstName?: string; lastName?: string;
+}): Promise<HostedUser> {
+  const users = endpoints(config).users;
+  const current = await keycloakRequest(config, `${users}/${encodeURIComponent(id)}`);
+  const payload = object(await current.json());
+  const emailChanged = input.email !== undefined && input.email !== payload.email;
+  await keycloakRequest(config, `${users}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...payload, ...input, ...(emailChanged ? { emailVerified: false } : {}) }),
+  });
+  return getHostedUser(config, id);
+}
+
 export async function resetHostedPassword(config: AccountsConfig, id: string, password: string): Promise<void> {
   await keycloakRequest(config, `${endpoints(config).users}/${encodeURIComponent(id)}/reset-password`, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
