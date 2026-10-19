@@ -35,7 +35,9 @@ async function harness() {
     await indexer.flush(); return id;
   }
   const scopes = (userId:string, groups:string[] = []) => searchableScopes(db, {
-    query: () => Promise.resolve({ rows: groups.map(groupId => ({ group_id: groupId })) }),
+    query: (sql:string) => Promise.resolve(sql.includes('FROM org_members')
+      ? { rowCount: 1, rows: [{ confirmed: true }] }
+      : { rowCount: groups.length, rows: groups.map(groupId => ({ group_id: groupId })) }),
   } as any, { userId, deviceId: 'test', kind: 'capability' });
   return { db, search, indexer, collection, version, scopes };
 }
