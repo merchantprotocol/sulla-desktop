@@ -62,7 +62,7 @@ import { isSingletonWorkflow, workflowConcurrencyLimit } from '../workflow/workf
 import { WorkflowLeaseHeartbeat, WorkflowLeaseLostError } from '../workflow/WorkflowLeaseHeartbeat';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
-import { ChatMessageModel } from '../database/models/ChatMessageModel';
+import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import {
   processNextStep,
   resolveDecision,
@@ -2640,13 +2640,18 @@ export class PlaybookController<TState = any> {
       // emitting messages. This closes the crash window between playbook
       // nodes and leaves a truthful partial transcript for recovery readers.
       const persistedState = finalState || subState;
-      await ChatMessageModel.saveThreadState(threadId, {
-        thread: {
-          id:       threadId,
-          title:    String((persistedState as any)?.metadata?.agent?.name || agentId || nodeId),
-          messages: Array.isArray((persistedState as any)?.messages) ? (persistedState as any).messages : [],
-        },
-      });
+      // Best-effort: a persistence failure must not mask the worker's own error.
+      try {
+        await ConversationThreadStore.saveThreadState(threadId, {
+          thread: {
+            id:       threadId,
+            title:    String((persistedState as any)?.metadata?.agent?.name || agentId || nodeId),
+            messages: Array.isArray((persistedState as any)?.messages) ? (persistedState as any).messages : [],
+          },
+        });
+      } catch (err) {
+        console.error(`[PlaybookController] Failed to persist sub-agent transcript ${ threadId }:`, err);
+      }
 
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
