@@ -4,7 +4,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 jest.unstable_mockModule('fs', () => ({ appendFileSync: jest.fn() }));
 jest.unstable_mockModule('../../services/ConversationLogger', () => ({ getConversationLogger: jest.fn() }));
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn(() => ({ send: jest.fn() })) }));
-jest.unstable_mockModule('../../database/models/ChatMessageModel', () => ({ ChatMessageModel: {} }));
+jest.unstable_mockModule('../../database/models/ConversationThreadStore', () => ({ ConversationThreadStore: { saveThreadState: jest.fn(() => Promise.resolve('h')) } }));
 jest.unstable_mockModule('../../workflow/lockedCoreRoutineExecution', () => ({ inheritSubAgentToolPolicy: jest.fn(), lockedCoreBlockedError: jest.fn(), resolveAgentTaskForDispatch: jest.fn() }));
 jest.unstable_mockModule('../../database/RedisClient', () => ({ redisClient: { get: jest.fn(() => Promise.resolve(null)) } }));
 jest.unstable_mockModule('../../tools/workflow/stop_workflow', () => ({ stopKey: () => 'stop' }));

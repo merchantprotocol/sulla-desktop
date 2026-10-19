@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 const mockGetByThread = jest.fn<any>();
 const mockGetById = jest.fn<any>();
 const mockLoadThreadState = jest.fn<any>();
-const mockLoadThreadsByThreadId = jest.fn<any>();
 const mockQuery = jest.fn<any>();
 
 jest.unstable_mockModule('@pkg/agent/database/models/ConversationHistoryModel', () => ({
@@ -17,10 +16,9 @@ jest.unstable_mockModule('@pkg/agent/database/models/ConversationHistoryModel', 
     getById: mockGetById,
   },
 }));
-jest.unstable_mockModule('@pkg/agent/database/models/ChatMessageModel', () => ({
-  ChatMessageModel: {
+jest.unstable_mockModule('@pkg/agent/database/models/ConversationThreadStore', () => ({
+  ConversationThreadStore: {
     loadThreadState: mockLoadThreadState,
-    loadThreadsByThreadId: mockLoadThreadsByThreadId,
   },
 }));
 jest.unstable_mockModule('@pkg/agent/database/PostgresClient', () => ({
@@ -42,7 +40,6 @@ describe('SearchConversationsWorker transcript recovery', () => {
     mockGetByThread.mockReset();
     mockGetById.mockReset();
     mockLoadThreadState.mockReset().mockResolvedValue(null);
-    mockLoadThreadsByThreadId.mockReset().mockResolvedValue([]);
     mockQuery.mockReset().mockResolvedValue([]);
   });
 

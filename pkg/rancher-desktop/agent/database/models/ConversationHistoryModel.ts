@@ -3,6 +3,7 @@
 // Replaces fragmented storage across localStorage, Redis TTL, and disk logs.
 
 import { postgresClient } from '../PostgresClient';
+import { ConversationThreadStore } from './ConversationThreadStore';
 
 export type ConversationHistoryType = 'chat' | 'browser' | 'workflow' | 'graph';
 export type ConversationHistoryStatus = 'active' | 'closed' | 'archived' | 'deleted';
@@ -332,9 +333,11 @@ export class ConversationHistoryModel {
 
   /**
    * Point existing history rows at the chat thread they display. Chat rows are
-   * keyed by tab id, but the transcript lives in chat_messages under the
-   * renderer's thread id — without this link, reopening from History can only
-   * find the transcript through a renderer localStorage pointer. UPDATE-only
+   * keyed by tab id, but the renderer saves the transcript under its thread
+   * id — without this link, reopening from History can only find the
+   * transcript through a renderer localStorage pointer. Messages saved before
+   * the link (on a hidden 'thread-placeholder' header) are adopted onto the
+   * tab row (ConversationThreadStore.adoptThreadMessages). UPDATE-only
    * (never resurrects a cleared row) and leaves last_active_at alone so a
    * backfill doesn't reorder History.
    */
@@ -350,6 +353,15 @@ export class ConversationHistoryModel {
       `, [valid.map(l => l.id), valid.map(l => l.threadId)]);
     } catch (err) {
       console.error('[ConversationHistoryModel] Failed to link threads:', err);
+      return;
+    }
+    // Fold any transcript saved under a hidden thread placeholder into the tab row.
+    for (const l of valid) {
+      try {
+        await ConversationThreadStore.adoptThreadMessages(l.id, l.threadId);
+      } catch (err) {
+        console.error(`[ConversationHistoryModel] Failed to adopt thread ${ l.threadId } into ${ l.id }:`, err);
+      }
     }
   }
 

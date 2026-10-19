@@ -188,7 +188,7 @@ function initController(): ChatController {
       const state = persister.load(storedId);
       if (state) return registry.open(state, props.tabId);
       // localStorage miss — but the thread may still live in the durable
-      // chat_messages DB backup. This is the normal case when reopening
+      // conversations DB backup. This is the normal case when reopening
       // from the History sidebar: threads scribed by the relay/mobile
       // persistence path (or blobs the startup GC evicted for budget) never
       // land in THIS renderer's localStorage. Spin up a provisional fresh
@@ -403,7 +403,7 @@ const rehydratableThreadIds = computed<Set<ThreadId>>(() => {
 });
 
 function onArchivedClick(_id: ThreadId): void {
-  // Neither this renderer nor the chat_messages DB backup holds the
+  // Neither this renderer nor the conversations DB backup holds the
   // transcript (e.g. cleared data) — say so instead of silently no-oping.
   window.dispatchEvent(new CustomEvent('chat:status', {
     detail: 'That chat\'s transcript couldn\'t be found.',

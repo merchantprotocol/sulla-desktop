@@ -3,7 +3,7 @@ import readline from 'node:readline';
 
 import { BaseTool, ToolResponse } from '../base';
 
-import { ChatMessageModel } from '@pkg/agent/database/models/ChatMessageModel';
+import { ConversationThreadStore } from '@pkg/agent/database/models/ConversationThreadStore';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
@@ -239,16 +239,14 @@ export class SearchConversationsWorker extends BaseTool {
         const threadKey = input.threadId || record?.thread_id || record?.id || input.id;
         const stateId   = input.id || record?.id;
 
-        // 1) Primary source: the full desktop thread state (chat_messages.state_json).
+        // 1) Primary source: the full desktop thread state from the unified
+        //    store (conversation_messages payloads + conversation_history.thread_state).
+        //    loadThreadState resolves a history id OR a thread id.
         let messages: Array<{ role?: string; content?: any }> = [];
         try {
           let threadState = null as any;
-          if (stateId) threadState = await ChatMessageModel.loadThreadState(stateId);
-          if (!threadState && threadKey) threadState = await ChatMessageModel.loadThreadState(threadKey);
-          if (!threadState && threadKey) {
-            const threads = await ChatMessageModel.loadThreadsByThreadId(threadKey);
-            threadState = threads[0] || null;
-          }
+          if (stateId) threadState = await ConversationThreadStore.loadThreadState(stateId);
+          if (!threadState && threadKey && threadKey !== stateId) threadState = await ConversationThreadStore.loadThreadState(threadKey);
           const arr = threadState?.thread?.messages;
           if (Array.isArray(arr)) messages = arr;
         } catch { /* fall through to relay mirror */ }

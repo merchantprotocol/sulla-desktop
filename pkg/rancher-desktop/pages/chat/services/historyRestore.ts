@@ -32,7 +32,7 @@ export function resolveHistoryChatTabId(entry: HistoryChatEntry, persister = new
     persister.findTabForThread(entry.thread_id || entry.id) ||
     entry.id;
 
-  // Only chat rows link to a chat_messages thread; a graph row's thread_id is
+  // Only chat rows link to a chat thread transcript; a graph row's thread_id is
   // the backend graph id and must not be written into the chat pointer.
   if (entry.type === 'chat' && entry.thread_id && !persister.getTabThread(tabId)) {
     persister.setTabThread(tabId, asThreadId(entry.thread_id));
