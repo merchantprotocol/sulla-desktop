@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export type SullaServiceImageName = 'sulla-accounts' | 'sulla-agent' | 'sulla-files' | 'sulla-projects' | 'sulla-relay' | 'sulla-tools' | 'sulla-vault' | 'sulla-workflows';
+export type SullaServiceImageName = 'sulla-accounts' | 'sulla-agent' | 'sulla-files' | 'sulla-files-fuse' | 'sulla-projects' | 'sulla-relay' | 'sulla-tools' | 'sulla-vault' | 'sulla-workflows';
 
 export interface SullaServiceImage {
   build?: {
@@ -45,7 +45,7 @@ export function resolveSullaServiceImage(
     return { image: override };
   }
 
-  const tag = name === 'sulla-files' ? 'latest' : publishedTag(appVersion);
+  const tag = name === 'sulla-files' || name === 'sulla-files-fuse' ? 'latest' : publishedTag(appVersion);
 
   return { image: `ghcr.io/merchantprotocol/${ name }:${ tag }` };
 }

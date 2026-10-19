@@ -218,8 +218,6 @@ export function createTrayPanel(): BrowserWindow {
   // ── IPC handlers (panel → main) ───────────────────────────────────────
   registerPanelIpc();
   registerCaptureShortcuts();
-  getSullaFilesWatcher().initialize().catch(error => console.warn('[SullaFiles] watcher initialization failed:', error));
-
   return panelWindow;
 }
 
