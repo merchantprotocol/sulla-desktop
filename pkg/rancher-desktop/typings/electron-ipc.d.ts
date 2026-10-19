@@ -503,6 +503,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:link-activity': (id?: string) => { id: string; action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt: string; detail?: string }[];
   'files-ui:open-folder':   () => void;
   'files-ui:open-file':     (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:reveal-file':   (input: { fileId: string; versionId?: string }) => import('@pkg/pages/files/types').FilesRevealResult;
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
@@ -515,6 +516,20 @@ export interface IpcMainInvokeEvents {
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
   'files-preferences:remove-root': (id: string) => void;
   'sulla-files:collections':     () => any[];
+  'sulla-files:folders': (input: { collectionId:string; details?:boolean }) => (string | import('@pkg/pages/files/types').FilesFolderState)[];
+  'sulla-files:operation-capabilities': (input: { collectionId:string }) => {
+    enabled:boolean;
+    reason?:string;
+    folderReceipts?:boolean;
+    nativeFolderReceipts?:boolean;
+    folderCollisionPolicies?:('keep-both' | 'skip')[];
+    crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
+  };
+  'sulla-files:operation-submit': (input: import('@pkg/pages/files/types').FilesOperationRequest) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-status': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-cancel': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-retry': (input: { operationId:string; request:import('@pkg/pages/files/types').FilesOperationRetry }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-undo': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
