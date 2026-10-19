@@ -1163,6 +1163,9 @@ export interface IpcMainInvokeEvents {
   'chat-messages:load':          (id: string) => { success: boolean; data?: any; error?: string };
   'chat-messages:delete':        (id: string) => { success: boolean; error?: string };
   'chat-messages:message-count': (id: string) => { success: boolean; count: number; error?: string };
+  'conversation-messages:append': (input: import('@pkg/agent/database/models/ConversationMessagesModel').AppendConversationMessageInput | import('@pkg/agent/database/models/ConversationMessagesModel').AppendConversationMessageInput[]) => { success: boolean; error?: string };
+  'conversation-messages:list': (conversationId: string, opts?: import('@pkg/agent/database/models/ConversationMessagesModel').ListConversationMessagesOptions) => { success: boolean; data: import('@pkg/agent/database/models/ConversationMessagesModel').ConversationMessageRecord[]; error?: string };
+  'conversation-messages:count': (conversationId: string) => { success: boolean; data: number; error?: string };
   // #endregion
 
   // #region Debug & Monitoring

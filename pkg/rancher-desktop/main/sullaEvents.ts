@@ -21,6 +21,7 @@ import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initChatHeartbeatIpc } from './chatHeartbeatIpc';
 import { initChatArtifactsIpc } from './chatArtifactsIpc';
 import { initChatMessagesIpc } from './chatMessagesIpc';
+import { initConversationMessagesIpc } from './conversationMessagesIpc';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initAgentTabContractIpc } from './agentTabContractIpc';
 import { initSullaApprovalEvents } from './sullaApprovalEvents';
@@ -83,6 +84,7 @@ export function initSullaEvents(): void {
   initConversationHistoryIpc();
   initBookmarksIpc();
   initChatMessagesIpc();
+  initConversationMessagesIpc();
   initChatArtifactsIpc();
   initChatHeartbeatIpc();
   initClaudeOAuthEvents();

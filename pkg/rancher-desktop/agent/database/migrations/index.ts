@@ -113,6 +113,7 @@ import { up as up_0123, down as down_0123 } from './0123_create_knowledge_projec
 import { up as up_0124, down as down_0124 } from './0124_scope_workflow_ownership';
 import { up as up_0125, down as down_0125 } from './0125_retire_archived_workflow_executions';
 import { up as up_0126, down as down_0126 } from './0126_settle_abandoned_workflow_launches';
+import { up as up_0127, down as down_0127 } from './0127_create_conversation_messages';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -227,4 +228,5 @@ export const migrationsRegistry = [
   { name: '0124_scope_workflow_ownership', up: up_0124, down: down_0124 },
   { name: '0125_retire_archived_workflow_executions', up: up_0125, down: down_0125 },
   { name: '0126_settle_abandoned_workflow_launches', up: up_0126, down: down_0126 },
+  { name: '0127_create_conversation_messages', up: up_0127, down: down_0127 },
 ] as const;
