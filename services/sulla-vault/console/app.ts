@@ -7,6 +7,7 @@ import {
 
 type Json = Record<string, any>;
 type AuthMode = 'signin' | 'join';
+type AccountsOnboardingStatus = 'initialize-owner' | 'initialize-member' | 'request-member' | 'pending' | 'ready';
 type RightKey = 'can_view' | 'can_use_by_agents' | 'can_edit' | 'can_manage';
 const text = new TextEncoder(); const decoder = new TextDecoder();
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -22,13 +23,14 @@ const state: {
 let idleTimer = 0;
 let accountsOrganizationId = '';
 let accountsSession = false;
+let accountsOnboarding: AccountsOnboardingStatus = 'ready';
 const service = 'vault';
 const parentOrigin = window.location.origin;
 function armIdle(): void { window.clearTimeout(idleTimer); if (state.token) idleTimer = window.setTimeout(() => lock('Locked after 15 minutes of inactivity.'), 15 * 60 * 1000); }
 for (const event of ['pointerdown','keydown','scroll']) window.addEventListener(event, armIdle, { passive:true });
 window.addEventListener('pagehide', clearKeys);
 function clearKeys(): void { for (const key of [state.userKey,state.privateKey,state.orgKey,...state.collectionKeys.values()]) key?.fill(0); state.userKey=state.privateKey=state.orgKey=null; state.collectionKeys.clear(); state.token=''; }
-function lock(message = ''): void { clearKeys(); accountsSession=false;accountsOrganizationId='';state.org=null; state.user=null; state.members=[]; state.groups=[]; state.collections=[]; state.selected=null; state.audit=[]; state.itemNames.clear(); state.auditOffset=0; document.querySelectorAll('.page').forEach(x=>x.setAttribute('hidden','')); $('modal').hasAttribute('open') && $<HTMLDialogElement>('modal').close(); $('modal-body').replaceChildren();$<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-join-password').value=''; $('shell').hidden=true; $('auth').hidden=false; setAuthMode('signin'); if (message) $('auth-error').textContent=message; }
+function lock(message = ''): void { clearKeys(); accountsSession=false;accountsOrganizationId='';accountsOnboarding='ready';state.org=null; state.user=null; state.members=[]; state.groups=[]; state.collections=[]; state.selected=null; state.audit=[]; state.itemNames.clear(); state.auditOffset=0; document.querySelectorAll('.page').forEach(x=>x.setAttribute('hidden','')); $('modal').hasAttribute('open') && $<HTMLDialogElement>('modal').close(); $('modal-body').replaceChildren();$<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value='';$<HTMLInputElement>('auth-join-password').value=''; $('shell').hidden=true; $('auth').hidden=false; setAuthMode('signin'); if (message) $('auth-error').textContent=message; }
 
 async function api<T = Json>(path: string, options: RequestInit = {}): Promise<T> {
   const target = window.location.pathname.startsWith('/services/vault/') && path.startsWith('/v1/') ? `/services/vault/api${path.slice(3)}` : path;
@@ -70,6 +72,22 @@ async function unlockAccountsSession(password:string):Promise<void>{
   const parameters=kdf(user.kdf);const master=await deriveMasterKey(password,parameters.salt,parameters.parameters);
   try{state.userKey=await unwrapUserKey(user.encryptedUserKey,master.key);state.privateKey=await unwrapUserPrivateKey(user.encryptedPrivateKey,state.userKey!)}finally{master.key.fill(0)}
 }
+async function initializeAccountsSession(password:string):Promise<'pending'|'ready'>{
+  if(accountsOnboarding==='request-member')return (await api<{status:'pending'|'ready'}>('/v1/accounts/onboarding',{method:'POST',body:'{}'})).status;
+  if(accountsOnboarding!=='initialize-owner'&&accountsOnboarding!=='initialize-member')throw new Error('Vault onboarding is not available');
+  if(password!==$<HTMLInputElement>('auth-password-confirm').value)throw new Error('Master passwords do not match');
+  const account=await makeAccount(password);let orgKey:Uint8Array|null=null;
+  try{
+    const body:Json={loginHash:account.loginHash,publicKey:account.publicKey,encryptedPrivateKey:account.encryptedPrivateKey,encryptedUserKey:account.encryptedUserKey,kdf:account.kdf};
+    if(accountsOnboarding==='initialize-owner'){
+      const name=$<HTMLInputElement>('auth-org-name').value.trim();if(!name)throw new Error('Enter an organization name');
+      orgKey=await generateKey();body.encryptedOrgName=await encryptText(name,orgKey,'sulla:org-name:v1');body.wrappedOrgKey=await wrapOrgKeyForMember(orgKey,account.publicKey);
+    }
+    const result=await api<{status:'pending'|'ready'}>('/v1/accounts/onboarding',{method:'POST',body:JSON.stringify(body)});
+    if(result.status==='ready')await unlockAccountsSession(password);
+    return result.status;
+  }finally{account.userKey.fill(0);account.privateKey.fill(0);orgKey?.fill(0)}
+}
 async function register(_mode: 'join', email: string, password: string): Promise<void> {
   const account = await makeAccount(password);
   try {
@@ -82,9 +100,29 @@ async function register(_mode: 'join', email: string, password: string): Promise
 
 async function onAuth(event: SubmitEvent): Promise<void> {
   event.preventDefault(); const email=$<HTMLInputElement>('auth-email').value.trim().toLowerCase(); const password=$<HTMLInputElement>('auth-password').value; const button=$<HTMLButtonElement>('auth-submit'); $('auth-error').textContent=''; button.disabled=true; button.textContent='Working…';
-  try { if(accountsSession)await unlockAccountsSession(password);else if(state.authMode==='signin') await establishSession(email,password); else await register(state.authMode,email,password); $<HTMLInputElement>('auth-password').value=''; $<HTMLInputElement>('auth-join-password').value=''; await openConsole(); }
+  try { if(accountsSession){if(accountsOnboarding==='pending')return;const status=accountsOnboarding==='ready'?(await unlockAccountsSession(password),'ready'):await initializeAccountsSession(password);if(status==='pending'){showAccountsPending();return}}else if(state.authMode==='signin') await establishSession(email,password); else await register(state.authMode,email,password); $<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value=''; $<HTMLInputElement>('auth-join-password').value=''; await openConsole(); }
   catch(error){ if(accountsSession){for(const key of [state.userKey,state.privateKey,state.orgKey,...state.collectionKeys.values()])key?.fill(0);state.userKey=state.privateKey=state.orgKey=null;state.collectionKeys.clear();state.user=null}else lock(); $('auth-error').textContent=error instanceof Error?error.message:'Could not unlock the vault'; }
-  finally { button.disabled=false; button.textContent=state.authMode==='signin'?'Unlock console':'Create account & request access'; }
+  finally { button.disabled=false; button.textContent=accountsSession?accountsSubmitLabel():state.authMode==='signin'?'Unlock console':'Create account & request access'; }
+}
+
+function showAccountsPending():void{
+  accountsOnboarding='pending';$('auth-title').textContent='Vault access pending';$('auth-lead').textContent='Your browser-encrypted Vault identity is ready. An organization owner must confirm your public key before any organization data or keys become available.';
+  $<HTMLInputElement>('auth-password').value='';$<HTMLInputElement>('auth-password-confirm').value='';$<HTMLInputElement>('auth-password').closest('label')!.hidden=true;$<HTMLInputElement>('auth-password').required=false;document.querySelectorAll<HTMLElement>('.accounts-setup-field,.accounts-owner-field').forEach(x=>x.hidden=true);$<HTMLButtonElement>('auth-submit').hidden=true;
+}
+function accountsSubmitLabel():string{return accountsOnboarding==='initialize-owner'?'Create & unlock Vault':accountsOnboarding==='initialize-member'?'Create Vault identity':accountsOnboarding==='request-member'?'Request Vault access':'Unlock Vault'}
+async function prepareAccountsSession():Promise<void>{
+  const result=await api<{status:AccountsOnboardingStatus}>('/v1/accounts/onboarding');accountsOnboarding=result.status;
+  document.querySelector<HTMLElement>('.auth-tabs')!.hidden=true;document.querySelectorAll<HTMLElement>('.join-field').forEach(x=>x.hidden=true);
+  $<HTMLInputElement>('auth-email').closest('label')!.hidden=true;$<HTMLInputElement>('auth-email').required=false;
+  if(result.status==='pending'){showAccountsPending();return}
+  const setup=result.status==='initialize-owner'||result.status==='initialize-member';const requestOnly=result.status==='request-member';
+  $<HTMLInputElement>('auth-password').closest('label')!.hidden=requestOnly;$<HTMLInputElement>('auth-password').required=!requestOnly;$<HTMLInputElement>('auth-password').autocomplete=setup?'new-password':'current-password';
+  document.querySelectorAll<HTMLElement>('.accounts-setup-field').forEach(x=>x.hidden=!setup);$<HTMLInputElement>('auth-password-confirm').required=setup;
+  document.querySelectorAll<HTMLElement>('.accounts-owner-field').forEach(x=>x.hidden=result.status!=='initialize-owner');$<HTMLInputElement>('auth-org-name').required=result.status==='initialize-owner';
+  $<HTMLButtonElement>('auth-submit').hidden=false;
+  if(requestOnly){$('auth-title').textContent='Request Vault access';$('auth-lead').textContent='Your Vault identity already exists. Request membership in this organization; an owner must confirm your public key before any organization key becomes available.';$('auth-submit').textContent=accountsSubmitLabel()}
+  else if(setup){$('auth-title').textContent=result.status==='initialize-owner'?'Create your organization Vault':'Create your Vault identity';$('auth-lead').textContent=result.status==='initialize-owner'?'Choose a Vault master password. Encryption keys are created here in your browser and the Vault organization uses the exact organization ID verified by Accounts.':'Choose a Vault master password. Your keys are created here in your browser; an owner must confirm your public key before organization access is granted.';$('auth-submit').textContent=accountsSubmitLabel()}
+  else{$('auth-title').textContent='Unlock Vault';$('auth-lead').textContent='Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.';$('auth-submit').textContent='Unlock Vault'}
 }
 
 async function openConsole(): Promise<void> { $('auth').hidden=true; $('shell').hidden=false; $('session-email').textContent=state.email; armIdle(); if(await loadAll())showPage('audit') }
@@ -153,11 +191,9 @@ window.addEventListener('message', event => {
   if(message?.version!==1||message.service!==service)return;
   if(message.type==='sulla.service.lock'){lock('Vault locked.');return}
   if(message.type!=='sulla.service.session'||typeof message.token!=='string'||typeof message.organizationId!=='string')return;
-  if(accountsSession&&accountsOrganizationId===message.organizationId&&state.userKey){state.token=message.token;armIdle();return}
+  if(accountsSession&&accountsOrganizationId===message.organizationId){state.token=message.token;if(state.userKey)armIdle();return}
   lock();accountsSession=true;accountsOrganizationId=message.organizationId;state.token=message.token;
-  document.querySelector<HTMLElement>('.auth-tabs')!.hidden=true;document.querySelectorAll<HTMLElement>('.join-field').forEach(x=>x.hidden=true);
-  $<HTMLInputElement>('auth-email').closest('label')!.hidden=true;$<HTMLInputElement>('auth-email').required=false;
-  $('auth-title').textContent='Unlock Vault';$('auth-lead').textContent='Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.';$('auth-submit').textContent='Unlock Vault';
+  void prepareAccountsSession().catch(error=>{$('auth-title').textContent='Vault unavailable';$('auth-lead').textContent='Vault onboarding could not be loaded.';$('auth-error').textContent=error instanceof Error?error.message:'Could not load Vault onboarding';$<HTMLButtonElement>('auth-submit').hidden=true});
 });
 window.parent.postMessage({type:'sulla.service.ready',version:1,service},parentOrigin);
 

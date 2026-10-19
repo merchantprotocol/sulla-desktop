@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3438,7 +3438,7 @@
   }, t.add = o, t.base64_variants = m, t.compare = l, t.from_base64 = x, t.from_hex = b, t.from_string = v, t.increment = p, t.is_zero = h, t.memcmp = i, t.memzero = y, t.output_formats = T, t.pad = u, t.unpad = d, t.ready = s, t.symbols = c, t.to_base64 = E, t.to_hex = f, t.to_string = g;
   var libsodium_wrappers_default = t;
 
-  // packages/vault-crypto/src/index.ts
+  // ../../packages/vault-crypto/src/index.ts
   var VERSION = 1;
   var KEY_BYTES = 32;
   var SALT_BYTES = 16;
@@ -3571,7 +3571,7 @@
     return decryptWithKey(encryptedCollectionKey, orgKey, "sulla:collection-key:v1");
   }
 
-  // services/sulla-vault/console/app.ts
+  // console/app.ts
   var text = new TextEncoder();
   var decoder = new TextDecoder();
   var $2 = (id) => document.getElementById(id);
@@ -3581,6 +3581,7 @@
   var idleTimer = 0;
   var accountsOrganizationId = "";
   var accountsSession = false;
+  var accountsOnboarding = "ready";
   var service = "vault";
   var parentOrigin = window.location.origin;
   function armIdle() {
@@ -3599,6 +3600,7 @@
     clearKeys();
     accountsSession = false;
     accountsOrganizationId = "";
+    accountsOnboarding = "ready";
     state.org = null;
     state.user = null;
     state.members = [];
@@ -3612,6 +3614,7 @@
     $2("modal").hasAttribute("open") && $2("modal").close();
     $2("modal-body").replaceChildren();
     $2("auth-password").value = "";
+    $2("auth-password-confirm").value = "";
     $2("auth-join-password").value = "";
     $2("shell").hidden = true;
     $2("auth").hidden = false;
@@ -3700,6 +3703,30 @@
       master.key.fill(0);
     }
   }
+  async function initializeAccountsSession(password) {
+    if (accountsOnboarding === "request-member") return (await api("/v1/accounts/onboarding", { method: "POST", body: "{}" })).status;
+    if (accountsOnboarding !== "initialize-owner" && accountsOnboarding !== "initialize-member") throw new Error("Vault onboarding is not available");
+    if (password !== $2("auth-password-confirm").value) throw new Error("Master passwords do not match");
+    const account = await makeAccount(password);
+    let orgKey = null;
+    try {
+      const body = { loginHash: account.loginHash, publicKey: account.publicKey, encryptedPrivateKey: account.encryptedPrivateKey, encryptedUserKey: account.encryptedUserKey, kdf: account.kdf };
+      if (accountsOnboarding === "initialize-owner") {
+        const name = $2("auth-org-name").value.trim();
+        if (!name) throw new Error("Enter an organization name");
+        orgKey = await generateKey();
+        body.encryptedOrgName = await encryptText(name, orgKey, "sulla:org-name:v1");
+        body.wrappedOrgKey = await wrapOrgKeyForMember(orgKey, account.publicKey);
+      }
+      const result = await api("/v1/accounts/onboarding", { method: "POST", body: JSON.stringify(body) });
+      if (result.status === "ready") await unlockAccountsSession(password);
+      return result.status;
+    } finally {
+      account.userKey.fill(0);
+      account.privateKey.fill(0);
+      orgKey?.fill(0);
+    }
+  }
   async function register(_mode, email, password) {
     const account = await makeAccount(password);
     try {
@@ -3721,10 +3748,17 @@
     button.disabled = true;
     button.textContent = "Working\u2026";
     try {
-      if (accountsSession) await unlockAccountsSession(password);
-      else if (state.authMode === "signin") await establishSession(email, password);
+      if (accountsSession) {
+        if (accountsOnboarding === "pending") return;
+        const status = accountsOnboarding === "ready" ? (await unlockAccountsSession(password), "ready") : await initializeAccountsSession(password);
+        if (status === "pending") {
+          showAccountsPending();
+          return;
+        }
+      } else if (state.authMode === "signin") await establishSession(email, password);
       else await register(state.authMode, email, password);
       $2("auth-password").value = "";
+      $2("auth-password-confirm").value = "";
       $2("auth-join-password").value = "";
       await openConsole();
     } catch (error) {
@@ -3737,7 +3771,56 @@
       $2("auth-error").textContent = error instanceof Error ? error.message : "Could not unlock the vault";
     } finally {
       button.disabled = false;
-      button.textContent = state.authMode === "signin" ? "Unlock console" : "Create account & request access";
+      button.textContent = accountsSession ? accountsSubmitLabel() : state.authMode === "signin" ? "Unlock console" : "Create account & request access";
+    }
+  }
+  function showAccountsPending() {
+    accountsOnboarding = "pending";
+    $2("auth-title").textContent = "Vault access pending";
+    $2("auth-lead").textContent = "Your browser-encrypted Vault identity is ready. An organization owner must confirm your public key before any organization data or keys become available.";
+    $2("auth-password").value = "";
+    $2("auth-password-confirm").value = "";
+    $2("auth-password").closest("label").hidden = true;
+    $2("auth-password").required = false;
+    document.querySelectorAll(".accounts-setup-field,.accounts-owner-field").forEach((x2) => x2.hidden = true);
+    $2("auth-submit").hidden = true;
+  }
+  function accountsSubmitLabel() {
+    return accountsOnboarding === "initialize-owner" ? "Create & unlock Vault" : accountsOnboarding === "initialize-member" ? "Create Vault identity" : accountsOnboarding === "request-member" ? "Request Vault access" : "Unlock Vault";
+  }
+  async function prepareAccountsSession() {
+    const result = await api("/v1/accounts/onboarding");
+    accountsOnboarding = result.status;
+    document.querySelector(".auth-tabs").hidden = true;
+    document.querySelectorAll(".join-field").forEach((x2) => x2.hidden = true);
+    $2("auth-email").closest("label").hidden = true;
+    $2("auth-email").required = false;
+    if (result.status === "pending") {
+      showAccountsPending();
+      return;
+    }
+    const setup = result.status === "initialize-owner" || result.status === "initialize-member";
+    const requestOnly = result.status === "request-member";
+    $2("auth-password").closest("label").hidden = requestOnly;
+    $2("auth-password").required = !requestOnly;
+    $2("auth-password").autocomplete = setup ? "new-password" : "current-password";
+    document.querySelectorAll(".accounts-setup-field").forEach((x2) => x2.hidden = !setup);
+    $2("auth-password-confirm").required = setup;
+    document.querySelectorAll(".accounts-owner-field").forEach((x2) => x2.hidden = result.status !== "initialize-owner");
+    $2("auth-org-name").required = result.status === "initialize-owner";
+    $2("auth-submit").hidden = false;
+    if (requestOnly) {
+      $2("auth-title").textContent = "Request Vault access";
+      $2("auth-lead").textContent = "Your Vault identity already exists. Request membership in this organization; an owner must confirm your public key before any organization key becomes available.";
+      $2("auth-submit").textContent = accountsSubmitLabel();
+    } else if (setup) {
+      $2("auth-title").textContent = result.status === "initialize-owner" ? "Create your organization Vault" : "Create your Vault identity";
+      $2("auth-lead").textContent = result.status === "initialize-owner" ? "Choose a Vault master password. Encryption keys are created here in your browser and the Vault organization uses the exact organization ID verified by Accounts." : "Choose a Vault master password. Your keys are created here in your browser; an owner must confirm your public key before organization access is granted.";
+      $2("auth-submit").textContent = accountsSubmitLabel();
+    } else {
+      $2("auth-title").textContent = "Unlock Vault";
+      $2("auth-lead").textContent = "Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.";
+      $2("auth-submit").textContent = "Unlock Vault";
     }
   }
   async function openConsole() {
@@ -4157,22 +4240,21 @@
       return;
     }
     if (message.type !== "sulla.service.session" || typeof message.token !== "string" || typeof message.organizationId !== "string") return;
-    if (accountsSession && accountsOrganizationId === message.organizationId && state.userKey) {
+    if (accountsSession && accountsOrganizationId === message.organizationId) {
       state.token = message.token;
-      armIdle();
+      if (state.userKey) armIdle();
       return;
     }
     lock();
     accountsSession = true;
     accountsOrganizationId = message.organizationId;
     state.token = message.token;
-    document.querySelector(".auth-tabs").hidden = true;
-    document.querySelectorAll(".join-field").forEach((x2) => x2.hidden = true);
-    $2("auth-email").closest("label").hidden = true;
-    $2("auth-email").required = false;
-    $2("auth-title").textContent = "Unlock Vault";
-    $2("auth-lead").textContent = "Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.";
-    $2("auth-submit").textContent = "Unlock Vault";
+    void prepareAccountsSession().catch((error) => {
+      $2("auth-title").textContent = "Vault unavailable";
+      $2("auth-lead").textContent = "Vault onboarding could not be loaded.";
+      $2("auth-error").textContent = error instanceof Error ? error.message : "Could not load Vault onboarding";
+      $2("auth-submit").hidden = true;
+    });
   });
   window.parent.postMessage({ type: "sulla.service.ready", version: 1, service }, parentOrigin);
   var auditRequest = 0;
