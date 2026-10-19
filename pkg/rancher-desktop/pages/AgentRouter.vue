@@ -17,8 +17,10 @@
         :active="activeTabMode"
         :active-sub-tab="activeSubTab"
         :bookmarks-open="bookmarksOpen"
+        :chat-files-open="chatFilesOpen"
         @set-mode="onModeRailSelect"
         @toggle-bookmarks="toggleBookmarks()"
+        @toggle-chat-files="toggleChatFiles()"
       />
 
       <!--
@@ -208,6 +210,7 @@ function onRoutinesSubTabChange(event: Event) {
 const BOOKMARKS_OPEN_KEY = 'sulla:bookmarks-pane-open';
 const bookmarksOpen = ref(localStorage.getItem(BOOKMARKS_OPEN_KEY) === '1');
 const bookmarkRevealId = ref<string | null>(null);
+const chatFilesOpen = ref(false);
 
 watch(bookmarksOpen, (open) => {
   try {
@@ -224,6 +227,15 @@ const activeTabInfo = computed(() => {
 
 function toggleBookmarks(open = !bookmarksOpen.value) {
   bookmarksOpen.value = open;
+}
+
+function toggleChatFiles():void {
+  window.dispatchEvent(new CustomEvent('sulla:toggle-chat-files'));
+}
+
+function onChatFilesStateChanged(event:Event):void {
+  const open = (event as CustomEvent<{ open?:boolean }>).detail?.open;
+  if (typeof open === 'boolean') chatFilesOpen.value = open;
 }
 
 // The browser toolbar star opens the pane on the bookmark it just saved.
@@ -565,6 +577,7 @@ onMounted(async() => {
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
+  window.addEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);
   window.addEventListener('keydown', onBookmarksShortcut);
 
   // Ensure at least one tab exists, then navigate to the last-active tab from
@@ -618,6 +631,7 @@ onUnmounted(() => {
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
+  window.removeEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);
   window.removeEventListener('keydown', onBookmarksShortcut);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);

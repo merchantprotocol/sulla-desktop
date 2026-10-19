@@ -72,7 +72,7 @@
 
           <div class="composer-tools">
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
-            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
+            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
             <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
@@ -403,6 +403,32 @@ async function toggleFilesMenu():Promise<void> {
   if (filesMenuOpen.value) recentFiles.value = await ipcRenderer.invoke('files-ui:recent-references', 5).catch(() => []);
 }
 
+type FilesPickerResult = FilesReference[] | { references:FilesReference[]; error?:string };
+
+function stagePickerResult(result:FilesPickerResult):void {
+  const imported = Array.isArray(result) ? result : result.references;
+  if (!Array.isArray(imported)) throw new Error('Files did not return file references.');
+  stageFilesReferences(imported);
+  if (!Array.isArray(result) && result.error) {
+    filesImportError.value = result.error;
+    filesMenuOpen.value = true;
+  }
+}
+
+async function browseFiles():Promise<void> {
+  if (filesImporting.value) return;
+  filesImportError.value = '';
+  filesImporting.value = true;
+  try {
+    stagePickerResult(await ipcRenderer.invoke('files-ui:pick-reference') as FilesPickerResult);
+  } catch (error) {
+    filesImportError.value = error instanceof Error ? error.message : 'Could not attach this Files item.';
+    filesMenuOpen.value = true;
+  } finally {
+    filesImporting.value = false;
+  }
+}
+
 async function uploadFromMac():Promise<void> {
   if (filesImporting.value) return;
   filesImportError.value = '';
@@ -411,14 +437,7 @@ async function uploadFromMac():Promise<void> {
     // The authenticated main-process importer returns [] on picker cancellation.
     // A later-file failure can include already committed references alongside a
     // recoverable error, so chat never loses track of a successful Files import.
-    const result = await ipcRenderer.invoke('files-ui:pick-upload-references');
-    const imported = Array.isArray(result) ? result : result.references;
-    if (!Array.isArray(imported)) throw new Error('Files did not return imported file references.');
-    stageFilesReferences(imported as FilesReference[]);
-    if (!Array.isArray(result) && result.error) {
-      filesImportError.value = result.error;
-      filesMenuOpen.value = true;
-    }
+    stagePickerResult(await ipcRenderer.invoke('files-ui:pick-upload-references') as FilesPickerResult);
   } catch (error) {
     filesImportError.value = error instanceof Error ? error.message : 'Could not import this file into Files.';
     filesMenuOpen.value = true;
@@ -504,7 +523,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
 });
 
-function onAttachShortcut():void { uploadFromMac().catch(() => undefined) }
+function onAttachShortcut():void { browseFiles().catch(() => undefined) }
 
 // ─── Listen for quote events from Sulla turns ────────────────────
 // TurnSulla's "Quote" hover action dispatches this; we prefill the

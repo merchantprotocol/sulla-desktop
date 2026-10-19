@@ -15,7 +15,7 @@
 <template>
   <div
     class="chat-root"
-    :class="{ 'artifact-open': hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible && !subAgentsCollapsed }"
+    :class="{ 'artifact-open': hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': chatFilesOpen }"
   >
     <Canvas />
 
@@ -73,6 +73,11 @@
         :collapsed="artifactCollapsed"
         @toggle-collapse="artifactCollapsed = !artifactCollapsed"
       />
+      <ChatFilesDrawer
+        :open="chatFilesOpen"
+        @close="setChatFilesOpen(false)"
+        @open-files="openFiles"
+      />
     </div>
 
     <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
@@ -101,6 +106,7 @@ import Composer          from './components/composer/Composer.vue';
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
+import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
@@ -614,7 +620,24 @@ function onForkEvent(ev: Event): void {
   persister.save(snapshot);
 }
 
-const { createTab, updateTab } = useBrowserTabs();
+const { createTab, tabs, updateTab } = useBrowserTabs();
+const chatFilesOpen = ref(false);
+
+function setChatFilesOpen(open:boolean):void {
+  chatFilesOpen.value = open;
+  window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open } }));
+}
+
+function onToggleChatFiles():void {
+  if (props.isActive === false) return;
+  setChatFilesOpen(!chatFilesOpen.value);
+}
+
+function openFiles():void {
+  const existing = tabs.find(tab => tab.mode === 'files');
+  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager' });
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+}
 
 // Keep this chat tab's label in sync with the active conversation's title.
 // The controller derives a title from the first user message
@@ -631,16 +654,21 @@ watch(
   },
   { immediate: true },
 );
+watch(() => props.isActive, (active) => {
+  if (active) window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open: chatFilesOpen.value } }));
+});
 
 onMounted(() => {
   window.addEventListener('chat:new-chat',          onNewChatEvent);
   window.addEventListener('chat:fork',              onForkEvent);
   window.addEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.addEventListener('sulla:toggle-chat-files', onToggleChatFiles);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('chat:new-chat',          onNewChatEvent);
   window.removeEventListener('chat:fork',              onForkEvent);
   window.removeEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.removeEventListener('sulla:toggle-chat-files', onToggleChatFiles);
 });
 </script>
 
@@ -746,6 +774,9 @@ onBeforeUnmount(() => {
 .chat-root.subagents-open.history-open .main { left: 532px; }
 .chat-root.artifact-open  .main { right: 560px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
+.chat-root.chat-files-open .main { right: 300px; }
+.chat-root.chat-files-open.artifact-open .main { right: 860px; }
+.chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: calc(70vw + 300px); }
 
 /* Rails float over the left/right edges at fixed widths. */
 .shell :deep(.history) {
@@ -762,11 +793,19 @@ onBeforeUnmount(() => {
   width: 560px;
   z-index: 6;
 }
+.chat-root.chat-files-open .shell :deep(.artifact) { right: 300px; }
 
 @media (max-width: 1200px) {
   .shell :deep(.subagent-rail),
   .shell :deep(.subagent-rail-tab) { display: none; }
   .chat-root.subagents-open .main { left: 0; }
   .chat-root.subagents-open.history-open .main { left: 260px; }
+}
+@media (max-width: 1000px) {
+  .shell :deep(.chat-files-drawer) { display: none; }
+  .chat-root.chat-files-open .main { right: 0; }
+  .chat-root.chat-files-open.artifact-open .main { right: 560px; }
+  .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: 70vw; }
+  .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
 }
 </style>
