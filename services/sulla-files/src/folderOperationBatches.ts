@@ -94,7 +94,8 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
     }
     let skipped=false;
     if (input.action!=='trash') {
-      if (!target || target===source || target.startsWith(source+'/') || source.startsWith(target+'/')) throw fail('Folder destination overlaps its source');
+      if (!target) throw fail('Folder destination is required');
+      if (destinationCollection===input.collectionId && (target===source || target.startsWith(source+'/') || source.startsWith(target+'/'))) throw fail('Folder destination overlaps its source');
       await access.path(client,destinationCollection,target);
       const targetOccupied=await occupied(destinationCollection,target);
       if (targetOccupied) {
