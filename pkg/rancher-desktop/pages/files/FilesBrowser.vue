@@ -650,7 +650,7 @@
             </template>
             <template v-else>
               <button role="menuitem" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="runTargetAction('restore')">Restore</button>
-              <button role="menuitem" type="button" class="danger" :disabled="busy || actionTarget.folder || !dataSource.purgeTrashItem" @click="runTargetAction('purge')">Delete permanently</button>
+              <button role="menuitem" type="button" class="danger" :disabled="busy || !dataSource.purgeTrashItem" @click="runTargetAction('purge')">Delete permanently</button>
             </template>
           </div>
         </Teleport>
@@ -779,7 +779,7 @@ import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot, FilesTrashFile, FilesTrashItem } from './types';
+import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot, FilesTrashItem } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
@@ -1445,23 +1445,25 @@ async function onTrashDetailOutcome(message:string) {
 async function purgeEntries(entries:DisplayEntry[], all = false) {
   if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrashItem) return;
   const purge = props.dataSource.purgeTrashItem.bind(props.dataSource);
-  const files = entries.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashFile } => entry.trashItem?.kind === 'file');
-  const folders = entries.filter(entry => entry.trashItem?.kind === 'folder');
-  if (!files.length) { operationNotice.value = `${ folders.length } folder${ folders.length === 1 ? '' : 's' } retained because folder permanent deletion is unavailable.`; return }
-  const warning = all ? 'Permanently delete every eligible file? Retention, record locks, unapproved disposal, and folders without a purge contract will remain.' : `Permanently delete ${ files.length } eligible file${ files.length === 1 ? '' : 's' }? Protected items will remain.`;
+  const items = entries.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashItem } => Boolean(entry.trashItem));
+  if (!items.length) return;
+  const warning = all ? 'Permanently delete every eligible item? Retention, record locks, changed tombstones, and unapproved disposal will remain.' : `Permanently delete ${ items.length } eligible item${ items.length === 1 ? '' : 's' }? Protected or changed items will remain.`;
   if (!window.confirm(warning)) return;
   await runMutation(async() => {
     let completed = 0; const recovering:string[] = []; const failures:string[] = [];
-    for (const file of files) {
+    for (const entry of items) {
       try {
-        const result = await purge(file.trashItem);
+        const result = await purge(entry.trashItem);
         if (result.status === 'purged') completed++;
-        else recovering.push(`${ file.name }: ${ result.reason || `metadata removed; chunks ${ result.chunks }; retained artifacts ${ result.retainedArtifacts }` }`);
-      } catch (cause) { failures.push(`${ file.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
+        else {
+          const chunks = 'chunks' in result ? ` chunks ${ result.chunks };` : '';
+
+          recovering.push(`${ entry.name }: ${ result.reason || `metadata removed;${ chunks } retained artifacts ${ result.retainedArtifacts }` }`);
+        }
+      } catch (cause) { failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
     }
-    const retainedFolders = folders.length ? `${ folders.length } folder${ folders.length === 1 ? '' : 's' } retained; folder permanent deletion is unavailable.` : '';
-    operationNotice.value = [completed ? `${ completed } file${ completed === 1 ? '' : 's' } fully disposed.` : '', retainedFolders].filter(Boolean).join(' ');
-    operationError.value = [recovering.length ? `${ recovering.length } file${ recovering.length === 1 ? '' : 's' } require cleanup recovery: ${ recovering.join(' · ') }` : '', failures.length ? `${ failures.length } file${ failures.length === 1 ? '' : 's' } retained: ${ failures.join(' · ') }` : ''].filter(Boolean).join(' ');
+    operationNotice.value = completed ? `${ completed } item${ completed === 1 ? '' : 's' } fully disposed.` : '';
+    operationError.value = [recovering.length ? `${ recovering.length } item${ recovering.length === 1 ? '' : 's' } require cleanup recovery: ${ recovering.join(' · ') }` : '', failures.length ? `${ failures.length } item${ failures.length === 1 ? '' : 's' } retained: ${ failures.join(' · ') }` : ''].filter(Boolean).join(' ');
     selectedKeys.value = new Set();
   });
 }
