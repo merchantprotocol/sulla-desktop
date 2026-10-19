@@ -9,7 +9,7 @@ export class FileOperationConflict extends Error { status = 409 }
 
 export async function copyLockedFile(client:pg.PoolClient, source:any, targetPath:string, actor:FilesIdentity):Promise<any> {
   const version = (await client.query(`SELECT v.*,m.chunk_ids FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash
-    WHERE v.id=$1 AND NOT v.deleted`, [source.current_version_id])).rows[0];
+    WHERE v.id=$1 AND NOT v.deleted`, [source.copy_version_id ?? source.current_version_id])).rows[0];
   if (!version) throw Object.assign(new Error('The current version is not copyable'), { status: 409 });
   const inserted = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status)
     VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING *`, [source.collection_id, targetPath, actor.userId, source.mime, source.size])).rows[0];
@@ -38,7 +38,7 @@ export async function applyDatabaseFileOperations(db:pg.Pool, action:'move' | 'c
       const row = (await client.query('SELECT * FROM files WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [source.file.id])).rows[0];
       if (!row) throw Object.assign(new Error('A selected file is no longer available'), { status: 404 });
       if (row.collection_id !== source.file.collection_id || row.path !== source.file.path || row.current_version_id !== source.file.current_version_id) throw new FileOperationConflict('A selected file changed while the operation was starting. Refresh Files and try again.');
-      locked.push({ file: row, targetPath: source.targetPath });
+      locked.push({ file: { ...row, copy_version_id: source.file.copy_version_id }, targetPath: source.targetPath });
     }
     const storedFolders:{ collectionId:string; sourcePath:string; targetPath:string }[] = [];
     for (const folder of folderMoves) {

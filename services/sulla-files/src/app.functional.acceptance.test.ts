@@ -141,7 +141,7 @@ test('real handlers provision collections and preserve authenticated content acr
 
     await waitForIndex(uploaded.id, uploaded.current_version_id);
     let indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: firstBytes.toString(), version_id: uploaded.current_version_id, content: firstBytes.toString(), status: 'indexed' }]);
 
@@ -210,7 +210,8 @@ test('real handlers provision collections and preserve authenticated content acr
     const audit = await db.query('SELECT action FROM audit_log WHERE file_id=$1 ORDER BY id', [uploaded.id]);
     assert.deepEqual(audit.rows.map(row => row.action), ['upload', 'preview', 'download', 'trash', 'trash-restore', 'preview', 'version-restore', 'download']);
     const refs = await db.query('SELECT refcount FROM chunks WHERE collection_id=$1', [collectionId]);
-    assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [1]);
+    // The original and both restored versions each retain the chunk.
+    assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [3]);
 
     await db.query('INSERT INTO files_protected_files(file_id) VALUES($1)', [uploaded.id]);
     const protectedState = async() => (await db!.query(`SELECT f.path,f.mime,f.size,f.current_version_id,
@@ -240,7 +241,7 @@ test('real handlers provision collections and preserve authenticated content acr
     await waitForIndex(uploaded.id, changedBody.current_version_id);
 
     indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: secondBytes.toString(), version_id: changedBody.current_version_id, content: secondBytes.toString(), status: 'indexed' }]);
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });

@@ -54,7 +54,7 @@ export class IndexingQueue {
       await client.query('BEGIN');
       const file = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
       if (!file || file.deleted_at || !file.current_version_id) throw new Error('Only a current, active file can be re-indexed.');
-      await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [fileId]);
+      await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [fileId, file.current_version_id]);
       await client.query(`INSERT INTO file_index_jobs(file_id,version_id,status,attempts,last_error,available_at,started_at,finished_at,reason_code,reason)
         VALUES($1,$2,'pending',0,NULL,NOW(),NULL,NULL,'manual_retry','Waiting for local indexing.')
         ON CONFLICT(version_id) DO UPDATE SET status='pending',attempts=0,last_error=NULL,available_at=NOW(),started_at=NULL,finished_at=NULL,reason_code='manual_retry',reason='Waiting for local indexing.'`, [fileId, file.current_version_id]);
@@ -103,7 +103,7 @@ export class IndexingQueue {
         if (activeJob?.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
           await client.query('COMMIT'); return true;
         }
-        await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [file.id]);
+        await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [file.id, job.version_id]);
         if (extracted.status === 'indexed' && extracted.text) {
           for (const [ordinal, content] of chunks(extracted.text).entries()) {
             const embedding = this.embedder.embed(content);

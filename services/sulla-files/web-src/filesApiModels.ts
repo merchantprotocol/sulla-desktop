@@ -1,4 +1,4 @@
-import type { FileAccessList, FileShare, FilesItem, FolderShare, SharePrincipalType } from '../../../pkg/rancher-desktop/pages/files/types';
+import type { FileAccessList, FileShare, FilesDetail, FilesItem, FilesItemCapabilities, FilesVersion, FolderShare, SharePrincipalType } from '../../../pkg/rancher-desktop/pages/files/types';
 
 export type FilesApiRecord = Record<string, any>;
 
@@ -18,7 +18,21 @@ export interface FilesApiFile extends FilesApiRecord {
   current_version_id: string;
 }
 
+export function fileCapabilities(value:unknown):FilesItemCapabilities | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const capabilities = value as FilesApiRecord;
+
+  return {
+    canEdit:      capabilities.canEdit === true,
+    canManage:    capabilities.canManage === true,
+    canViewDraft: capabilities.canViewDraft === true,
+    canPublish:   capabilities.canPublish === true,
+  };
+}
+
 export function filesItem(file:FilesApiFile):FilesItem {
+  const retention = file.retention;
+
   return {
     id:               file.id,
     path:             file.path,
@@ -40,6 +54,53 @@ export function filesItem(file:FilesApiFile):FilesItem {
     indexReasonCode:  file.extraction_reason_code,
     indexReason:      file.extraction_reason ?? 'Waiting for local indexing.',
     indexedAt:        file.extracted_at,
+    draftVersionId: file.draft_version_id ?? file.draftVersionId ?? null,
+    publishedVersionId: file.published_version_id ?? file.publishedVersionId ?? null,
+    publicationState: file.publication_state ?? file.publicationState,
+    versioning: file.versioning ? {
+      enabled: file.versioning.enabled ?? file.versioning.versioningEnabled ?? false,
+      majorMinor: file.versioning.majorMinor ?? false,
+      requireApproval: file.versioning.requireApproval ?? false,
+      requireCheckout: file.versioning.requireCheckout ?? false,
+    } : undefined,
+    checkout: file.checkout ?? null,
+    retention: retention ? {
+      ...retention,
+      retainUntil: retention.retainUntil ?? retention.retain_until ?? null,
+      eventType: retention.eventType ?? retention.event_type ?? null,
+      eventOccurredAt: retention.eventOccurredAt ?? retention.event_occurred_at ?? null,
+      durationDays: retention.durationDays ?? retention.duration_days ?? null,
+      reason: retention.reason ?? retention.lockReason ?? retention.lock_reason ?? null,
+      active: typeof retention.active === 'boolean' ? retention.active : typeof file.retention_active === 'boolean' ? file.retention_active : undefined,
+    } : undefined,
+    record: file.record,
+    disposal: file.disposal,
+    capabilities: fileCapabilities(file.capabilities),
+  };
+}
+
+export function filesDetail(row:FilesApiRecord):FilesDetail {
+  return {
+    ...row,
+    item:         filesItem(row as FilesApiFile),
+    capabilities: fileCapabilities(row.capabilities),
+  } as FilesDetail;
+}
+
+export function filesVersion(row:FilesApiRecord, currentVersionId?:string):FilesVersion {
+  return {
+    ...row,
+    id: row.id,
+    size: Number(row.size ?? 0),
+    deleted: Boolean(row.deleted),
+    created_by_type: row.created_by_type ?? row.createdByType ?? 'user',
+    created_by_id: row.created_by_id ?? row.createdById ?? '',
+    created_at: row.created_at ?? row.createdAt ?? new Date(0).toISOString(),
+    message: row.comment ?? row.message,
+    versionNumber: row.version_number ?? row.versionNumber,
+    versionKind: row.version_kind ?? row.versionKind,
+    publicationStatus: row.publication_status ?? row.publicationStatus,
+    current: row.id === currentVersionId,
   };
 }
 
