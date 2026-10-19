@@ -6,6 +6,7 @@ import { mapState } from 'vuex';
 import PreferencesBodyAppearance from '@pkg/components/Preferences/BodyAppearance.vue';
 import PreferencesBodyApplication from '@pkg/components/Preferences/BodyApplication.vue';
 import PreferencesBodyContainerEngine from '@pkg/components/Preferences/BodyContainerEngine.vue';
+import PreferencesBodyFiles from '@pkg/components/Preferences/BodyFiles.vue';
 import PreferencesBodyKubernetes from '@pkg/components/Preferences/BodyKubernetes.vue';
 import PreferencesBodyVirtualMachine from '@pkg/components/Preferences/BodyVirtualMachine.vue';
 import PreferencesBodyWsl from '@pkg/components/Preferences/BodyWsl.vue';
@@ -18,6 +19,7 @@ export default defineComponent({
   name:       'preferences-body',
   components: {
     PreferencesBodyAppearance,
+    PreferencesBodyFiles,
     PreferencesBodyApplication,
     PreferencesBodyVirtualMachine,
     PreferencesBodyWsl,
@@ -54,6 +56,11 @@ export default defineComponent({
           eyebrow: 'Appearance',
           headline: 'Set the mood.',
           lead:     'Choose the visual language Sulla uses across every window.',
+        },
+        Files: {
+          eyebrow: 'Files',
+          headline: 'Choose what Sulla keeps track of.',
+          lead:     'Track separate folders without moving the originals or mixing their histories.',
         },
         'Virtual Machine': {
           eyebrow: 'Virtual Machine',

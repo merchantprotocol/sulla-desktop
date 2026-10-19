@@ -36,7 +36,7 @@ export interface Config {
   cloudUrl:             string;
   paused:               boolean;
   modelDir:             string;
-  fileRoots:            FileRootConfig[];
+  fileRoots?:           FileRootConfig[];
 }
 
 export interface FileRootConfig {
@@ -69,9 +69,11 @@ function fileRoots(filesRoot:string | undefined):FileRootConfig[] {
     if (!roots.some(root => root.id === 'default')) roots.unshift(fallback);
     if (roots.some(root => !/^[a-z0-9][a-z0-9-]{0,63}$/.test(root.id) || !root.name || !root.path)) throw new Error('root configuration contains invalid fields');
     if (new Set(roots.map(root => root.id)).size !== roots.length || new Set(roots.map(root => root.path)).size !== roots.length) throw new Error('root configuration contains duplicates');
-    for (const [index, root] of roots.entries()) for (const other of roots.slice(index + 1)) {
-      const prefix = (value:string) => value.endsWith('/') ? value : `${ value }/`;
-      if (root.path === other.path || root.path.startsWith(prefix(other.path)) || other.path.startsWith(prefix(root.path))) throw new Error('root configuration paths overlap');
+    for (const [index, root] of roots.entries()) {
+      for (const other of roots.slice(index + 1)) {
+        const prefix = (value:string) => value.endsWith('/') ? value : `${ value }/`;
+        if (root.path === other.path || root.path.startsWith(prefix(other.path)) || other.path.startsWith(prefix(root.path))) throw new Error('root configuration paths overlap');
+      }
     }
     return roots;
   } catch (error) {

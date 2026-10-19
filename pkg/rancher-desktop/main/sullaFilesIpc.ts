@@ -12,6 +12,7 @@ import { pickAndImportChatFiles } from './sullaFilesChatImport';
 import { getSullaFilesClient } from './sullaFilesClient';
 import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
+import { getSullaFilesRootRegistry } from './sullaFilesRootRegistry';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
@@ -334,6 +335,13 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:restore-link', (_event, input:{ id:string; password?:string }) => getSullaFilesLinkService().restore(input.id, input.password));
   ipcMain.handle('files-ui:link-activity', (_event, id?:string) => getSullaFilesLinkService().activity(id));
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
+  ipcMain.handle('files-preferences:list-roots', () => getSullaFilesRootRegistry().list());
+  ipcMain.handle('files-preferences:add-root', event => getSullaFilesRootRegistry().add(BrowserWindow.fromWebContents(event.sender) ?? undefined));
+  ipcMain.handle('files-preferences:update-root', (_event, input:{ id:string; syncMode?:'local' | 'server'; paused?:boolean; exclusions?:string[] }) => {
+    const { id, ...updates } = input;
+    return getSullaFilesRootRegistry().update(id, updates);
+  });
+  ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
   ipcMain.handle('files-ui:create-folder', async(_event, relativePath:string) => {

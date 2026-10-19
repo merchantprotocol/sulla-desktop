@@ -528,8 +528,8 @@ export class FileResidencyManager {
       await client.query('BEGIN');
       await this.assertTransactionState(client, descriptor, operationId, 'hydrating');
       await client.query(
-        `INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms)
-         VALUES($1,$2,$3,$4,$5,$6)
+        `INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
+         VALUES($1,$2,$3,$4,$5,$6,'default')
          ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,
            content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`,
         [descriptor.collectionId, descriptor.path, descriptor.fileId, local.contentHash, local.size, local.mtimeMs],
