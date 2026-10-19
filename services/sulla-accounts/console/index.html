@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <title>Sulla Accounts</title>
   <link rel="stylesheet" href="./accounts.css">
 </head>
@@ -10,44 +11,74 @@
   <header class="return-row"><a href="/console" target="_top" aria-label="Back to main menu">← Back to main menu</a></header>
   <main>
     <header class="page-head">
-      <div><p class="eyebrow">Identity authority</p><h1>Accounts</h1><p>People, organizations, memberships, and roles for this Sulla server.</p></div>
-      <div class="session"><span class="status-dot"></span><span id="session-label">Checking session…</span></div>
+      <div><p class="eyebrow" id="page-eyebrow">Sulla Accounts</p><h1 id="page-title">People</h1><p id="page-description">People, roles, and access to this organization.</p></div>
+      <label class="organization-picker">Organization<select id="organization-select" aria-label="Organization"></select></label>
     </header>
-
-    <nav class="tabs" aria-label="Accounts sections">
-      <button class="active" data-view="users">Users</button>
-      <button data-view="organizations">Organizations</button>
-    </nav>
 
     <section id="notice" class="notice" hidden role="status"></section>
     <section id="signed-out" class="panel empty" hidden>
-      <h2>Sign in required</h2><p>Sign in through the main console to manage Accounts.</p>
+      <span class="empty-mark" aria-hidden="true">S</span>
+      <h2>Sign in required</h2><p>Sign in through Accounts to open this part of the console.</p>
       <a class="button primary" href="/accounts-api/v1/web/login?returnTo=%2Fconsole">Sign in</a>
     </section>
 
-    <section id="users-view">
-      <div class="toolbar">
-        <label>Organization<select id="organization-select"></select></label>
-        <button id="show-new-user" class="button primary">Add user</button>
+    <section id="overview-view" class="view" hidden>
+      <article class="hero panel">
+        <div><p class="eyebrow">Organization</p><h2 id="overview-org">Your server</h2><p id="overview-welcome">Your people and services are connected through one Accounts session.</p></div>
+        <span class="identity-chip"><span class="status-dot"></span><span id="overview-user">Signed in</span></span>
+      </article>
+      <div class="metric-grid" aria-label="Organization summary">
+        <article class="metric panel"><strong id="member-count">—</strong><span>people</span></article>
+        <article class="metric panel"><strong id="admin-count">—</strong><span>organization admins</span></article>
+        <article class="metric panel"><strong id="session-count">—</strong><span>your browser sessions</span></article>
       </div>
+      <div class="overview-grid">
+        <article class="panel action-card"><div class="icon-tile">P</div><div><h2>Projects</h2><p>Plan work, track what is moving, and open the organization project board.</p></div><button id="open-projects" class="button primary" type="button">Open Projects</button></article>
+        <article class="panel detail-list"><p class="eyebrow">Your access</p><h2>Current membership</h2><dl><div><dt>Organization</dt><dd id="overview-slug">—</dd></div><div><dt>Roles</dt><dd id="overview-roles">—</dd></div><div><dt>Groups</dt><dd id="overview-groups">—</dd></div></dl></article>
+      </div>
+    </section>
+
+    <section id="people-view" class="view" hidden>
+      <div class="toolbar"><div><p class="eyebrow">Organization access</p><h2>People</h2></div><button id="show-new-user" class="button primary" type="button">Add person</button></div>
       <div class="panel table-wrap">
-        <table><thead><tr><th>User</th><th>Status</th><th>Roles</th><th>Groups</th><th></th></tr></thead><tbody id="users"></tbody></table>
-        <div id="users-empty" class="empty" hidden>No users are assigned to this organization.</div>
+        <table><thead><tr><th>Person</th><th>Status</th><th>Roles</th><th>Groups</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="users"></tbody></table>
+        <div id="users-empty" class="empty" hidden>No people are assigned to this organization.</div>
       </div>
       <form id="new-user" class="panel form-grid" hidden>
-        <div class="form-head"><div><p class="eyebrow">New identity</p><h2>Add user</h2></div><button type="button" class="quiet" data-close="new-user">Cancel</button></div>
+        <div class="form-head"><div><p class="eyebrow">New identity</p><h2>Add person</h2></div><button type="button" class="quiet" data-close="new-user">Cancel</button></div>
         <label>Username<input name="username" required maxlength="254" autocomplete="off"></label>
         <label>Email<input name="email" type="email" maxlength="254" autocomplete="off"></label>
         <label>First name<input name="firstName" maxlength="120" autocomplete="off"></label>
         <label>Last name<input name="lastName" maxlength="120" autocomplete="off"></label>
-        <label class="wide">Temporary password<input name="temporaryPassword" type="password" minlength="12" required autocomplete="new-password"><small>User must replace it after sign-in.</small></label>
+        <label class="wide">Temporary password<input name="temporaryPassword" type="password" minlength="12" required autocomplete="new-password"><small>They must replace it after signing in.</small></label>
         <fieldset class="wide"><legend>Roles</legend><label><input type="checkbox" name="roles" value="member" checked> Member</label><label><input type="checkbox" name="roles" value="editor"> Editor</label><label><input type="checkbox" name="roles" value="admin"> Admin</label></fieldset>
-        <div class="wide actions"><button class="button primary" type="submit">Create user</button></div>
+        <div class="wide actions"><button class="button primary" type="submit">Create person</button></div>
       </form>
     </section>
 
-    <section id="organizations-view" hidden>
-      <div class="toolbar"><div><p class="eyebrow">Membership boundaries</p><h2>Your organizations</h2></div><button id="show-new-org" class="button primary">New organization</button></div>
+    <section id="devices-view" class="view" hidden>
+      <article class="callout"><strong>Browser sessions</strong><span>These are authenticated console sessions for your account, not registered physical devices.</span></article>
+      <div class="toolbar"><div><p class="eyebrow">Signed-in browsers</p><h2>Connected sessions</h2></div><button id="refresh-sessions" class="button" type="button">Refresh</button></div>
+      <div id="sessions" class="session-grid"></div>
+      <div id="sessions-empty" class="panel empty" hidden>No active browser sessions.</div>
+    </section>
+
+    <section id="settings-view" class="view" hidden>
+      <div class="settings-grid">
+        <form id="profile-form" class="panel form-grid">
+          <div class="form-head"><div><p class="eyebrow">Personal</p><h2>Your profile</h2></div><span id="profile-username" class="subtle"></span></div>
+          <label>First name<input name="firstName" maxlength="120"></label>
+          <label>Last name<input name="lastName" maxlength="120"></label>
+          <label class="wide">Email<input name="email" type="email" maxlength="254"></label>
+          <div class="wide actions"><button class="button primary" type="submit">Save profile</button></div>
+        </form>
+        <form id="organization-form" class="panel form-grid">
+          <div class="form-head"><div><p class="eyebrow">Organization</p><h2>Organization settings</h2></div><code id="organization-slug"></code></div>
+          <label class="wide">Organization name<input name="name" required maxlength="120"></label>
+          <div class="wide actions"><button class="button primary" type="submit">Save organization</button></div>
+        </form>
+      </div>
+      <div class="toolbar secondary-toolbar"><div><p class="eyebrow">Membership boundary</p><h2>Organizations</h2></div><button id="show-new-org" class="button" type="button">New organization</button></div>
       <div id="organizations" class="org-grid"></div>
       <form id="new-org" class="panel form-grid" hidden>
         <div class="form-head"><div><p class="eyebrow">New boundary</p><h2>Create organization</h2></div><button type="button" class="quiet" data-close="new-org">Cancel</button></div>

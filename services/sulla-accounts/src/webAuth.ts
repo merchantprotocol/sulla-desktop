@@ -175,6 +175,11 @@ export async function webIdentity(db: Database, config: AccountsConfig, request:
   );
   const session = found.rows[0];
   if (!session) throw new Error('authentication_required');
+  await db.query(
+    `UPDATE accounts.web_sessions SET updated_at=now()
+      WHERE id=$1 AND updated_at < now()-interval '1 minute'`,
+    [session.id],
+  );
   if (config.mode === 'server') {
     const user = await getHostedUser(config, session.subject).catch(() => undefined);
     if (!user?.enabled) throw new Error('authentication_required');
