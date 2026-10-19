@@ -72,7 +72,7 @@
 
           <div class="composer-tools">
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
-            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
+            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
             <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
@@ -403,17 +403,6 @@ async function toggleFilesMenu():Promise<void> {
   if (filesMenuOpen.value) recentFiles.value = await ipcRenderer.invoke('files-ui:recent-references', 5).catch(() => []);
 }
 
-async function browseFiles():Promise<void> {
-  filesImportError.value = '';
-  try {
-    const selected = await ipcRenderer.invoke('files-ui:pick-reference') as FilesReference[];
-    stageFilesReferences(selected);
-  } catch (error) {
-    filesImportError.value = error instanceof Error ? error.message : 'Could not attach this Files item.';
-    filesMenuOpen.value = true;
-  }
-}
-
 async function uploadFromMac():Promise<void> {
   if (filesImporting.value) return;
   filesImportError.value = '';
@@ -456,10 +445,21 @@ function stageFilesReferences(files:FilesReference[]):void {
 }
 
 async function takeScreenshot():Promise<void> {
-  const capture = await ipcRenderer.invoke('files-ui:capture-screenshot', 'area') as { fileId?:string };
-  const recent = await ipcRenderer.invoke('files-ui:recent-references', 20) as FilesReference[];
-  const ref = recent.find(file => file.fileId === capture.fileId);
-  if (ref) stageFilesReference(ref);
+  if (filesImporting.value) return;
+  filesImportError.value = '';
+  filesImporting.value = true;
+  try {
+    const capture = await ipcRenderer.invoke('files-ui:capture-screenshot', 'area') as { reference:FilesReference };
+    stageFilesReference(capture.reference);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not attach the screenshot.';
+    if (!message.includes('Screenshot cancelled')) {
+      filesImportError.value = message;
+      filesMenuOpen.value = true;
+    }
+  } finally {
+    filesImporting.value = false;
+  }
 }
 
 async function toggleScreenRecording():Promise<void> {
@@ -504,7 +504,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
 });
 
-function onAttachShortcut():void { void browseFiles() }
+function onAttachShortcut():void { uploadFromMac().catch(() => undefined) }
 
 // ─── Listen for quote events from Sulla turns ────────────────────
 // TurnSulla's "Quote" hover action dispatches this; we prefill the
