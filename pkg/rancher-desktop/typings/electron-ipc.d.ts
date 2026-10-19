@@ -504,6 +504,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:link-activity': (id?: string) => { id: string; action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt: string; detail?: string }[];
   'files-ui:open-folder':   () => void;
   'files-ui:open-file':     (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:reveal-file':   (input: { fileId: string; versionId?: string }) => import('@pkg/pages/files/types').FilesRevealResult;
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
@@ -516,6 +517,21 @@ export interface IpcMainInvokeEvents {
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
   'files-preferences:remove-root': (id: string) => void;
   'sulla-files:collections':     () => any[];
+  'sulla-files:folders': (input: { collectionId:string; details?:boolean }) => (string | import('@pkg/pages/files/types').FilesFolderState)[];
+  'sulla-files:operation-capabilities': (input: { collectionId:string }) => {
+    enabled:boolean;
+    reason?:string;
+    folderReceipts?:boolean;
+    nativeFolderReceipts?:boolean;
+    folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
+    crossCollectionOperations?:'all-authorized' | 'stored-authorized' | 'unavailable';
+  };
+  'sulla-files:folder-operation-state': (input: { collectionId:string; path:string }) => import('@pkg/pages/files/types').FilesFolderSourceSnapshot;
+  'sulla-files:operation-submit': (input: import('@pkg/pages/files/types').FilesOperationRequest) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-status': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-cancel': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-retry': (input: { operationId:string; request:import('@pkg/pages/files/types').FilesOperationRetry }) => import('@pkg/pages/files/types').FilesOperationReceipt;
+  'sulla-files:operation-undo': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
@@ -534,10 +550,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:record-lock': (input: { fileId: string; status: 'ordinary' | 'policy' }) => void;
   'sulla-files:record-unlock': (input: { fileId: string }) => void;
   'sulla-files:disposal-review': (input: { fileId: string; decision: 'approve' | 'reject' | 'extend'; extendedUntil?: string }) => void;
-  'sulla-files:trash-list':      (input: { collectionId: string }) => any[];
+  'sulla-files:trash-list':      (input: { collectionId: string }) => import('@pkg/pages/files/types').FilesTrashItem[];
   'sulla-files:trash':           (input: { fileId: string }) => void;
-  'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
-  'sulla-files:trash-purge':     (input: { fileId: string }) => void;
+  'sulla-files:trash-restore':   (input: { id:string; kind:import('@pkg/pages/files/types').FilesTrashItem['kind']; expectedRevision:string; currentTombstone:{ id:string; receiptId?:string } }) => import('@pkg/pages/files/types').FilesTrashRestoreResult;
+  'sulla-files:trash-purge':     (input: { id:string; kind?:'folder'; expectedRevision:string; currentTombstone:{ id:string; kind?:'receipt'; receiptId?:string }; invalidateUndo?:true }) => import('@pkg/pages/files/types').FilesTrashPurgeResult;
   'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
   'sulla-files:shares':          (input: { collectionId: string }) => any[];
   'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;

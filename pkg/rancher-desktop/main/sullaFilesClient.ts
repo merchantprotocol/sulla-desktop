@@ -11,6 +11,14 @@ export interface FilesRequestOptions {
   server?:    boolean;
 }
 
+export interface FilesFolderOperationState {
+  collectionId:string;
+  path:string;
+  folderId?:string;
+  revision?:string;
+  subtreeSignature:string;
+}
+
 export class FilesApiError extends Error {
   constructor(message:string, readonly status:number) { super(message) }
 }
@@ -50,6 +58,12 @@ export class SullaFilesClient {
     if (!response.ok) throw new FilesApiError(await errorMessage(response), response.status);
 
     return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  }
+
+  folderOperationState(collectionId:string, path:string):Promise<FilesFolderOperationState> {
+    const query = new URLSearchParams({ collectionId, path });
+
+    return this.json(`/v1/database-file-operations/folder-state?${ query }`);
   }
 
   async stream(endpoint:string, init:RequestInit = {}, signal?:AbortSignal):Promise<Response> {

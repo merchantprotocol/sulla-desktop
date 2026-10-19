@@ -1,9 +1,29 @@
-import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from './filesApiModels';
+import { fileAccessList, fileCapabilities, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from './filesApiModels';
 import { normalizeFilesIndexCoverage } from '../../../pkg/rancher-desktop/pages/files/types';
 
 import type { FileAccessList, FilesDataSource, FileShare, FilesDetail, FilesIndexCoverage, FilesItem, FilesPreview, FilesRetentionPolicy, FilesSnapshot, FilesVersion, FilesVersioningSettings, FolderShare } from '../../../pkg/rancher-desktop/pages/files/types';
 
+import type { FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from '../../../pkg/rancher-desktop/pages/files/types';
+import type { FilesFolderSourceSnapshot, FilesFolderState, FilesOperationCapabilities, FilesTrashItem, FilesTrashPurgeResult, FilesTrashRestoreResult } from '../../../pkg/rancher-desktop/pages/files/types';
+
 export type ContainerCollection = FilesApiCollection;
+
+function trashItem(value:FilesApiRecord):FilesTrashItem {
+  const tombstone=value?.currentTombstone;
+  if (!value || !['file','folder'].includes(value.kind) || typeof value.id!=='string' || !value.id ||
+      typeof value.path!=='string' || typeof value.revision!=='string' || !value.revision ||
+      !tombstone || typeof tombstone.id!=='string' || !tombstone.id ||
+      !['available','invalidated','recovery-required','unavailable'].includes(tombstone.undo?.state) ||
+      (tombstone.receiptId!==undefined && typeof tombstone.receiptId!=='string')) {
+    throw new Error('The server returned an invalid Trash entry. Refresh before restoring or deleting anything.');
+  }
+  if (value.kind==='folder') {
+    if (tombstone.kind!=='receipt' || tombstone.receiptId!==tombstone.id || typeof value.deleted_at!=='string') throw new Error('The server returned an invalid folder tombstone.');
+    return {kind:'folder',id:value.id,path:value.path,revision:value.revision,deletedAt:value.deleted_at,currentTombstone:tombstone,capabilities:fileCapabilities(value.capabilities)};
+  }
+  if (tombstone.kind!=='version') throw new Error('The server returned an invalid file tombstone.');
+  return {...filesItem(value as FilesApiFile),kind:'file',revision:value.revision,operationRevision:value.revision,currentVersionId:tombstone.id,currentTombstone:tombstone};
+}
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
   const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true };
@@ -18,22 +38,23 @@ function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
 }
 
 export class BrowserFilesDataSource implements FilesDataSource {
-  readonly capabilities={upload:true,versionHistory:true,restoreVersions:true,trash:true,orgSharing:true,publicLinks:false,onlineOnly:false,nativeFilesystem:false};
+  readonly capabilities={upload:true,versionHistory:true,restoreVersions:true,trash:true,orgSharing:true,publicLinks:false,onlineOnly:false,nativeFilesystem:false,durableOperations:false,folderReceipts:false,nativeFolderReceipts:false,folderCollisionPolicies:[] as FilesOperationCapabilities['folderCollisionPolicies'],crossCollectionOperations:'unavailable' as FilesOperationCapabilities['crossCollectionOperations']};
   readonly onlineOnlyReason='Server files remain available from the server.';
   private controller=new AbortController();
   private readonly urls=new Set<string>();
   private files:FilesItem[]=[];
   private collectionId='';
   private collection:ContainerCollection|undefined;
+  private collections:ContainerCollection[]=[];
   private generation=0;
   private apiBase:Promise<''|'/files-api'>|undefined;
 
   constructor(private token:string,private readonly accountName:string,private readonly orgId:string,private readonly expired:()=>void,private readonly explicitApiBase?:''|'/files-api'){}
 
-  async availableCollections():Promise<ContainerCollection[]>{const collections=await this.request<ContainerCollection[]>('/v1/collections');if(collections.length)return collections;return[this.collection=await this.request<ContainerCollection>('/v1/collections/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orgId:this.orgId})})]}
-  selectCollection(collection:ContainerCollection):void{const shares=Array.isArray(collection.shared_folders)?collection.shared_folders:[];const files=Array.isArray(collection.shared_files)?collection.shared_files:[];if(!collection.id||(!collection.access_role&&!shares.length&&!files.length))throw new Error('This collection is not available to your account.');const scopedRole=[...shares,...files].some((share:FilesApiRecord)=>share.role==='edit')?'edit':'view';const effectiveRole=collection.access_role??scopedRole;const canEdit=['edit','manage','owner'].includes(effectiveRole);const canManage=['manage','owner'].includes(effectiveRole);this.capabilities.upload=canEdit;this.capabilities.restoreVersions=canEdit;this.capabilities.trash=canEdit;this.capabilities.orgSharing=canManage;this.generation+=1;this.controller.abort();this.controller=new AbortController();for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear();this.collection=collection;this.collectionId=collection.id;this.files=[]}
+  async availableCollections():Promise<ContainerCollection[]>{const generation=this.generation;const collections=await this.request<ContainerCollection[]>('/v1/collections',{},generation);const available=collections.length?collections:[await this.request<ContainerCollection>('/v1/collections/default',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orgId:this.orgId})},generation)];this.assertCurrent(generation);this.collections=available;return available}
+  selectCollection(collection:ContainerCollection|string):void{if(typeof collection==='string'){const selected=this.collections.find(item=>item.id===collection);if(!selected)throw new Error('This collection is not available to your account.');collection=selected}const shares=Array.isArray(collection.shared_folders)?collection.shared_folders:[];const files=Array.isArray(collection.shared_files)?collection.shared_files:[];if(!collection.id||(!collection.access_role&&!shares.length&&!files.length))throw new Error('This collection is not available to your account.');const scopedRole=[...shares,...files].some((share:FilesApiRecord)=>share.role==='edit')?'edit':'view';const effectiveRole=collection.access_role??scopedRole;const canEdit=['edit','manage','owner'].includes(effectiveRole);const canManage=['manage','owner'].includes(effectiveRole);this.capabilities.upload=canEdit;this.capabilities.restoreVersions=canEdit;this.capabilities.trash=canEdit;this.capabilities.orgSharing=canManage;this.resetOperationCapabilities();this.generation+=1;this.controller.abort();this.controller=new AbortController();for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear();this.collection=collection;this.collectionId=collection.id;this.files=[]}
 
-  destroy():void{this.generation+=1;this.controller.abort();this.token='';this.files=[];for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear()}
+  destroy():void{this.generation+=1;this.controller.abort();this.token='';this.files=[];this.collections=[];this.resetOperationCapabilities();for(const url of this.urls)URL.revokeObjectURL(url);this.urls.clear()}
 
   private async request<T>(path:string,options:RequestInit={},generation=this.generation):Promise<T>{
     if(!this.token)throw new Error('Files is locked. Sign in again.');
@@ -49,17 +70,23 @@ export class BrowserFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot>{
+    this.resetOperationCapabilities();
     const generation=this.generation;
     const collection=this.collection;
     if(!collection)throw new Error('Choose a Files collection to continue.');
     this.collectionId=collection.id;
-    const [active,trash,folders]=await Promise.all([this.request<FilesApiFile[]>(`/v1/files?collectionId=${encodeURIComponent(collection.id)}`,{},generation),this.request<FilesApiFile[]>(`/v1/trash?collectionId=${encodeURIComponent(collection.id)}`,{},generation),this.request<string[]>(`/v1/folders?collectionId=${encodeURIComponent(collection.id)}`,{},generation)]);
+    const operationCapabilities=await this.operationCapabilities(collection.id);
+    this.assertCurrent(generation);Object.assign(this.capabilities,{durableOperations:operationCapabilities.enabled,folderReceipts:operationCapabilities.folderReceipts,nativeFolderReceipts:operationCapabilities.nativeFolderReceipts,folderCollisionPolicies:operationCapabilities.folderCollisionPolicies,crossCollectionOperations:operationCapabilities.crossCollectionOperations});
+    const [active,trash]=await Promise.all([this.request<FilesApiFile[]>(`/v1/files?collectionId=${encodeURIComponent(collection.id)}`,{},generation),this.request<FilesApiRecord[]>(`/v1/trash?collectionId=${encodeURIComponent(collection.id)}`,{},generation)]);
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
-    this.files=[...active,...trash].map(value=>filesItem(value));
+    const trashItems=trash.map(trashItem);
+    this.files=active.map(value=>filesItem(value));
+    const folders=await this.request<FilesFolderState[]>(`/v1/folders?collectionId=${encodeURIComponent(collection.id)}&details=true`,{},generation);
+    this.assertCurrent(generation);
     const shares=Array.isArray(collection.shared_folders)?collection.shared_folders:[];const files=Array.isArray(collection.shared_files)?collection.shared_files:[];const scopedRole=[...shares,...files].some((share:FilesApiRecord)=>share.role==='edit')?'file-or-folder-edit':shares.length||files.length?'file-or-folder-view':undefined;
     const indexing=indexCoverage(this.files.filter(file=>!file.deletedAt));
     const hasConflict=this.files.some(file=>file.syncState==='conflict');
-    return{collection:{id:collection.id,name:collection.name,home:collection.home??'/',orgId:collection.org_id,retentionPolicy:collection.retention_policy??{},storageQuota:collection.storage_quota===undefined?undefined:Number(collection.storage_quota),keptBytes:collection.kept_bytes===undefined?undefined:Number(collection.kept_bytes),desktopCount:collection.desktop_count===undefined?undefined:Number(collection.desktop_count),memberCount:collection.member_count===undefined?undefined:Number(collection.member_count),accountName:collection.account_display_name??this.accountName,accountRole:collection.access_role??scopedRole,ownerUserId:collection.owner_user_id,sharedFolders:shares.map((value:FilesApiRecord)=>value.folderPath??value.folder_path)},folders,files:this.files,status:{state:hasConflict?'conflict':'synced',pendingFiles:0,serverConfigured:true,location:'server',serverLabel:'Sulla Server',indexing}};
+    return{folders,availableCollections:this.collections.map(item=>({id:item.id,name:item.name})),trash:trashItems,collection:{id:collection.id,name:collection.name,home:collection.home??'/',orgId:collection.org_id,retentionPolicy:collection.retention_policy??{},storageQuota:collection.storage_quota===undefined?undefined:Number(collection.storage_quota),keptBytes:collection.kept_bytes===undefined?undefined:Number(collection.kept_bytes),desktopCount:collection.desktop_count===undefined?undefined:Number(collection.desktop_count),memberCount:collection.member_count===undefined?undefined:Number(collection.member_count),accountName:collection.account_display_name??this.accountName,accountRole:collection.access_role??scopedRole,ownerUserId:collection.owner_user_id,sharedFolders:shares.map((value:FilesApiRecord)=>value.folderPath??value.folder_path)},files:this.files,status:{state:hasConflict?'conflict':'synced',pendingFiles:0,serverConfigured:true,location:'server',serverLabel:'Sulla Server',indexing}};
   }
 
   async history(fileId:string,currentVersionId:string):Promise<FilesVersion[]>{const rows=await this.request<FilesApiRecord[]>(`/v1/files/${encodeURIComponent(fileId)}/history`);return rows.map(row=>filesVersion(row,currentVersionId))}
@@ -83,6 +110,20 @@ export class BrowserFilesDataSource implements FilesDataSource {
   listStars(collectionId:string):Promise<{fileId?:string;folderPath?:string}[]>{return this.request(`/v1/stars?collectionId=${encodeURIComponent(collectionId)}`)}
   setStar(collectionId:string,target:{fileId?:string;folderPath?:string},starred:boolean):Promise<void>{return this.request('/v1/stars',{method:starred?'PUT':'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({collectionId,...target})})}
   operate(action:'move'|'copy',collectionId:string,items:{fileId?:string;folderPath?:string;targetPath:string}[]):Promise<void>{return this.request('/v1/file-operations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,collectionId,items})})}
+  submitOperation(request:FilesOperationRequest):Promise<FilesOperationReceipt>{return this.request('/v1/database-file-operations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)})}
+  private resetOperationCapabilities():void{Object.assign(this.capabilities,{durableOperations:false,folderReceipts:false,nativeFolderReceipts:false,folderCollisionPolicies:[],crossCollectionOperations:'unavailable'})}
+  async operationCapabilities(collectionId:string):Promise<FilesOperationCapabilities>{
+    const generation=this.generation;
+    const value=await this.request<Partial<FilesOperationCapabilities>>(`/v1/database-file-operations/capabilities?collectionId=${encodeURIComponent(collectionId)}`,{},generation).catch(()=>({enabled:false} as Partial<FilesOperationCapabilities>));
+    this.assertCurrent(generation);
+    const enabled=value?.enabled===true;
+    return {enabled,reason:typeof value?.reason==='string'?value.reason:undefined,folderReceipts:enabled&&value.folderReceipts===true,nativeFolderReceipts:enabled&&value.nativeFolderReceipts===true,folderCollisionPolicies:enabled&&Array.isArray(value.folderCollisionPolicies)?value.folderCollisionPolicies.filter(item=>item==='replace'||item==='keep-both'||item==='skip'):[],crossCollectionOperations:enabled&&(value.crossCollectionOperations==='all-authorized'||value.crossCollectionOperations==='stored-authorized')?value.crossCollectionOperations:'unavailable'};
+  }
+  folderOperationState(collectionId:string,path:string):Promise<FilesFolderSourceSnapshot>{return this.request(`/v1/database-file-operations/folder-state?collectionId=${encodeURIComponent(collectionId)}&path=${encodeURIComponent(path)}`)}
+  getOperation(operationId:string):Promise<FilesOperationReceipt>{return this.request(`/v1/database-file-operations/${encodeURIComponent(operationId)}`)}
+  cancelOperation(operationId:string):Promise<FilesOperationReceipt>{return this.request(`/v1/database-file-operations/${encodeURIComponent(operationId)}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})}
+  retryOperation(operationId:string,request:FilesOperationRetry={}):Promise<FilesOperationReceipt>{return this.request(`/v1/database-file-operations/${encodeURIComponent(operationId)}/retry`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)})}
+  undoOperation(operationId:string):Promise<FilesOperationReceipt>{return this.request(`/v1/database-file-operations/${encodeURIComponent(operationId)}/undo`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})}
   async listFolderShares(collectionId:string):Promise<FolderShare[]>{const rows=await this.request<FilesApiRecord[]>(`/v1/collections/${encodeURIComponent(collectionId)}/shares`);return rows.map(row=>folderShare(row,collectionId))}
   async shareFolder(collectionId:string,folderPath:string,principalType:'user'|'group',principalId:string,role:'view'|'edit'):Promise<FolderShare>{const row=await this.request<FilesApiRecord>(`/v1/collections/${encodeURIComponent(collectionId)}/shares`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folderPath,principalType,principalId,role})});return folderShare(row,collectionId,{folderPath,principalType,principalId,role})}
   unshareFolder(share:FolderShare):Promise<void>{return this.request(`/v1/collections/${encodeURIComponent(share.collectionId)}/shares`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({folderPath:share.folderPath,principalType:share.principalType,principalId:share.principalId})})}
@@ -102,6 +143,8 @@ export class BrowserFilesDataSource implements FilesDataSource {
   disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void>{return this.request(`/v1/files/${encodeURIComponent(fileId)}/disposal-review`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision,extendedUntil})})}
   restoreTrash(fileId:string):Promise<void>{return this.request(`/v1/trash/${encodeURIComponent(fileId)}/restore`,{method:'POST'})}
   purgeTrash(fileId:string):Promise<void>{return this.request(`/v1/trash/${encodeURIComponent(fileId)}/purge`,{method:'DELETE'})}
+  restoreTrashItem(item:FilesTrashItem):Promise<FilesTrashRestoreResult>{return this.request(`/v1/trash/${encodeURIComponent(item.id)}/restore`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:item.kind,expectedRevision:item.revision,currentTombstone:{id:item.currentTombstone.id,receiptId:item.currentTombstone.receiptId}})})}
+  purgeTrashItem(item:FilesTrashItem):Promise<FilesTrashPurgeResult>{return this.request(`/v1/trash/${encodeURIComponent(item.id)}/purge`,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:item.kind,expectedRevision:item.revision,currentTombstone:item.kind==='folder'?{kind:'receipt',id:item.currentTombstone.id,receiptId:item.currentTombstone.receiptId}:{id:item.currentTombstone.id},...(item.currentTombstone.receiptId?{invalidateUndo:true}:{})})})}
   trashFile(fileId:string):Promise<void>{return this.request(`/v1/files/${encodeURIComponent(fileId)}`,{method:'DELETE'})}
 
   private async upload(file:File,path:string,generation=this.generation,collectionId=this.collectionId):Promise<void>{if(!collectionId)throw new Error('No Files collection is selected.');this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');const url=await this.apiUrl(`/v1/files/import?collectionId=${encodeURIComponent(collectionId)}&path=${encodeURIComponent(path)}&conflict=keep-both`);this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');const response=await fetch(url,{method:'PUT',cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,'Content-Type':file.type||'application/octet-stream'},body:file});this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string};this.assertCurrent(generation);throw new Error(body.error??`Files request failed (${response.status})`)} }

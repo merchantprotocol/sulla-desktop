@@ -73,6 +73,7 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
   role(request:RequestWithIdentity, file:any):Promise<string | undefined>;
   audit(request:RequestWithIdentity, action:string, file?:any, details?:Record<string, unknown>):Promise<void>;
   deleteChunk(collectionId:string, chunkId:string):Promise<void>;
+  disposeTrashReceipt?(receiptId:string):Promise<{state:'none'|'complete'|'recovery-required';error?:string}>;
 }) {
   void drainPendingChunkGc(db, deps.deleteChunk).catch(error => console.warn('[SullaFiles] pending physical chunk cleanup failed:', error));
   const locked = async(client:pg.PoolClient, id:string) => {
@@ -243,9 +244,23 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
     const removed = await transaction(async client => {
       const file = await locked(client, request.params.id);
       if (!file.deleted_at) throw httpError(409, 'only trashed files can be purged');
+      const expectedRevision=String(request.body?.expectedRevision??''); const expectedTombstone=String(request.body?.currentTombstone?.id??'');
+      if (!/^\d+$/.test(expectedRevision) || expectedRevision!==String(file.operation_revision) || expectedTombstone!==String(file.current_version_id)) throw httpError(409,'Trash changed; refresh before permanent disposal');
       const active = (await client.query('SELECT files_retention_active(f) active FROM files f WHERE id=$1', [file.id])).rows[0]?.active;
       if (active || file.disposal_status !== 'approved') throw httpError(409, 'approved disposal with no active retention or lock is required');
       if ((await client.query('SELECT 1 FROM file_share_links WHERE file_id=$1 AND revoked_at IS NULL LIMIT 1', [file.id])).rowCount) throw httpError(409, 'active share links must be revoked before disposal');
+      const receipt=(await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash' AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[file.id,file.current_version_id])).rows[0];
+      let retained=false;
+      if (receipt?.state==='completed') {
+        if (request.body?.invalidateUndo!==true) throw httpError(409,'Permanent disposal must explicitly invalidate the retained Trash receipt');
+        const operation=(await client.query('SELECT * FROM files_path_operations WHERE operation_id=$1 FOR UPDATE',[receipt.id])).rows[0];
+        if (operation && (!['completed','undone','rolled-back'].includes(operation.state) || operation.last_error)) throw httpError(409,'Native Trash journal requires recovery before disposal');
+        if (operation && !deps.disposeTrashReceipt) throw httpError(503,'Native retained-artifact disposal is unavailable; artifacts were preserved');
+        const invalidation={undoInvalidatedAt:new Date().toISOString(),invalidatedBy:actor.userId,reason:'explicit-disposal'};
+        const receiptPlan=receipt.folder_plan??{}; receiptPlan.lifecycle={...(receiptPlan.lifecycle??{}),disposal:invalidation};
+        await client.query('UPDATE files_database_operation_receipts SET folder_plan=$2 WHERE id=$1',[receipt.id,receiptPlan]);
+        if (operation) { const plan=operation.plan; plan.disposal=invalidation; await client.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1',[receipt.id,plan]); retained=true }
+      }
       await client.query('LOCK TABLE file_versions IN SHARE ROW EXCLUSIVE MODE');
       const chunks = await client.query(`SELECT DISTINCT v.chunk_collection_id,jsonb_array_elements_text(m.chunk_ids) chunk_id
         FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash WHERE v.file_id=$1`, [file.id]);
@@ -277,10 +292,17 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
         if (refs === 0) { await client.query(`INSERT INTO file_chunk_gc(collection_id,chunk_id,audit_id) VALUES($1,$2,$3) ON CONFLICT(collection_id,chunk_id) DO UPDATE SET audit_id=EXCLUDED.audit_id,requested_at=NOW(),last_error=NULL`, [chunk.chunk_collection_id, chunk.chunk_id, audit.rows[0].id]); queued++ }
       }
       if (!queued) await client.query(`UPDATE audit_log SET details=jsonb_set(details,'{physicalChunkGc}',to_jsonb('not-required'::text),TRUE) WHERE id=$1`, [audit.rows[0].id]);
-      return { auditId: audit.rows[0].id, queued };
+      return { auditId:audit.rows[0].id,queued,receiptId:receipt?.id??null,retained,id:file.id,path:file.path,revision:String(file.operation_revision) };
     });
-    if (removed.queued) await drainPendingChunkGc(db, deps.deleteChunk);
-    if ((await db.query('SELECT 1 FROM file_chunk_gc WHERE audit_id=$1 LIMIT 1', [removed.auditId])).rowCount) throw httpError(503, 'file metadata was purged; physical chunk cleanup is pending retry');
-    response.status(204).end();
+    const retainedResult=removed.retained&&removed.receiptId
+      ? await deps.disposeTrashReceipt!(removed.receiptId).catch(() => ({state:'recovery-required' as const,error:'Retained-artifact cleanup did not complete; exact artifacts were preserved for recovery'}))
+      : {state:'none' as const};
+    if (removed.queued) await drainPendingChunkGc(db, deps.deleteChunk).catch(() => undefined);
+    const chunksPending=Boolean((await db.query('SELECT 1 FROM file_chunk_gc WHERE audit_id=$1 LIMIT 1',[removed.auditId])).rowCount);
+    const common={kind:'file',id:removed.id,path:removed.path,revision:removed.revision,currentTombstone:null,metadataPurged:true};
+    if (chunksPending || retainedResult.state==='recovery-required') return response.status(202).json({status:'recovery-required',...common,
+      chunks:chunksPending?'pending':'complete',retainedArtifacts:retainedResult.state==='recovery-required'?'preserved':'complete',undo:removed.receiptId?'invalidated':'unavailable',receiptId:removed.receiptId,
+      ...(retainedResult.error?{reason:retainedResult.error}:{})});
+    response.json({status:'purged',...common,chunks:'complete',retainedArtifacts:retainedResult.state,undo:removed.receiptId?'invalidated':'unavailable',receiptId:removed.receiptId});
   } catch (error) { next(error) } });
 }

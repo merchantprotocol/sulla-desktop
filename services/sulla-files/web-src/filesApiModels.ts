@@ -41,6 +41,7 @@ export function filesItem(file:FilesApiFile):FilesItem {
     updatedAt:        file.updated_at ?? new Date(0).toISOString(),
     deletedAt:        file.deleted_at,
     currentVersionId: file.current_version_id,
+    operationRevision: file.operation_revision === undefined ? undefined : String(file.operation_revision),
     versionCount:     Number(file.version_count ?? 1),
     createdByType:    file.created_by_type ?? file.version_created_by_type ?? 'user',
     createdById:      file.created_by_id ?? file.version_created_by_id ?? '',

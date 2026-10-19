@@ -375,6 +375,37 @@ class SullaFilesWatcher {
     return send();
   }
 
+  /**
+   * Calls a local endpoint that requires both Desktop principal authority and
+   * the native service secret. This is deliberately separate from
+   * requestFiles(): ordinary Files calls must never gain native-main custody.
+   */
+  async requestNativeFiles(endpoint:string, init:RequestInit = {}):Promise<Response> {
+    const url = new URL(endpoint, API);
+    if (url.origin !== new URL(API).origin) throw new Error('Native Files endpoints must use the local service');
+    await this.ensureUnlocked();
+    let principalId = await this.localPrincipalId();
+    const send = async() => {
+      const [localToken, capability] = await Promise.all([
+        SullaSettingsModel.getServicePassword(),
+        this.capabilityToken(principalId),
+      ]);
+      const headers = requestHeaders(init.headers, {
+        'x-sulla-files-token': localToken,
+        authorization:         `Bearer ${ capability }`,
+      }, init.body ? { 'content-type': 'application/json' } : {});
+
+      return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
+    };
+    const response = await send();
+    if (!await this.isLockedResponse(response)) return response;
+    await response.body?.cancel();
+    await this.ensureUnlocked();
+    principalId = await this.localPrincipalId();
+
+    return send();
+  }
+
   async requestFilesStream(endpoint:string, init:RequestInit = {}, signal?:AbortSignal):Promise<Response> {
     const url = new URL(endpoint, API);
     if (url.origin !== new URL(API).origin) throw new Error('Files endpoint must use the local service');
