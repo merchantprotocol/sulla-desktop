@@ -1,0 +1,193 @@
+:root {
+  color-scheme: light;
+  --sulla-paper: #f4f7fb;
+  --sulla-ink: #1a2332;
+  --sulla-muted: #63758b;
+  --sulla-line: #cbd7e2;
+  --sulla-accent: #3a7fa0;
+  --sulla-accent-bright: #5096b3;
+}
+
+html,
+body,
+.login-pf,
+.login-pf body {
+  min-height: 100%;
+  background: radial-gradient(900px 500px at 88% -4%, #dceef5, transparent 60%), var(--sulla-paper) !important;
+  color: var(--sulla-ink);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.login-pf-page {
+  display: flex;
+  min-height: 100vh;
+  padding: 40px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+#kc-header {
+  position: relative;
+  width: min(480px, 100%);
+  margin: 0 0 -86px;
+  padding: 34px 38px 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+#kc-header-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding-left: 49px;
+  color: var(--sulla-ink);
+  font: 600 0/1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  text-transform: none;
+  text-decoration: none !important;
+}
+
+#kc-header-wrapper::before {
+  content: "S";
+  position: absolute;
+  left: 0;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(155deg, var(--sulla-accent-bright), var(--sulla-accent));
+  box-shadow: 0 8px 18px rgba(58, 127, 160, .22);
+  color: white;
+  font: 600 17px Georgia, "Times New Roman", serif;
+}
+
+#kc-header-wrapper::after {
+  content: "Sulla Console";
+  color: var(--sulla-ink);
+  font: 600 22px/1.05 Georgia, "Times New Roman", serif;
+}
+
+#kc-header::after {
+  content: "YOUR SERVER WORKSPACE";
+  position: absolute;
+  top: 60px;
+  left: 87px;
+  color: #8796a7;
+  font: 500 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .11em;
+}
+
+.card-pf,
+.pf-v5-c-login__main,
+.pf-c-login__main {
+  width: min(480px, calc(100vw - 40px));
+  margin: 0 !important;
+  padding: 104px 38px 34px !important;
+  border: 1px solid rgba(26, 35, 50, .09) !important;
+  border-radius: 18px !important;
+  background: rgba(255, 255, 255, .86) !important;
+  box-shadow: 0 18px 50px rgba(26, 35, 50, .07) !important;
+  backdrop-filter: blur(16px);
+}
+
+#kc-page-title {
+  margin: 2px 0 22px;
+  color: var(--sulla-ink);
+  font: 600 32px/1.15 Georgia, "Times New Roman", serif;
+  letter-spacing: -.02em;
+  text-align: left;
+}
+
+#kc-page-title::before {
+  content: "SECURE SERVER ACCESS";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--sulla-accent);
+  font: 500 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .14em;
+}
+
+#kc-content,
+#kc-content-wrapper,
+#kc-form,
+#kc-form-wrapper {
+  width: 100%;
+}
+
+.pf-v5-c-form__label,
+.pf-c-form__label,
+label {
+  color: #344257 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
+.pf-v5-c-form-control,
+.pf-c-form-control,
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--sulla-line) !important;
+  border-radius: 10px !important;
+  background: white !important;
+  color: var(--sulla-ink) !important;
+  box-shadow: none !important;
+}
+
+.pf-v5-c-form-control:focus,
+.pf-c-form-control:focus,
+input:focus {
+  border-color: var(--sulla-accent-bright) !important;
+  box-shadow: 0 0 0 3px rgba(80, 150, 179, .13) !important;
+  outline: 0;
+}
+
+#kc-form-buttons {
+  margin-top: 20px;
+}
+
+#kc-login,
+.pf-v5-c-button.pf-m-primary,
+.pf-c-button.pf-m-primary {
+  min-height: 42px;
+  border: 0 !important;
+  border-radius: 11px !important;
+  background: linear-gradient(180deg, var(--sulla-accent-bright), var(--sulla-accent)) !important;
+  box-shadow: 0 6px 15px rgba(58, 127, 160, .22) !important;
+  color: white !important;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+#kc-form-options,
+#kc-registration,
+#kc-info,
+.login-pf-settings,
+.instruction,
+.subtitle {
+  color: var(--sulla-muted) !important;
+  font-size: 12px;
+}
+
+a {
+  color: var(--sulla-accent) !important;
+}
+
+.alert-error,
+.pf-v5-c-alert.pf-m-danger,
+.pf-c-alert.pf-m-danger {
+  border-radius: 10px;
+}
+
+@media (max-width: 560px) {
+  .login-pf-page { padding: 20px; }
+  #kc-header { padding: 28px 22px 0; }
+  .card-pf,
+  .pf-v5-c-login__main,
+  .pf-c-login__main { padding: 98px 22px 28px !important; }
+}

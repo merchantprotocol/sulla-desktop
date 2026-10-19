@@ -2,8 +2,8 @@
   const api = window.location.pathname.startsWith('/services/accounts/') ? '/accounts-api/v1/web' : '/v1/web';
   const viewCopy = {
     overview: ['Server overview', 'Overview', 'Your organization, access, and active console sessions.'],
-    people: ['Sulla Accounts', 'People', 'People, roles, and access to this organization.'],
-    devices: ['Sulla Accounts', 'Devices', 'Review and revoke the browser sessions connected to your account.'],
+    people: ['Sulla Server', 'People', 'People, roles, and access to this organization.'],
+    devices: ['Sulla Server', 'Devices', 'Review and revoke the browser sessions connected to your account.'],
     settings: ['Server administration', 'Settings', 'Manage your profile and organization settings.'],
   };
   const requestedView = new URLSearchParams(window.location.search).get('view');
@@ -108,7 +108,7 @@
     }
   }
 
-  function lockSession(message = 'Sign in through Accounts to open this part of the console.') {
+  function lockSession(message = 'Sign in to open this part of the console.') {
     nextGeneration();
     state.session = null;
     state.organizationId = '';
@@ -141,7 +141,7 @@
   function handleRequestError(error, context) {
     if (isStale(error, context)) return true;
     if (!isAuthenticationFailure(error)) return false;
-    lockSession('Your Accounts session ended. Sign in again to continue.');
+    lockSession('Your session ended. Sign in again to continue.');
     if (embedded) window.parent.postMessage({ type: 'sulla.service.expired', version: 1, service: 'accounts' }, window.location.origin);
     return true;
   }
@@ -194,7 +194,7 @@
         : session.organizations[0];
       if (!selected) {
         lockSession(requiredOrganizationId
-          ? 'This Accounts session is not authorized for the selected organization.'
+          ? 'Your session is not authorized for the selected organization.'
           : 'This account is not assigned to an organization.');
         if (embedded) window.parent.postMessage({ type: 'sulla.service.expired', version: 1, service: 'accounts' }, window.location.origin);
         return;
@@ -215,7 +215,7 @@
       showView();
       await loadCurrentView();
     } catch (error) {
-      if (!handleRequestError(error, context)) lockSession('Accounts is unavailable. Sign in again to retry.');
+      if (!handleRequestError(error, context)) lockSession('Sign-in is unavailable. Sign in again to retry.');
     }
   }
 

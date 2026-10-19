@@ -9,11 +9,14 @@
 </head>
 <body>
   <section id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
-    <span class="empty-mark" aria-hidden="true">S</span>
-    <p class="eyebrow">Sulla Server</p>
-    <h1 id="auth-title">Sign in to your console</h1>
-    <p id="auth-message">Accounts protects every service with one session.</p>
-    <a id="gate-signin" class="primary-action" href="/accounts-api/v1/web/login">Continue with Accounts</a>
+    <div class="auth-card">
+      <div class="auth-brand"><span class="empty-mark" aria-hidden="true">S</span><div>Sulla <em>Console</em><small>Your server workspace</small></div></div>
+      <p class="eyebrow">Secure server access</p>
+      <h1 id="auth-title">Welcome back</h1>
+      <p id="auth-message" role="status">Checking your session…</p>
+      <a id="gate-signin" class="primary-action" href="/accounts-api/v1/web/login">Sign in</a>
+      <p class="auth-note">Your session protects every service in this console.</p>
+    </div>
   </section>
 
   <div id="console-shell" class="shell" hidden>
