@@ -228,6 +228,25 @@ export function createApp(
   }));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
+  app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.roots()) } catch (error) { next(error) } });
+  app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
+    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
+    const exclusions = request.body.exclusions;
+    if (exclusions !== undefined && (!Array.isArray(exclusions) || exclusions.length > 200 || exclusions.some((item:unknown) => typeof item !== 'string' || item.length > 500 || item.includes('\0')))) {
+      return response.status(400).json({ error: 'exclusions must be an array of safe patterns' });
+    }
+    if (request.body.syncMode !== undefined && !['local', 'server'].includes(request.body.syncMode)) return response.status(400).json({ error: 'syncMode must be local or server' });
+    response.json(await manager.configureRoot(String(request.params.id), {
+      paused: request.body.paused === undefined ? undefined : Boolean(request.body.paused),
+      syncMode: request.body.syncMode,
+      exclusions,
+    }));
+  } catch (error) { next(error) } });
+  app.delete('/v1/local/roots/:id', async(request, response, next) => { try {
+    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
+    await manager.detachRoot(String(request.params.id));
+    response.status(204).end();
+  } catch (error) { next(error) } });
   app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
   app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });

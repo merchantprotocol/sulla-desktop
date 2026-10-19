@@ -16,6 +16,12 @@
           S
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
+      <label v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="root-picker">
+        <span>Tracked folder</span>
+        <select :value="snapshot?.collection.id" @change="onCollectionChange">
+          <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
+        </select>
+      </label>
       <a
         v-for="entry in sections"
         :key="entry.id"
@@ -791,6 +797,12 @@ const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 
 async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function selectCollection(collectionId:string) {
+  if (!props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
+  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; selectedKeys.value = new Set();
+  await refresh();
+}
+function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
 async function reindex(entry:FilesItem) { busy.value = true; operationError.value = ''; try { await props.dataSource.reindex(entry.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
@@ -1018,6 +1030,8 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .brand .mark { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #3a7fa0, #1a2332); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .02em; flex: none; }
 .brand b { display: block; font-size: 13px; letter-spacing: .01em; }
 .brand span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.root-picker { display: grid; gap: 4px; margin: 0 8px 10px; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.root-picker select { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--card-solid); color: var(--text); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--muted); font-weight: 500; }
 .nav a .sv { display: grid; width: 16px; height: 16px; flex: none; opacity: .8; }
 .nav a .sv :deep(svg) { width: 16px; height: 16px; }
@@ -1264,7 +1278,7 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 @container (max-width: 1180px) {
   .nav { width: 64px; padding: 14px 10px; }
   .nav a { justify-content: center; padding: 9px 0; position: relative; }
-  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
+  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .root-picker, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
   .nav a .cnt { position: absolute; margin: 0; transform: translate(14px, -10px); }
   .brand { justify-content: center; padding-bottom: 12px; }
   .content { padding: 16px 18px 50px; }

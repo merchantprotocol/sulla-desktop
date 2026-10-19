@@ -14,6 +14,7 @@ export const preferencesNavItems: NavItems[] = [
     tabs: ['general', 'behavior', 'environment'],
   },
   { name: 'Appearance' },
+  { name: 'Files' },
   {
     name: process.platform === 'win32' ? 'WSL' : 'Virtual Machine',
     tabs: process.platform === 'win32' ? wslTabs : ( process.platform === 'linux' ? vmLinuxTabs : vmDarwinTabs ),

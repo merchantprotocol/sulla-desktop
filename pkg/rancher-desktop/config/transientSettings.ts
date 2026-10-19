@@ -5,6 +5,7 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 export const navItemNames = [
   'Application',
   'Appearance',
+  'Files',
   'WSL',
   'Virtual Machine',
   'Container Engine',
@@ -20,6 +21,7 @@ export const defaultTransientSettings = {
       current:     'Application' as NavItemName,
       currentTabs: {
         Application:        'general',
+        Files:              undefined,
         'Virtual Machine':  'hardware',
         'Container Engine': 'general',
         ...(process.platform === 'win32' && { WSL: 'integration' }),

@@ -84,7 +84,7 @@ export class IndexingQueue {
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
       await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
-      const file = (await this.db.query('SELECT id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
+      const file = (await this.db.query('SELECT id,collection_id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
       if (!file || file.deleted_at || file.current_version_id !== job.version_id) {
         await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
         return true;
@@ -100,7 +100,7 @@ export class IndexingQueue {
           await client.query('COMMIT'); return true;
         }
         const activeJob = (await client.query('SELECT status,attempts FROM file_index_jobs WHERE version_id=$1 FOR UPDATE', [job.version_id])).rows[0];
-        if (!activeJob || activeJob.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
+        if (activeJob?.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
           await client.query('COMMIT'); return true;
         }
         await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [file.id]);

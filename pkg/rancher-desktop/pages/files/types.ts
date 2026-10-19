@@ -43,6 +43,7 @@ export interface FilesVersion {
 
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
+  availableCollections?: { id:string; name:string }[];
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -181,6 +182,7 @@ export interface FilesDataSource {
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
   load(): Promise<FilesSnapshot>;
+  selectCollection?(collectionId:string):void;
   history(fileId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
   detail(fileId:string):Promise<FilesDetail>;

@@ -34,6 +34,21 @@ export interface SullaFilesStatus {
   serverLabel?:      string;
 }
 
+export interface SullaFilesRootStatus {
+  id: string;
+  name: string;
+  collectionId: string;
+  syncMode: 'local' | 'server';
+  paused: boolean;
+  exclusions: string[];
+  state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
+  pendingFiles: number;
+  serverConfigured: boolean;
+  lastError?: string;
+  lastScanAt?: string;
+  lastSyncAt?: string;
+}
+
 export interface RecentSullaFile {
   id:               string;
   path:             string;
@@ -69,7 +84,7 @@ function ignored(relativePath:string, patterns:string[]):boolean {
 
 class SullaFilesWatcher {
   readonly folder = resolveSullaFilesUserRoot().activePath;
-  private watcher?:     fs.FSWatcher;
+  private watchers = new Map<string, fs.FSWatcher>();
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
@@ -141,11 +156,24 @@ class SullaFilesWatcher {
   }
 
   async initialize():Promise<void> {
-    if (this.started) return; this.started = true; this.stopped = false; app.once('before-quit', () => this.shutdown()); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
+    if (this.started) return; this.started = true; this.stopped = false;
+    const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
+    const registry = getSullaFilesRootRegistry();
+    await registry.startBookmarks();
+    app.once('before-quit', () => { registry.stopBookmarks(); this.shutdown() }); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     if (process.platform === 'darwin') {
       try { await spawnFile('/usr/bin/defaults', ['write', 'group.io.sulla.desktop', 'FilesRoot', this.folder]) } catch (error) { console.warn('[SullaFiles] Finder extension root configuration failed:', error) }
     }
-    try { this.watcher = fs.watch(this.folder, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => { if (filename) this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error)); }) } catch (error) { console.warn('[SullaFiles] host folder watcher unavailable; periodic rescans remain active:', error) }
+    for (const root of await registry.stored()) {
+      try {
+        const watcher = fs.watch(root.path, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => {
+          if (!filename) return;
+          if (root.id === 'default') this.changed(filename.toString()).catch(error => console.warn('[SullaFiles] watch event failed:', error));
+          else this.scheduleRescan();
+        });
+        this.watchers.set(root.id, watcher);
+      } catch (error) { console.warn(`[SullaFiles] watcher unavailable for root ${ root.id }; periodic rescans remain active:`, error) }
+    }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
     const pauseUntil = Number(await SullaSettingsModel.get('sullaFilesPauseUntil', 0));
@@ -153,12 +181,13 @@ class SullaFilesWatcher {
     else if (pauseUntil) await SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number');
   }
 
-  shutdown():void { this.stopped = true; this.lockService().catch(() => undefined); this.watcher?.close(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  shutdown():void { this.stopped = true; this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  private scheduleRescan():void { if (this.rescanTimer) clearTimeout(this.rescanTimer); this.rescanTimer = setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] debounced rescan failed:', error)), 350) }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
     if (ignored(relativePath, await this.patterns())) return; const absolute = path.resolve(this.folder, relativePath); if (!absolute.startsWith(`${ this.folder }${ path.sep }`)) return;
     try { const first = await fs.promises.stat(absolute); if (!first.isFile()) return; await new Promise(resolve => setTimeout(resolve, 600)); const second = await fs.promises.stat(absolute); if (first.size !== second.size || first.mtimeMs !== second.mtimeMs) return this.changed(relativePath); } catch { /* rename/delete: rescan now */ }
-    if (this.rescanTimer) clearTimeout(this.rescanTimer); this.rescanTimer = setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] debounced rescan failed:', error)), 350);
+    this.scheduleRescan();
   }
 
   private async request(endpoint:string, init:RequestInit = {}):Promise<Response> {
@@ -272,6 +301,25 @@ class SullaFilesWatcher {
 
   async setPaused(paused:boolean):Promise<SullaFilesStatus> { const response = await this.request('/v1/local/pause', { method: 'POST', body: JSON.stringify({ paused }) }); if (!response.ok) throw new Error(`Files pause failed (${ response.status })`); return await response.json() as SullaFilesStatus }
 
+  async rootStatuses():Promise<SullaFilesRootStatus[]> {
+    const response = await this.rawLocalRequest('/v1/local/roots');
+    if (!response.ok) throw new Error(`Files roots are unavailable (${ response.status })`);
+    const roots = await response.json() as SullaFilesRootStatus[];
+    if (!roots.length) throw new Error('Files roots are locked or have not initialized');
+    return roots;
+  }
+
+  async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<SullaFilesRootStatus> {
+    const response = await this.rawLocalRequest(`/v1/local/roots/${ encodeURIComponent(id) }`, { method: 'PATCH', body: JSON.stringify(input) });
+    if (!response.ok) throw new Error(`Files root update failed (${ response.status })`);
+    return await response.json() as SullaFilesRootStatus;
+  }
+
+  async detachRoot(id:string):Promise<void> {
+    const response = await this.rawLocalRequest(`/v1/local/roots/${ encodeURIComponent(id) }`, { method: 'DELETE' });
+    if (!response.ok && response.status !== 404) throw new Error(`Files root removal failed (${ response.status })`);
+  }
+
   async pauseFor(ms:number):Promise<SullaFilesStatus> {
     await SullaSettingsModel.set('sullaFilesPauseUntil', Date.now() + ms, 'number');
     if (this.resumeTimer) clearTimeout(this.resumeTimer);
@@ -294,7 +342,15 @@ class SullaFilesWatcher {
     return (await response.json() as RecentSullaFile[])[0];
   }
 
-  async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
+  async folderForCollection(collectionId?:string):Promise<string> {
+    if (!collectionId) return this.folder;
+    const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
+    const root = await getSullaFilesRootRegistry().rootForCollection(collectionId);
+    if (!root) throw new Error('That Files collection has no active local folder.');
+    return root.path;
+  }
+
+  async openFolder(collectionId?:string):Promise<void> { const error = await shell.openPath(await this.folderForCollection(collectionId)); if (error) throw new Error(error); }
 }
 
 let instance:SullaFilesWatcher | undefined;
