@@ -5,7 +5,11 @@ export interface NativePublicationAction {
   operationId:    string;
   handle:         string;
   sourceRevision: string;
+  sourceHash:     string;
   desiredHash:    string;
+  baseVersionId:  string;
+  versionId:      string;
+  state:          'publishing' | 'recovery-required';
 }
 
 export interface NativeSourceRecord {
@@ -48,7 +52,7 @@ export interface NativeSourceBrokerDependencies {
   read:     (handle:string) => Promise<NativeSourceSnapshot>;
   write:    (handle:string, expectedRevision:string, bytes:Buffer) => Promise<Omit<NativeSourceSnapshot, 'bytes'>>;
   ingest:   (input:NativeSourceIngestInput) => Promise<NativeSourceIngestResult>;
-  finish:   (operationId:string, result:{ nextSourceRevision?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string; currentSourceHash?: string; currentFilesVersionId?: string }) => Promise<void>;
+  finish:   (operationId:string, result:{ nextSourceRevision?: string; originalSourceRevision?: string; originalSourceHash?: string; currentSourceHash?: string; filesBaseVersionId?: string; currentFilesVersionId?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string }) => Promise<void>;
   logError: (message:string, error:unknown) => void;
 }
 
@@ -166,7 +170,7 @@ export class SullaFilesNativeBroker {
 
       this.assertCurrent(generation);
       if (before.contentHash === action.desiredHash) {
-        await this.dependencies.finish(action.operationId, { nextSourceRevision: before.revision });
+        await this.dependencies.finish(action.operationId, this.completionProof(action, before.revision));
         this.assertCurrent(generation);
         return;
       }
@@ -174,7 +178,7 @@ export class SullaFilesNativeBroker {
 
       this.assertCurrent(generation);
       if (result.contentHash !== action.desiredHash) throw new Error('Native source publication returned an unexpected content hash');
-      await this.dependencies.finish(action.operationId, { nextSourceRevision: result.revision });
+      await this.dependencies.finish(action.operationId, this.completionProof(action, result.revision));
       this.assertCurrent(generation);
     } catch (error) {
       if (error instanceof StaleNativeBrokerOperationError) throw error;
@@ -241,5 +245,16 @@ export class SullaFilesNativeBroker {
       await this.dependencies.finish(action.operationId, { error: publicationError instanceof Error ? publicationError.message : String(publicationError) }).catch(() => undefined);
       this.assertCurrent(generation);
     }
+  }
+
+  private completionProof(action:NativePublicationAction, nextSourceRevision:string) {
+    return {
+      nextSourceRevision,
+      originalSourceRevision: action.sourceRevision,
+      originalSourceHash:     action.sourceHash,
+      currentSourceHash:      action.desiredHash,
+      filesBaseVersionId:     action.baseVersionId,
+      currentFilesVersionId:  action.versionId,
+    };
   }
 }

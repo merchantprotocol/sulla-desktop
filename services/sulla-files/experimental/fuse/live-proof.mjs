@@ -2,7 +2,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, readdir, rm, rmdir, writeFile } from 'node:fs/promises';
 import { networkInterfaces, platform, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,13 @@ const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const sleep = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds));
 const port = Number(process.env.SULLA_FILES_PROOF_PORT ?? 48792);
-const root = await mkdtemp(join(tmpdir(), 'sulla-files-live-proof-'));
+const trace7Mode = process.env.SULLA_FILES_PROOF_TRACE7 ?? '';
+if (trace7Mode && !['prepare', 'recover'].includes(trace7Mode)) throw new Error('SULLA_FILES_PROOF_TRACE7 must be prepare or recover');
+const trace7Base = join(tmpdir(), 'sulla-files-native-trace7');
+const trace7Key = trace7Mode === 'prepare' ? randomUUID() : process.env.SULLA_FILES_PROOF_TRACE7_KEY;
+if (trace7Mode && !/^[a-f0-9-]{36}$/.test(trace7Key ?? '')) throw new Error('Trace 7 recovery requires the generated fixture key');
+const root = trace7Mode ? join(trace7Base, trace7Key) : await mkdtemp(join(tmpdir(), 'sulla-files-live-proof-'));
+const trace7StatePath = join(root, '.sulla-trace7-state.json');
 const cluster = join(root, 'postgres');
 const sourceRoot = join(root, 'synthetic-source');
 const mountRoot = join(root, 'mount');
@@ -31,7 +37,7 @@ const proofPath = join(sourceRoot, 'Proof', 'round-trip.txt');
 const mountedPath = join(mountRoot, 'Native Sources', 'round-trip.txt');
 const containerMountedPath = '/mnt/proof/Native Sources/round-trip.txt';
 const fuseContainer = `sulla-files-native-proof-${ process.pid }`;
-const databasePort = 50_000 + (process.pid % 10_000);
+let databasePort = 50_000 + (process.pid % 10_000);
 const originalBytes = 'original synthetic bytes\n';
 
 let admin;
@@ -47,9 +53,71 @@ let stopping = false;
 let releaseNativeAccess;
 let sourceHandle;
 let lockedSourceHandle;
+let trace7State;
+let trace7Armed = false;
+let proofMaster;
+let signingKey;
+let localToken;
 
 const nativeMacProof = process.env.SULLA_FILES_MACOS_NATIVE_PROOF === '1';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+async function assertOwnedDirectory(target, mode = 0o700) {
+  const info = await lstat(target);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o777) !== mode) {
+    throw new Error('Trace 7 fixture directory failed its owner, type, or mode check');
+  }
+  if (await realpath(target) !== target) throw new Error('Trace 7 fixture directory is not its canonical exact path');
+}
+
+async function readTrace7State() {
+  await assertOwnedDirectory(trace7Base);
+  await assertOwnedDirectory(root);
+  const info = await lstat(trace7StatePath);
+  if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o600) {
+    throw new Error('Trace 7 fixture marker failed its owner, type, or mode check');
+  }
+  const state = JSON.parse(await readFile(trace7StatePath, 'utf8'));
+  if (state.schema !== 1 || state.fixtureKey !== trace7Key || state.phase !== 'published-not-acknowledged') {
+    throw new Error('Trace 7 fixture marker does not identify a recoverable harness-created fixture');
+  }
+  return state;
+}
+
+async function writeTrace7State(state, exclusive = false) {
+  await assertOwnedDirectory(trace7Base);
+  await assertOwnedDirectory(root);
+  const bytes = `${ JSON.stringify(state) }\n`;
+  if (!exclusive) {
+    const info = await lstat(trace7StatePath);
+    if (!info.isFile() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o777) !== 0o600) throw new Error('Trace 7 fixture marker changed identity');
+  }
+  const marker = await open(trace7StatePath, exclusive ? 'wx' : 'r+', 0o600);
+  try {
+    if (!exclusive) await marker.truncate(0);
+    await marker.writeFile(bytes);
+    await marker.sync();
+  } finally { await marker.close() }
+  const directory = await open(root, 'r');
+  try { await directory.sync() } finally { await directory.close() }
+}
+
+async function initializeTrace7Fixture() {
+  if (!trace7Mode) return;
+  if (trace7Mode === 'prepare') {
+    await mkdir(trace7Base, { recursive: true, mode: 0o700 });
+    await assertOwnedDirectory(trace7Base);
+    await mkdir(root, { mode: 0o700 });
+    await assertOwnedDirectory(root);
+    trace7State = { schema: 1, fixtureKey: trace7Key, phase: 'initializing' };
+    await writeTrace7State(trace7State, true);
+    return;
+  }
+  trace7State = await readTrace7State();
+  databasePort = trace7State.databasePort;
+}
+
+await initializeTrace7Fixture();
 
 function deferred() {
   let resolve;
@@ -143,7 +211,12 @@ async function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
   if (brokerTimer) clearInterval(brokerTimer);
-  if (nativeMacProof) await run('docker', ['stop', '--time', '5', fuseContainer]).catch(() => undefined);
+  if (nativeMacProof) {
+    const ownedContainer = trace7Mode === 'recover' ? trace7State?.fuseContainer : fuseContainer;
+    if (typeof ownedContainer === 'string' && /^sulla-files-native-proof-\d+$/.test(ownedContainer)) {
+      await run('docker', ['stop', '--time', '5', ownedContainer]).catch(() => undefined);
+    }
+  }
   else {
     await run('fusermount3', ['-u', mountRoot]).catch(() => undefined);
     if (fuse?.exitCode === null) fuse.kill('SIGTERM');
@@ -157,30 +230,45 @@ async function stop(exitCode = 0) {
   await admin?.end().catch(() => undefined);
   await run('pg_ctl', ['-D', cluster, '-m', 'immediate', '-w', 'stop']).catch(() => undefined);
   releaseNativeAccess?.();
+  if (trace7Mode) {
+    await assertOwnedDirectory(trace7Base);
+    await assertOwnedDirectory(root);
+  }
   await rm(root, { recursive: true, force: true });
+  if (trace7Mode && !(await readdir(trace7Base)).length) await rmdir(trace7Base).catch(() => undefined);
   process.exit(exitCode);
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => void stop());
 
 try {
-  await Promise.all([mkdir(join(sourceRoot, 'Proof'), { recursive: true }), mkdir(mountRoot, { recursive: true })]);
-  await writeFile(proofPath, originalBytes);
-  await run('initdb', ['-D', cluster, '-A', 'trust', '-U', 'postgres', '--no-locale']);
-  await run('pg_ctl', ['-D', cluster, '-w', 'start', '-o', `-F -p ${ databasePort } -h 127.0.0.1 -k ${ root }`, '-l', join(root, 'postgres.log')]);
-
-  admin = new pg.Pool({ connectionString: `postgresql://postgres@127.0.0.1:${ databasePort }/postgres` });
-  await admin.query('CREATE DATABASE files_fuse_live_proof');
+  if (trace7Mode !== 'recover') {
+    await Promise.all([mkdir(join(sourceRoot, 'Proof'), { recursive: true, mode: 0o700 }), mkdir(mountRoot, { recursive: true, mode: 0o700 })]);
+    await writeFile(proofPath, originalBytes, { mode: 0o600, flag: 'wx' });
+    await run('initdb', ['-D', cluster, '-A', 'trust', '-U', 'postgres', '--no-locale']);
+    await run('pg_ctl', ['-D', cluster, '-w', 'start', '-o', `-F -p ${ databasePort } -h 127.0.0.1 -k ${ root }`, '-l', join(root, 'postgres.log')]);
+    admin = new pg.Pool({ connectionString: `postgresql://postgres@127.0.0.1:${ databasePort }/postgres` });
+    await admin.query('CREATE DATABASE files_fuse_live_proof');
+    proofMaster = randomBytes(32);
+    signingKey = randomBytes(32);
+    localToken = randomBytes(32).toString('base64url');
+  } else {
+    const sourceInfo = await lstat(proofPath);
+    if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() || sourceInfo.uid !== process.getuid() || (sourceInfo.mode & 0o777) !== 0o600) {
+      throw new Error('Persisted synthetic source failed its owner, type, or mode check');
+    }
+    await run('pg_isready', ['-h', '127.0.0.1', '-p', String(databasePort)]).catch(async() => {
+      await run('pg_ctl', ['-D', cluster, '-w', 'start', '-o', `-F -p ${ databasePort } -h 127.0.0.1 -k ${ root }`, '-l', join(root, 'postgres.log')]);
+    });
+    proofMaster = Buffer.from(trace7State.proofMaster, 'base64');
+    signingKey = Buffer.from(trace7State.signingKey, 'base64');
+    localToken = trace7State.localToken;
+  }
   const databaseUrl = `postgresql://postgres@127.0.0.1:${ databasePort }/files_fuse_live_proof`;
   db = new pg.Pool({ connectionString: databaseUrl });
-  await migrate(db);
-  const master = randomBytes(32);
-  const proofMaster = Buffer.from(master);
-  const signingKey = randomBytes(32);
+  if (trace7Mode !== 'recover') await migrate(db);
   keyring = new FilesKeyring(db);
-  await keyring.unlock(master, signingKey);
-  master.fill(0);
-  const localToken = randomBytes(32).toString('base64url');
+  await keyring.unlock(Buffer.from(proofMaster), signingKey);
   const config = {
     keyring,
     port,
@@ -202,6 +290,7 @@ try {
   };
   manager = new LocalFilesManager(db, config);
   await manager.initialize();
+  if (trace7Mode === 'recover') await manager.revalidateNativeSessions([]);
   const collectionId = await manager.nativeCollectionId();
   const token = issueProofToken({ sub: config.userId, device_id: config.deviceId, scopes: ['files/*'] }, signingKey);
   const fuseTokenPath = join(root, 'fuse-token');
@@ -211,12 +300,13 @@ try {
   let runConcurrentConflict;
   let runLockDrain;
   let runSessionRecovery;
+  let runInterruptedPublication;
 
   app.get('/proof-control/', (_request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444;flex-wrap:wrap}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 96px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="conflict">Concurrent conflict</button><button id="lock">Lock + drain</button><button id="recover">Reselect + recover</button><button id="reset">Reset source</button><button id="status">Status</button><button id="stop">Stop + clean</button><span id="result">Ready</span></header><iframe id="files"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const session=()=>frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin);const call=async path=>{result.textContent='Running…';const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#conflict').onclick=()=>call('concurrent-conflict');document.querySelector('#lock').onclick=()=>call('lock-drain');document.querySelector('#recover').onclick=()=>call('session-recovery');document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');document.querySelector('#stop').onclick=()=>call('stop');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')session()});frame.addEventListener('load',session,{once:true});frame.src='/files-proof/';</script></body></html>`);
+    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444;flex-wrap:wrap}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 96px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="conflict">Concurrent conflict</button><button id="lock">Lock + drain</button><button id="recover">Reselect + recover</button>${ trace7Mode === 'prepare' ? '<button id="trace7">Trace 7 interrupt</button>' : '' }<button id="reset">Reset source</button><button id="status">Status</button><button id="stop">Stop + clean</button><span id="result">Ready</span></header><iframe id="files"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const session=()=>frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin);const call=async path=>{result.textContent='Running…';const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#conflict').onclick=()=>call('concurrent-conflict');document.querySelector('#lock').onclick=()=>call('lock-drain');document.querySelector('#recover').onclick=()=>call('session-recovery');document.querySelector('#trace7')?.addEventListener('click',()=>call('trace7-interrupt'));document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');document.querySelector('#stop').onclick=()=>call('stop');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')session()});frame.addEventListener('load',session,{once:true});frame.src='/files-proof/';</script></body></html>`);
   });
   app.post('/proof-control/fuse-edit', async(_request, response, next) => {
     try { await ordinaryFuseEdit(`ordinary FUSE edit ${ new Date().toISOString() }\n`); response.json(await snapshot(collectionId)) } catch (error) { next(error) }
@@ -246,6 +336,13 @@ try {
     if (!runSessionRecovery) return response.status(503).json({ error: 'proof_not_ready' });
     try { response.json(await runSessionRecovery()) } catch (error) {
       response.status(500).json({ error: error instanceof Error ? error.message : 'session_recovery_failed' });
+    }
+  });
+  app.post('/proof-control/trace7-interrupt', async(_request, response) => {
+    if (!runInterruptedPublication) return response.status(503).json({ error: 'trace7_not_ready' });
+    try { await runInterruptedPublication(); response.status(500).json({ error: 'process_was_not_interrupted' }) } catch (error) {
+      trace7Armed = false;
+      response.status(500).json({ error: error instanceof Error ? error.message : 'trace7_interruption_failed' });
     }
   });
   app.post('/proof-control/stop', (_request, response) => {
@@ -285,7 +382,22 @@ try {
     if (!response.ok) throw new Error(`native ingest failed ${ response.status }: ${ await response.text() }`);
     return response.json();
   };
-  await ingest({ snapshot: initial });
+  if (trace7Mode !== 'recover') {
+    await ingest({ snapshot: initial });
+  } else {
+    const [detached] = await manager.listNativeSources();
+    if (!detached || detached.state !== 'reselect-required') throw new Error('Persisted native source did not require reselection');
+    if (sourceHandle === detached.handle) throw new Error('Trace 7 reselection reused the revoked source handle');
+    const rebound = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/reselect-interrupted-publication`, {
+      method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify({
+        fileId: detached.fileId, previousHandle: detached.handle, handle: sourceHandle,
+        sourceRevision: initial.revision, sourceHash: initial.contentHash,
+      }),
+    });
+    if (!rebound.ok) throw new Error(`Interrupted publication reselection failed ${ rebound.status }: ${ await rebound.text() }`);
+    if (!(await rebound.json()).recovered) throw new Error('Persisted fixture had no interrupted publication to recover');
+    lockedSourceHandle = detached.handle;
+  }
   const createBroker = () => new SullaFilesNativeBroker({
     actions: () => manager.nativePublicationActions(),
     sources: () => manager.listNativeSources(),
@@ -300,6 +412,24 @@ try {
       fileId: input.fileId, baseVersionId: input.baseVersionId, filesPath: input.filesPath,
     }),
     finish: async(operationId, result) => {
+      if (trace7Mode === 'prepare' && trace7Armed && result.nextSourceRevision) {
+        trace7State = {
+          schema: 1, fixtureKey: trace7Key, phase: 'published-not-acknowledged', databasePort,
+          proofMaster: proofMaster.toString('base64'), signingKey: signingKey.toString('base64'), localToken,
+          fuseContainer, nativeMacProof, operationId,
+          evidence: {
+            originalSourceRevision: result.originalSourceRevision, originalSourceHash: result.originalSourceHash,
+            currentSourceRevision: result.nextSourceRevision, currentSourceHash: result.currentSourceHash,
+            filesBaseVersionId: result.filesBaseVersionId, currentFilesVersionId: result.currentFilesVersionId,
+          },
+        };
+        await writeTrace7State(trace7State);
+        const evidence = { trace7: 'published-not-acknowledged', fixtureKey: trace7Key, operationId,
+          ...trace7State.evidence, next: 'relaunch with SULLA_FILES_PROOF_TRACE7=recover and SULLA_FILES_PROOF_TRACE7_KEY set to fixtureKey' };
+        await new Promise(resolvePromise => process.stdout.write(`${ JSON.stringify(evidence) }\n`, resolvePromise));
+        process.kill(process.pid, 'SIGKILL');
+        await new Promise(() => undefined);
+      }
       const finished = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ operationId }/finish`, {
         method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify(result),
       });
@@ -310,6 +440,38 @@ try {
   broker = createBroker();
   broker.resume();
   brokerTimer = setInterval(() => broker.poll().catch(error => console.error('[synthetic-broker]', error.message)), 25);
+  runInterruptedPublication = trace7Mode === 'prepare' ? async() => {
+    trace7Armed = true;
+    await ordinaryFuseEdit(`trace 7 interrupted publication ${ new Date().toISOString() }\n`);
+  } : undefined;
+  if (trace7Mode === 'recover') {
+    clearInterval(brokerTimer);
+    brokerTimer = undefined;
+    const [action] = await manager.nativePublicationActions();
+    const expected = trace7State.evidence;
+    const exactPending = action?.state === 'recovery-required' && action.operationId === trace7State.operationId &&
+      action.sourceRevision === expected.originalSourceRevision && action.sourceHash === expected.originalSourceHash &&
+      action.desiredHash === expected.currentSourceHash && action.baseVersionId === expected.filesBaseVersionId &&
+      action.versionId === expected.currentFilesVersionId;
+    if (!exactPending) throw new Error('Persisted publication action did not retain the exact source and Files identities');
+    await broker.poll();
+    await waitFor(async() => !(await manager.nativePublicationActions()).length, 'Interrupted publication acknowledgement did not reach a durable terminal state');
+    const remaining = await manager.nativePublicationActions();
+    const [recovered] = await manager.listNativeSources();
+    const current = await gateway.read(sourceHandle);
+    const oldHandleRevoked = await gateway.read(lockedSourceHandle).then(() => false, () => true);
+    const exactRecovered = !remaining.length && recovered?.state === 'active' && recovered.versionId === expected.currentFilesVersionId &&
+      recovered.sourceRevision === expected.currentSourceRevision && recovered.sourceHash === expected.currentSourceHash &&
+      current.revision === expected.currentSourceRevision && current.contentHash === expected.currentSourceHash;
+    if (!exactRecovered || !oldHandleRevoked) throw new Error('Interrupted publication recovery did not preserve exact source and Files outcomes');
+    console.log(JSON.stringify({
+      trace7: 'recovered-and-cleaning', fixtureKey: trace7Key, operationId: action.operationId,
+      oldHandleRevoked, newHandleActive: true, originalSourceRevision: action.sourceRevision,
+      originalSourceHash: action.sourceHash, currentSourceRevision: current.revision, currentSourceHash: current.contentHash,
+      filesBaseVersionId: action.baseVersionId, currentFilesVersionId: recovered.versionId,
+    }));
+    await stop(0);
+  }
   runLockDrain = async() => {
     if (lockedSourceHandle) throw new Error('Synthetic source session is already locked');
     const [source] = await manager.listNativeSources();
@@ -399,9 +561,10 @@ try {
     url: `http://127.0.0.1:${ port }/proof-control/`,
     ...(nativeMacProof ? {} : { vmUrl: `http://${ reachableAddress() }:${ port }/proof-control/` }),
     fixture: basename(root),
+    ...(trace7Mode ? { trace7Mode, fixtureKey: trace7Key } : {}),
     sourceHandle: `${ sourceHandle.slice(0, 6) }…`,
     isolation: nativeMacProof ? 'native macOS gateway + disposable Docker FUSE + temporary PostgreSQL' : 'temporary Linux gateway/FUSE/PostgreSQL',
-    controls: ['fuse-edit', 'external-edit', 'concurrent-conflict', 'lock-drain', 'session-recovery', 'reset', 'status', 'stop'],
+    controls: ['fuse-edit', 'external-edit', 'concurrent-conflict', 'lock-drain', 'session-recovery', ...(trace7Mode === 'prepare' ? ['trace7-interrupt'] : []), 'reset', 'status', 'stop'],
   }));
 } catch (error) {
   console.error(error instanceof Error ? error.stack : String(error));

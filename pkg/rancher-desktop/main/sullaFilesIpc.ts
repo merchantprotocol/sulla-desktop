@@ -416,6 +416,17 @@ export function initSullaFilesIpc():void {
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
     try {
       const snapshot = await gateway.read(handle);
+      const recovered = await getSullaFilesWatcher().reselectInterruptedNativePublication({
+        fileId:         source.fileId,
+        previousHandle: source.handle,
+        handle,
+        sourceRevision: snapshot.revision,
+        sourceHash:     snapshot.contentHash,
+      });
+      if (recovered) {
+        gateway.revoke(source.handle);
+        return { fileId: source.fileId, versionId: source.versionId };
+      }
       const result = await getSullaFilesWatcher().ingestNativeSource({
         operationId:    randomUUID(),
         handle,
@@ -453,9 +464,18 @@ export function initSullaFilesIpc():void {
       baseVersionId:  input.versionId,
     });
     try {
+      const before = await getSullaFilesSourceGateway().read(input.handle);
+      if (before.revision !== input.sourceRevision) throw new Error('Native source changed before publication');
       const result = await getSullaFilesSourceGateway().write(input.handle, input.sourceRevision, bytes);
       if (result.contentHash !== contentHash) throw new Error('Native source publication returned an unexpected content hash');
-      await watcher.finishNativePublication(operationId, { nextSourceRevision: result.revision });
+      await watcher.finishNativePublication(operationId, {
+        nextSourceRevision:      result.revision,
+        originalSourceRevision: input.sourceRevision,
+        originalSourceHash:     before.contentHash,
+        currentSourceHash:      contentHash,
+        filesBaseVersionId:     input.versionId,
+        currentFilesVersionId:  input.versionId,
+      });
       return { operationId, sourceRevision: result.revision, contentHash: result.contentHash };
     } catch (error) {
       await watcher.finishNativePublication(operationId, { error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);

@@ -26,6 +26,20 @@ function dependencies(overrides:Partial<NativeSourceBrokerDependencies> = {}):Na
   };
 }
 
+function action(overrides:Partial<Awaited<ReturnType<NativeSourceBrokerDependencies['actions']>>[number]> = {}) {
+  return {
+    operationId:    randomUUID(),
+    handle:         'h'.repeat(43),
+    sourceRevision: 'a'.repeat(64),
+    sourceHash:     'c'.repeat(64),
+    desiredHash:    'b'.repeat(64),
+    baseVersionId:  randomUUID(),
+    versionId:      randomUUID(),
+    state:          'publishing' as const,
+    ...overrides,
+  };
+}
+
 describe('native source broker lifecycle', () => {
   test('rejects action enrollment when a poll returns after lock began', async() => {
     const pendingActions = deferred<Awaited<ReturnType<NativeSourceBrokerDependencies['actions']>>>();
@@ -36,7 +50,7 @@ describe('native source broker lifecycle', () => {
     const poll = broker.poll();
     const lock = broker.suspendAndDrain(() => Promise.resolve());
 
-    pendingActions.resolve([{ operationId: randomUUID(), handle: 'h'.repeat(43), sourceRevision: 'a'.repeat(64), desiredHash: 'b'.repeat(64) }]);
+    pendingActions.resolve([action()]);
     await Promise.all([poll, lock]);
     expect(content).not.toHaveBeenCalled();
   });
@@ -48,7 +62,7 @@ describe('native source broker lifecycle', () => {
     const finish = jest.fn(() => Promise.resolve());
     const read = jest.fn(() => sourceRead.promise);
     const broker = new SullaFilesNativeBroker(dependencies({
-      actions: () => Promise.resolve([{ operationId: randomUUID(), handle: 'h'.repeat(43), sourceRevision: 'a'.repeat(64), desiredHash }]),
+      actions: () => Promise.resolve([action({ desiredHash })]),
       content: () => Promise.resolve(bytes),
       read,
       finish,
@@ -65,6 +79,31 @@ describe('native source broker lifecycle', () => {
     sourceRead.resolve({ bytes, contentHash: desiredHash, revision: 'b'.repeat(64) });
     await Promise.all([poll, lock]);
     expect(finish).not.toHaveBeenCalled();
+  });
+
+  test('acknowledges a recovered publication with the exact durable source and Files identities', async() => {
+    const bytes = Buffer.from('already published synthetic bytes');
+    const desiredHash = createHash('sha256').update(bytes).digest('hex');
+    const pending = action({ desiredHash, state: 'recovery-required' });
+    const finish = jest.fn(() => Promise.resolve());
+    const broker = new SullaFilesNativeBroker(dependencies({
+      actions: () => Promise.resolve([pending]),
+      content: () => Promise.resolve(bytes),
+      read:    () => Promise.resolve({ bytes, contentHash: desiredHash, revision: 'd'.repeat(64) }),
+      finish,
+    }));
+
+    broker.resume();
+    await broker.poll();
+    while (!finish.mock.calls.length) await Promise.resolve();
+    expect(finish).toHaveBeenCalledWith(pending.operationId, {
+      nextSourceRevision:      'd'.repeat(64),
+      originalSourceRevision: pending.sourceRevision,
+      originalSourceHash:     pending.sourceHash,
+      currentSourceHash:      pending.desiredHash,
+      filesBaseVersionId:     pending.baseVersionId,
+      currentFilesVersionId:  pending.versionId,
+    });
   });
 });
 

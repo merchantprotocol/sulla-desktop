@@ -500,11 +500,19 @@ class SullaFilesWatcher {
     if (!response.ok) throw new Error(`Native source publication planning failed (${ response.status }): ${ await response.text() }`);
   }
 
-  async finishNativePublication(operationId:string, result:{ nextSourceRevision?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string; currentSourceHash?: string; currentFilesVersionId?: string }):Promise<void> {
+  async finishNativePublication(operationId:string, result:{ nextSourceRevision?: string; originalSourceRevision?: string; originalSourceHash?: string; currentSourceHash?: string; filesBaseVersionId?: string; currentFilesVersionId?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string }):Promise<void> {
     const response = await this.request(`/v1/local/native-sources/publications/${ encodeURIComponent(operationId) }/finish`, {
       method: 'POST', body: JSON.stringify(result),
     });
     if (!response.ok) throw new Error(`Native source publication finalization failed (${ response.status }): ${ await response.text() }`);
+  }
+
+  async reselectInterruptedNativePublication(input:{ fileId:string; previousHandle:string; handle:string; sourceRevision:string; sourceHash:string }):Promise<boolean> {
+    const response = await this.request('/v1/local/native-sources/reselect-interrupted-publication', {
+      method: 'POST', body: JSON.stringify(input),
+    });
+    if (!response.ok) throw new Error(`Interrupted native publication reselection failed (${ response.status }): ${ await response.text() }`);
+    return Boolean((await response.json() as { recovered?:boolean }).recovered);
   }
 
   private async pollNativePublications():Promise<void> {

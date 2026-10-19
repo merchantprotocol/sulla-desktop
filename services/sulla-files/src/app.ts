@@ -291,7 +291,19 @@ export function createApp(
     }
     const nextRevision = typeof request.body.nextSourceRevision === 'string' ? request.body.nextSourceRevision.toLowerCase() : undefined;
     if (nextRevision !== undefined && !/^[a-f0-9]{64}$/.test(nextRevision)) throw new HttpError(400, 'next source revision is invalid');
-    await nativeSourceManager().finishNativePublication(request.params.id, nextRevision, typeof request.body.error === 'string' ? request.body.error : undefined);
+    const proof = nextRevision === undefined
+      ? undefined
+      : {
+          nextSourceRevision:      nextRevision,
+          originalSourceRevision: String(request.body.originalSourceRevision ?? '').toLowerCase(),
+          originalSourceHash:     String(request.body.originalSourceHash ?? '').toLowerCase(),
+          currentSourceHash:      String(request.body.currentSourceHash ?? '').toLowerCase(),
+          filesBaseVersionId:     String(request.body.filesBaseVersionId ?? ''),
+          currentFilesVersionId:  String(request.body.currentFilesVersionId ?? ''),
+        };
+    if (proof && (![proof.originalSourceRevision, proof.originalSourceHash, proof.currentSourceHash].every(value => /^[a-f0-9]{64}$/.test(value)) ||
+        ![proof.filesBaseVersionId, proof.currentFilesVersionId].every(value => UUID.test(value)))) throw new HttpError(400, 'native publication completion proof is invalid');
+    await nativeSourceManager().finishNativePublication(request.params.id, proof, typeof request.body.error === 'string' ? request.body.error : undefined);
     response.status(204).end();
   } catch (error) { next(error) } });
   app.get('/v1/local/native-sources/actions', async(_request, response, next) => { try {
@@ -307,6 +319,22 @@ export function createApp(
     if (!Array.isArray(handles) || handles.length > 256 || handles.some((handle:unknown) => typeof handle !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(handle))) throw new HttpError(400, 'native source handles are invalid');
     await nativeSourceManager().revalidateNativeSessions(handles);
     response.status(204).end();
+  } catch (error) { next(error) } });
+  app.post('/v1/local/native-sources/reselect-interrupted-publication', async(request, response, next) => { try {
+    const input = request.body as Record<string, unknown>;
+    if (!UUID.test(String(input.fileId ?? '')) ||
+        ![input.previousHandle, input.handle].every(value => typeof value === 'string' && /^[A-Za-z0-9_-]{43}$/.test(value)) ||
+        ![input.sourceRevision, input.sourceHash].every(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value))) {
+      throw new HttpError(400, 'interrupted native publication reselection proof is invalid');
+    }
+    const recovered = await nativeSourceManager().reselectInterruptedNativePublication(input as {
+      fileId:string;
+      previousHandle:string;
+      handle:string;
+      sourceRevision:string;
+      sourceHash:string;
+    });
+    response.json({ recovered });
   } catch (error) { next(error) } });
   app.get('/v1/local/native-sources/actions/:id/content', async(request, response, next) => { try {
     const action = (await nativeSourceManager().nativePublicationActions()).find(item => item.operationId === request.params.id);

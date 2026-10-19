@@ -97,16 +97,54 @@ credentials, bookmarks, capabilities, database credentials, or host paths.
    new handle is indexed, and confirm the revoked handle remains unusable. Use
    **Reselect + recover** immediately after trace 5; the chooser must be used a
    second time for the same generated file.
-7. **Interrupted publication:** stop the isolated proof instance after source
-   publication but before acknowledgement, then relaunch and reselect. Recovery
-   may complete only after comparing the revalidated source revision/hash with
-   the exact Files base/result versions; an operation receipt alone is not
-   sufficient. **This harness does not yet make trace 7 exercisable across an
-   actual process relaunch:** its temporary root and synthetic key are removed
-   on exit by design. Do not cite `live-proof.mjs`, Linux results, or the
-   in-process lock/reselect controls as evidence for trace 7. Native acceptance
-   remains incomplete until a reviewed synthetic-only restart fixture retains
-   its isolated state across two proof-process launches and then removes it.
+7. **Interrupted publication:** run the two-launch sequence below. The first
+   proof process publishes the new synthetic bytes through the production
+   `SullaFilesNativeBroker`, persists only its generated isolated fixture state,
+   and kills itself immediately before the Files acknowledgement request. The
+   second process accepts only the generated fixture key, validates the exact
+   owner/mode/marker of the harness-created state, asks for the same synthetic
+   file through the chooser again, and requires a new opaque handle. The shared
+   production broker may acknowledge recovery only after the original source
+   revision/hash and exact Files base/result versions all match the durable
+   action and the reselected source revision/hash.
+
+   First launch:
+
+   ```sh
+   cd /absolute/path/to/reviewed/sulla-desktop-worktree
+   SULLA_FILES_MACOS_NATIVE_PROOF=1 \
+   SULLA_FILES_PROOF_TRACE7=prepare \
+   SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
+   NODE_OPTIONS=--import=tsx \
+   ./node_modules/.bin/electron \
+     services/sulla-files/experimental/fuse/live-proof.mjs
+   ```
+
+   Select the generated file, then use **Trace 7 interrupt**. The process must
+   end from `SIGKILL` after printing `published-not-acknowledged`; record the
+   printed `fixtureKey`, revisions, hashes, operation id, and Files version ids.
+   A normal exit or a Files acknowledgement is a failed trace.
+
+   Second launch from the same reviewed checkout and commit:
+
+   ```sh
+   cd /absolute/path/to/reviewed/sulla-desktop-worktree
+   SULLA_FILES_MACOS_NATIVE_PROOF=1 \
+   SULLA_FILES_PROOF_TRACE7=recover \
+   SULLA_FILES_PROOF_TRACE7_KEY=<fixture-key-from-first-launch> \
+   SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
+   NODE_OPTIONS=--import=tsx \
+   ./node_modules/.bin/electron \
+     services/sulla-files/experimental/fuse/live-proof.mjs
+   ```
+
+   Reselect the same generated file. Recovery fails closed for a reused handle,
+   a different file, any changed owner/mode/marker, a symlinked fixture, a
+   source revision/hash mismatch, or a different Files base/result version. A
+   successful second process prints `recovered-and-cleaning`, stops the exact
+   owned proof container and PostgreSQL cluster, closes the gateway, and removes
+   the exact marked fixture root before exiting. Verify the container/process
+   checks in Cleanup below after the second launch.
 
 ## Exit criteria
 
@@ -116,9 +154,10 @@ or FUSE-to-host path exists, and all temporary synthetic data is removed. Any
 unexpected acknowledgement, missing visible conflict, reused revoked handle,
 or source/Files hash mismatch fails the proof.
 
-At this revision, trace 7 is explicitly unsupported by the harness, so this
-document is a staging checklist rather than completed native acceptance
-evidence. `SULLA_FILES_NATIVE_SOURCE_READY` must remain `false`.
+The harness makes trace 7 runnable, but this change does not claim native macOS
+evidence. The proof still has to be run from the reviewed commit on macOS with
+the chooser and Docker FUSE. Linux/VM exercise is implementation evidence only.
+`SULLA_FILES_NATIVE_SOURCE_READY` remains `false`.
 
 ## Cleanup and evidence isolation
 
@@ -146,3 +185,13 @@ SHA-256 hashes. Do not capture the chooser, control-page tokens, process
 environment, Docker inspection output, temporary paths, file contents, or
 PostgreSQL logs. The readiness constant remains false after a successful run;
 enabling it requires a separate reviewed change.
+
+Trace 7 retains one owner-only `0700` synthetic fixture root between the two
+processes. Its owner-only `0600` marker contains only generated synthetic keys,
+loopback port metadata, proof resource identity, and the revision/hash/version
+evidence required for restart. It never accepts a caller-supplied directory,
+never follows a fixture/source symlink, never reads Desktop configuration or
+environment database credentials, and never opens Sulla application, wallet,
+or vault data. The retained PostgreSQL cluster, encrypted chunks, source, and
+marker stay within the same 1 GiB disk/RAM acceptance budget above and are
+removed by the successful recovery process.
