@@ -633,7 +633,7 @@
             <b>{{ actionTarget.name }}</b>
             <button v-if="section !== 'trash' && actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
             <button v-else-if="section !== 'trash'" role="menuitem" type="button" @click="runTargetAction('native-open')">Open</button>
-            <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal downloaded copy</button>
+            <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal in folder</button>
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
             <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
@@ -775,15 +775,15 @@ import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesCollisionPolicy, FilesDataSource, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot } from './types';
+import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
-interface OperationItem { fileId?:string; folderPath?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
+interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
 const icons = {
@@ -821,7 +821,15 @@ const icons = {
 const explorer = useFilesExplorerInteractions(props.tabId);
 const operations = useFilesOperationQueue(props.dataSource, props.tabId);
 const { error: queueError, pendingRequest } = operations;
-const operationHistory = computed(() => operations.receipts.value.filter(receipt => receipt.collectionId === snapshot.value?.collection.id));
+const operationHistory = computed(() => {
+  const collectionId = snapshot.value?.collection.id;
+
+  return operations.receipts.value.filter((receipt, index) => receipt.collectionId === collectionId ||
+    receipt.items.some(item =>
+      (item.before && 'collectionId' in item.before && item.before.collectionId === collectionId) ||
+      (item.after && 'collectionId' in item.after && item.after.collectionId === collectionId)) ||
+    (operations.active.value && index === 0));
+});
 const operationReceipt = computed(() => operationHistory.value[0] ?? null);
 const undoReceipt = computed(() => [...operationHistory.value].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).find(receipt => receipt.undoSupported && receipt.state !== 'pending'));
 const collisionItem = computed(() => operationReceipt.value?.items.find(item => item.state === 'failed' && item.error?.code === 'destination-conflict'));
@@ -953,14 +961,14 @@ function toDisplay(file:FilesItem):DisplayEntry {
 
   return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
-function folderEntry(prefix:string, name:string, children:FilesItem[]):DisplayEntry {
+function folderEntry(prefix:string, name:string, children:FilesItem[], folderState?:FilesFolderState):DisplayEntry {
   const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
   const agent = children.length > 0 && children.every(file => file.createdByType === 'agent-run');
   const state = children.some(file => entrySync(file) === 'conflict') ? 'conflict' : children.some(file => entrySync(file) === 'syncing') ? 'syncing' : children.length && children.every(file => entrySync(file) === 'online-only') ? 'online-only' : 'synced';
   const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'kept on this computer';
   const size = children.reduce((sum, file) => sum + file.size, 0);
 
-  return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
+  return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, folderState, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
 }
 const visibleEntries = computed<DisplayEntry[]>(() => {
   let files = section.value === 'trash' ? trashFiles.value : searchResults.value ?? activeFiles.value;
@@ -972,21 +980,29 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
   if (search && section.value === 'trash') files = files.filter(file => file.path.toLowerCase().includes(search));
   const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value);
   const prefix = currentPath.value && section.value === 'files' ? `${ currentPath.value }/` : '';
-  const entries:DisplayEntry[] = []; const folders = new Set<string>();
+  const entries:DisplayEntry[] = []; const folders = new Map<string, FilesFolderState | undefined>();
   for (const file of files) {
     if (!flat && !file.path.startsWith(prefix)) continue;
     const relative = flat ? file.path : file.path.slice(prefix.length); const parts = relative.split('/');
-    if (!flat && (parts.length > 1 || file.mime === 'inode/directory')) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
+    if (!flat && (parts.length > 1 || file.mime === 'inode/directory')) { if (!folders.has(parts[0])) folders.set(parts[0], undefined) } else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
   }
-  if (!flat && section.value === 'files') for (const path of snapshot.value?.folders ?? []) {
-    if (path.startsWith(prefix) && path.length > prefix.length) folders.add(path.slice(prefix.length).split('/')[0]);
+  if (!flat && section.value === 'files') for (const folder of snapshot.value?.folders ?? []) {
+    const folderPath = typeof folder === 'string' ? folder : folder.path;
+    if (folderPath.startsWith(prefix) && folderPath.length > prefix.length) {
+      const name = folderPath.slice(prefix.length).split('/')[0];
+      const displayedPath = `${ prefix }${ name }`;
+      folders.set(name, typeof folder !== 'string' && folder.path === displayedPath ? folder : folders.get(name));
+    }
   }
-  for (const name of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`))));
+  for (const [name, folderState] of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`)), folderState));
   if (section.value === 'starred') {
     for (const key of starred.value) {
       if (!key.startsWith('folder:')) continue;
       const path = key.slice('folder:'.length); const children = activeFiles.value.filter(file => file.path.startsWith(`${ path }/`));
-      if (children.length) entries.push(folderEntry(`${ path.split('/').slice(0, -1).join('/') }${ path.includes('/') ? '/' : '' }`, path.split('/').at(-1)!, children));
+      if (children.length) {
+        const state = snapshot.value?.folders?.find(folder => typeof folder !== 'string' && folder.path === path);
+        entries.push(folderEntry(`${ path.split('/').slice(0, -1).join('/') }${ path.includes('/') ? '/' : '' }`, path.split('/').at(-1)!, children, typeof state === 'string' ? undefined : state));
+      }
     }
   }
   const filtered = entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date));
@@ -1006,7 +1022,9 @@ const groups = computed(() => [
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
 const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
-const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.collectionId === snapshot.value.collection.id && clipboard.value.targets.length));
+const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
+  (clipboard.value.collectionId === snapshot.value.collection.id ||
+   (props.dataSource.capabilities.crossCollectionOperations === 'stored-same-audience-files' && clipboard.value.targets.every(target => !target.folder)))));
 const canEmptyTrash = computed(() => Boolean(props.dataSource.purgeTrash));
 const quickLookEntries = computed(() => visibleEntries.value.filter(entry => !entry.folder));
 const quickLookIndex = computed(() => quickLookEntry.value ? quickLookEntries.value.findIndex(entry => entry.key === quickLookEntry.value?.key) : -1);
@@ -1133,7 +1151,7 @@ function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.curr
 async function onDrop(event:DragEvent) {
   dragging.value = false;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
-  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return }
+  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); clearInternalDrag(); await perform('move', targets); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
   if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
   const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
@@ -1159,17 +1177,18 @@ function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTarget
 async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
   if (!canDropOnFolder(entry)) return;
   event.preventDefault(); event.stopPropagation();
-  const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(entry.path, target.name) }));
+  const targets = dragTargets.value.map(target => operationTarget(target, entry.path));
   clearInternalDrag();
   if (targets.length) await perform('move', targets);
 }
-function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
+function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path, expectedFolder: entry.folderState } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
+function operationTarget(target:ExplorerTarget, destination:string):OperationItem { return { ...(target.folder ? { folderPath: target.folderPath, expectedFolder: target.expectedFolder } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(destination, target.name) } }
 function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTimer = setTimeout(() => { if (dropTargetKey.value === entry.key && dragTargets.value.length) openPath(entry.path) }, 750) }
 function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
 function updateDragPointer(event:DragEvent) { dragPointer.value = { x: event.clientX, y: event.clientY } }
 function onSurfaceDragOver(event:DragEvent) { updateDragPointer(event); const surface = mainSurface.value; if (!surface) return; const rect = surface.getBoundingClientRect(); if (event.clientY < rect.top + 64) surface.scrollTop -= 18; else if (event.clientY > rect.bottom - 64) surface.scrollTop += 18 }
 function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
-async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(path, target.name) })); clearInternalDrag(); await perform('move', targets) }
+async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); clearInternalDrag(); await perform('move', targets) }
 function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dropTargetKey.value = '' }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
@@ -1273,25 +1292,41 @@ function closeQuickLook() { const wasOpen = Boolean(quickLookEntry.value); quick
 function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quickLookIndex.value + delta]; if (entry) openQuickLook(entry) }
 
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
-function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), targetPath: joinPath(destination, entry.name) })) }
-async function perform(action:'move' | 'copy', items:OperationItem[]) {
+function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => operationTarget(toTarget(entry), destination)) }
+async function perform(action:'move' | 'copy', items:OperationItem[], sourceCollectionId?:string) {
   if (busy.value || !snapshot.value || !items.length) return false;
   if (items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
-  const collectionId = snapshot.value.collection.id;
-  if (operations.supported() && items.every(item => item.fileId)) {
-    const requests:FilesOperationItem[] = items.map(item => ({ itemId: crypto.randomUUID(), action, fileId: item.fileId, expectedVersionId: item.expectedVersionId, expectedRevision: item.expectedRevision ?? snapshot.value!.files.find(file => file.id === item.fileId)?.operationRevision, targetPath: item.targetPath }));
-    return submitReceiptItems(requests);
+  const destinationCollectionId = snapshot.value.collection.id;
+  const collectionId = sourceCollectionId ?? destinationCollectionId;
+  const crossCollection = collectionId !== destinationCollectionId;
+  if (crossCollection && items.some(item => item.folderPath)) { operationError.value = 'Folders can’t be moved or copied between collections yet.'; return false }
+  if (crossCollection && props.dataSource.capabilities.crossCollectionOperations !== 'stored-same-audience-files') { operationError.value = 'These collections don’t support a receipt-backed transfer.'; return false }
+  const receiptSupported = operations.supported() && items.every(item => item.fileId || (item.folderPath && props.dataSource.capabilities.folderReceipts));
+  if (receiptSupported) {
+    const requests:FilesOperationItem[] = items.map(item => item.folderPath ? {
+      itemId: crypto.randomUUID(), kind: 'folder', action, folderPath: item.folderPath, expectedFolder: item.expectedFolder,
+      targetPath: item.targetPath,
+    } : {
+      itemId: crypto.randomUUID(), kind: 'file', action, fileId: item.fileId,
+      expectedVersionId: item.expectedVersionId,
+      expectedRevision: item.expectedRevision ?? (crossCollection ? undefined : snapshot.value!.files.find(file => file.id === item.fileId)?.operationRevision),
+      targetPath: item.targetPath,
+      ...(crossCollection ? { targetCollectionId: destinationCollectionId } : {}),
+    });
+    return submitReceiptItems(requests, collectionId);
   }
-  operationNotice.value = 'This operation reports completion only. Undo, collision choices, cancellation and retry are unavailable for native or folder operations.';
+  if (crossCollection) { operationError.value = 'Cross-collection transfer requires durable operation receipts.'; return false }
+  operationNotice.value = 'This operation reports completion only. Undo, collision choices, cancellation and retry are unavailable.';
   return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
 }
-async function submitReceiptItems(items:FilesOperationItem[]) {
+async function submitReceiptItems(items:FilesOperationItem[], collectionId = snapshot.value?.collection.id) {
   if (!snapshot.value || pendingRequest.value || operations.receipts.value.some(receipt => receipt.state === 'pending')) { operationError.value = 'Resolve the pending operation before starting another.'; return false }
+  if (!collectionId) return false;
   if (items.length > 250) { operationError.value = 'Select at most 250 items for one operation.'; return false }
-  if (items.some(item => item.action !== 'create-folder' && (!item.expectedVersionId || !item.expectedRevision))) { operationError.value = 'The service did not supply a revision for this item. Refresh Files before trying again.'; return false }
+  if (items.some(item => item.kind !== 'folder' && item.action !== 'create-folder' && (!item.expectedVersionId || !item.expectedRevision))) { operationError.value = 'The service did not supply a revision for this item. Refresh Files before trying again.'; return false }
   let receipt:FilesOperationReceipt | null = null;
   operationNotice.value = '';
-  await runMutation(async() => { receipt = await operations.submit({ idempotencyKey: crypto.randomUUID(), collectionId: snapshot.value!.collection.id, items }) });
+  await runMutation(async() => { receipt = await operations.submit({ idempotencyKey: crypto.randomUUID(), collectionId, items }) });
   return Boolean(receipt && (receipt as FilesOperationReceipt).items.every(item => item.state === 'completed'));
 }
 async function undoLastOperation() {
@@ -1325,23 +1360,33 @@ async function commitRename(entry:DisplayEntry) {
   const name = renameValue.value.trim();
   if (!name || name === entry.name) { cancelRename(); return }
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Names can’t contain “/” or be “.” or “..”.'; return }
-  renameCommitting = true; const parent = entry.path.split('/').slice(0, -1).join('/'); const success = await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), targetPath: joinPath(parent, name) }]);
+  renameCommitting = true; const parent = entry.path.split('/').slice(0, -1).join('/'); const success = await perform('move', [{ ...operationTarget(toTarget(entry), parent), targetPath: joinPath(parent, name) }]);
   if (success) cancelRename(); else renameCommitting = false;
 }
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
 async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
 function copyToClipboard(mode:'copy' | 'cut') { if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
-async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(currentPath.value, target.name) }))); if (success && value.mode === 'cut') clipboard.value = null }
+async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => operationTarget(target, currentPath.value)), value.collectionId); if (success && value.mode === 'cut') clipboard.value = null }
 function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
 async function trashSelected() {
   if (busy.value || section.value === 'trash' || !props.dataSource.capabilities.trash) return;
+  if (operations.supported() && props.dataSource.capabilities.folderReceipts) {
+    const items:FilesOperationItem[] = selectedEntries.value.map(entry => entry.folder ? {
+      itemId: crypto.randomUUID(), kind: 'folder', action: 'trash', folderPath: entry.path, expectedFolder: entry.folderState,
+    } : {
+      itemId: crypto.randomUUID(), kind: 'file', action: 'trash', fileId: entry.id,
+      expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision,
+    });
+    if (items.length) await submitReceiptItems(items);
+    return;
+  }
   const files = new Map<string, FilesItem>();
   if (selectedEntries.value.some(entry => entry.folder)) operationNotice.value = 'Trash applies to the selected folders’ files. Empty folder metadata is retained; folder Trash is unavailable.';
   for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) }
   if (!files.size) return;
   if (operations.supported() && selectedEntries.value.every(entry => !entry.folder)) {
-    await submitReceiptItems([...files.values()].map(file => ({ itemId: crypto.randomUUID(), action: 'trash', fileId: file.id, expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision })));
+    await submitReceiptItems([...files.values()].map(file => ({ itemId: crypto.randomUUID(), kind: 'file', action: 'trash', fileId: file.id, expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision })));
     return;
   }
   await runMutation(async() => { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); closeActions(false) });
