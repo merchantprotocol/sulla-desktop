@@ -210,11 +210,6 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'side-panel.html'),
       filename: 'side-panel.html',
     },
-    'files-preview': {
-      entry:    path.join(import.meta.dirname, 'entry', 'files-preview.ts'),
-      template: path.join(import.meta.dirname, 'public', 'files-preview.html'),
-      filename: 'files-preview.html',
-    },
     'capture-studio': {
       entry:    path.join(import.meta.dirname, 'entry', 'capture-studio.ts'),
       template: path.join(import.meta.dirname, 'public', 'capture-studio.html'),

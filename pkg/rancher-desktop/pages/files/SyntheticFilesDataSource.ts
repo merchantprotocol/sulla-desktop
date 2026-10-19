@@ -13,6 +13,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   private paused = false;
   private copySequence = 0;
   private stars = new Set<string>();
+  private folders:FilesItem[] = [];
   private files:FilesItem[] = [
     this.file('synthetic-video', 'Projects/Alpha/demo-recording.mp4', 'video/mp4', 184_000_000, 'version-video'),
     this.file('synthetic-notes', 'Projects/Alpha/meeting-notes.md', 'text/markdown', 12_400, 'version-notes'),
@@ -43,20 +44,29 @@ export class SyntheticFilesDataSource implements FilesDataSource {
 
     return {
       collection: { id: 'synthetic-collection', name: 'Files', home: 'preview', orgId: 'synthetic-org', retentionPolicy: {}, storageQuota: 10_000_000_000, keptBytes: active.reduce((sum, file) => sum + file.size, 0), desktopCount: 0, memberCount: 2, accountName: 'Preview user', accountRole: 'owner', ownerUserId: 'synthetic-user' },
-      files: this.files.map(file => ({ ...file })),
+      files: [...this.files, ...this.folders].map(file => ({ ...file })),
       status: { state: this.paused ? 'paused' : 'synced', pendingFiles: 0, lastSyncAt: iso(0), serverConfigured: false, location: 'local', serverLabel: 'Synthetic preview', indexing: { total: active.length, pending: 0, indexing: 0, indexed, partial: 0, unsupported: 0, failed: 0, complete: indexed === active.length } },
     };
   }
-  async history():Promise<FilesVersion[]> { return Array.from({ length: 7 }, (_, index) => ({ id: `version-${ 7 - index }`, size: 184_000_000 + index * 300_000, deleted: false, created_by_type: index ? 'user' : 'agent-run', created_by_id: index ? 'Jonathon' : 'heartbeat run #4,112', created_at: iso(-index / 24), message: index ? ['Trimmed last 12 seconds', 'Camera bubble moved to corner', 'Uploaded from tray'][index - 1] || 'Recording updated' : 'Transcript added', device_id: index ? 'Mac Studio' : 'heartbeat run #4,112', current: index === 0 })) }
+  async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> { return Array.from({ length: 7 }, (_, index) => ({ id: index === 0 ? currentVersionId : `${ fileId }-version-${ 7 - index }`, size: 184_000_000 + index * 300_000, deleted: false, created_by_type: index ? 'user' : 'agent-run', created_by_id: index ? 'Jonathon' : 'heartbeat run #4,112', created_at: iso(-index / 24), message: index ? ['Trimmed last 12 seconds', 'Camera bubble moved to corner', 'Uploaded from tray'][index - 1] || 'Recording updated' : 'Transcript added', device_id: index ? 'Mac Studio' : 'heartbeat run #4,112', current: index === 0 })) }
   async preview():Promise<FilesPreview> { return { data: new TextEncoder().encode('<h1>Synthetic Files preview</h1>'), mime: 'text/html', path: 'Sulla-made/mockups/03-share.html' } }
   async detail(fileId = 'synthetic-video'):Promise<FilesDetail> { const file = this.files.find(item => item.id === fileId) ?? this.files[0]; return { item: file, capabilities: { canEdit: true, canManage: true, canViewDraft: true, canPublish: true }, provenance: { type: 'synthetic-preview', id: 'fixture' }, version: (await this.history(file.id, file.currentVersionId))[0], recording: file.mime.startsWith('video/') ? { version_id: file.currentVersionId, language: 'en', generator: 'synthetic fixture', duration_seconds: 42, generated_at: iso(0), transcript: [{ start: 0, end: 8, text: 'Synthetic Files preview fixture.' }], chapters: [{ start: 0, end: 42, title: 'Preview fixture' }] } : undefined, links: [], activity: [], access: { role: 'owner', inherited: [] } } }
-  async mediaUrl():Promise<string> { return '' }
+  async mediaUrl(fileId:string):Promise<string> {
+    const file = this.files.find(item => item.id === fileId);
+    if (file?.mime !== 'image/png') return '';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700"><rect width="1200" height="700" fill="#152536"/><rect x="70" y="70" width="1060" height="560" rx="24" fill="#213d54"/><path d="M130 520 390 280l150 140 150-190 380 290H130Z" fill="#5096b3"/><circle cx="900" cy="220" r="72" fill="#a5d8e8"/><text x="130" y="160" fill="#fff" font-family="sans-serif" font-size="42">Synthetic Files QuickLook</text></svg>`;
+    return `data:image/svg+xml;charset=utf-8,${ encodeURIComponent(svg) }`;
+  }
   async search(query:string) { const files = (await this.load()).files.filter(file => !file.deletedAt && file.path.toLowerCase().includes(query.toLowerCase())); return { files, coverage: { total: files.length, pending: 0, indexing: 0, indexed: files.length, partial: 0, unsupported: 0, failed: 0, complete: true } } }
   async reindex() {}
   async setPaused(paused:boolean) { this.paused = paused; return (await this.load()).status }
   async chooseUpload(_destination = '') { return 0 }
   async uploadPaths(_paths:string[], _destination = '') { return 0 }
-  async createFolder(path:string) { const marker = `${ path.replace(/\/$/, '') }/.preview-placeholder`; if (!this.files.some(file => file.path === marker)) this.files.push(this.file(`synthetic-folder-${ ++this.copySequence }`, marker, 'application/octet-stream', 0, `version-folder-${ this.copySequence }`)); }
+  async createFolder(path:string) {
+    const normalized = path.replace(/^\/+|\/+$/g, '');
+    if (!normalized || this.folders.some(folder => folder.path === normalized)) return;
+    this.folders.push({ id: `synthetic-folder-${ ++this.copySequence }`, path: normalized, mime: 'inode/directory', size: 0, updatedAt: iso(0), currentVersionId: '', versionCount: 0, createdByType: 'user', createdById: 'synthetic-user', ownerDisplayName: 'Preview user', syncState: 'synced', indexStatus: 'indexed', indexReasonCode: 'synthetic_fixture', indexReason: 'Synthetic folder metadata.' });
+  }
   async openFolder() {}
   async openFile() {}
   async downloadFile() { return false }
