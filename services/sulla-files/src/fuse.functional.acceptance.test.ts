@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -45,9 +45,10 @@ test('real FUSE mount writes through Files and fails closed on conflict and outa
   const sourceRoot = join(root, 'synthetic-source');
   const mountRoot = join(root, 'mount');
   const proofPath = join(sourceRoot, 'Proof', 'round-trip.txt');
+  const privatePath = join(sourceRoot, 'Private', 'secret.txt');
   const port = 48_000 + (process.pid % 8_000);
-  await Promise.all([mkdir(join(sourceRoot, 'Proof'), { recursive: true }), mkdir(mountRoot, { recursive: true })]);
-  await writeFile(proofPath, 'original synthetic bytes\n');
+  await Promise.all([mkdir(join(sourceRoot, 'Proof'), { recursive: true }), mkdir(join(sourceRoot, 'Private'), { recursive: true }), mkdir(mountRoot, { recursive: true })]);
+  await Promise.all([writeFile(proofPath, 'original synthetic bytes\n'), writeFile(privatePath, 'private synthetic bytes\n')]);
   await run('initdb', ['-D', cluster, '-A', 'trust', '-U', 'postgres', '--no-locale']);
   await run('pg_ctl', ['-D', cluster, '-w', 'start', '-o', `-F -p ${ port } -h 127.0.0.1 -k ${ root }`, '-l', join(root, 'postgres.log')]);
 
@@ -93,6 +94,9 @@ test('real FUSE mount writes through Files and fails closed on conflict and outa
     assert(address && typeof address === 'object');
     const baseUrl = `http://127.0.0.1:${ address.port }`;
     const token = issueCapabilityToken({ sub: config.userId, device_id: config.deviceId, scopes: ['files/*'] }, signingKey);
+    const scopedToken = issueCapabilityToken({ sub: 'synthetic-scoped-viewer', device_id: 'scoped-device', scopes: ['files/*'] }, signingKey);
+    const scopedAgentToken = issueCapabilityToken({ sub: 'synthetic-scoped-viewer', agent_id: 'synthetic-agent', job_id: 'synthetic-run', device_id: 'scoped-agent-device', scopes: ['files/*'] }, signingKey);
+    const wrongScopeToken = issueCapabilityToken({ sub: config.userId, device_id: config.deviceId, scopes: ['project/*'] }, signingKey);
     const auth = { authorization: `Bearer ${ token }` };
     const adapter = join(process.cwd(), 'experimental/fuse/sulla_files_fuse.py');
     fuse = spawn('python3', [adapter, '--url', baseUrl, '--collection', collectionId, mountRoot], {
@@ -100,7 +104,10 @@ test('real FUSE mount writes through Files and fails closed on conflict and outa
     });
     let fuseError = '';
     fuse.stderr?.on('data', chunk => { fuseError += chunk.toString() });
-    await waitFor(async() => run('mountpoint', ['-q', mountRoot]).then(() => true, () => false), `FUSE mount did not become ready: ${ fuseError }`);
+    await waitFor(async() => {
+      if (fuse!.exitCode !== null || fuse!.signalCode) throw new Error(`FUSE adapter exited ${ fuse!.exitCode ?? fuse!.signalCode }: ${ fuseError }`);
+      return run('mountpoint', ['-q', mountRoot]).then(() => true, () => false);
+    }, `FUSE mount did not become ready: ${ fuseError }`, 800);
 
     const mountedFile = join(mountRoot, 'Proof', 'round-trip.txt');
     const ordinaryEdit = Buffer.from('agent wrote through a real FUSE fd\n');
@@ -117,9 +124,43 @@ test('real FUSE mount writes through Files and fails closed on conflict and outa
     assert.equal(downloaded.status, 200);
     assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), ordinaryEdit);
 
+    await db.query(`INSERT INTO folder_shares(collection_id,folder_path,principal_type,principal_id,role,created_by)
+      VALUES($1,'Proof','user','synthetic-scoped-viewer','view',$2)`, [collectionId, config.userId]);
+    const scopedSnapshot = await fetch(`${ baseUrl }/v1/fuse/files?collectionId=${ collectionId }`, { headers: { authorization: `Bearer ${ scopedToken }` } });
+    assert.equal(scopedSnapshot.status, 200);
+    assert.deepEqual((await scopedSnapshot.json() as any[]).map(file => file.path), ['Proof/round-trip.txt']);
+    assert.equal((await fetch(`${ baseUrl }/v1/fuse/files?collectionId=${ collectionId }`, { headers: { authorization: `Bearer ${ scopedAgentToken }` } })).status, 403);
+    assert.equal((await fetch(`${ baseUrl }/v1/fuse/files?collectionId=${ collectionId }`, { headers: { authorization: `Bearer ${ wrongScopeToken }` } })).status, 401);
+
+    const untrackedCollection = randomUUID();
+    const untrackedFile = randomUUID();
+    const untrackedVersion = randomUUID();
+    await db.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext)
+      VALUES($1,$2,'Untracked collision','knowledge','desktop-only','{}','{}')`, [untrackedCollection, config.userId]);
+    await db.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size)
+      VALUES($1,$2,$3,'user',$4,'text/plain',1)`, [untrackedFile, untrackedCollection, originalFile.path, config.userId]);
+    await db.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,size,created_by_type,created_by_id,device_id)
+      VALUES($1,$2,$3,1,'user',$4,'collision-device')`, [untrackedVersion, untrackedFile, untrackedCollection, config.userId]);
+    await db.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [untrackedFile, untrackedVersion]);
+    await db.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
+      VALUES($1,$2,$3,$4,1,0,'default')`, [untrackedCollection, originalFile.path, untrackedFile, '0'.repeat(64)]);
+    assert.equal((await fetch(`${ baseUrl }/v1/fuse/files/${ untrackedFile }/content`, { headers: auth })).status, 404);
+
+    const noOp = await fetch(`${ baseUrl }/v1/fuse/files/${ originalFile.id }/content`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'application/octet-stream', 'if-match': `"${ originalFile.current_version_id }"`, 'x-sulla-source-hash': createHash('sha256').update(ordinaryEdit).digest('hex') }, body: ordinaryEdit,
+    });
+    assert.equal(noOp.status, 200);
+    assert.equal((await noOp.json() as any).versionId, originalFile.current_version_id);
+    assert.deepEqual(await readFile(proofPath), ordinaryEdit);
+
     const externalBytes = Buffer.from('external writer refresh\n');
     await writeFile(proofPath, externalBytes);
     assert.deepEqual(Buffer.from((await run('cat', [mountedFile])).stdout), externalBytes);
+    const staleNoOp = await fetch(`${ baseUrl }/v1/fuse/files/${ originalFile.id }/content`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'application/octet-stream', 'if-match': `"${ originalFile.current_version_id }"`, 'x-sulla-source-hash': createHash('sha256').update(ordinaryEdit).digest('hex') }, body: ordinaryEdit,
+    });
+    assert.equal(staleNoOp.status, 409);
+    assert.deepEqual(await readFile(proofPath), externalBytes);
     filesResponse = await fetch(`${ baseUrl }/v1/files?collectionId=${ collectionId }`, { headers: auth });
     files = await filesResponse.json() as any[];
     assert.equal(Number(files.find(file => file.id === originalFile.id).size), externalBytes.length);
@@ -157,6 +198,25 @@ test('real FUSE mount writes through Files and fails closed on conflict and outa
     await waitForChild(outageWriter, 'outage writer');
     assert.equal((await readFile(outageResult, 'utf8')).trim(), '5');
     assert.deepEqual(await readFile(proofPath), concurrentBytes);
+
+    const beforeFailedIngestion = (await manager.fuseSnapshot(collectionId)).find(file => file.id === originalFile.id)!;
+    const failedBytes = Buffer.from('published bytes retained after ingestion failure\n');
+    const scanRoot = (manager as any).scanRoot.bind(manager);
+    (manager as any).scanRoot = async() => { throw new Error('injected ingestion failure after publication') };
+    let failedWrite:any;
+    try {
+      await manager.fuseWrite(originalFile.id, beforeFailedIngestion.versionId, beforeFailedIngestion.sourceHash, failedBytes, { userId: config.userId, deviceId: 'failure-device', kind: 'capability' });
+    } catch (error) { failedWrite = error }
+    (manager as any).scanRoot = scanRoot;
+    assert.equal(failedWrite?.status, 503);
+    assert.match(failedWrite?.message ?? '', /durably ingest/);
+    assert.ok(failedWrite?.conflictPath);
+    assert.deepEqual(await readFile(proofPath), failedBytes);
+    assert.deepEqual(await readFile(join(sourceRoot, failedWrite.conflictPath)), failedBytes);
+    const operationFiles = await readdir(join(sourceRoot, '.sulla-trash', '.operations'), { recursive: true });
+    const retainedBackup = operationFiles.find(path => path.endsWith('.source'));
+    assert.ok(retainedBackup, 'the prior source must remain in private recovery storage');
+    assert.deepEqual(await readFile(join(sourceRoot, '.sulla-trash', '.operations', retainedBackup)), concurrentBytes);
   } finally {
     await run('fusermount3', ['-u', mountRoot]).catch(() => undefined);
     if (fuse && fuse.exitCode === null) fuse.kill('SIGTERM');

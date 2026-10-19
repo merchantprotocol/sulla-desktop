@@ -207,13 +207,18 @@ export class LocalFilesManager {
   }
 
   /** Experimental VM adapter contract. Synthetic tracked roots only. */
-  async fuseSnapshot(collectionId:string):Promise<FuseTrackedFile[]> {
+  async fuseSnapshot(collectionId:string, scope?:{ paths:string[]; fileIds:string[] }):Promise<FuseTrackedFile[]> {
     const root = this.rootForCollection(collectionId);
     await this.serial(() => this.scanRoot(root));
+    const params:any[] = [collectionId, root.id];
+    const scopeFilter = scope
+      ? ` AND (f.id::text=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($4::text[]) granted(path) WHERE f.path=granted.path OR starts_with(f.path, granted.path||'/')))`
+      : '';
+    if (scope) params.push(scope.fileIds, scope.paths);
     const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
       w.content_hash,w.mtime_ms FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
       WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND w.root_id=$2
-        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) ORDER BY f.path`, [collectionId, root.id]);
+        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)${ scopeFilter } ORDER BY f.path`, params);
     return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
       id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
       size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms),
@@ -243,6 +248,31 @@ export class LocalFilesManager {
     const desiredHash = createHash('sha256').update(bytes).digest('hex');
     return this.serial(() => mutations.runExclusive([initial.path, stagedPath, backupPath, conflict], async() => {
       const current = await this.fuseRow(fileId);
+      if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash) {
+        if (desiredHash === expectedSourceHash) {
+          throw Object.assign(new Error('Tracked source changed before the no-op FUSE write was verified; no source bytes were replaced'), { status: 409 });
+        }
+        const output = await mutations.openPrivateExclusive(stagedPath);
+        try {
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const result = await output.write(bytes, offset);
+            if (!result.bytesWritten) throw new Error('FUSE staging made no write progress');
+            offset += result.bytesWritten;
+          }
+          await output.sync();
+        } finally { await output.close() }
+        const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: file => this.verifyHash(file, desiredHash) });
+        await mutations.finalizePublication(publication);
+        await this.scanRoot(root);
+        throw Object.assign(new Error('Tracked source changed before the FUSE write was committed; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict });
+      }
+      const verifyExpected = (file:PinnedRegularFile) => this.verifyHash(file, expectedSourceHash);
+      if (desiredHash === expectedSourceHash) {
+        const unchanged = await mutations.pinVerified(current.path, verifyExpected);
+        try { await unchanged.assertUnchanged() } finally { await unchanged.close() }
+        return current;
+      }
       const output = await mutations.openPrivateExclusive(stagedPath);
       try {
         let offset = 0;
@@ -253,14 +283,7 @@ export class LocalFilesManager {
         }
         await output.sync();
       } finally { await output.close() }
-      const verifyExpected = (file:PinnedRegularFile) => this.verifyHash(file, expectedSourceHash);
       const verifyDesired = (file:PinnedRegularFile) => this.verifyHash(file, desiredHash);
-      if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash) {
-        const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: verifyDesired });
-        await mutations.finalizePublication(publication);
-        await this.scanRoot(root);
-        throw Object.assign(new Error('Tracked source changed before the FUSE write was committed; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict });
-      }
       let receipt:ReplacementReceipt | undefined;
       try {
         receipt = await mutations.replaceVerified({ staged: stagedPath, target: current.path, backup: backupPath, conflict, verifyStaged: verifyDesired, verifyTarget: verifyExpected });
@@ -291,10 +314,12 @@ export class LocalFilesManager {
 
   private async fuseRow(fileId:string):Promise<FuseTrackedFile> {
     const result = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
-      w.content_hash,w.mtime_ms FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      w.content_hash,w.mtime_ms,w.root_id FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
       WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [fileId]);
     const row = result.rows[0];
     if (!row || isProtectedPath(row.path)) throw Object.assign(new Error('Tracked file is unavailable'), { status: 404 });
+    const root = this.rootForCollection(row.collection_id);
+    if (row.root_id !== root.id) throw Object.assign(new Error('Tracked file is not watched by its configured Files root'), { status: 409 });
     return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms) };
   }
 
@@ -660,7 +685,9 @@ export class LocalFilesManager {
   private async ignores(root:FileRootConfig):Promise<string[]> { try { return [...DEFAULT_IGNORES, ...root.exclusions, ...(await readFile(join(root.path, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return [...DEFAULT_IGNORES, ...root.exclusions] } }
   private safe(relativePath:string, root = this.roots.find(item => item.primary)!):string { const absolute = resolve(root.path, relativePath); if (absolute !== root.path && !absolute.startsWith(`${ root.path }${ sep }`)) throw new Error('path escapes Files folder'); return absolute }
   private rootForCollection(collectionId:string):FileRootConfig {
-    return this.roots.find(root => this.rootCollections.get(root.id) === collectionId) ?? this.roots.find(root => root.primary)!;
+    const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+    if (!root) throw Object.assign(new Error('Collection is not mapped to a configured Files root'), { status: 404 });
+    return root;
   }
 
   private async diskFiles(configuredRoot:FileRootConfig, current = configuredRoot.path, prefix = '', patterns?:string[]):Promise<DiskScan> {

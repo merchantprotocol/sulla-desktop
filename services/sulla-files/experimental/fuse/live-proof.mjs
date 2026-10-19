@@ -11,10 +11,10 @@ import { promisify } from 'node:util';
 import express from 'express';
 import pg from 'pg';
 
-import { createApp } from '../../dist/app.js';
-import { migrate } from '../../dist/db.js';
-import { FilesKeyring } from '../../dist/keyring.js';
-import { LocalFilesManager } from '../../dist/localManager.js';
+import { createApp } from '../../src/app.ts';
+import { migrate } from '../../src/db.ts';
+import { FilesKeyring } from '../../src/keyring.ts';
+import { LocalFilesManager } from '../../src/localManager.ts';
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));

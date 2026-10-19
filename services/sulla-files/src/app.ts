@@ -236,9 +236,14 @@ export function createApp(
   app.get('/v1/fuse/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
     if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    await requireCollection(request, collectionId, 'view');
+    const required = effectiveRight(request, 'view');
+    const access = await requireCollection(request, collectionId, 'view', true, true);
+    const scope = access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required] ? undefined : {
+      paths: access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]).map(grant => grant.folderPath),
+      fileIds: access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]).map(grant => grant.fileId),
+    };
     response.setHeader('Cache-Control', 'private, no-store');
-    response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
+    response.json(await requireFuseExperiment().fuseSnapshot(collectionId, scope));
   } catch (error) { next(error) } });
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
     await requireFile(request, request.params.id, 'view');
