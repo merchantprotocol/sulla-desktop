@@ -60,17 +60,13 @@ button,
 
 //btn roles
 .role-primary {
-  background: var(--primary);
-  color: var(--primary-text);
+  background: var(--primary-btn-bg, var(--primary));
+  color: var(--primary-btn-text, var(--primary-text, #fff));
 
-  &:hover {
-    background-color: var(--primary-hover-bg);
-    color: var(--primary-text);
-  }
-
+  &:hover,
   &:focus {
-    background-color: var(--primary-hover-bg);
-    color: var(--primary-text);
+    background-color: var(--primary-btn-hover-bg, var(--primary-hover-bg));
+    color: var(--primary-btn-text, var(--primary-text, #fff));
   }
 }
 
