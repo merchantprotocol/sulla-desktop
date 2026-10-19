@@ -49,7 +49,7 @@ git -C "$repository_root" archive --format=tar HEAD | tar -x -C "$source_root"
 ln -s "$native_dependencies" "$source_root/node_modules"
 
 cd "$source_root"
-PATH="/opt/homebrew/bin:$PATH" \
+PATH="${SULLA_FILES_PROOF_PG_BIN:-/opt/homebrew/bin}:/opt/homebrew/bin:$PATH" \
 NODE_OPTIONS=--import=tsx \
 SULLA_FILES_MACOS_NATIVE_PROOF=1 \
 SULLA_FILES_PROOF_PORT="${SULLA_FILES_PROOF_PORT:-48793}" \
