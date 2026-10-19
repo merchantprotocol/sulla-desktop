@@ -1,5 +1,7 @@
 import { computed, ref } from 'vue';
 
+import type { FilesFolderState } from '../types';
+
 export interface ExplorerLocation {
   collectionId: string;
   section: string;
@@ -10,6 +12,7 @@ export interface ExplorerTarget {
   key: string;
   fileId?: string;
   folderPath?: string;
+  expectedFolder?: FilesFolderState;
   expectedVersionId?: string;
   expectedRevision?: string;
   path: string;

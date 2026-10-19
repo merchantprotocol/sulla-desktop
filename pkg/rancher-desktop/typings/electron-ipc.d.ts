@@ -516,8 +516,15 @@ export interface IpcMainInvokeEvents {
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
   'files-preferences:remove-root': (id: string) => void;
   'sulla-files:collections':     () => any[];
-  'sulla-files:folders': (input: { collectionId:string }) => string[];
-  'sulla-files:operation-capabilities': (input: { collectionId:string }) => { enabled:boolean; reason?:string };
+  'sulla-files:folders': (input: { collectionId:string; details?:boolean }) => (string | import('@pkg/pages/files/types').FilesFolderState)[];
+  'sulla-files:operation-capabilities': (input: { collectionId:string }) => {
+    enabled:boolean;
+    reason?:string;
+    folderReceipts?:boolean;
+    nativeFolderReceipts?:boolean;
+    folderCollisionPolicies?:('keep-both' | 'skip')[];
+    crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
+  };
   'sulla-files:operation-submit': (input: import('@pkg/pages/files/types').FilesOperationRequest) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-status': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-cancel': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;

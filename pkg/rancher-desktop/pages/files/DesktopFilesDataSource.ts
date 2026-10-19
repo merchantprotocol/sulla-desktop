@@ -1,4 +1,4 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -14,6 +14,14 @@ interface RemoteCapabilities {
   authenticatedRemote: boolean;
   verifiedRecovery: boolean;
   onlineOnlyReason?: string;
+}
+
+interface OperationCapabilities {
+  enabled:boolean;
+  folderReceipts?:boolean;
+  nativeFolderReceipts?:boolean;
+  folderCollisionPolicies?:('keep-both' | 'skip')[];
+  crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
 }
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
@@ -41,6 +49,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     nativeFilesystem:true,
     nativeReveal:    true,
     durableOperations:false,
+    folderReceipts:  false,
+    nativeFolderReceipts:false,
+    folderCollisionPolicies:[] as ('keep-both' | 'skip')[],
+    crossCollectionOperations:'unavailable' as 'unavailable' | 'stored-same-audience-files',
   };
 
   onlineOnlyReason = '';
@@ -97,6 +109,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   async load():Promise<FilesSnapshot> {
     this.capabilities.durableOperations = false;
+    this.capabilities.folderReceipts = false;
+    this.capabilities.nativeFolderReceipts = false;
+    this.capabilities.folderCollisionPolicies = [];
+    this.capabilities.crossCollectionOperations = 'unavailable';
     const capabilitiesGeneration = ++this.capabilitiesGeneration;
     this.resetRemoteCapabilities();
     const [collections, status] = await Promise.all([
@@ -110,8 +126,14 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     this.collectionId = collection.id;
-    const operationCapabilities = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId: collection.id }).catch(() => ({ enabled: false }));
-    if (capabilitiesGeneration === this.capabilitiesGeneration) this.capabilities.durableOperations = operationCapabilities.enabled === true;
+    const operationCapabilities = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId: collection.id }).catch(() => ({ enabled: false })) as OperationCapabilities;
+    if (capabilitiesGeneration === this.capabilitiesGeneration) Object.assign(this.capabilities, {
+      durableOperations:        operationCapabilities.enabled === true,
+      folderReceipts:           operationCapabilities.folderReceipts === true,
+      nativeFolderReceipts:     operationCapabilities.nativeFolderReceipts === true,
+      folderCollisionPolicies:  Array.isArray(operationCapabilities.folderCollisionPolicies) ? operationCapabilities.folderCollisionPolicies.filter((item:unknown) => item === 'keep-both' || item === 'skip') : [],
+      crossCollectionOperations:operationCapabilities.crossCollectionOperations === 'stored-same-audience-files' ? 'stored-same-audience-files' : 'unavailable',
+    });
     const selectedRoot = roots.find(root => root.collectionId === collection.id);
     this.capabilities.nativeFilesystem = Boolean(selectedRoot?.activation === 'active');
     this.capabilities.upload = this.capabilities.nativeFilesystem;
@@ -140,7 +162,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
-      folders: await ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id }).catch(() => []),
+      folders: await ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id, details: true }).catch(() => []) as FilesFolderState[],
       collection: {
         id:              collection.id,
         name:            collection.name,

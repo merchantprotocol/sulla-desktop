@@ -134,7 +134,7 @@ export interface FilesVersion {
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
   availableCollections?: { id:string; name:string }[];
-  folders?:string[];
+  folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -157,18 +157,23 @@ export interface FilesPreview {
 }
 
 export type FilesRevealResult =
-  | { status:'revealed'; target:'materialized-copy'; fileId:string; versionId:string }
+  | { status:'revealed'; target:'tracked-original' | 'materialized-copy'; fileId:string; versionId:string }
   | { status:'unavailable'; code:'no-local-copy' | 'local-copy-changed'; reason:string };
 
 export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
-export interface FilesOperationState { fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
+export interface FilesFolderState { folderId:string; path:string; revision:string }
+export interface FilesOperationState { collectionId?:string; fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
 export interface FilesOperationItem {
   itemId:string;
   action:'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
+  kind?:'file' | 'folder';
   fileId?:string;
+  folderPath?:string;
+  expectedFolder?:FilesFolderState;
   expectedVersionId?:string;
   expectedRevision?:string;
   targetPath?:string;
+  targetCollectionId?:string;
   collisionPolicy?:FilesCollisionPolicy;
   expectedDestination?:FilesOperationState;
 }
@@ -179,8 +184,8 @@ export interface FilesOperationItemReceipt {
   action:FilesOperationItem['action'];
   state:'pending' | 'completed' | 'skipped' | 'failed' | 'cancelled' | 'undone';
   receiptId:string | null;
-  before:FilesOperationState | null;
-  after:FilesOperationState | { folderId:string; path:string; revision:string } | null;
+  before:FilesOperationState | FilesFolderState | null;
+  after:FilesOperationState | FilesFolderState | null;
   displacedBefore?:FilesOperationState;
   displacedAfter?:FilesOperationState;
   error:{ status:number; code:string; message:string; destination?:FilesOperationState } | null;
@@ -226,6 +231,10 @@ export interface FilesCapabilities {
   nativeFilesystem: boolean;
   nativeReveal?: boolean;
   durableOperations?: boolean;
+  folderReceipts?: boolean;
+  nativeFolderReceipts?: boolean;
+  folderCollisionPolicies?: Exclude<FilesCollisionPolicy, 'replace'>[];
+  crossCollectionOperations?: 'stored-same-audience-files' | 'unavailable';
 }
 
 export type ShareAccessMode = 'view' | 'download';
@@ -340,7 +349,7 @@ export interface FilesDataSource {
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
-  /** Reveals an authorized local copy, never promises an original host file. */
+  /** Reveals an authorized tracked original when available, otherwise a verified downloaded copy. */
   revealFile?(fileId:string, versionId?:string): Promise<FilesRevealResult>;
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean>;
   downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }>;
