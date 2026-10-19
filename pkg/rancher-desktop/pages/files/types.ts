@@ -393,8 +393,12 @@ export interface FilesDataSource {
   recordLock?(fileId:string, status:'ordinary' | 'policy'): Promise<void>;
   unlockRecord?(fileId:string): Promise<void>;
   disposalReview?(fileId:string, decision:'approve' | 'reject' | 'extend', extendedUntil?:string): Promise<void>;
-  restoreTrash(item:FilesTrashItem): Promise<FilesTrashRestoreResult | void>;
-  purgeTrash?(item:FilesTrashFile): Promise<FilesTrashPurgeResult>;
+  /** Legacy completion-only route. Receipt-aware UI must use restoreTrashItem. */
+  restoreTrash?(fileId:string): Promise<void>;
+  restoreTrashItem?(item:FilesTrashItem): Promise<FilesTrashRestoreResult>;
+  /** Legacy no-CAS route. Receipt-aware UI must use purgeTrashItem. */
+  purgeTrash?(fileId:string): Promise<void>;
+  purgeTrashItem?(item:FilesTrashFile): Promise<FilesTrashPurgeResult>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
   updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;

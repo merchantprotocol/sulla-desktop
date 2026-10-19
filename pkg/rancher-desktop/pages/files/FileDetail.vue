@@ -133,7 +133,7 @@ const canCheckin = computed(() => Boolean(props.dataSource.checkin && permission
 const canManageLifecycle = computed(() => permissions.value.canManage);
 const itemDisposalApproved = computed(() => item.disposal?.status === 'approved');
 const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
-const canPurge = computed(() => Boolean(props.trashItem && item.deletedAt && props.dataSource.purgeTrash && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
+const canPurge = computed(() => Boolean(props.trashItem && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
 const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
@@ -229,12 +229,12 @@ async function submitActionForm() {
 async function publish(id:string) { openPublish(id) }
 async function publishCurrent() { openPublish(item.currentVersionId) }
 async function checkin(kind:'major'|'minor') { openCheckin(kind) }
-async function restoreTrash() { if (!props.trashItem) return; if (await runLifecycle(() => props.dataSource.restoreTrash(props.trashItem!).then(() => undefined), false)) emit('restored') }
+async function restoreTrash() { if (!props.trashItem || !props.dataSource.restoreTrashItem) return; if (await runLifecycle(() => props.dataSource.restoreTrashItem!(props.trashItem!).then(() => undefined), false)) emit('restored') }
 async function purgeTrash() {
-  if (!props.dataSource.purgeTrash || !props.trashItem || !canPurge.value || !purgeConfirmed.value) return;
+  if (!props.dataSource.purgeTrashItem || !props.trashItem || !canPurge.value || !purgeConfirmed.value) return;
   busy.value = true; error.value = '';
   try {
-    const result = await props.dataSource.purgeTrash(props.trashItem);
+    const result = await props.dataSource.purgeTrashItem(props.trashItem);
     if (result.status === 'recovery-required') {
       emit('trash-outcome', result.reason || `Metadata was removed, but cleanup still requires recovery (chunks ${ result.chunks }; retained artifacts ${ result.retainedArtifacts }).`);
       return;

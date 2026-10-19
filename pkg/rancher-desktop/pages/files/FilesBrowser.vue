@@ -305,7 +305,7 @@
             <button class="btn sm" type="button" :disabled="busy || !canPaste" @click="pasteClipboard">Paste</button>
           </template>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
-          <template v-if="section === 'trash'"><button class="btn sm" type="button" :disabled="busy" @click="restoreSelected">Restore</button><button class="btn sm danger" type="button" :disabled="busy || !dataSource.purgeTrash" @click="purgeSelected">Delete permanently</button></template><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+          <template v-if="section === 'trash'"><button class="btn sm" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="restoreSelected">Restore</button><button class="btn sm danger" type="button" :disabled="busy || !dataSource.purgeTrashItem" @click="purgeSelected">Delete permanently</button></template><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
         </div>
         </div>
         <div v-if="operationError" class="operation-error" role="alert">
@@ -649,8 +649,8 @@
               <button v-if="dataSource.capabilities.trash" role="menuitem" type="button" class="danger" :disabled="busy" @click="runTargetAction('trash')">Move to Trash</button>
             </template>
             <template v-else>
-              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('restore')">Restore</button>
-              <button role="menuitem" type="button" class="danger" :disabled="busy || actionTarget.folder || !dataSource.purgeTrash" @click="runTargetAction('purge')">Delete permanently</button>
+              <button role="menuitem" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="runTargetAction('restore')">Restore</button>
+              <button role="menuitem" type="button" class="danger" :disabled="busy || actionTarget.folder || !dataSource.purgeTrashItem" @click="runTargetAction('purge')">Delete permanently</button>
             </template>
           </div>
         </Teleport>
@@ -1056,7 +1056,7 @@ const selectedEntries = computed(() => visibleEntries.value.filter(entry => sele
 const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
    (props.dataSource.capabilities.crossCollectionOperations === 'stored-same-audience-files' && clipboard.value.targets.every(target => !target.folder)))));
-const canEmptyTrash = computed(() => Boolean(props.dataSource.purgeTrash));
+const canEmptyTrash = computed(() => Boolean(props.dataSource.purgeTrashItem));
 const quickLookEntries = computed(() => visibleEntries.value.filter(entry => !entry.folder));
 const quickLookIndex = computed(() => quickLookEntry.value ? quickLookEntries.value.findIndex(entry => entry.key === quickLookEntry.value?.key) : -1);
 const marqueeStyle = computed(() => marquee.value ? { left: `${ marquee.value.left }px`, top: `${ marquee.value.top }px`, width: `${ marquee.value.width }px`, height: `${ marquee.value.height }px` } : {});
@@ -1424,11 +1424,12 @@ async function trashSelected() {
 }
 async function restoreSelected() {
   const entries = selectedEntries.value.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashItem } => Boolean(entry.trashItem));
-  if (!entries.length || section.value !== 'trash') return;
+  const restore = props.dataSource.restoreTrashItem?.bind(props.dataSource);
+  if (!entries.length || section.value !== 'trash' || !restore) return;
   await runMutation(async() => {
     let restored = 0; const failures:string[] = [];
     for (const entry of entries) {
-      try { await props.dataSource.restoreTrash(entry.trashItem); restored++ }
+      try { await restore(entry.trashItem); restored++ }
       catch (cause) { failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
     }
     operationNotice.value = restored ? `${ restored } item${ restored === 1 ? '' : 's' } restored from their exact Trash tombstone.` : '';
@@ -1442,8 +1443,8 @@ async function onTrashDetailOutcome(message:string) {
   await refresh(true);
 }
 async function purgeEntries(entries:DisplayEntry[], all = false) {
-  if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrash) return;
-  const purge = props.dataSource.purgeTrash.bind(props.dataSource);
+  if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrashItem) return;
+  const purge = props.dataSource.purgeTrashItem.bind(props.dataSource);
   const files = entries.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashFile } => entry.trashItem?.kind === 'file');
   const folders = entries.filter(entry => entry.trashItem?.kind === 'folder');
   if (!files.length) { operationNotice.value = `${ folders.length } folder${ folders.length === 1 ? '' : 's' } retained because folder permanent deletion is unavailable.`; return }

@@ -283,13 +283,13 @@ export class DesktopFilesDataSource implements FilesDataSource {
   recordLock(fileId:string,status:'ordinary'|'policy'):Promise<void> { return ipcRenderer.invoke('sulla-files:record-lock', { fileId, status }) }
   unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
   disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
-  restoreTrash(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
+  restoreTrashItem(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
     return ipcRenderer.invoke('sulla-files:trash-restore', {
       id: item.id, kind: item.kind, expectedRevision: item.revision,
       currentTombstone: { id: item.currentTombstone.id, receiptId: item.currentTombstone.receiptId },
     });
   }
-  purgeTrash(item:FilesTrashFile):Promise<FilesTrashPurgeResult> {
+  purgeTrashItem(item:FilesTrashFile):Promise<FilesTrashPurgeResult> {
     return ipcRenderer.invoke('sulla-files:trash-purge', {
       id: item.id, expectedRevision: item.revision,
       currentTombstone: { id: item.currentTombstone.id },
