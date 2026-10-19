@@ -73,15 +73,15 @@
   $$('[data-close]').forEach(button => button.addEventListener('click', () => { $(`#${button.dataset.close}`).hidden = true; }));
 
   $('#new-user').addEventListener('submit', async event => {
-    event.preventDefault(); const form = new FormData(event.currentTarget);
+    event.preventDefault(); const formElement=event.currentTarget; const form = new FormData(formElement);
     try {
       await request('/users', { method: 'POST', body: JSON.stringify({ organizationId: state.organizationId, username: form.get('username'), email: form.get('email') || undefined, firstName: form.get('firstName') || undefined, lastName: form.get('lastName') || undefined, temporaryPassword: form.get('temporaryPassword'), roles: form.getAll('roles') }) });
-      event.currentTarget.reset(); event.currentTarget.hidden = true; notice('User created with a temporary password.'); await loadUsers();
+      formElement.reset(); formElement.hidden = true; notice('User created with a temporary password.'); await loadUsers();
     } catch (error) { notice(error.message, true); }
   });
   $('#new-org').addEventListener('submit', async event => {
-    event.preventDefault(); const form = new FormData(event.currentTarget);
-    try { await request('/organizations', { method: 'POST', body: JSON.stringify({ name: form.get('name'), slug: form.get('slug') }) }); event.currentTarget.reset(); event.currentTarget.hidden = true; notice('Organization created.'); await loadSession(); }
+    event.preventDefault(); const formElement=event.currentTarget; const form = new FormData(formElement);
+    try { await request('/organizations', { method: 'POST', body: JSON.stringify({ name: form.get('name'), slug: form.get('slug') }) }); formElement.reset(); formElement.hidden = true; notice('Organization created.'); await loadSession(); }
     catch (error) { notice(error.message, true); }
   });
   $('#users').addEventListener('click', async event => {
