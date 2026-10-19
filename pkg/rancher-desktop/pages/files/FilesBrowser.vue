@@ -260,7 +260,7 @@
             v-if="section === 'trash'"
             class="pill idle"
           >{{ retentionLabel }}</span>
-          <button v-if="section === 'trash'" class="btn sm danger" type="button" :disabled="busy || !canEmptyTrash || !trashFiles.length" @click="emptyTrash">Empty Trash</button>
+          <button v-if="section === 'trash'" class="btn sm danger" type="button" :disabled="busy || !canEmptyTrash || !trashItems.length" @click="emptyTrash">Empty Trash</button>
           <div class="view">
             <label class="sel"><span>Sort</span> {{ sortLabel }}<select
               v-model="sort"
@@ -516,7 +516,7 @@
                     />
                   </td>
                   <td @dblclick.stop>
-                    <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
+                    <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
                     <button v-if="!entry.folder && ['failed', 'unsupported'].includes(entry.indexStatus)" class="btn sm" type="button" :disabled="busy" :title="entry.indexReason" @click.stop="reindex(entry)">Re-index</button>
                     <div
                       v-if="entrySync(entry) === 'conflict' && !entry.folder"
@@ -541,6 +541,7 @@
                       class="actions"
                     >
                       <button
+                        v-if="section !== 'trash'"
                         class="btn ico"
                         type="button"
                         :disabled="!dataSource.capabilities.publicLinks || entry.folder"
@@ -548,6 +549,7 @@
                         @click.stop="shareEntry(entry)"
                         v-html="icons.share"
                       /><button
+                        v-if="section !== 'trash'"
                         class="btn ico"
                         type="button"
                         :title="starred.has(entry.id) ? 'Unstar' : 'Star'"
@@ -611,7 +613,7 @@
                 v-html="syncIcon(entry)"
               />
             </div>
-            <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
+            <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
             <div class="bd">
               <input
                 v-if="editingKey === entry.key"
@@ -635,7 +637,7 @@
             <button v-else-if="section !== 'trash'" role="menuitem" type="button" @click="runTargetAction('native-open')">Open</button>
             <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal in folder</button>
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
-            <button role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
+            <button v-if="section !== 'trash' || !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
             <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
             <template v-if="section !== 'trash'">
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('rename')">Rename</button>
@@ -647,7 +649,7 @@
               <button v-if="dataSource.capabilities.trash" role="menuitem" type="button" class="danger" :disabled="busy" @click="runTargetAction('trash')">Move to Trash</button>
             </template>
             <template v-else>
-              <button role="menuitem" type="button" :disabled="busy || actionTarget.folder" @click="runTargetAction('restore')">Restore</button>
+              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('restore')">Restore</button>
               <button role="menuitem" type="button" class="danger" :disabled="busy || actionTarget.folder || !dataSource.purgeTrash" @click="runTargetAction('purge')">Delete permanently</button>
             </template>
           </div>
@@ -685,12 +687,14 @@
       v-else-if="snapshot"
       :key="`${selected.id}:${selected.currentVersionId}`"
       :item="selected"
+      :trash-item="selected.trashItem?.kind === 'file' ? selected.trashItem : undefined"
       :collection="snapshot.collection"
       :data-source="dataSource"
       :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
       @close="selected = null"
       @share="shareEntry(selected)"
       @restored="selected = null; refresh(true)"
+      @trash-outcome="onTrashDetailOutcome"
       @open-linked="openLinked"
     />
 
@@ -775,14 +779,14 @@ import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot } from './types';
+import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot, FilesTrashFile, FilesTrashItem } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
@@ -870,7 +874,7 @@ const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
-const trashFiles = computed(() => snapshot.value?.files.filter(file => file.deletedAt) ?? []);
+const trashItems = computed(() => snapshot.value?.trash ?? []);
 const totalBytes = computed(() => activeFiles.value.reduce((sum, file) => sum + file.size, 0));
 const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
 const storagePercent = computed(() => quotaBytes.value ? Math.min(100, Math.max(1, totalBytes.value / quotaBytes.value * 100)) : 0);
@@ -917,7 +921,7 @@ const sections = computed(() => [
   { id: 'recent' as Section, label: 'Recent', icon: icons.clock, count: 0, warn: false },
   { id: 'starred' as Section, label: 'Starred', icon: icons.star, count: 0, warn: false },
   { id: 'agent' as Section, label: 'Agent files', icon: icons.agent, count: agentCount.value, warn: true },
-  { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
+  { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: trashItems.value.length, warn: trashItems.value.some(item => item.currentTombstone.undo.state === 'recovery-required') },
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
 const emptyCopy = computed(() => ({ files: props.dataSource.capabilities.nativeFilesystem ? 'Drop files here or choose files. They stay in ~/sulla/files.' : 'Choose files to upload. Files sync to the server and are versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
@@ -961,6 +965,24 @@ function toDisplay(file:FilesItem):DisplayEntry {
 
   return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
+function toTrashDisplay(item:FilesTrashItem):DisplayEntry {
+  const undo = item.currentTombstone.undo.state.replace('-', ' ');
+  if (item.kind === 'file') return {
+    ...toDisplay(item), key: `trash:file:${ item.id }`, trashItem: item,
+    subtitle: `${ kindLabel(item.mime, item.path) } · Trash restore ${ undo }`,
+  };
+
+  return {
+    id: item.id, key: `trash:folder:${ item.id }`, path: item.path,
+    name: item.path.split('/').at(-1) || item.path, folder: true, trashItem: item,
+    agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder,
+    subtitle: `Folder · Trash restore ${ undo }`, mime: 'inode/directory', size: 0,
+    updatedAt: item.deletedAt, deletedAt: item.deletedAt, currentVersionId: '',
+    operationRevision: item.revision, versionCount: 0, createdByType: 'user', createdById: '',
+    syncState: 'synced', indexStatus: 'indexed', indexReason: 'Folder tombstone.',
+    capabilities: item.capabilities,
+  };
+}
 function folderEntry(prefix:string, name:string, children:FilesItem[], folderState?:FilesFolderState):DisplayEntry {
   const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
   const agent = children.length > 0 && children.every(file => file.createdByType === 'agent-run');
@@ -971,13 +993,22 @@ function folderEntry(prefix:string, name:string, children:FilesItem[], folderSta
   return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, folderState, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
 }
 const visibleEntries = computed<DisplayEntry[]>(() => {
-  let files = section.value === 'trash' ? trashFiles.value : searchResults.value ?? activeFiles.value;
+  if (section.value === 'trash') {
+    const search = query.value.trim().toLowerCase();
+    const entries = trashItems.value.filter(item => !search || item.path.toLowerCase().includes(search)).map(toTrashDisplay);
+
+    return entries.sort((a, b) => {
+      const result = sort.value === 'modified' ? Date.parse(a.updatedAt || '0') - Date.parse(b.updatedAt || '0') : sort.value === 'size' ? a.size - b.size : sort.value === 'type' ? a.mime.localeCompare(b.mime) : a.name.localeCompare(b.name, undefined, { numeric: true });
+
+      return sortDirection.value === 'asc' ? result : -result;
+    });
+  }
+  let files = searchResults.value ?? activeFiles.value;
   if (section.value === 'agent') files = files.filter(file => file.createdByType === 'agent-run');
   if (section.value === 'starred') files = files.filter(file => starred.value.has(file.id));
   if (section.value === 'recent') files = [...files].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 50);
   if (section.value === 'shared') files = files.filter(file => sharedFolders.value.some(folder => file.path.startsWith(`${ folder }/`)));
   const search = query.value.trim().toLowerCase();
-  if (search && section.value === 'trash') files = files.filter(file => file.path.toLowerCase().includes(search));
   const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value);
   const prefix = currentPath.value && section.value === 'files' ? `${ currentPath.value }/` : '';
   const entries:DisplayEntry[] = []; const folders = new Map<string, FilesFolderState | undefined>();
@@ -1141,7 +1172,7 @@ async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-async function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else if (section.value === 'trash') selectEntry(entry); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
+async function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
@@ -1391,22 +1422,50 @@ async function trashSelected() {
   }
   await runMutation(async() => { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); closeActions(false) });
 }
-async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length || section.value !== 'trash') return; await runMutation(async() => { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set() }) }
+async function restoreSelected() {
+  const entries = selectedEntries.value.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashItem } => Boolean(entry.trashItem));
+  if (!entries.length || section.value !== 'trash') return;
+  await runMutation(async() => {
+    let restored = 0; const failures:string[] = [];
+    for (const entry of entries) {
+      try { await props.dataSource.restoreTrash(entry.trashItem); restored++ }
+      catch (cause) { failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
+    }
+    operationNotice.value = restored ? `${ restored } item${ restored === 1 ? '' : 's' } restored from their exact Trash tombstone.` : '';
+    operationError.value = failures.length ? `${ failures.length } item${ failures.length === 1 ? '' : 's' } not restored. ${ failures.join(' · ') }` : '';
+    selectedKeys.value = new Set(); closeActions(false);
+  });
+}
+async function onTrashDetailOutcome(message:string) {
+  selected.value = null;
+  operationError.value = message;
+  await refresh(true);
+}
 async function purgeEntries(entries:DisplayEntry[], all = false) {
   if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrash) return;
   const purge = props.dataSource.purgeTrash.bind(props.dataSource);
-  const files = entries.filter(entry => !entry.folder); if (!files.length) return;
-  const warning = all ? 'Permanently delete every eligible item? Retention, record locks, and unapproved disposal still block deletion.' : `Permanently delete ${ files.length } eligible item${ files.length === 1 ? '' : 's' }? Protected items will remain.`;
+  const files = entries.filter((entry):entry is DisplayEntry & { trashItem:FilesTrashFile } => entry.trashItem?.kind === 'file');
+  const folders = entries.filter(entry => entry.trashItem?.kind === 'folder');
+  if (!files.length) { operationNotice.value = `${ folders.length } folder${ folders.length === 1 ? '' : 's' } retained because folder permanent deletion is unavailable.`; return }
+  const warning = all ? 'Permanently delete every eligible file? Retention, record locks, unapproved disposal, and folders without a purge contract will remain.' : `Permanently delete ${ files.length } eligible file${ files.length === 1 ? '' : 's' }? Protected items will remain.`;
   if (!window.confirm(warning)) return;
   await runMutation(async() => {
-    let completed = 0; const failures:string[] = [];
-    for (const file of files) { try { await purge(file.id); completed++ } catch (cause) { failures.push(file.name + ': ' + (cause instanceof Error ? cause.message : String(cause))) } }
-    if (failures.length) operationError.value = completed + ' deleted; ' + failures.length + ' retained. ' + failures.join(' · ');
+    let completed = 0; const recovering:string[] = []; const failures:string[] = [];
+    for (const file of files) {
+      try {
+        const result = await purge(file.trashItem);
+        if (result.status === 'purged') completed++;
+        else recovering.push(`${ file.name }: ${ result.reason || `metadata removed; chunks ${ result.chunks }; retained artifacts ${ result.retainedArtifacts }` }`);
+      } catch (cause) { failures.push(`${ file.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
+    }
+    const retainedFolders = folders.length ? `${ folders.length } folder${ folders.length === 1 ? '' : 's' } retained; folder permanent deletion is unavailable.` : '';
+    operationNotice.value = [completed ? `${ completed } file${ completed === 1 ? '' : 's' } fully disposed.` : '', retainedFolders].filter(Boolean).join(' ');
+    operationError.value = [recovering.length ? `${ recovering.length } file${ recovering.length === 1 ? '' : 's' } require cleanup recovery: ${ recovering.join(' · ') }` : '', failures.length ? `${ failures.length } file${ failures.length === 1 ? '' : 's' } retained: ${ failures.join(' · ') }` : ''].filter(Boolean).join(' ');
     selectedKeys.value = new Set();
   });
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
-function emptyTrash() { return purgeEntries(trashFiles.value.map(toDisplay), true) }
+function emptyTrash() { return purgeEntries(trashItems.value.map(toTrashDisplay), true) }
 async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }

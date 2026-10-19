@@ -1,4 +1,4 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -22,6 +22,30 @@ interface OperationCapabilities {
   nativeFolderReceipts?:boolean;
   folderCollisionPolicies?:('keep-both' | 'skip')[];
   crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
+}
+
+function trashItem(value:FilesApiRecord):FilesTrashItem {
+  if (value.kind === 'folder') {
+    return {
+      kind:             'folder',
+      id:               String(value.id),
+      path:             String(value.path),
+      revision:         String(value.revision),
+      deletedAt:        String(value.deleted_at),
+      currentTombstone: value.currentTombstone,
+      capabilities:     value.capabilities,
+    } as FilesTrashFolder;
+  }
+  const item = filesItem(value as FilesApiFile);
+
+  return {
+    ...item,
+    kind:               'file',
+    revision:           String(value.revision),
+    operationRevision:  String(value.revision),
+    currentVersionId:   String(value.currentTombstone?.id),
+    currentTombstone:   value.currentTombstone,
+  } as FilesTrashFile;
 }
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
@@ -158,7 +182,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    this.files = [...active, ...trash].map(file => filesItem(file));
+    this.files = active.map(file => filesItem(file));
+    const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
@@ -180,6 +205,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       },
       availableCollections,
       files: this.files,
+      trash: trashItems,
       status,
     };
     snapshot.status.indexing = indexCoverage(this.files.filter(file => !file.deletedAt));
@@ -257,8 +283,19 @@ export class DesktopFilesDataSource implements FilesDataSource {
   recordLock(fileId:string,status:'ordinary'|'policy'):Promise<void> { return ipcRenderer.invoke('sulla-files:record-lock', { fileId, status }) }
   unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
   disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
-  restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
-  purgeTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-purge', { fileId }) }
+  restoreTrash(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
+    return ipcRenderer.invoke('sulla-files:trash-restore', {
+      id: item.id, kind: item.kind, expectedRevision: item.revision,
+      currentTombstone: { id: item.currentTombstone.id, receiptId: item.currentTombstone.receiptId },
+    });
+  }
+  purgeTrash(item:FilesTrashFile):Promise<FilesTrashPurgeResult> {
+    return ipcRenderer.invoke('sulla-files:trash-purge', {
+      id: item.id, expectedRevision: item.revision,
+      currentTombstone: { id: item.currentTombstone.id },
+      ...(item.currentTombstone.undo.state === 'available' ? { invalidateUndo: true } : {}),
+    });
+  }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
   keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
   makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }
