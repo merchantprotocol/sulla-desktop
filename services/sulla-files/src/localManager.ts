@@ -191,7 +191,7 @@ export class LocalFilesManager {
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
   }
 
-  async roots():Promise<FileRootStatus[]> {
+  async listRoots():Promise<FileRootStatus[]> {
     const rows = await this.db.query(`SELECT id,display_name,collection_id,sync_mode,paused,exclusions,state,pending_files,last_error,last_scan_at,last_sync_at
       FROM file_roots WHERE enabled=TRUE ORDER BY created_at`);
     return rows.rows.map(row => ({
@@ -212,7 +212,7 @@ export class LocalFilesManager {
     await this.db.query(`UPDATE file_roots SET paused=$2,sync_mode=$3,exclusions=$4,state=$5,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE`,
       [id, configured.paused, configured.syncMode, JSON.stringify(configured.exclusions), configured.paused ? 'paused' : 'idle']);
     if (!configured.paused) await this.rescan();
-    const root = (await this.roots()).find(item => item.id === id);
+    const root = (await this.listRoots()).find(item => item.id === id);
     if (!root) throw Object.assign(new Error('File root is unavailable'), { status: 404 });
     return root;
   }
