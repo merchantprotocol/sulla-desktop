@@ -1,6 +1,6 @@
 import type {
-  FileAccessList, FilesCollisionDestination, FilesDataSource, FilesDetail, FilesFolderReplacementDestination,
-  FilesFolderState, FilesItem, FilesOperationItem,
+  FileAccessList, FilesCapabilities, FilesCollisionDestination, FilesDataSource, FilesDetail, FilesFolderReplacementDestination,
+  FilesFolderSourceSnapshot, FilesFolderState, FilesItem, FilesOperationCapabilities, FilesOperationItem,
   FilesOperationItemReceipt, FilesOperationReceipt, FilesOperationRequest, FilesOperationRetry,
   FilesOperationState, FilesPreview, FilesSnapshot, FilesTrashItem, FilesTrashPurgeResult,
   FilesTrashRestoreResult, FilesTrashTombstone, FilesVersion, FileShare, FolderShare,
@@ -13,7 +13,7 @@ import { isFilesFolderReplacementDestination, isFilesOperationState } from './ty
 const now = Date.now();
 const iso = (days = 0) => new Date(now + days * 86_400_000).toISOString();
 // Synthetic operation state is deliberately scoped to this browser session.
-const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v3';
+const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v4';
 const clone = <T>(value:T):T => JSON.parse(JSON.stringify(value)) as T;
 const canonical = (value:unknown):string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, (item as Record<string, unknown>)[key]])) : item);
@@ -68,7 +68,15 @@ interface SyntheticTrashState {
 interface SyntheticFile extends FilesItem { syntheticTrash?:SyntheticTrashState }
 interface SyntheticFolder extends FilesFolderState { deletedAt?:string; syntheticTrash?:SyntheticTrashState }
 interface SyntheticCollection { id:string; name:string; home:string; files:SyntheticFile[]; folders:SyntheticFolder[] }
-interface SyntheticMutation { before:SyntheticCollection[]; after:SyntheticCollection[]; fileIds:string[]; folderIds:string[] }
+interface SyntheticMutation {
+  before:SyntheticCollection[];
+  after:SyntheticCollection[];
+  beforeFolderShares:FolderShare[];
+  afterFolderShares:FolderShare[];
+  fileIds:string[];
+  folderIds:string[];
+  folderShareIds:string[];
+}
 interface SyntheticOperation {
   request:FilesOperationRequest;
   fingerprint:string;
@@ -92,6 +100,7 @@ interface SyntheticState {
   idempotency:Record<string, { fingerprint:string; operationId:string }>;
   folderReceipts:Record<string, SyntheticFolderReceiptPlan>;
   stars:Record<string, string[]>;
+  folderShares:FolderShare[];
   staleReplaceAdvanced:boolean;
 }
 
@@ -99,16 +108,18 @@ interface SyntheticState {
 export class SyntheticFilesDataSource implements FilesDataSource {
   readonly syntheticPreview = true;
   readonly syntheticPersistenceScope = 'session' as const;
-  capabilities = {
+  capabilities:FilesCapabilities = {
     upload: false, versionHistory: true, restoreVersions: true, trash: true, orgSharing: true,
     publicLinks: true, onlineOnly: false, nativeFilesystem: false, durableOperations: true,
     folderReceipts: true, nativeFolderReceipts: false,
     folderCollisionPolicies: ['replace', 'keep-both', 'skip'] as ('replace' | 'keep-both' | 'skip')[],
-    crossCollectionOperations: 'stored-same-audience-files' as const,
+    crossCollectionOperations: 'all-authorized',
   };
   onlineOnlyReason = 'Synthetic preview';
   private paused = false;
   private state:SyntheticState;
+  private get folderShares() { return this.state.folderShares }
+  private set folderShares(value:FolderShare[]) { this.state.folderShares = value }
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private shares:ShareLink[] = [
     { id: 'share-capture', url: 'https://share.sulla.cloud/v/m3Xp9A', name: 'Screenshot 2026-10-16 at 11.17.02.png', mode: 'view', password: false, expiresAt: iso(30), viewCount: 0, keepAvailable: true, keepUntil: iso(30), displaySharerName: true, servedFrom: 'cloud', assetKind: 'capture', source: 'Copy on Sulla Cloud', createdAt: iso(-1) },
@@ -116,11 +127,11 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     { id: 'share-file', url: 'https://share.sulla.cloud/v/8kQ2vT', name: 'Vault phase 2 walkthrough.mp4', mode: 'view', password: true, expiresAt: iso(13), viewCount: 14, lastViewedAt: iso(-2), keepAvailable: false, displaySharerName: true, servedFrom: 'desktop', assetKind: 'file', source: 'This Mac · live', targetId: 'synthetic-file', targetType: 'file', collectionId: 'synthetic-collection', createdAt: iso(-8) },
     { id: 'share-revoked', url: 'https://share.sulla.cloud/v/Jd9xCp', name: 'Route settlement · week 41', mode: 'view', password: false, viewCount: 12, keepAvailable: false, displaySharerName: true, servedFrom: 'desktop', assetKind: 'artifact', source: 'This Mac', revokedAt: iso(-2), createdAt: iso(-12) },
   ];
-  private folderShares:FolderShare[] = [];
   private fileShares:FileShare[] = [{ id: 'file-share-design', fileId: 'synthetic-video', principalType: 'group', principalId: 'design', principalName: 'Design', role: 'view' }];
 
   constructor() {
     this.state = this.restoreState() ?? this.initialState();
+    this.capabilities.crossCollectionOperations = this.state.selectedCollectionId === 'synthetic-collection' ? 'all-authorized' : 'stored-authorized';
     Object.values(this.state.operations).filter(value => value.receipt.state === 'pending').forEach(value => this.schedule(value.receipt.operationId));
   }
 
@@ -163,15 +174,22 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       files: [
         this.file('synthetic-stored-brief', 'Review/product-brief.md', 'text/markdown', 18_200, 'version-stored-brief', '11'),
         this.file('synthetic-stored-readme', 'Readme.md', 'text/markdown', 3_400, 'version-stored-readme', '12'),
+        this.file('synthetic-stored-replace-file', 'Projects/Alpha/Replace demo/stored-preserved.md', 'text/markdown', 4_800, 'version-stored-replace', '31'),
+        this.file('synthetic-stored-stale-file', 'Projects/Alpha/Stale subtree/stored-existing.txt', 'text/plain', 720, 'version-stored-stale', '36'),
       ],
       folders: [
         { folderId: 'synthetic-stored-review', path: 'Review', revision: '13' },
         { folderId: 'synthetic-stored-empty', path: 'Archive', revision: '14' },
+        { folderId: 'synthetic-stored-projects', path: 'Projects', revision: '32' },
+        { folderId: 'synthetic-stored-alpha', path: 'Projects/Alpha', revision: '33' },
+        { folderId: 'synthetic-stored-replace', path: 'Projects/Alpha/Replace demo', revision: '34' },
+        { folderId: 'synthetic-stored-replace-empty', path: 'Projects/Alpha/Replace demo/Preserved empty', revision: '35' },
+        { folderId: 'synthetic-stored-stale', path: 'Projects/Alpha/Stale subtree', revision: '37' },
       ],
     };
 
     return {
-      revision: 30, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {},
+      revision: 37, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {},
       folderReceipts: {
         'receipt-trash-folder': {
           collectionId: primary.id, rootFolderId: 'synthetic-trash-folder', rootPath: 'Discarded project',
@@ -185,7 +203,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
           ],
         },
       },
-      stars: {}, staleReplaceAdvanced: false,
+      stars: {}, folderShares: [], staleReplaceAdvanced: false,
     };
   }
 
@@ -194,7 +212,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const raw = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(STORAGE_KEY);
       const value = raw ? JSON.parse(raw) as SyntheticState : null;
 
-      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts && typeof value.staleReplaceAdvanced === 'boolean' ? value : null;
+      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts && Array.isArray(value.folderShares) && typeof value.staleReplaceAdvanced === 'boolean' ? value : null;
     } catch { return null }
   }
   private persist() {
@@ -235,16 +253,17 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   private sameFileState(a?:FilesCollisionDestination, b?:FilesCollisionDestination) {
     return isFilesOperationState(a) && isFilesOperationState(b) && a.collectionId === b.collectionId && a.fileId === b.fileId && a.path === b.path && a.versionId === b.versionId && a.revision === b.revision && a.deleted === b.deleted;
   }
+  private folderState(folder:FilesFolderState, collectionId:string):FilesFolderState {
+    return { collectionId, folderId: folder.folderId, path: folder.path, revision: folder.revision };
+  }
   private sameFolderState(a?:FilesFolderState, b?:FilesFolderState) {
-    return Boolean(a && b && a.folderId === b.folderId && a.path === b.path && a.revision === b.revision);
+    return Boolean(a && b && a.collectionId === b.collectionId && a.folderId === b.folderId && a.path === b.path && a.revision === b.revision);
   }
   private sameFolderReplacementDestination(a?:FilesCollisionDestination, b?:FilesCollisionDestination) {
     return isFilesFolderReplacementDestination(a) && isFilesFolderReplacementDestination(b) && this.sameFolderState(a, b) && a.subtreeSignature === b.subtreeSignature;
   }
-  private folderReplacementDestination(collection:SyntheticCollection, path:string):FilesFolderReplacementDestination | undefined {
+  private folderSourceSnapshot(collection:SyntheticCollection, path:string):FilesFolderSourceSnapshot {
     const root = this.activeFolderAt(collection, path);
-
-    if (!root) return undefined;
     const files = collection.files.filter(file => !file.deletedAt && file.path.startsWith(path + '/')).sort((a, b) => a.path.localeCompare(b.path));
     const folders = collection.folders.filter(folder => !folder.deletedAt && (folder.path === path || folder.path.startsWith(path + '/'))).sort((a, b) => a.path.localeCompare(b.path));
     const fileIds = new Set(files.map(file => file.id));
@@ -252,7 +271,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     const fileShares = this.fileShares.filter(share => fileIds.has(share.fileId)).map(share => clone(share)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
     const subtreeSignature = sha256(canonical({
       files: files.map(file => ({ id: file.id, path: file.path, versionId: file.currentVersionId, revision: file.operationRevision ?? '0', deleted: false })),
-      folders: folders.map(folder => ({ folderId: folder.folderId, path: folder.path, revision: folder.revision })),
+      folders: folders.map(folder => this.folderState(folder, collection.id)),
       folderShares,
       publicLinks: [],
       fileSharesSignature: sha256(canonical(fileShares)),
@@ -260,7 +279,12 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       nativeSignature: sha256(canonical({ files: [], directories: [] })),
     }));
 
-    return { folderId: root.folderId, path: root.path, revision: root.revision, subtreeSignature };
+    return { collectionId: collection.id, path, ...(root ? { folderId: root.folderId, revision: root.revision } : {}), subtreeSignature };
+  }
+  private folderReplacementDestination(collection:SyntheticCollection, path:string):FilesFolderReplacementDestination | undefined {
+    const snapshot = this.folderSourceSnapshot(collection, path);
+
+    return snapshot.folderId && snapshot.revision ? { collectionId: snapshot.collectionId, folderId: snapshot.folderId, path: snapshot.path, revision: snapshot.revision, subtreeSignature: snapshot.subtreeSignature } : undefined;
   }
   private activeFileAt(collection:SyntheticCollection, path:string, ignored = new Set<string>()) { return collection.files.find(file => !file.deletedAt && file.path === path && !ignored.has(file.id)) }
   private activeFolderAt(collection:SyntheticCollection, path:string, ignored = new Set<string>()) { return collection.folders.find(folder => !folder.deletedAt && folder.path === path && !ignored.has(folder.folderId)) }
@@ -281,7 +305,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     return {
       collection: { id: collection.id, name: collection.name, home: collection.home, orgId: 'synthetic-org', retentionPolicy: {}, storageQuota: 10_000_000_000, keptBytes: active.reduce((sum, file) => sum + file.size, 0), desktopCount: 0, memberCount: 2, accountName: 'Preview user', accountRole: 'owner', ownerUserId: 'synthetic-user' },
       availableCollections: this.state.collections.map(item => ({ id: item.id, name: item.name })),
-      folders: collection.folders.filter(folder => !folder.deletedAt).map(folder => ({ folderId: folder.folderId, path: folder.path, revision: folder.revision })),
+      folders: collection.folders.filter(folder => !folder.deletedAt).map(folder => this.folderState(folder, collection.id)),
       files: collection.files.map(({ syntheticTrash: _syntheticTrash, ...file }) => ({ ...file })),
       trash: [
         ...collection.files.filter(file => file.deletedAt && file.syntheticTrash?.listed).map(file => {
@@ -298,7 +322,30 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       status: { state: this.paused ? 'paused' : 'synced', pendingFiles: 0, lastSyncAt: iso(), serverConfigured: true, location: 'server', serverLabel: 'Synthetic stored preview', indexing: { total: active.length, pending: 0, indexing: 0, indexed, partial: 0, unsupported: 0, failed: 0, complete: indexed === active.length } },
     };
   }
-  selectCollection(collectionId:string) { this.collection(collectionId); this.state.selectedCollectionId = collectionId; this.persist() }
+  selectCollection(collectionId:string) {
+    this.collection(collectionId); this.state.selectedCollectionId = collectionId;
+    this.capabilities.crossCollectionOperations = collectionId === 'synthetic-collection' ? 'all-authorized' : 'stored-authorized';
+    this.persist();
+  }
+  async operationCapabilities(collectionId:string):Promise<FilesOperationCapabilities> {
+    const available = this.state.collections.some(collection => collection.id === collectionId);
+
+    return {
+      enabled: available,
+      ...(!available ? { reason: 'synthetic-collection-unavailable' } : {}),
+      folderReceipts: available,
+      nativeFolderReceipts: false,
+      folderCollisionPolicies: available ? ['replace', 'keep-both', 'skip'] : [],
+      crossCollectionOperations: !available ? 'unavailable' : collectionId === 'synthetic-collection' ? 'all-authorized' : 'stored-authorized',
+    };
+  }
+  async folderOperationState(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot> {
+    const collection = this.collection(collectionId); const normalized = this.normalizePath(path);
+    const exists = Boolean(this.activeFolderAt(collection, normalized) || collection.files.some(file => !file.deletedAt && file.path.startsWith(normalized + '/')) || collection.folders.some(folder => !folder.deletedAt && folder.path.startsWith(normalized + '/')));
+
+    if (!exists) throw new Error('Synthetic folder was not found');
+    return clone(this.folderSourceSnapshot(collection, normalized));
+  }
   async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> { return Array.from({ length: 7 }, (_, index) => ({ id: index === 0 ? currentVersionId : fileId + '-version-' + (7 - index), size: 184_000_000 + index * 300_000, deleted: false, created_by_type: index ? 'user' : 'agent-run', created_by_id: index ? 'Jonathon' : 'heartbeat run #4,112', created_at: iso(-index / 24), message: index ? ['Trimmed last 12 seconds', 'Camera bubble moved to corner', 'Uploaded from tray'][index - 1] || 'Recording updated' : 'Transcript added', device_id: index ? 'Mac Studio' : 'heartbeat run #4,112', current: index === 0 })) }
   async preview():Promise<FilesPreview> { return { data: new TextEncoder().encode('<h1>Synthetic Files preview</h1>'), mime: 'text/html', path: 'Sulla-made/mockups/03-share.html' } }
   async detail(fileId = 'synthetic-video'):Promise<FilesDetail> { const file = this.state.collections.flatMap(item => item.files).find(item => item.id === fileId) ?? this.currentCollection().files[0]; return { item: file, capabilities: { canEdit: true, canManage: true, canViewDraft: true, canPublish: true }, provenance: { type: 'synthetic-preview', id: 'fixture' }, version: (await this.history(file.id, file.currentVersionId))[0], recording: file.mime.startsWith('video/') ? { version_id: file.currentVersionId, language: 'en', generator: 'synthetic fixture', duration_seconds: 42, generated_at: iso(), transcript: [{ start: 0, end: 8, text: 'Synthetic Files preview fixture.' }], chapters: [{ start: 0, end: 42, title: 'Preview fixture' }] } : undefined, links: [], activity: [], access: { role: 'owner', inherited: [] } } }
@@ -322,7 +369,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const file = item.fileId ? collection.files.find(candidate => candidate.id === item.fileId) : undefined;
       const folder = item.folderPath ? collection.folders.find(candidate => candidate.path === item.folderPath && !candidate.deletedAt) : undefined;
 
-      return { itemId: crypto.randomUUID(), action, kind: item.folderPath ? 'folder' : 'file', ...item, ...(file ? { expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision } : {}), ...(folder ? { expectedFolder: clone(folder) } : {}) };
+      return { itemId: crypto.randomUUID(), action, kind: item.folderPath ? 'folder' : 'file', ...item, ...(file ? { expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision } : {}), ...(folder ? { expectedFolder: this.folderState(folder, collection.id), sourceSubtreeSignature: this.folderSourceSnapshot(collection, folder.path).subtreeSignature } : {}) };
     }) });
 
     while (receipt.state === 'pending') { await new Promise(resolve => setTimeout(resolve, 25)); receipt = await this.getOperation(receipt.operationId) }
@@ -415,7 +462,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (operation.receipt.state === 'pending') this.schedule(id);
   }
   private executeItem(operation:SyntheticOperation, item:FilesOperationItem, receipt:FilesOperationItemReceipt) {
-    const before = clone(this.state.collections); const receiptId = crypto.randomUUID();
+    const before = clone(this.state.collections); const beforeFolderShares = clone(this.folderShares); const receiptId = crypto.randomUUID();
 
     try {
       const override = operation.retryOverrides[item.itemId]; const policy = override?.collisionPolicy ?? item.collisionPolicy; const collection = this.collection(operation.request.collectionId);
@@ -423,7 +470,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       if (item.action === 'create-folder') this.executeCreateFolder(collection, item, receipt, receiptId, policy);
       else if (item.kind === 'folder' || item.folderPath) this.executeFolder(collection, item, receipt, receiptId, policy, override?.expectedDestination ?? item.expectedDestination);
       else this.executeFile(collection, item, receipt, receiptId, policy, override?.expectedDestination ?? item.expectedDestination);
-      if (receipt.state === 'completed') operation.mutations[item.itemId] = this.captureMutation(before, this.state.collections);
+      if (receipt.state === 'completed') operation.mutations[item.itemId] = this.captureMutation(before, this.state.collections, beforeFolderShares, this.folderShares);
     } catch (cause) {
       const error = cause as { status?:number; code?:string; message?:string; destination?:FilesCollisionDestination };
 
@@ -460,7 +507,6 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     }
     if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic destination path is required.' };
     const targetCollection = this.collection(item.targetCollectionId ?? source.id);
-    if (item.targetCollectionId && policy === 'replace') throw { status: 422, code: 'cross-collection-replace-unavailable', message: 'Synthetic cross-collection Replace is unavailable.' };
     const expectedFileDestination = isFilesOperationState(expectedDestination) ? expectedDestination : undefined;
     const target = this.resolveDestination(targetCollection, this.normalizePath(item.targetPath), policy, receipt, new Set<string>(item.action === 'move' ? [file.id] : []), new Set<string>(), expectedFileDestination);
     if (!target) return;
@@ -492,13 +538,25 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     Object.assign(receipt, { receiptId, before: null, after: clone(folder), state: 'completed', error: null, undoSupported: true, retryable: false });
   }
   private executeFolder(collection:SyntheticCollection, item:FilesOperationItem, receipt:FilesOperationItemReceipt, receiptId:string, policy?:FilesOperationItem['collisionPolicy'], expectedDestination?:FilesCollisionDestination) {
-    const sourcePath = this.normalizePath(item.folderPath ?? ''); const folder = collection.folders.find(candidate => !candidate.deletedAt && candidate.path === sourcePath);
+    const sourcePath = this.normalizePath(item.folderPath ?? ''); let folder = collection.folders.find(candidate => !candidate.deletedAt && candidate.path === sourcePath);
+    const sourceState = folder ? this.folderState(folder, collection.id) : undefined;
+    const files = collection.files.filter(file => !file.deletedAt && file.path.startsWith(sourcePath + '/')); let folders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === sourcePath || candidate.path.startsWith(sourcePath + '/')));
 
-    if (!folder || item.expectedFolder && !this.sameFolderState(folder, item.expectedFolder)) throw { code: 'state-conflict', message: 'Synthetic folder or revision changed.' };
-    receipt.before = { folderId: folder.folderId, path: folder.path, revision: folder.revision }; receipt.receiptId = receiptId;
-    const files = collection.files.filter(file => !file.deletedAt && file.path.startsWith(sourcePath + '/')); const folders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === sourcePath || candidate.path.startsWith(sourcePath + '/')));
+    if (!files.length && !folders.length || item.expectedFolder && !this.sameFolderState(sourceState, item.expectedFolder)) throw { code: 'source-conflict', message: 'Synthetic folder identity, collection, or revision changed.' };
+    receipt.before = sourceState ? clone(sourceState) : null; receipt.receiptId = receiptId;
+    const sourceSnapshot = this.folderSourceSnapshot(collection, sourcePath);
+    const targetCollection = this.collection(item.targetCollectionId ?? collection.id); const crossCollection = targetCollection.id !== collection.id;
+
+    if ((crossCollection || item.sourceSubtreeSignature !== undefined) && (!item.sourceSubtreeSignature || !/^[0-9a-f]{64}$/.test(item.sourceSubtreeSignature) || item.sourceSubtreeSignature !== sourceSnapshot.subtreeSignature)) {
+      throw { status: 409, code: 'source-conflict', message: 'The synthetic source folder subtree changed; refresh Files.' };
+    }
     if (item.action === 'trash') {
       const deletedAt = new Date().toISOString();
+
+      if (!folder) {
+        folder = { folderId: this.nextId('synthetic-folder-implicit'), path: sourcePath, revision: this.nextRevision() };
+        collection.folders.push(folder); folders = [folder, ...folders];
+      }
 
       files.forEach(file => {
         const childReceiptId = this.nextId('synthetic-trash-child-receipt');
@@ -520,11 +578,10 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic folder destination is required.' };
       const requestedTarget = this.normalizePath(item.targetPath);
 
-      if (item.targetCollectionId && item.targetCollectionId !== collection.id) throw { status: 422, code: 'cross-collection-folder-unsupported', message: 'Synthetic cross-collection folder transfer is unavailable.' };
-      if (requestedTarget === sourcePath || requestedTarget.startsWith(sourcePath + '/') || sourcePath.startsWith(requestedTarget + '/')) throw { status: 409, code: 'invalid-operation', message: 'A synthetic folder destination cannot overlap its source.' };
+      if (!crossCollection && (requestedTarget === sourcePath || requestedTarget.startsWith(sourcePath + '/') || sourcePath.startsWith(requestedTarget + '/'))) throw { status: 409, code: 'invalid-operation', message: 'A synthetic folder destination cannot overlap its source.' };
       const ignoredFiles = new Set(files.map(file => file.id)); const ignoredFolders = new Set(folders.map(value => value.folderId));
-      const moveIgnoredFiles = item.action === 'move' ? ignoredFiles : new Set<string>(); const moveIgnoredFolders = item.action === 'move' ? ignoredFolders : new Set<string>();
-      const destinationFile = this.activeFileAt(collection, requestedTarget, moveIgnoredFiles); const destinationFolder = this.activeFolderAt(collection, requestedTarget, moveIgnoredFolders);
+      const moveIgnoredFiles = item.action === 'move' && !crossCollection ? ignoredFiles : new Set<string>(); const moveIgnoredFolders = item.action === 'move' && !crossCollection ? ignoredFolders : new Set<string>();
+      const destinationFile = this.activeFileAt(targetCollection, requestedTarget, moveIgnoredFiles); const destinationFolder = this.activeFolderAt(targetCollection, requestedTarget, moveIgnoredFolders);
       let targetPath = requestedTarget;
       let displacedFiles:SyntheticFile[] = []; let displacedFolders:SyntheticFolder[] = []; let recovery:string | undefined;
 
@@ -534,16 +591,16 @@ export class SyntheticFilesDataSource implements FilesDataSource {
 
       if (destinationFile || destinationFolder) {
         if (policy === 'skip') { Object.assign(receipt, { state: 'skipped', error: null, retryable: false, undoSupported: false }); return }
-        if (policy === 'keep-both') targetPath = this.keepBothPath(collection, requestedTarget, moveIgnoredFiles, moveIgnoredFolders);
+        if (policy === 'keep-both') targetPath = this.keepBothPath(targetCollection, requestedTarget, moveIgnoredFiles, moveIgnoredFolders);
         else {
-          const displayed = destinationFolder ? this.folderReplacementDestination(collection, requestedTarget) : undefined;
+          const displayed = destinationFolder ? this.folderReplacementDestination(targetCollection, requestedTarget) : undefined;
 
           if (policy !== 'replace') {
             // This fixture advances only a descendant revision after exposing the
             // snapshot. The unchanged root revision makes the retry depend on the
             // subtree signature, matching the service's stale-tree CAS contract.
             if (destinationFolder?.folderId === 'synthetic-folder-stale-destination' && displayed && !this.state.staleReplaceAdvanced) {
-              const child = collection.files.find(file => file.id === 'synthetic-stale-destination-file');
+              const child = targetCollection.files.find(file => file.id === 'synthetic-stale-destination-file');
 
               this.state.staleReplaceAdvanced = true;
               if (child) { child.operationRevision = this.nextRevision(); child.updatedAt = new Date().toISOString() }
@@ -553,47 +610,72 @@ export class SyntheticFilesDataSource implements FilesDataSource {
           if (!displayed || !this.sameFolderReplacementDestination(displayed, expectedDestination)) {
             throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination subtree changed; refresh Files.', ...(displayed ? { destination: displayed } : expectedDestination ? { destination: clone(expectedDestination) } : {}) };
           }
-          displacedFiles = collection.files.filter(file => !file.deletedAt && file.path.startsWith(requestedTarget + '/'));
-          displacedFolders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === requestedTarget || candidate.path.startsWith(requestedTarget + '/')));
+          displacedFiles = targetCollection.files.filter(file => !file.deletedAt && file.path.startsWith(requestedTarget + '/'));
+          displacedFolders = targetCollection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === requestedTarget || candidate.path.startsWith(requestedTarget + '/')));
           const slash = requestedTarget.lastIndexOf('/'); const parent = slash < 0 ? '' : requestedTarget.slice(0, slash); const name = slash < 0 ? requestedTarget : requestedTarget.slice(slash + 1);
           recovery = [parent, '.replaced-' + receiptId + '-' + name].filter(Boolean).join('/');
 
-          if (this.activeFileAt(collection, recovery) || this.activeFolderAt(collection, recovery) || collection.files.some(file => !file.deletedAt && file.path.startsWith(recovery + '/')) || collection.folders.some(candidate => !candidate.deletedAt && candidate.path.startsWith(recovery + '/'))) {
+          if (this.activeFileAt(targetCollection, recovery) || this.activeFolderAt(targetCollection, recovery) || targetCollection.files.some(file => !file.deletedAt && file.path.startsWith(recovery + '/')) || targetCollection.folders.some(candidate => !candidate.deletedAt && candidate.path.startsWith(recovery + '/'))) {
             throw { status: 409, code: 'state-conflict', message: 'Synthetic Replace recovery sibling is occupied.' };
           }
         }
       }
       const mappedFiles = files.map(file => ({ file, path: targetPath + file.path.slice(sourcePath.length) })); const mappedFolders = folders.map(value => ({ folder: value, path: targetPath + value.path.slice(sourcePath.length) }));
+      const sourceFolderShares = this.folderShares.filter(share => share.collectionId === collection.id && (share.folderPath === sourcePath || share.folderPath.startsWith(sourcePath + '/')));
       const preflightFiles = new Set([...ignoredFiles, ...displacedFiles.map(file => file.id)]); const preflightFolders = new Set([...ignoredFolders, ...displacedFolders.map(candidate => candidate.folderId)]);
-      const conflict = mappedFiles.find(value => this.activeFileAt(collection, value.path, preflightFiles) || this.activeFolderAt(collection, value.path, preflightFolders)) ?? mappedFolders.find(value => this.activeFileAt(collection, value.path, preflightFiles) || this.activeFolderAt(collection, value.path, preflightFolders));
+      const conflict = mappedFiles.find(value => this.activeFileAt(targetCollection, value.path, preflightFiles) || this.activeFolderAt(targetCollection, value.path, preflightFolders)) ?? mappedFolders.find(value => this.activeFileAt(targetCollection, value.path, preflightFiles) || this.activeFolderAt(targetCollection, value.path, preflightFolders));
 
       if (conflict) throw { code: 'destination-conflict', message: 'A synthetic descendant already exists at ' + conflict.path + '.' };
       if (destinationFolder && recovery) {
         const recoveryPath = recovery;
 
-        receipt.displacedBefore = { folderId: destinationFolder.folderId, path: destinationFolder.path, revision: destinationFolder.revision };
+        receipt.displacedBefore = this.folderState(destinationFolder, targetCollection.id);
         displacedFolders.forEach(candidate => { candidate.path = recoveryPath + candidate.path.slice(requestedTarget.length); candidate.revision = this.nextRevision() });
         displacedFiles.forEach(file => { file.path = recoveryPath + file.path.slice(requestedTarget.length); file.operationRevision = this.nextRevision(); file.updatedAt = new Date().toISOString() });
+        this.folderShares.filter(share => share.collectionId === targetCollection.id && (share.folderPath === requestedTarget || share.folderPath.startsWith(requestedTarget + '/')))
+          .forEach(share => { share.folderPath = recoveryPath + share.folderPath.slice(requestedTarget.length) });
 
-        receipt.displacedAfter = { folderId: destinationFolder.folderId, path: destinationFolder.path, revision: destinationFolder.revision };
+        receipt.displacedAfter = this.folderState(destinationFolder, targetCollection.id);
       }
       if (item.action === 'copy') {
-        mappedFolders.forEach(value => collection.folders.push({ folderId: this.nextId('synthetic-folder-copy'), path: value.path, revision: this.nextRevision() }));
-        mappedFiles.forEach(value => collection.files.push({ ...clone(value.file), id: this.nextId('synthetic-copy'), path: value.path, currentVersionId: this.nextId('version-copy'), operationRevision: this.nextRevision(), updatedAt: new Date().toISOString() }));
-        const copied = collection.folders.find(value => value.path === targetPath)!; receipt.after = clone(copied);
+        mappedFolders.forEach(value => targetCollection.folders.push({ folderId: this.nextId('synthetic-folder-copy'), path: value.path, revision: this.nextRevision() }));
+        mappedFiles.forEach(value => targetCollection.files.push({ ...clone(value.file), id: this.nextId('synthetic-copy'), path: value.path, currentVersionId: this.nextId('version-copy'), operationRevision: this.nextRevision(), updatedAt: new Date().toISOString() }));
+        sourceFolderShares.forEach(share => this.folderShares.push({ ...clone(share), id: this.nextId('synthetic-folder-share-copy'), collectionId: targetCollection.id, folderPath: targetPath + share.folderPath.slice(sourcePath.length) }));
+        const copied = targetCollection.folders.find(value => value.path === targetPath) ?? { folderId: this.nextId('synthetic-folder-copy'), path: targetPath, revision: this.nextRevision() };
+
+        if (!targetCollection.folders.includes(copied)) targetCollection.folders.push(copied);
+        receipt.after = this.folderState(copied, targetCollection.id);
       } else {
+        if (crossCollection) {
+          collection.folders = collection.folders.filter(candidate => !ignoredFolders.has(candidate.folderId));
+          collection.files = collection.files.filter(candidate => !ignoredFiles.has(candidate.id));
+          targetCollection.folders.push(...folders); targetCollection.files.push(...files);
+        }
         mappedFolders.forEach(value => { value.folder.path = value.path; value.folder.revision = this.nextRevision() });
         mappedFiles.forEach(value => { value.file.path = value.path; value.file.operationRevision = this.nextRevision(); value.file.updatedAt = new Date().toISOString() });
-        receipt.after = { folderId: folder.folderId, path: folder.path, revision: folder.revision };
+        sourceFolderShares.forEach(share => { share.collectionId = targetCollection.id; share.folderPath = targetPath + share.folderPath.slice(sourcePath.length) });
+        const moved = folder ?? { folderId: this.nextId('synthetic-folder-move'), path: targetPath, revision: this.nextRevision() };
+
+        if (!folder) targetCollection.folders.push(moved);
+        receipt.after = this.folderState(moved, targetCollection.id);
       }
     }
     Object.assign(receipt, { state: 'completed', error: null, undoSupported: true, retryable: false });
   }
 
-  private captureMutation(before:SyntheticCollection[], after:SyntheticCollection[]):SyntheticMutation {
+  private folderShareId(share:FolderShare) {
+    return share.id ?? [share.collectionId, share.folderPath, share.principalType, share.principalId].join('\0');
+  }
+  private captureMutation(before:SyntheticCollection[], after:SyntheticCollection[], beforeFolderShares:FolderShare[], afterFolderShares:FolderShare[]):SyntheticMutation {
     const beforeFiles = new Map(before.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify([collection.id, file])] as const))); const afterFiles = new Map(after.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify([collection.id, file])] as const))); const beforeFolders = new Map(before.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify([collection.id, folder])] as const))); const afterFolders = new Map(after.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify([collection.id, folder])] as const)));
+    const beforeShares = new Map(beforeFolderShares.map(share => [this.folderShareId(share), JSON.stringify(share)])); const afterShares = new Map(afterFolderShares.map(share => [this.folderShareId(share), JSON.stringify(share)]));
 
-    return { before: clone(before), after: clone(after), fileIds: [...new Set([...beforeFiles.keys(), ...afterFiles.keys()])].filter(id => beforeFiles.get(id) !== afterFiles.get(id)), folderIds: [...new Set([...beforeFolders.keys(), ...afterFolders.keys()])].filter(id => beforeFolders.get(id) !== afterFolders.get(id)) };
+    return {
+      before: clone(before), after: clone(after), beforeFolderShares: clone(beforeFolderShares), afterFolderShares: clone(afterFolderShares),
+      fileIds: [...new Set([...beforeFiles.keys(), ...afterFiles.keys()])].filter(id => beforeFiles.get(id) !== afterFiles.get(id)),
+      folderIds: [...new Set([...beforeFolders.keys(), ...afterFolders.keys()])].filter(id => beforeFolders.get(id) !== afterFolders.get(id)),
+      folderShareIds: [...new Set([...beforeShares.keys(), ...afterShares.keys()])].filter(id => beforeShares.get(id) !== afterShares.get(id)),
+    };
   }
   private locatedItem(collections:SyntheticCollection[], kind:'file' | 'folder', id:string) {
     for (const collection of collections) {
@@ -635,6 +717,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     mutation.fileIds.forEach(id => addGuard('file', id)); mutation.folderIds.forEach(id => addGuard('folder', id));
 
     return mutation.fileIds.every(id => matchesItem('file', id)) && mutation.folderIds.every(id => matchesItem('folder', id)) &&
+      mutation.folderShareIds.every(id => JSON.stringify(this.folderShares.find(share => this.folderShareId(share) === id)) === JSON.stringify(mutation[side === 'before' ? 'beforeFolderShares' : 'afterFolderShares'].find(share => this.folderShareId(share) === id))) &&
       [...guards.values()].every(guard => JSON.stringify(this.namespaceOwners(this.state.collections, guard.collectionId, guard.path, guard.descendants)) === JSON.stringify(this.namespaceOwners(snapshot, guard.collectionId, guard.path, guard.descendants)));
   }
   private applyMutation(mutation:SyntheticMutation, side:'before' | 'after') {
@@ -645,6 +728,8 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       collection.files.push(...clone(saved.files.filter(file => mutation.fileIds.includes(file.id))));
       collection.folders.push(...clone(saved.folders.filter(folder => mutation.folderIds.includes(folder.folderId))));
     }
+    this.folderShares = this.folderShares.filter(share => !mutation.folderShareIds.includes(this.folderShareId(share)));
+    this.folderShares.push(...clone(mutation[side === 'before' ? 'beforeFolderShares' : 'afterFolderShares'].filter(share => mutation.folderShareIds.includes(this.folderShareId(share)))));
   }
   private refreshReceipt(operation:SyntheticOperation) {
     const items = operation.receipt.items; const pending = items.some(item => item.state === 'pending'); const completed = items.some(item => item.state === 'completed'); const failed = items.some(item => item.state === 'failed'); const cancelled = items.some(item => item.state === 'cancelled'); const undone = items.some(item => item.state === 'undone'); const undoConflict = items.some(item => item.state === 'completed' && item.error?.code === 'state-conflict' && !item.undoSupported);
@@ -748,8 +833,8 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async restorePublicLink(id:string, password?:string) { const share = this.shares.find(item => item.id === id); if (!share) throw new Error('Synthetic link not found'); if (share.password && (!password || password.length < 8)) throw new Error('Re-enter the synthetic link password'); share.revokedAt = undefined; return share }
   async shareActivity():Promise<ShareActivity[]> { return [{ id: 'event-1', action: 'viewed', occurredAt: iso(-1), detail: '03-share.html' }, { id: 'event-2', action: 'downloaded', occurredAt: iso(-2), detail: 'Vault phase 2 walkthrough.mp4' }] }
   async listFolderShares() { return this.folderShares }
-  async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit') { const share = { id: principalType + ':' + principalId, collectionId, folderPath, principalType, principalId, role }; this.folderShares.push(share); return share }
-  async unshareFolder(share:FolderShare) { this.folderShares = this.folderShares.filter(item => item.id !== share.id) }
+  async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit') { const share = { id: principalType + ':' + principalId, collectionId, folderPath, principalType, principalId, role }; this.folderShares.push(share); this.persist(); return share }
+  async unshareFolder(share:FolderShare) { this.folderShares = this.folderShares.filter(item => item.id !== share.id); this.persist() }
   async listFileShares(fileId:string):Promise<FileAccessList> { return { ownerId: 'synthetic-owner', direct: this.fileShares.filter(item => item.fileId === fileId).map(item => ({ ...item })), inherited: this.folderShares.map(item => ({ ...item, id: item.id ?? ['folder', item.folderPath, item.principalType, item.principalId].join(':'), source: 'folder' as const })) } }
   async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit') { const existing = this.fileShares.find(item => item.fileId === fileId && item.principalType === principalType && item.principalId === principalId); if (existing) { existing.role = role; return { ...existing } } const share:FileShare = { id: ['file', fileId, principalType, principalId].join(':'), fileId, principalType, principalId, role }; this.fileShares.push(share); return { ...share } }
   async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit') { const share = this.fileShares.find(item => item.fileId === fileId && item.id === shareId); if (!share) throw new Error('Synthetic file share not found'); share.role = role; return { ...share } }
