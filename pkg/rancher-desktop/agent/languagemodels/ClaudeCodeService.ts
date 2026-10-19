@@ -1,7 +1,6 @@
 import * as childProcess from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import {
@@ -131,6 +130,7 @@ interface PrewarmRecord {
   transport:         ProviderExecutionTransport;
   transportContext:  ProviderTransportContext;
   systemPromptFile?: ProviderFileRef;
+  mcpConfigFile?:    ProviderFileRef;
   mcpSession:        RegisteredSession | null;
   mcpConfigPath:     string | null;
   /** VM-side pidfile of this process (see buildRemoteKillCommand). */
@@ -493,6 +493,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // fires), so no rebinding is needed for this single-turn adoption.
       let mcpSession: RegisteredSession | null = null;
       let mcpConfigPath: string | null = null;
+      let mcpConfigFile: ProviderFileRef | undefined;
       try {
         const host = getMCPServerHost();
         if (host.running) {
@@ -516,9 +517,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
         ? requireContainerToolConfig(transportContext)
         : undefined;
       if (mcpSession) {
-        mcpConfigPath = transportContext.runtime === 'container'
-          ? toolConfig?.claudeConfigPath ?? null
-          : this.writeMcpConfig(mcpSession);
+        if (transportContext.runtime === 'container') {
+          mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
+        } else {
+          mcpConfigFile = this.writeMcpConfig(mcpSession, transportContext);
+          mcpConfigPath = mcpConfigFile.path;
+        }
         if (transportContext.runtime === 'container' && !mcpConfigPath) {
           throw new Error('Container Claude execution requires an opaque broker MCP config');
         }
@@ -560,6 +564,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         transport,
         transportContext,
         systemPromptFile,
+        mcpConfigFile,
         mcpSession,
         mcpConfigPath,
         pidFile,
@@ -771,9 +776,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     }, 5_000);
     escalation.unref?.();
     if (rec.mcpSession) { try { rec.mcpSession.revoke() } catch { /* ignore */ } }
-    if (rec.mcpConfigPath && rec.transportContext.runtime === 'lima') {
-      try { fs.unlinkSync(rec.mcpConfigPath) } catch { /* ignore */ }
-    }
+    rec.mcpConfigFile?.dispose();
     rec.systemPromptFile?.dispose();
   }
 
@@ -880,8 +883,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Save a base64 image block to ~/sulla/workspaces/attachments/ so the
-   * Lima VM agent can read it via the Read tool. Returns the saved path.
+   * Transport a base64 image block into the provider's guest-owned staging
+   * area so the Read tool can open it. Returns the provider-visible path.
    */
   private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
     try {
@@ -898,14 +901,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         refs?.push(ref);
         return ref.path;
       }
-      const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
-      fs.mkdirSync(dir, { recursive: true });
-
-      const filepath = path.join(dir, filename);
-      fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
-
-      log.info(`[ClaudeCodeService] Image saved: ${ filepath }`);
-      return filepath;
+      throw new Error('Attachment transport context is required');
     } catch (err) {
       log.error('[ClaudeCodeService] Failed to save image attachment:', err);
       return null;
@@ -1213,9 +1209,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // Lifetime: revoke + delete config when the spawn promise settles.
     let mcpSession: RegisteredSession | null = null;
     let mcpConfigPath: string | null = null;
+    let mcpConfigFile: ProviderFileRef | null = null;
     if (adopted) {
       mcpSession = adopted.mcpSession;
       mcpConfigPath = adopted.mcpConfigPath;
+      mcpConfigFile = adopted.mcpConfigFile ?? null;
       // Re-point the stable MCP token at THIS turn's live state — required when
       // the process is reused across turns; a no-op on first adoption.
       if (mcpSession && options.state) {
@@ -1226,7 +1224,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const host = getMCPServerHost();
         if (host.running) {
           mcpSession = host.registerSession(options.state, PROC_MCP_SESSION_TTL_MS);
-          mcpConfigPath = transport.runtime === 'lima' ? this.writeMcpConfig(mcpSession) : null;
+          if (transport.runtime === 'lima') {
+            mcpConfigFile = this.writeMcpConfig(mcpSession, initialTransportContext);
+            mcpConfigPath = mcpConfigFile.path;
+          }
           log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath ?? '(transport-owned)' } url=${ mcpSession.url }`);
         }
       } catch (err) {
@@ -1258,13 +1259,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
       if (!mcpConfigPath) throw new Error('Container Claude execution requires an opaque broker MCP config');
     }
-
-    // Refresh ~/.claude/CLAUDE.md on the host (kept for host-side Claude Code
-    // use). The VM-side CLI never sees it — Sulla's prompt reaches it through
-    // --append-system-prompt-file (see cliSystemPromptFile).
-    import('../prompts/generateClaudeCodeMemoryFile').then(({ generateClaudeCodeMemoryFile }) => {
-      generateClaudeCodeMemoryFile().catch(() => {});
-    }).catch(() => {});
 
     // The prompt is fed via stdin (see below), NOT as an argv element. A large
     // transcript embedded in the command line overflows limactl's SSH
@@ -1310,10 +1304,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         try { mcpSession.revoke() } catch { /* ignore */ }
         mcpSession = null;
       }
-      if (mcpConfigPath && transportContext.runtime === 'lima') {
-        try { fs.unlinkSync(mcpConfigPath) } catch { /* file may already be gone */ }
-        mcpConfigPath = null;
-      }
+      mcpConfigFile?.dispose();
+      mcpConfigFile = null;
+      mcpConfigPath = null;
     };
 
     if (options.signal?.aborted) {
@@ -1357,6 +1350,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           transport,
           transportContext,
           systemPromptFile: systemPromptFile ?? undefined,
+          mcpConfigFile:    mcpConfigFile ?? undefined,
           mcpSession,
           mcpConfigPath,
           pidFile,
@@ -2285,18 +2279,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
   }
 
   /**
-   * Write a short-lived MCP config JSON that tells Claude Code how to reach
-   * the in-process MCP server. Placed under ~/.sulla/mcp-configs so it
-   * appears at the same path inside the Lima VM (Lima mounts the user's
-   * home directory). Perms 0600.
+   * Transport a short-lived MCP config JSON into guest-owned storage so
+   * Claude Code can reach the in-process MCP server without a home mount.
    *
    * The Authorization header carries the session id so tool handlers can
    * resolve back to the calling graph's BaseThreadState.
    */
-  private writeMcpConfig(session: RegisteredSession): string {
-    const dir = path.join(paths.sullaConfig, 'mcp-configs');
-    fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `${ session.id }.json`);
+  private writeMcpConfig(session: RegisteredSession, context: ProviderTransportContext): ProviderFileRef {
     const payload = {
       mcpServers: {
         'sulla-native': {
@@ -2306,8 +2295,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         },
       },
     };
-    fs.writeFileSync(filePath, JSON.stringify(payload), { mode: 0o600 });
-    return filePath;
+    return getProviderExecutionTransport().files.write({
+      context,
+      purpose:       'mcp-config',
+      suggestedName: `mcp-${ session.id }.json`,
+      data:          JSON.stringify(payload),
+      mode:          0o600,
+    });
   }
 }
 

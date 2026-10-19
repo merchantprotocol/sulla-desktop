@@ -37,6 +37,13 @@ export interface AgentJobResult {
   /** Contract name and the structured value the child returned, if it did. */
   contract?: string;
   result?:   unknown;
+  /** Guest cleanup/recovery disposition for container-backed workers. */
+  cleanupReceipt?: {
+    removedGuestPaths:       string[];
+    retainedGuestPaths:      string[];
+    recoveryWorkspacePath?:  string;
+    workspaceDecisionReason: string;
+  };
 }
 
 export interface AgentJobTask {

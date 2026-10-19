@@ -198,12 +198,14 @@ async function selectNativeSource() {
   });
   const picked = await electron.dialog.showOpenDialog({
     title: 'Select the synthetic round-trip.txt proof file', defaultPath: proofPath,
-    properties: ['openFile'], securityScopedBookmarks: true,
+    properties: ['openFile'], securityScopedBookmarks: Boolean(process.mas),
   });
-  if (picked.canceled || !picked.filePaths[0] || !picked.bookmarks?.[0]) throw new Error('The native proof requires one chooser-issued security-scoped bookmark');
+  if (picked.canceled || !picked.filePaths[0]) throw new Error('The native proof requires selection of its synthetic file');
   if (await realpath(picked.filePaths[0]) !== await realpath(proofPath)) throw new Error('The selected file is not the isolated synthetic proof file');
-  const release = electron.app.startAccessingSecurityScopedResource(picked.bookmarks[0]);
-  if (typeof release !== 'function') throw new Error('macOS did not grant security-scoped access to the synthetic proof file');
+  if (process.mas && !picked.bookmarks?.[0]) throw new Error('The Mac App Store proof requires a chooser-issued security-scoped bookmark');
+  const release = picked.bookmarks?.[0] ? electron.app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
+  if (process.mas && typeof release !== 'function') throw new Error('macOS did not grant security-scoped access to the synthetic proof file');
+  console.log(JSON.stringify({ nativeSelectionGrant: process.mas ? 'macos-security-scoped-bookmark' : 'application-enforced-session-selection', osSandboxProof: Boolean(process.mas) }));
   return { sourcePath: picked.filePaths[0], release };
 }
 

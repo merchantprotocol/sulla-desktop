@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { app, BrowserWindow, dialog, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, protocol, shell, webContents } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
@@ -15,11 +15,11 @@ import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLin
 import { getSullaFilesRootRegistry } from './sullaFilesRootRegistry';
 import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
+import { getSullaFilesMountManager } from './sullaFilesMountManager';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
-import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -260,6 +260,11 @@ function initFilesMediaProtocol():void {
 
 export function initSullaFilesIpc():void {
   try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
+  const mountManager = getSullaFilesMountManager();
+  mountManager.on('changed', status => {
+    for (const contents of webContents.getAllWebContents()) contents.send('files-ui:native-runtime-changed', status);
+  });
+  ipcMain.handle('files-ui:native-runtime', () => mountManager.status());
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
@@ -431,7 +436,7 @@ export function initSullaFilesIpc():void {
     return pickAndImportChatFiles(owner);
   });
   ipcMain.handle('files-experiment:pick-native-source', async(event) => {
-    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
+    if (!mountManager.status().ready) throw new Error('Native Files runtime is not ready');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options:Electron.OpenDialogOptions = {
       title:                   'Choose one synthetic file for the Files source experiment',
@@ -471,11 +476,11 @@ export function initSullaFilesIpc():void {
     }
   });
   ipcMain.handle('files-experiment:list-native-sources', async() => {
-    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') return [];
+    if (!mountManager.status().ready) return [];
     return (await getSullaFilesWatcher().listNativeSources()).map(({ handle: _handle, versionId: _versionId, path: _path, sourceRevision: _sourceRevision, sourceHash: _sourceHash, ...source }) => source);
   });
   ipcMain.handle('files-experiment:recover-native-source', async(event, fileId:string) => {
-    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !UUID.test(fileId)) throw new Error('Native Files recovery input is invalid');
+    if (!mountManager.status().ready || !UUID.test(fileId)) throw new Error('Native Files recovery input is invalid');
     const source = (await getSullaFilesWatcher().listNativeSources()).find(item => item.fileId === fileId);
     if (source?.state !== 'reselect-required') throw new Error('Native Files source does not require reselection');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
@@ -516,11 +521,11 @@ export function initSullaFilesIpc():void {
     } catch (error) { gateway.revoke(handle); throw error }
   });
   ipcMain.handle('files-experiment:revoke-native-source', (_event, handle:string) => {
-    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
+    if (!mountManager.status().ready || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Native Files source handle is invalid');
     getSullaFilesSourceGateway().revoke(handle);
   });
   ipcMain.handle('files-experiment:publish-native-source', async(_event, input:{ handle: string; sourceRevision: string; fileId: string; versionId: string }) => {
-    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
+    if (!mountManager.status().ready) throw new Error('Native Files runtime is not ready');
     if (!/^[A-Za-z0-9_-]{43}$/.test(input.handle) || !/^[a-f0-9]{64}$/i.test(input.sourceRevision) ||
         !UUID.test(input.fileId) || !UUID.test(input.versionId)) throw new Error('Native Files publication input is invalid');
     const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/download?versionId=${ encodeURIComponent(input.versionId) }`);

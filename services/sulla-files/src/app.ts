@@ -131,6 +131,10 @@ export function createApp(
     if (request.path === '/healthz') return next();
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
     try { request.filesIdentity = verifyFilesIdentity(bearer(request), config.capabilitySigningKey, config.serverJwtSecret) } catch { response.status(401).json({ error: 'unauthorized' }); return }
+    if (request.filesIdentity.kind === 'capability' && request.filesIdentity.scopes?.includes('files/fuse') &&
+        !request.filesIdentity.scopes.some(scope => scope === '*' || scope === 'files/*') && !request.path.startsWith('/v1/fuse/')) {
+      response.status(403).json({ error: 'FUSE capability is restricted to mount operations' }); return;
+    }
     if (config.mode !== 'server') return next();
     if (!identityDb) return response.status(503).json({ error: 'organization identity database is not configured' });
     identityDb.query('SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL', [request.filesIdentity.userId])
@@ -164,6 +168,7 @@ export function createApp(
   }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, allowShared = false, allowExactFiles = false) {
     const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
@@ -175,6 +180,7 @@ export function createApp(
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right) {
     if (isProtectedPath(path)) throw protectedPathError();
     const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
@@ -185,6 +191,7 @@ export function createApp(
   async function fileRow(fileId:string):Promise<any> { const result = await db.query('SELECT * FROM files WHERE id=$1', [fileId]); if (!result.rows[0]) throw new HttpError(404, 'file not found'); await assertUnprotectedFile(db, result.rows[0]); return result.rows[0] }
   async function requireFile(request:RequestWithIdentity, fileId:string, right:Right):Promise<any> {
     const file = await fileRow(fileId); const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== file.collection_id) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, file.collection_id);
     requireScratchRun(actor, access.collection);

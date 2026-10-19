@@ -462,6 +462,7 @@ export class SpawnAgentWorker extends BaseTool {
 
       let subStateRef: any;
       let containerLifecycle: import('../../services/AgentContainerLauncher').AgentContainerLifecycle | undefined;
+      let taskResult: AgentJobResult | undefined;
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
           agentConfigChannel,
@@ -559,36 +560,35 @@ export class SpawnAgentWorker extends BaseTool {
           returned = await returnedTask();
         }
 
-        let result: AgentJobResult;
         if (returned) {
-          result = returnedJobResult(returned, label, threadId);
+          taskResult = returnedJobResult(returned, label, threadId);
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState);
-          result = contract.schema && status !== 'blocked'
+          taskResult = contract.schema && status !== 'blocked'
             ? { label, status: 'error', output: `failed: no_contract — ${ label } ended without returning its "${ contract.name }" contract.\n\nLast message:\n${ text }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
         }
 
         await safeFinishDelegation(delegationId, {
-          outcome: result.status === 'completed' ? 'completed' : 'failed',
-          detail:  result.status === 'completed' ? '' : `${ result.status }: ${ result.output }`,
+          outcome: taskResult.status === 'completed' ? 'completed' : 'failed',
+          detail:  taskResult.status === 'completed' ? '' : `${ taskResult.status }: ${ taskResult.output }`,
         });
         if (activityJobId) {
-          await updateJobTask(activityJobId, index, { status: result.status, threadId, finishedAt: Date.now() });
+          await updateJobTask(activityJobId, index, { status: taskResult.status, threadId, finishedAt: Date.now() });
           await emitSubAgentExchange(parentChannel, parentThreadId, {
             direction: 'from_agent',
             agentId: selector || parentChannel,
             label,
-            summary: result.status === 'completed' ? `${ label } finished` : `${ label } is ${ result.status }`,
-            detail: result.output,
-            status: result.status === 'completed' ? 'done' : 'failed',
+            summary: taskResult.status === 'completed' ? `${ label } finished` : `${ label } is ${ taskResult.status }`,
+            detail: taskResult.output,
+            status: taskResult.status === 'completed' ? 'done' : 'failed',
             jobId: activityJobId,
             taskIndex: index,
             conversationId: threadId,
           });
         }
-        return result;
+        return taskResult;
       } catch (err) {
         const output = `Error: ${ (err as Error).message }`;
         const stopped = jobAbortSignal?.aborted === true;
@@ -607,15 +607,22 @@ export class SpawnAgentWorker extends BaseTool {
             conversationId: threadId,
           });
         }
-        return {
+        taskResult = {
           label,
           status:   'error',
           output,
           threadId,
         };
+        return taskResult;
       } finally {
         try {
-          await containerLifecycle?.close();
+          const cleanupReceipt = await containerLifecycle?.close();
+          if (taskResult && cleanupReceipt) {
+            taskResult.cleanupReceipt = cleanupReceipt;
+            if (cleanupReceipt.recoveryWorkspacePath) {
+              taskResult.output += `\n\n[Container recovery] Guest workspace retained at ${ cleanupReceipt.recoveryWorkspacePath }. ${ cleanupReceipt.workspaceDecisionReason }`;
+            }
+          }
         } finally {
           if (subStateRef?.metadata) subStateRef.metadata.delegatedRunActive = false;
           // Deregister from parent's active-sub-agents list so stale threadIds
