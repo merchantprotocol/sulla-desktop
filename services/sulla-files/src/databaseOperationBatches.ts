@@ -9,18 +9,18 @@ import { createDatabaseFolder, executeDatabaseOperation, parseDatabaseOperation,
 export type DatabaseCollisionPolicy = 'replace'|'keep-both'|'skip';
 export type DatabaseBatchState = 'pending'|'completed'|'partial'|'failed'|'cancelled'|'undone';
 export type DatabaseItemState = 'pending'|'completed'|'skipped'|'failed'|'cancelled'|'undone';
-export interface DatabaseFolderState { folderId:string; path:string; revision:string; subtreeSignature?:string }
+export interface DatabaseFolderState { collectionId?:string; folderId?:string; path:string; revision?:string; subtreeSignature?:string }
 interface DatabaseBatchItemBase extends Omit<DatabaseOperationRequest,'idempotencyKey'|'collectionId'|'action'|'fileId'|'expectedVersionId'|'expectedRevision'|'expectedDestination'> {
   itemId:string;
   action:'move'|'copy'|'rename'|'trash'|'create-folder';
   fileId?:string; expectedVersionId?:string; expectedRevision?:string;
-  kind?:'file'|'folder'; folderPath?:string; expectedFolder?:DatabaseFolderState; targetCollectionId?:string;
+  kind?:'file'|'folder'; folderPath?:string; expectedFolder?:DatabaseFolderState; sourceSubtreeSignature?:string; targetCollectionId?:string;
 }
 export interface DatabaseFileBatchItem extends DatabaseBatchItemBase {
   kind?:'file'; action:'move'|'copy'|'rename'|'trash';
   fileId:string; expectedVersionId:string; expectedRevision:string;
   expectedDestination?:DatabaseOperationState;
-  folderPath?:never; expectedFolder?:never;
+  folderPath?:never; expectedFolder?:never; sourceSubtreeSignature?:never;
 }
 export interface DatabaseFolderBatchItem extends DatabaseBatchItemBase {
   kind:'folder'; action:'move'|'copy'|'rename'|'trash'; folderPath:string;
@@ -30,7 +30,7 @@ export interface DatabaseFolderBatchItem extends DatabaseBatchItemBase {
 }
 export interface DatabaseCreateFolderBatchItem extends DatabaseBatchItemBase {
   kind?:'file'; action:'create-folder'; targetPath:string;
-  fileId?:never; expectedVersionId?:never; expectedRevision?:never; folderPath?:never; expectedFolder?:never;
+  fileId?:never; expectedVersionId?:never; expectedRevision?:never; folderPath?:never; expectedFolder?:never; sourceSubtreeSignature?:never;
   collisionPolicy?:'keep-both'|'skip';
 }
 export type DatabaseBatchItem=DatabaseFileBatchItem|DatabaseFolderBatchItem|DatabaseCreateFolderBatchItem;
@@ -57,14 +57,20 @@ function validateItem(item:any, collectionId:string):DatabaseBatchItem {
   if (item.kind!==undefined && !['file','folder'].includes(item.kind)) throw fail(400,'Unknown item kind');
   if (item.kind==='folder') {
     if (!['move','copy','rename','trash'].includes(item.action) || !pathValid(item.folderPath) || item.fileId!==undefined || item.expectedVersionId!==undefined) throw fail(400,'Folder operations require folderPath and no file identity');
+    if (item.targetCollectionId!==undefined && !['move','copy'].includes(item.action)) throw fail(400,'Only folder move/copy accept targetCollectionId');
     if (item.action!=='trash' && !pathValid(item.targetPath)) throw fail(400,'Folder targetPath must be canonical');
     if (item.action==='trash' && (item.targetPath!==undefined || item.collisionPolicy!==undefined || item.targetCollectionId!==undefined)) throw fail(400,'Trash has no destination');
     if (item.collisionPolicy!==undefined && !['replace','keep-both','skip'].includes(item.collisionPolicy)) throw fail(400,'Folder collisions support Replace, Keep Both or Skip');
-    if (item.expectedFolder && (!uuid.test(item.expectedFolder.folderId) || item.expectedFolder.path!==item.folderPath || typeof item.expectedFolder.revision!=='string' || !/^[0-9]+$/.test(item.expectedFolder.revision))) throw fail(400,'Invalid expectedFolder snapshot');
-    if (item.collisionPolicy==='replace' && (!item.expectedDestination || !uuid.test(item.expectedDestination.folderId) || item.expectedDestination.path!==item.targetPath || typeof item.expectedDestination.revision!=='string' || !/^\d+$/.test(item.expectedDestination.revision) || typeof item.expectedDestination.subtreeSignature!=='string' || !/^[0-9a-f]{64}$/.test(item.expectedDestination.subtreeSignature))) throw fail(400,'Folder Replace requires the displayed destination folder identity, revision and subtree signature');
+    if (item.expectedFolder && (!uuid.test(item.expectedFolder.folderId) || item.expectedFolder.path!==item.folderPath || typeof item.expectedFolder.revision!=='string' || !/^[0-9]+$/.test(item.expectedFolder.revision) ||
+      (item.expectedFolder.collectionId!==undefined && item.expectedFolder.collectionId!==collectionId))) throw fail(400,'Invalid expectedFolder snapshot');
+    const sourceSignature=item.sourceSubtreeSignature??item.expectedFolder?.subtreeSignature;
+    if (item.targetCollectionId && item.targetCollectionId!==collectionId && (typeof sourceSignature!=='string' || !/^[0-9a-f]{64}$/.test(sourceSignature))) throw fail(400,'Cross-collection folders require the displayed source subtree signature');
+    if (item.collisionPolicy==='replace' && (!item.expectedDestination || !uuid.test(item.expectedDestination.folderId) || item.expectedDestination.path!==item.targetPath || typeof item.expectedDestination.revision!=='string' || !/^\d+$/.test(item.expectedDestination.revision) || typeof item.expectedDestination.subtreeSignature!=='string' || !/^[0-9a-f]{64}$/.test(item.expectedDestination.subtreeSignature) ||
+      (item.expectedDestination.collectionId!==undefined && item.expectedDestination.collectionId!==(item.targetCollectionId??collectionId)))) throw fail(400,'Folder Replace requires the displayed destination collection, identity, revision and subtree signature');
     if (item.collisionPolicy!=='replace' && item.expectedDestination!==undefined) throw fail(400,'expectedDestination is only accepted for folder Replace');
     return { itemId:item.itemId.toLowerCase(),kind:'folder',action:item.action,folderPath:item.folderPath,
       ...(item.expectedFolder?{expectedFolder:item.expectedFolder}:{}),...(item.targetPath?{targetPath:item.targetPath}:{}),
+      ...(sourceSignature?{sourceSubtreeSignature:sourceSignature}:{}),
       ...(item.collisionPolicy?{collisionPolicy:item.collisionPolicy}:{}),...(item.expectedDestination?{expectedDestination:item.expectedDestination}:{}),
       ...(item.targetCollectionId?{targetCollectionId:item.targetCollectionId.toLowerCase()}:{}) };
   }
@@ -101,7 +107,7 @@ async function authorize(client:pg.PoolClient, row:any, access:DatabaseOperation
     for (const receipt of receipts) {
       for (const state of [receipt.after_state,receipt.displaced_after]) {
         if (state?.fileId) await access.file(client,state.fileId);
-        else if (state?.folderId) await access.path(client,row.collection_id,state.path);
+        else if (state?.folderId) await access.path(client,state.collectionId??row.collection_id,state.path);
       }
     }
     for (const [itemId,error] of Object.entries(row.errors) as [string,DatabaseItemError][]) {
@@ -121,7 +127,7 @@ async function itemRows(client:pg.PoolClient, row:any, actor:FilesIdentity):Prom
 async function view(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<DatabaseBatchReceipt> {
   const receipts = await itemRows(client, row, actor);
   const native=(await client.query(`SELECT operation_id,state,plan,plan->>'itemId' AS item_id,last_error FROM files_path_operations
-    WHERE plan->>'operationId'=$1 AND plan->>'version'='2'`,[row.id])).rows;
+    WHERE plan->>'operationId'=$1 AND plan->>'version' IN('2','3')`,[row.id])).rows;
   const items:DatabaseBatchItemReceipt[] = row.request.items.map((item:DatabaseBatchItem) => {
     const stored = receipts.find(r => r.idempotency_key === row.item_keys[item.itemId]);
     const nativeRow=native.find(n=>n.item_id===item.itemId);
@@ -144,16 +150,17 @@ async function view(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<
 }
 export async function databaseOperationCapabilities(db:pg.Pool, collectionId:string, access:DatabaseOperationAccess):Promise<{
   enabled:boolean; reason?:string; folderReceipts:boolean; nativeFolderReceipts:boolean;
-  folderCollisionPolicies:DatabaseCollisionPolicy[]; crossCollectionOperations:'stored-same-audience-files'|'unavailable';
+  folderCollisionPolicies:DatabaseCollisionPolicy[]; crossCollectionOperations:'all-authorized'|'stored-authorized'|'unavailable';
 }> {
   if (!uuid.test(collectionId)) throw fail(400, 'collectionId must be a UUID');
   return transaction(db, async client => {
     // The caller authorizes collection visibility before invoking discovery.
     const native = (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [collectionId])).rowCount;
-    const enabled=!native || Boolean(access.custody && await access.custody.available());
+    const helperAvailable=Boolean(access.custody && await access.custody.available());
+    const enabled=!native || helperAvailable;
     return { enabled,...(!enabled?{reason:access.custody?'native-helper-unavailable':'native-custody-required'}:{}),folderReceipts:enabled,
       nativeFolderReceipts:Boolean(native && enabled),folderCollisionPolicies:['replace','keep-both','skip'],
-      crossCollectionOperations:native?'unavailable':'stored-same-audience-files' };
+      crossCollectionOperations:helperAvailable?'all-authorized':native?'unavailable':'stored-authorized' };
   });
 }
 export async function submitDatabaseBatch(db:pg.Pool, input:DatabaseBatchRequest, actor:FilesIdentity, access:DatabaseOperationAccess):Promise<DatabaseBatchReceipt> {
@@ -168,8 +175,10 @@ export async function submitDatabaseBatch(db:pg.Pool, input:DatabaseBatchRequest
       return view(client, prior, actor);
     }
     await authorize(client, { request: input, collection_id: input.collectionId }, access);
-    if (!access.custody && (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [input.collectionId])).rowCount) throw fail(422, 'Native operations require the custody coordinator', 'native-custody-required');
-    if (access.custody && (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1',[input.collectionId])).rowCount && !await access.custody.available()) throw fail(503,'Atomic native mutation helper is unavailable','native-helper-unavailable');
+    const collections=[input.collectionId,...input.items.map(item=>item.targetCollectionId).filter((id):id is string=>Boolean(id))];
+    const native=(await client.query('SELECT 1 FROM file_roots WHERE collection_id=ANY($1::uuid[]) LIMIT 1',[collections])).rowCount;
+    if (!access.custody && native) throw fail(422, 'Native operations require the custody coordinator', 'native-custody-required');
+    if (access.custody && native && !await access.custody.available()) throw fail(503,'Atomic native mutation helper is unavailable','native-helper-unavailable');
     const keys = Object.fromEntries(input.items.map(item => [item.itemId, randomUUID()]));
     const row = (await client.query(`INSERT INTO files_database_operation_batches(actor_user_id,actor_scope,idempotency_key,collection_id,request,item_keys)
       VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [actor.userId, scope(actor), input.idempotencyKey, input.collectionId, input, keys])).rows[0];

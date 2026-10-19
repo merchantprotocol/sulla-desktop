@@ -165,7 +165,11 @@ export class LocalFilesManager {
     const root=this.roots.find(root=>root.id===row.id);
     if (!root || !row.enabled || ['detached','offline'].includes(row.state) || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) throw new Error('Tracked root is unavailable');
     return { id:root.id,collectionId,mutations:this.rootMutations.get(root.id)! };
-  },(fileId,versionId,hash)=>this.verifyNativeVersion(fileId,versionId,hash)) }
+  },(fileId,versionId,hash)=>this.verifyNativeVersion(fileId,versionId,hash),async(fileId,versionId)=>{
+    const content=await streamFileContent(this.db,this.config,this.store,fileId,versionId,undefined,new AbortController().signal);
+    if (!content) throw Object.assign(new Error('Original version content is unavailable'),{status:409,code:'original-changed'});
+    return content.body;
+  }) }
 
   private async verifyNativeVersion(fileId:string,versionId:string,hash:string):Promise<void> {
     const content=await streamFileContent(this.db,this.config,this.store,fileId,versionId,undefined,new AbortController().signal);
@@ -569,7 +573,7 @@ export class LocalFilesManager {
       for (const row of rows) {
         try {
           if ((row.plan as RemotePurgePlan)?.kind==='remote-purge-v1') { await this.recoverRemotePurgeOperation(row as any); continue }
-          if ((row.plan as any)?.version===2) { await this.nativeJournal.recover(row); continue }
+          if ([2,3].includes((row.plan as any)?.version)) { await this.nativeJournal.recover(row); continue }
           const plan = Array.isArray(row.plan) ? row.plan : [];
           if (!plan.length) throw new Error('Path operation has no recoverable plan');
           const receipts = Array.isArray(row.receipts) ? row.receipts : [];

@@ -25,18 +25,33 @@ GET `/v1/folders?collectionId=UUID` remains `string[]`. Add `details=true` for
 Folder receipt before/after are `{folderId,path,revision}|null`; before is null
 for an implicit folder. File snapshots additionally include `collectionId`.
 
-The request collectionId is the source collection. File move/copy may include
-`targetCollectionId`; source version/revision requirements are unchanged. The
-implemented cross-collection contract requires stored collections, the current
-actor as both owners, matching collection kind and ACL audience, and no folder
-shares or active public links. File identities/history/grants survive moves;
-copies preserve immutable chunk/key contexts and publication policy. Native
-cross-root, stored/native, cross-collection folders, and cross-collection Replace
-return explicit 422 errors. They are not advertised as supported transfers.
+The request `collectionId` is the source collection. A file or folder move/copy
+places sibling `targetCollectionId` on that item; source CAS requirements are
+unchanged. Cross-collection folders additionally require the displayed
+`sourceSubtreeSignature` (the same value may be supplied as
+`expectedFolder.subtreeSignature`). Replace snapshots include their displayed
+`collectionId`. The service requires the current actor to own both non-scratch
+collections, matching collection kind and effective source/destination audience,
+and owner-recoverable immutable version key contexts. File identities/history,
+direct grants and lifecycle survive moves. Copies preserve immutable chunk/key
+contexts, grants, retention and publication policy. Record-locked sources remain
+non-editable. Active folder public links block transfer rather than being silently
+reissued in another collection.
+
+Stored/native, native/stored, native/native and stored/stored file and folder
+move/copy use the same receipt API and collision policies. A version-3 path plan
+records both collection/root identities, stages verified bytes on the destination
+root (never by cross-root rename), retains exact source/displaced artifacts, and
+commits both watched sets with metadata. Its guarded inverse and startup recovery
+verify both roots, including partial undo publication, before accepting a state.
 
 Capabilities adds `folderReceipts:boolean`, `nativeFolderReceipts:boolean`,
 `folderCollisionPolicies:['replace','keep-both','skip']`, and
-`crossCollectionOperations:'stored-same-audience-files'|'unavailable'`.
+`crossCollectionOperations:'all-authorized'|'stored-authorized'|'unavailable'`.
+`all-authorized` means the native helper is available for authorized mixed/native
+destinations; `stored-authorized` keeps stored-only transfers available when no
+native helper is present; `unavailable` applies to a native source without the
+helper.
 Root availability, authorization, collision and CAS are checked on execution.
 
 Native execution uses only `files_path_operations` and
@@ -150,16 +165,6 @@ file remains pinned. A crash at any boundary therefore leaves either a guarded
 rollback or a committed, discoverable GC stage; raw recursive deletion and a
 parallel audit cleanup queue are not used.
 
-### Full14 continuation — separate open scope
-- Native/mixed cross-collection and folder transfers: extend leaf plans with
-  source and destination root/collection identity, lock both roots deterministically,
-  stage verified bytes on the destination filesystem (never cross-device rename),
-  retain source artifacts for moves, and atomically commit both metadata/watched
-  sets. Reconcile and undo both roots from the SAME path journal. Stored folders
-  need subtree audience/grant checks and explicit empty-folder metadata transfer.
-  These remain HTTP422; the advertised cross-collection support is stored files
-  with the narrow same-audience contract above, not arbitrary Explorer transfers.
-
 ## Main-only original reveal
 
 Both POST `/v1/original-reveal/attest` and `/v1/original-reveal/redeem` require
@@ -203,8 +208,13 @@ add a duplicate mutation API. Apply 025_database_operation_receipts and
 ## HTTP routes
 
 - GET /v1/database-file-operations/capabilities?collectionId=UUID:
-  { enabled: boolean, reason?: 'native-custody-required' }. Missing route on an
-  older service means unsupported. Discovery requires current edit access.
+  returns the capability fields above. Missing route on an older service means
+  unsupported. Discovery requires current edit access.
+- GET /v1/database-file-operations/folder-state?collectionId=UUID&path=canonical:
+  returns `{collectionId,path,folderId?,revision?,subtreeSignature}` after
+  authorizing and snapshotting the exact stored/native subtree. Renderer code
+  acquires this immediately before submitting a cross-collection folder item or
+  folder Replace CAS.
 - POST /v1/database-file-operations: DatabaseBatchRequest; HTTP 202 durable batch,
   returned before background processing starts. Legacy single-item input is
   accepted but now also returns a batch.
@@ -226,18 +236,21 @@ type DatabaseBatchState = 'pending' | 'completed' | 'partial' |
 type DatabaseItemState = 'pending' | 'completed' | 'skipped' |
   'failed' | 'cancelled' | 'undone';
 interface DatabaseOperationState {
-  fileId: string; path: string; versionId: string;
+  collectionId?: string; fileId: string; path: string; versionId: string;
   revision: string; deleted: boolean;
 }
 interface DatabaseFolderState {
-  folderId: string; path: string; revision: string;
+  collectionId?: string; folderId?: string; path: string; revision?: string;
+  subtreeSignature?: string;
 }
 interface DatabaseBatchItem {
   itemId: string;
   action: 'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
   fileId?: string; expectedVersionId?: string; expectedRevision?: string;
-  targetPath?: string; collisionPolicy?: DatabaseCollisionPolicy;
-  expectedDestination?: DatabaseOperationState;
+  targetPath?: string; targetCollectionId?: string;
+  sourceSubtreeSignature?: string;
+  collisionPolicy?: DatabaseCollisionPolicy;
+  expectedDestination?: DatabaseOperationState | DatabaseFolderState;
 }
 interface DatabaseBatchRequest {
   idempotencyKey: string; collectionId: string;
