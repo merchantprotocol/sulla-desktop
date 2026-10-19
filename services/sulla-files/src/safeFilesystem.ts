@@ -10,6 +10,7 @@ import type { Readable } from 'node:stream';
 export interface FileFingerprint { dev: bigint; ino: bigint; size: number; mtimeMs: number }
 export interface EvictionReceipt { source: string; quarantine: string; fingerprint: FileFingerprint }
 export interface PublicationReceipt { staged: string; target: string; fingerprint: FileFingerprint }
+export interface ReplacementReceipt { target: string; backup: string; targetFingerprint: FileFingerprint; backupFingerprint: FileFingerprint }
 
 export class PinnedRegularFile {
   constructor(
@@ -93,12 +94,91 @@ export class FilesMutationCoordinator {
           if (error?.code === 'EEXIST') throw new Error('Publication will not overwrite an existing file');
           throw error;
         }
+        await this.syncParent(input.target);
         const target = await this.pinVerified(input.target, input.verify);
         try {
           if (!sameIdentity(staged.fingerprint, target.fingerprint)) throw new Error('Published file identity does not match its pinned stage');
           return { staged: input.staged, target: input.target, fingerprint: target.fingerprint };
         } finally { await target.close() }
       } finally { await staged.close() }
+    });
+  }
+
+  /**
+   * Replace a tracked file while retaining its previous inode until the caller
+   * has durably ingested the new bytes. The second verification happens after
+   * rename, so a cooperating caller detects an external write in the
+   * check-to-rename window and retains both versions for explicit recovery.
+   *
+   * This is deliberately not described as a general filesystem CAS: a process
+   * that already holds the old inode open can still write after verification.
+   * The native source broker must own handles/coordination before this leaves
+   * the synthetic feasibility boundary.
+   */
+  replaceVerified(input:{ staged: string; target: string; backup: string; conflict: string; verifyStaged: Verify; verifyTarget: Verify }):Promise<ReplacementReceipt> {
+    return this.runExclusive([input.staged, input.target, input.backup, input.conflict], async() => {
+      const target = await this.pinVerified(input.target, input.verifyTarget);
+      const staged = await this.pinVerified(input.staged, input.verifyStaged);
+      let published = false;
+      try {
+        await this.ensurePrivateParent(input.backup);
+        if (await this.exists(input.backup)) throw new Error('Replacement recovery file already exists');
+        await this.linkPinned(input.target, input.backup);
+        await this.syncParent(input.backup);
+        const backup = await this.pinVerified(input.backup, input.verifyTarget);
+        try {
+          if (!sameIdentity(target.fingerprint, backup.fingerprint)) throw new Error('Replacement recovery identity does not match its pinned target');
+          const current = await this.pinVerified(input.target, input.verifyTarget);
+          try {
+            if (!sameIdentity(current.fingerprint, backup.fingerprint)) throw new Error('Replacement target identity changed before publication');
+          } finally { await current.close() }
+          await this.renamePinned(input.staged, input.target);
+          published = true;
+          await Promise.all([this.syncParent(input.staged), this.syncParent(input.target)]);
+          const replaced = await this.pinVerified(input.target, input.verifyStaged);
+          try {
+            if (!sameIdentity(staged.fingerprint, replaced.fingerprint)) throw new Error('Replacement target identity does not match its pinned stage');
+            await input.verifyTarget(backup);
+            await backup.assertUnchanged();
+            return { target: input.target, backup: input.backup, targetFingerprint: replaced.fingerprint, backupFingerprint: backup.fingerprint };
+          } finally { await replaced.close() }
+        } catch (error) {
+          if (published && await this.exists(input.target).catch(() => false)) {
+            try {
+              await this.ensureParent(input.conflict);
+              await this.linkPinned(input.target, input.conflict);
+              await this.syncParent(input.conflict);
+            } catch (preserveError) {
+              throw new Error(`Replacement verification failed and automatic recovery stopped because the replacement could not be preserved at ${ input.conflict }; the prior source remains at ${ input.backup }: ${ preserveError instanceof Error ? preserveError.message : String(preserveError) }`, { cause: error });
+            }
+            throw new Error(`Replacement verification failed; both versions were preserved for recovery at ${ input.conflict } and ${ input.backup }`, { cause: error });
+          }
+          throw error;
+        } finally { await backup.close() }
+      } finally { await Promise.all([target.close(), staged.close()]) }
+    });
+  }
+
+  async preserveReplacement(receipt:ReplacementReceipt, preserve:string, verifyReplacement:Verify):Promise<void> {
+    await this.runExclusive([receipt.target, receipt.backup, preserve], async() => {
+      const replacement = await this.pinVerified(receipt.target, verifyReplacement);
+      try {
+        if (!sameFingerprint(replacement.fingerprint, receipt.targetFingerprint)) throw new Error('Replacement changed before preservation; recovery files were retained');
+        await this.ensureParent(preserve);
+        await this.linkPinned(receipt.target, preserve);
+        await this.syncParent(preserve);
+      } finally { await replacement.close() }
+    });
+  }
+
+  async finalizeReplacement(receipt:ReplacementReceipt):Promise<void> {
+    await this.runExclusive([receipt.backup], async() => {
+      const backup = await this.pin(receipt.backup);
+      try {
+        if (!sameFingerprint(backup.fingerprint, receipt.backupFingerprint)) throw new Error('Replacement recovery file changed before cleanup');
+      } finally { await backup.close() }
+      await this.unlinkPinned(receipt.backup);
+      await this.syncParent(receipt.backup);
     });
   }
 
@@ -199,6 +279,7 @@ export class FilesMutationCoordinator {
         if (!sameIdentity(pinned.fingerprint, receipt.fingerprint)) throw new Error('Private staged identity changed before cleanup');
       } finally { await pinned.close() }
       await this.unlinkPinned(staged);
+      await this.syncParent(staged);
     });
   }
 
@@ -303,6 +384,11 @@ export class FilesMutationCoordinator {
   private async unlinkPinned(path:string):Promise<void> {
     const parent = await this.pinParent(path);
     try { await unlink(parent.child) } finally { await parent.handle.close() }
+  }
+
+  private async syncParent(path:string):Promise<void> {
+    const parent = await this.pinParent(path);
+    try { await parent.handle.sync() } finally { await parent.handle.close() }
   }
 
   private absolute(path:string):string { return resolve(this.root, this.clean(path)) }

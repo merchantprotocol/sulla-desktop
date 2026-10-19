@@ -76,7 +76,8 @@ export function createApp(
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
-  if (config.mode === 'server') app.use('/files', serverUi());
+  if (config.mode === 'server' || config.fuseExperiment) app.use('/files', serverUi());
+  if (config.fuseExperiment) app.use('/files-proof', serverUi());
   app.post('/v1/bootstrap/challenge', bootstrapJsonParser, async(request, response) => {
     if (config.mode !== 'desktop' || !bootstrapAuthority) return response.sendStatus(404);
     try { return response.json(await bootstrapAuthority.challenge(request.body)) } catch (error) {
@@ -228,6 +229,36 @@ export function createApp(
   }));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
+  const requireFuseExperiment = () => {
+    if (!config.fuseExperiment || !manager || config.mode !== 'desktop') throw new HttpError(404, 'experimental Files mount is unavailable');
+    return manager;
+  };
+  app.get('/v1/fuse/files', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? '');
+    if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    await requireCollection(request, collectionId, 'view');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
+  } catch (error) { next(error) } });
+  app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
+    await requireFile(request, request.params.id, 'view');
+    const content = await requireFuseExperiment().fuseRead(request.params.id);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('ETag', `"${ content.file.versionId }"`);
+    response.setHeader('X-Sulla-Source-Hash', content.file.sourceHash);
+    response.type(content.file.mime).send(content.bytes);
+  } catch (error) { next(error) } });
+  app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
+    await requireFile(request, request.params.id, 'edit');
+    const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
+    const sourceHash = request.header('x-sulla-source-hash');
+    if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
+    const result = await requireFuseExperiment().fuseWrite(request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer), identity(request));
+    await audit(request, 'fuse-write', { id: result.id, current_version_id: result.versionId, collection_id: result.collectionId, path: result.path });
+    response.setHeader('ETag', `"${ result.versionId }"`);
+    response.setHeader('X-Sulla-Source-Hash', result.sourceHash);
+    response.json(result);
+  } catch (error) { next(error) } });
   app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
   app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
     if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
@@ -832,5 +863,5 @@ export function createApp(
       FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
-  app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error' })); return app;
+  app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) })); return app;
 }

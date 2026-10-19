@@ -14,7 +14,7 @@ import { Store } from './store.js';
 import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
 import type { IndexingQueue } from './indexing.js';
-import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
+import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -31,6 +31,10 @@ export interface FileRootStatus {
   id: string; name: string; collectionId: string; syncMode: 'local' | 'server'; paused: boolean;
   exclusions: string[]; state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
   pendingFiles: number; serverConfigured: boolean; lastError?: string; lastScanAt?: string; lastSyncAt?: string;
+}
+export interface FuseTrackedFile {
+  id: string; collectionId: string; path: string; mime: string; size: number;
+  versionId: string; sourceHash: string; mtimeMs: number;
 }
 interface PathOperationPlanEntry {
   rootId: string;
@@ -130,7 +134,7 @@ export class LocalFilesManager {
   private readonly store: Store;
   private collectionId?:  string;
   private stopped = false;
-  private running?:       Promise<void>;
+  private running?:       Promise<unknown>;
   private paused:         boolean;
   private lastError?:     string;
   private lastScanAt?:    string;
@@ -200,6 +204,104 @@ export class LocalFilesManager {
       serverConfigured: Boolean(this.config.serverUrl),
       lastError: row.last_error ?? undefined, lastScanAt: row.last_scan_at?.toISOString?.(), lastSyncAt: row.last_sync_at?.toISOString?.(),
     }));
+  }
+
+  /** Experimental VM adapter contract. Synthetic tracked roots only. */
+  async fuseSnapshot(collectionId:string):Promise<FuseTrackedFile[]> {
+    const root = this.rootForCollection(collectionId);
+    await this.serial(() => this.scanRoot(root));
+    const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      w.content_hash,w.mtime_ms FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND w.root_id=$2
+        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) ORDER BY f.path`, [collectionId, root.id]);
+    return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
+      id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
+      size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms),
+    }));
+  }
+
+  async fuseRead(fileId:string):Promise<{ file:FuseTrackedFile; bytes:Buffer }> {
+    const row = await this.fuseRow(fileId);
+    const root = this.rootForCollection(row.collectionId);
+    const pinned = await this.rootMutations.get(root.id)!.pinVerified(row.path, file => this.verifyHash(file, row.sourceHash));
+    try {
+      const chunks:Buffer[] = [];
+      for await (const chunk of pinned.createReadStream()) chunks.push(Buffer.from(chunk));
+      await pinned.assertUnchanged();
+      return { file: row, bytes: Buffer.concat(chunks) };
+    } finally { await pinned.close() }
+  }
+
+  async fuseWrite(fileId:string, expectedVersionId:string, expectedSourceHash:string, bytes:Buffer, actor:FilesIdentity):Promise<FuseTrackedFile & { conflictPath?:string }> {
+    const initial = await this.fuseRow(fileId);
+    const root = this.rootForCollection(initial.collectionId);
+    const mutations = this.rootMutations.get(root.id)!;
+    const operationId = randomUUID();
+    const stagedPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.write`;
+    const backupPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.source`;
+    const conflict = conflictPath(initial.path, `${ actor.deviceId || 'fuse' }-${ operationId.slice(0, 8) }`);
+    const desiredHash = createHash('sha256').update(bytes).digest('hex');
+    return this.serial(() => mutations.runExclusive([initial.path, stagedPath, backupPath, conflict], async() => {
+      const current = await this.fuseRow(fileId);
+      const output = await mutations.openPrivateExclusive(stagedPath);
+      try {
+        let offset = 0;
+        while (offset < bytes.byteLength) {
+          const result = await output.write(bytes, offset);
+          if (!result.bytesWritten) throw new Error('FUSE staging made no write progress');
+          offset += result.bytesWritten;
+        }
+        await output.sync();
+      } finally { await output.close() }
+      const verifyExpected = (file:PinnedRegularFile) => this.verifyHash(file, expectedSourceHash);
+      const verifyDesired = (file:PinnedRegularFile) => this.verifyHash(file, desiredHash);
+      if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash) {
+        const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: verifyDesired });
+        await mutations.finalizePublication(publication);
+        await this.scanRoot(root);
+        throw Object.assign(new Error('Tracked source changed before the FUSE write was committed; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict });
+      }
+      let receipt:ReplacementReceipt | undefined;
+      try {
+        receipt = await mutations.replaceVerified({ staged: stagedPath, target: current.path, backup: backupPath, conflict, verifyStaged: verifyDesired, verifyTarget: verifyExpected });
+      } catch (error) {
+        if (await mutations.exists(stagedPath).catch(() => false)) {
+          const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: verifyDesired });
+          await mutations.finalizePublication(publication);
+        }
+        await this.scanRoot(root);
+        throw Object.assign(new Error('Tracked source changed during the FUSE write; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict, cause: error });
+      }
+      try {
+        await this.scanRoot(root);
+        const committed = await this.fuseRow(fileId);
+        if (committed.sourceHash !== desiredHash || committed.versionId === expectedVersionId) throw new Error('Files ingestion did not durably record the replacement');
+        await mutations.finalizeReplacement(receipt);
+        return committed;
+      } catch (error) {
+        let preserved = false;
+        try { await mutations.preserveReplacement(receipt, conflict, verifyDesired); preserved = true } catch { /* Keep both private recovery and current path; never overwrite after failed preservation. */ }
+        await this.scanRoot(root).catch(() => undefined);
+        throw Object.assign(new Error(preserved
+          ? 'Files could not durably ingest the FUSE write; agent and prior-source bytes were retained for recovery'
+          : 'Files could not durably ingest the FUSE write; automatic recovery stopped without overwriting the current path'), { status: 503, ...(preserved ? { conflictPath: conflict } : {}), cause: error });
+      }
+    }));
+  }
+
+  private async fuseRow(fileId:string):Promise<FuseTrackedFile> {
+    const result = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      w.content_hash,w.mtime_ms FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [fileId]);
+    const row = result.rows[0];
+    if (!row || isProtectedPath(row.path)) throw Object.assign(new Error('Tracked file is unavailable'), { status: 404 });
+    return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms) };
+  }
+
+  private async verifyHash(file:PinnedRegularFile, expected:string):Promise<void> {
+    const hash = createHash('sha256');
+    for await (const chunk of file.createReadStream()) hash.update(chunk);
+    if (hash.digest('hex') !== expected) throw Object.assign(new Error('Tracked source hash changed'), { status: 409 });
   }
 
   async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<FileRootStatus> {
@@ -526,12 +628,12 @@ export class LocalFilesManager {
 
   async rescan():Promise<void> { return this.serial(async() => { await this.recoverPathOperations(); await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
-  private async serial(operation:()=>Promise<void>):Promise<void> {
+  private async serial<T>(operation:()=>Promise<T>):Promise<T> {
     return this.mutations.runExclusive(['.'], async() => {
       if (this.stopped) throw new Error('Files is locked');
-      const running = operation().then(() => { this.lastError = undefined }).catch(error => { this.fail(error); throw error });
+      const running = operation().then((value) => { this.lastError = undefined; return value }).catch(error => { this.fail(error); throw error });
       this.running = running;
-      try { await running } finally { if (this.running === running) this.running = undefined; }
+      try { return await running } finally { if (this.running === running) this.running = undefined; }
     });
   }
 

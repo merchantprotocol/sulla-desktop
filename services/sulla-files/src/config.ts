@@ -37,6 +37,7 @@ export interface Config {
   paused:               boolean;
   modelDir:             string;
   fileRoots?:           FileRootConfig[];
+  fuseExperiment?:      boolean;
 }
 
 export interface FileRootConfig {
@@ -121,5 +122,6 @@ export function loadConfig():Config {
     paused:           process.env.SULLA_FILES_PAUSED === '1',
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
     fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
+    fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
   };
 }
