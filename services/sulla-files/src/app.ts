@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 
 import { resolveFilesUiSession } from './accountsAuth.js';
-import { prepareCollectionMembership, resolveCollectionGrants, ROLE_LEVEL, searchableScopes, type CollectionMembership } from './acl.js';
+import { requireOrganizationScope, prepareCollectionMembership, resolveCollectionGrants, ROLE_LEVEL, searchableScopes, type CollectionMembership } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
@@ -303,10 +303,10 @@ export function createApp(
       return collection;
     }
     if (!actor.jobId) {
-      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND kind='knowledge' AND compatibility_state='native' AND published=TRUE AND legacy_source=FALSE ORDER BY created_at LIMIT 1", [actor.userId])).rows[0];
+      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND kind='knowledge' AND compatibility_state='native' AND published=TRUE AND legacy_source=FALSE AND ($2::uuid IS NULL OR org_id=$2) ORDER BY created_at LIMIT 1", [actor.userId, actor.orgId ?? null])).rows[0];
       if (existing) return existing;
     } else {
-      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE", [actor.userId, actor.jobId])).rows[0];
+      const existing = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE AND ($3::uuid IS NULL OR org_id=$3)", [actor.userId, actor.jobId, actor.orgId ?? null])).rows[0];
       if (existing) {
         if (existing.thread_id && actor.threadId && existing.thread_id !== actor.threadId) throw new HttpError(403, 'agent run belongs to another thread');
         return existing;
@@ -677,6 +677,7 @@ export function createApp(
       if (config.mode !== 'server' || !identityDb) throw new HttpError(404, 'default collection provisioning is unavailable');
       const actor = identity(request); const orgId = typeof request.body.orgId === 'string' ? request.body.orgId : '';
       if (!orgId) throw new HttpError(400, 'orgId is required');
+      requireOrganizationScope(actor, orgId);
       const membership = await identityDb.query("SELECT 1 FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL", [orgId, actor.userId]);
       if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
       await client.query('BEGIN');
@@ -705,17 +706,17 @@ export function createApp(
       if (!threadId) throw new HttpError(400, 'threadId is required');
       const legacy = await db.query(`SELECT count(*)::int AS count FROM files f JOIN collections c ON c.id=f.collection_id
         JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND ((c.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=c.id AND m.published_at IS NOT NULL))
+        WHERE c.owner_user_id=$1 AND ($3::uuid IS NULL OR c.org_id=$3) AND ((c.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=c.id AND m.published_at IS NOT NULL))
           OR (chunks.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=chunks.id AND m.published_at IS NOT NULL)))
-          AND (c.agent_run_id=ANY($2::text[]) OR f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[]))`, [actor.userId, runIds]);
+          AND (c.agent_run_id=ANY($2::text[]) OR f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[]))`, [actor.userId, runIds, actor.orgId ?? null]);
       if (Number(legacy.rows[0]?.count ?? 0) > 0) throw new HttpError(409, 'Legacy agent files need an explicit secure import from the retired external chunk store; records were preserved and were not opened');
       const rows = await db.query(`SELECT f.*,c.kind AS collection_kind,c.agent_run_id
         FROM files f JOIN collections c ON c.id=f.collection_id JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
+        WHERE c.owner_user_id=$1 AND ($4::uuid IS NULL OR c.org_id=$4) AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
           AND chunks.compatibility_state='native' AND chunks.published=TRUE AND chunks.legacy_source=FALSE AND (c.thread_id=$3 OR c.thread_id IS NULL)
           AND (c.agent_run_id=ANY($2::text[]) OR (f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[])))
           AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-        ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId]);
+        ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId, actor.orgId ?? null]);
       response.json(rows.rows.filter(row => !isProtectedPath(row.path)));
     } catch (error:any) {
       const databaseCode = typeof error?.code === 'string' && ['22P02', '23503', '23505', '42P01', '42703'].includes(error.code) ? error.code : undefined;
@@ -804,6 +805,7 @@ export function createApp(
   app.post('/v1/collections', async(request:RequestWithIdentity, response, next) => {
     try {
       const actor = identity(request); const collection = request.body.collection;
+      requireOrganizationScope(actor, collection.org_id);
       if (collection.kind !== 'knowledge') throw new HttpError(400, 'only knowledge syncs');
       if (config.mode === 'server' && collection.org_id) {
         if (!identityDb) throw new HttpError(503, 'organization identity database is not configured');
@@ -811,7 +813,7 @@ export function createApp(
         if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
       }
       const created = await db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy) VALUES($1,$2,$3,$4,'knowledge','synced','org-readable',$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id`, [collection.id, collection.org_id, actor.userId, collection.name, collection.encrypted_data_key, collection.dedup_key_ciphertext, collection.retention_policy ?? {}]);
-      if (!created.rowCount) { const existing = await collectionRow(collection.id); if (existing.owner_user_id !== actor.userId) throw new HttpError(409, 'collection already exists'); } else await db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [collection.id, actor.userId]);
+      if (!created.rowCount) { const existing = await collectionRow(collection.id); requireOrganizationScope(actor, existing.org_id); if (existing.owner_user_id !== actor.userId) throw new HttpError(409, 'collection already exists'); } else await db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [collection.id, actor.userId]);
       response.json({ ok: true });
     } catch (error) { next(error) }
   });
@@ -1321,7 +1323,7 @@ export function createApp(
   app.get('/v1/collections/:id/shares', async(request:RequestWithIdentity, response, next) => { try { await requireCollection(request, request.params.id, 'manage'); const rows = await db.query('SELECT * FROM folder_shares WHERE collection_id=$1 ORDER BY folder_path,principal_type,principal_id', [request.params.id]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
   app.post('/v1/collections/:id/shares', async(request:RequestWithIdentity, response, next) => { try { const access = await requireCollection(request, request.params.id, 'manage'); const folderPath = cleanPath(request.body.folderPath, false); const principalType = request.body.principalType; const principalId = String(request.body.principalId ?? ''); const role = request.body.role; if (!identityDb || !access.collection.org_id) throw new HttpError(409, 'organization identity is not configured'); if (!['view', 'edit'].includes(role)) throw new HttpError(400, 'role must be view or edit'); await validateSharePrincipal(access.collection.org_id, principalType, principalId); const actor = identity(request); const row = await db.query(`INSERT INTO folder_shares(collection_id,folder_path,principal_type,principal_id,role,created_by) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(collection_id,folder_path,principal_type,principal_id) DO UPDATE SET role=EXCLUDED.role,updated_at=NOW() RETURNING *`, [request.params.id, folderPath, principalType, principalId, role, actor.userId]); await audit(request, 'share-folder', undefined, { orgId: access.collection.org_id, collectionId: request.params.id, folderPath, principalType, principalId, role }); response.status(201).json(row.rows[0]) } catch (error) { next(error) } });
   app.delete('/v1/collections/:id/shares', async(request:RequestWithIdentity, response, next) => { try { const access = await requireCollection(request, request.params.id, 'manage'); const folderPath = cleanPath(request.body.folderPath, false); const deleted = await db.query('DELETE FROM folder_shares WHERE collection_id=$1 AND folder_path=$2 AND principal_type=$3 AND principal_id=$4 RETURNING id', [request.params.id, folderPath, request.body.principalType, request.body.principalId]); if (!deleted.rowCount) throw new HttpError(404, 'share not found'); await audit(request, 'unshare-folder', undefined, { orgId: access.collection.org_id, collectionId: request.params.id, folderPath, principalType: request.body.principalType, principalId: request.body.principalId }); response.status(204).end() } catch (error) { next(error) } });
-  app.get('/v1/orgs/:orgId/members', async(request:RequestWithIdentity, response, next) => { try { if (!identityDb) throw new HttpError(409, 'organization identity is not configured'); const member = await identityDb.query(`SELECT role FROM org_members WHERE org_id=$1 AND user_id=$2 AND status='confirmed'`, [request.params.orgId, identity(request).userId]); if (!member.rowCount) throw new HttpError(403, 'access denied'); const members = await identityDb.query(`SELECT u.id::text,u.email,om.role FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL ORDER BY u.email`, [request.params.orgId]); const groups = await identityDb.query(`SELECT g.id::text,g.encrypted_name,COALESCE(json_agg(gm.user_id::text) FILTER(WHERE gm.user_id IS NOT NULL),'[]') members FROM org_groups g LEFT JOIN group_members gm ON gm.group_id=g.id WHERE g.org_id=$1 GROUP BY g.id ORDER BY g.created_at`, [request.params.orgId]); response.json({ members: members.rows, groups: groups.rows }) } catch (error) { next(error) } });
+  app.get('/v1/orgs/:orgId/members', async(request:RequestWithIdentity, response, next) => { try { if (!identityDb) throw new HttpError(409, 'organization identity is not configured'); requireOrganizationScope(identity(request), request.params.orgId); const member = await identityDb.query(`SELECT role FROM org_members WHERE org_id=$1 AND user_id=$2 AND status='confirmed'`, [request.params.orgId, identity(request).userId]); if (!member.rowCount) throw new HttpError(403, 'access denied'); const members = await identityDb.query(`SELECT u.id::text,u.email,om.role FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL ORDER BY u.email`, [request.params.orgId]); const groups = await identityDb.query(`SELECT g.id::text,g.encrypted_name,COALESCE(json_agg(gm.user_id::text) FILTER(WHERE gm.user_id IS NOT NULL),'[]') members FROM org_groups g LEFT JOIN group_members gm ON gm.group_id=g.id WHERE g.org_id=$1 GROUP BY g.id ORDER BY g.created_at`, [request.params.orgId]); response.json({ members: members.rows, groups: groups.rows }) } catch (error) { next(error) } });
   app.post('/v1/agent-files/:id/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const source = await requireFile(request, request.params.id, 'edit'); const targetCollectionId = String(request.body.collectionId ?? ''); const targetPath = cleanPath(String(request.body.path ?? source.path), false);
     await requirePath(request, targetCollectionId, targetPath, 'edit'); const target = await collectionRow(targetCollectionId); if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
@@ -1338,6 +1340,7 @@ export function createApp(
   app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request); const source = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE", [actor.userId, request.params.runId])).rows[0];
     if (!source) throw new HttpError(404, 'scratch run not found');
+    requireOrganizationScope(actor, source.org_id);
     requireScratchRun(actor, source);
     if (source.thread_id && actor.threadId && source.thread_id !== actor.threadId) throw new HttpError(403, 'scratch run belongs to another thread');
     const targetCollectionId = String(request.body.collectionId ?? ''); await requireCollection(request, targetCollectionId, 'edit'); const target = await collectionRow(targetCollectionId);
@@ -1359,7 +1362,7 @@ export function createApp(
   app.post('/v1/agent-runs/:runId/end', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (actor.jobId !== request.params.runId) throw new HttpError(403, 'run identity mismatch');
     const result = await db.query(`UPDATE files f SET expires_at=NOW()+INTERVAL '14 days',updated_at=NOW()
-      FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
+      FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND ($3::uuid IS NULL OR c.org_id=$3) AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId, actor.orgId ?? null]);
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
   registerDocumentLifecycleRoutes(app, db, { identity, requireFile, role: fileRole, audit,
