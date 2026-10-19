@@ -18,6 +18,7 @@ interface SyntheticTrashState {
   listed:boolean;
   revision:string;
   tombstone:FilesTrashTombstone;
+  parentReceiptId?:string;
   purgeOutcome?:'recovery-required';
 }
 interface SyntheticFile extends FilesItem { syntheticTrash?:SyntheticTrashState }
@@ -31,6 +32,13 @@ interface SyntheticOperation {
   mutations:Record<string, SyntheticMutation>;
   retryOverrides:Record<string, NonNullable<FilesOperationRetry['items']>[number]>;
 }
+interface SyntheticFolderReceiptPlan {
+  collectionId:string;
+  rootFolderId:string;
+  rootPath:string;
+  files:{ id:string; path:string; revision:string; receiptId:string }[];
+  folders:{ id:string; path:string; revision:string }[];
+}
 interface SyntheticState {
   revision:number;
   sequence:number;
@@ -38,6 +46,7 @@ interface SyntheticState {
   collections:SyntheticCollection[];
   operations:Record<string, SyntheticOperation>;
   idempotency:Record<string, { fingerprint:string; operationId:string }>;
+  folderReceipts:Record<string, SyntheticFolderReceiptPlan>;
   stars:Record<string, string[]>;
 }
 
@@ -82,8 +91,8 @@ export class SyntheticFilesDataSource implements FilesDataSource {
         this.file('synthetic-collision', 'Projects/Beta/meeting-notes.md', 'text/markdown', 9_600, 'version-collision', '6'),
         this.trashedFile('synthetic-trash-file', 'Archive/old-draft.md', 'text/markdown', 4_200, 'version-trash-file', '15', 'receipt-trash-file'),
         this.trashedFile('synthetic-trash-recovery', 'Archive/recovery-required.zip', 'application/zip', 48_000, 'version-trash-recovery', '16', 'receipt-trash-recovery', 'recovery-required'),
-        this.trashedFile('synthetic-trash-child', 'Discarded project/notes.txt', 'text/plain', 1_900, 'version-trash-child', '18', 'receipt-trash-folder', undefined, false),
-        this.trashedFile('synthetic-trash-nested-child', 'Discarded project/Research/results.json', 'application/json', 7_700, 'version-trash-nested-child', '19', 'receipt-trash-folder', undefined, false),
+        this.trashedFile('synthetic-trash-child', 'Discarded project/notes.txt', 'text/plain', 1_900, 'version-trash-child', '18', 'receipt-trash-child', undefined, true, 'receipt-trash-folder'),
+        this.trashedFile('synthetic-trash-nested-child', 'Discarded project/Research/results.json', 'application/json', 7_700, 'version-trash-nested-child', '19', 'receipt-trash-nested-child', undefined, true, 'receipt-trash-folder'),
       ],
       folders: [
         { folderId: 'synthetic-folder-projects', path: 'Projects', revision: '7' },
@@ -106,7 +115,23 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       ],
     };
 
-    return { revision: 20, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {}, stars: {} };
+    return {
+      revision: 20, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {},
+      folderReceipts: {
+        'receipt-trash-folder': {
+          collectionId: primary.id, rootFolderId: 'synthetic-trash-folder', rootPath: 'Discarded project',
+          files: [
+            { id: 'synthetic-trash-child', path: 'Discarded project/notes.txt', revision: '18', receiptId: 'receipt-trash-child' },
+            { id: 'synthetic-trash-nested-child', path: 'Discarded project/Research/results.json', revision: '19', receiptId: 'receipt-trash-nested-child' },
+          ],
+          folders: [
+            { id: 'synthetic-trash-folder', path: 'Discarded project', revision: '17' },
+            { id: 'synthetic-trash-child-folder', path: 'Discarded project/Research', revision: '20' },
+          ],
+        },
+      },
+      stars: {},
+    };
   }
 
   private restoreState():SyntheticState | null {
@@ -114,7 +139,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const raw = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(STORAGE_KEY);
       const value = raw ? JSON.parse(raw) as SyntheticState : null;
 
-      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency ? value : null;
+      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts ? value : null;
     } catch { return null }
   }
   private persist() {
@@ -124,15 +149,15 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   private file(id:string, path:string, mime:string, size:number, currentVersionId:string, operationRevision:string):SyntheticFile {
     return { id, path, mime, size, updatedAt: iso(), currentVersionId, operationRevision, versionCount: 1, createdByType: 'user', createdById: 'synthetic-user', ownerDisplayName: 'Preview user', syncState: 'synced', indexStatus: 'indexed', indexReasonCode: 'synthetic_fixture', indexReason: 'Synthetic preview fixture.', indexedAt: iso() };
   }
-  private trashedFile(id:string, path:string, mime:string, size:number, currentVersionId:string, revision:string, receiptId:string, purgeOutcome?:'recovery-required', listed = true):SyntheticFile {
+  private trashedFile(id:string, path:string, mime:string, size:number, currentVersionId:string, revision:string, receiptId:string, purgeOutcome?:'recovery-required', listed = true, parentReceiptId?:string):SyntheticFile {
     const deletedAt = iso(-2); const tombstone:FilesTrashTombstone = { kind: 'version', id: currentVersionId, receiptId, operationId: receiptId, undo: { state: purgeOutcome ?? 'available', expiresAt: iso(28) } };
 
-    return { ...this.file(id, path, mime, size, currentVersionId, revision), deletedAt, updatedAt: deletedAt, disposal: { status: 'approved' }, syntheticTrash: { listed, revision, tombstone, ...(purgeOutcome ? { purgeOutcome } : {}) } };
+    return { ...this.file(id, path, mime, size, currentVersionId, revision), deletedAt, updatedAt: deletedAt, disposal: { status: 'approved' }, syntheticTrash: { listed, revision, tombstone, ...(parentReceiptId ? { parentReceiptId } : {}), ...(purgeOutcome ? { purgeOutcome } : {}) } };
   }
   private trashedFolder(folderId:string, path:string, revision:string, receiptId:string, listed:boolean):SyntheticFolder {
     const deletedAt = iso(-2); const tombstone:FilesTrashTombstone = { kind: 'receipt', id: receiptId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(28) } };
 
-    return { folderId, path, revision, deletedAt, syntheticTrash: { listed, revision, tombstone } };
+    return { folderId, path, revision, deletedAt, syntheticTrash: { listed, revision, tombstone, parentReceiptId: receiptId } };
   }
   private collection(id:string) {
     const result = this.state.collections.find(item => item.id === id);
@@ -391,13 +416,20 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const deletedAt = new Date().toISOString();
 
       files.forEach(file => {
+        const childReceiptId = this.nextId('synthetic-trash-child-receipt');
+
         file.deletedAt = deletedAt; file.operationRevision = this.nextRevision(); file.updatedAt = deletedAt;
-        file.syntheticTrash = { listed: false, revision: file.operationRevision, tombstone: { kind: 'version', id: file.currentVersionId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } };
+        file.syntheticTrash = { listed: true, revision: file.operationRevision, parentReceiptId: receiptId, tombstone: { kind: 'version', id: file.currentVersionId, receiptId: childReceiptId, operationId: childReceiptId, undo: { state: 'available', expiresAt: iso(30) } } };
       });
       folders.forEach(candidate => {
         candidate.deletedAt = deletedAt; candidate.revision = this.nextRevision();
-        candidate.syntheticTrash = { listed: candidate.folderId === folder.folderId, revision: candidate.revision, tombstone: { kind: 'receipt', id: receiptId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } };
+        candidate.syntheticTrash = { listed: candidate.folderId === folder.folderId, revision: candidate.revision, parentReceiptId: receiptId, tombstone: { kind: 'receipt', id: receiptId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } };
       });
+      this.state.folderReceipts[receiptId] = {
+        collectionId: collection.id, rootFolderId: folder.folderId, rootPath: sourcePath,
+        files: files.map(file => ({ id: file.id, path: file.path, revision: file.operationRevision ?? '0', receiptId: file.syntheticTrash!.tombstone.receiptId! })),
+        folders: folders.map(candidate => ({ id: candidate.folderId, path: candidate.path, revision: candidate.revision })),
+      };
       receipt.after = null;
     } else {
       if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic folder destination is required.' };
@@ -496,11 +528,33 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     return Boolean(actual?.listed && actual.revision === item.revision && currentRevision === item.revision && JSON.stringify(actual.tombstone) === JSON.stringify(item.currentTombstone));
   }
   private receiptMembers(collection:SyntheticCollection, receiptId:string) {
-    const files = collection.files.filter(file => file.syntheticTrash?.tombstone.receiptId === receiptId);
-    const folders = collection.folders.filter(folder => folder.syntheticTrash?.tombstone.receiptId === receiptId);
-    const exact = [...files].every(file => file.deletedAt && file.operationRevision === file.syntheticTrash?.revision) && folders.every(folder => folder.deletedAt && folder.revision === folder.syntheticTrash?.revision);
+    const plan = this.state.folderReceipts[receiptId];
+    const files = plan?.files.map(member => collection.files.find(file => file.id === member.id)).filter((file):file is SyntheticFile => Boolean(file)) ?? [];
+    const folders = plan?.folders.map(member => collection.folders.find(folder => folder.folderId === member.id)).filter((folder):folder is SyntheticFolder => Boolean(folder)) ?? [];
+    const exact = Boolean(plan && plan.collectionId === collection.id && files.length === plan.files.length && folders.length === plan.folders.length &&
+      plan.folders.some(member => member.id === plan.rootFolderId && member.path === plan.rootPath) &&
+      plan.files.every(member => {
+        const file = files.find(candidate => candidate.id === member.id);
 
-    return { files, folders, exact };
+        return Boolean(file?.deletedAt && file.path === member.path && file.operationRevision === member.revision && file.syntheticTrash?.revision === member.revision && file.syntheticTrash.parentReceiptId === receiptId && file.syntheticTrash.tombstone.receiptId === member.receiptId);
+      }) && plan.folders.every(member => {
+        const folder = folders.find(candidate => candidate.folderId === member.id);
+
+        return Boolean(folder?.deletedAt && folder.path === member.path && folder.revision === member.revision && folder.syntheticTrash?.revision === member.revision && folder.syntheticTrash.parentReceiptId === receiptId && folder.syntheticTrash.tombstone.receiptId === receiptId);
+      }));
+    const expectedFiles = new Set(plan?.files.map(member => member.id) ?? []); const expectedFolders = new Set(plan?.folders.map(member => member.id) ?? []);
+    const inNamespace = (path:string) => Boolean(plan && (path === plan.rootPath || path.startsWith(plan.rootPath + '/')));
+    const namespaceExact = Boolean(plan && collection.files.filter(file => inNamespace(file.path)).every(file => expectedFiles.has(file.id)) &&
+      collection.folders.filter(folder => inNamespace(folder.path)).every(folder => expectedFolders.has(folder.folderId)));
+
+    return { files, folders, exact, namespaceExact, plan };
+  }
+  private folderRestoreNamespaceOccupied(collection:SyntheticCollection, plan:SyntheticFolderReceiptPlan) {
+    const expectedFiles = new Set(plan.files.map(member => member.id)); const expectedFolders = new Set(plan.folders.map(member => member.id));
+    const inNamespace = (path:string) => path === plan.rootPath || path.startsWith(plan.rootPath + '/');
+
+    return collection.files.some(file => !file.deletedAt && inNamespace(file.path) && !expectedFiles.has(file.id)) ||
+      collection.folders.some(folder => !folder.deletedAt && inNamespace(folder.path) && !expectedFolders.has(folder.folderId));
   }
   async restoreTrashItem(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
     const collection = this.currentCollection();
@@ -520,9 +574,11 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (!folder?.deletedAt || !receiptId || !this.exactTrashState(folder.syntheticTrash, item, folder.revision)) this.trashConflict('Synthetic restore was blocked because the folder revision or current receipt changed.');
     const members = this.receiptMembers(collection, receiptId);
     if (!members.exact) this.trashConflict('Synthetic restore was blocked because a child revision changed after the folder entered Trash.');
-    if (members.files.some(file => this.activeFileAt(collection, file.path, new Set([file.id])) || this.activeFolderAt(collection, file.path)) || members.folders.some(candidate => this.activeFileAt(collection, candidate.path) || this.activeFolderAt(collection, candidate.path, new Set([candidate.folderId])))) this.trashConflict('Synthetic restore was blocked because the original folder namespace is occupied.');
+    if (this.folderRestoreNamespaceOccupied(collection, members.plan!)) this.trashConflict('Synthetic restore was blocked because the original folder namespace is occupied.');
+    if (!members.namespaceExact) this.trashConflict('Synthetic restore was blocked because the folder subtree gained an unrelated item after entering Trash.');
     members.files.forEach(file => { file.deletedAt = undefined; file.syntheticTrash = undefined; file.updatedAt = new Date().toISOString(); file.operationRevision = this.nextRevision() });
     members.folders.forEach(candidate => { candidate.deletedAt = undefined; candidate.syntheticTrash = undefined; candidate.revision = this.nextRevision() });
+    delete this.state.folderReceipts[receiptId];
     this.persist();
     return { status: 'restored', kind: 'folder', id: folder.folderId, path: folder.path, revision: folder.revision, currentTombstone: null, receiptId };
   }
@@ -543,10 +599,10 @@ export class SyntheticFilesDataSource implements FilesDataSource {
 
     if (!folder?.deletedAt || !receiptId || !this.exactTrashState(folder.syntheticTrash, item, folder.revision)) this.trashConflict('Synthetic purge was blocked because the folder revision or current receipt changed.');
     const members = this.receiptMembers(collection, receiptId);
-    if (!members.exact) this.trashConflict('Synthetic purge was blocked because a child revision changed after the folder entered Trash.');
+    if (!members.exact || !members.namespaceExact) this.trashConflict('Synthetic purge was blocked because the folder membership changed after entering Trash.');
     const fileIds = new Set(members.files.map(file => file.id)); const folderIds = new Set(members.folders.map(candidate => candidate.folderId));
 
-    collection.files = collection.files.filter(file => !fileIds.has(file.id)); collection.folders = collection.folders.filter(candidate => !folderIds.has(candidate.folderId)); this.persist();
+    collection.files = collection.files.filter(file => !fileIds.has(file.id)); collection.folders = collection.folders.filter(candidate => !folderIds.has(candidate.folderId)); delete this.state.folderReceipts[receiptId]; this.persist();
     return { status: 'purged', kind: 'folder', id: folder.folderId, path: folder.path, revision: folder.revision, currentTombstone: null, metadataPurged: true, chunks: 'complete', retainedArtifacts: 'complete', undo: 'invalidated', receiptId };
   }
   async restoreTrash(fileId:string) { const item = (await this.load()).trash?.find(candidate => candidate.kind === 'file' && candidate.id === fileId); if (!item) throw new Error('Synthetic file is not in Trash'); await this.restoreTrashItem(item) }
