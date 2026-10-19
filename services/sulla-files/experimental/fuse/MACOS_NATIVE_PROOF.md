@@ -1,7 +1,7 @@
 # Native macOS Files/FUSE acceptance proof
 
-This is the required acceptance run before `SULLA_FILES_NATIVE_SOURCE_READY`
-can become `true`. It is deliberately staged, not executed by this change. The
+This is one required acceptance run before production rollout can be enabled.
+The harness alone does not prove production mount startup or agent wiring. The
 run must use a reviewed Desktop proof build and disposable synthetic data only.
 It must not inspect, copy, migrate, mount, or modify personal files, credentials,
 wallet/vault data, existing Files data, or Sulla/PostgreSQL application data.
@@ -16,14 +16,15 @@ creates a fresh `mkdtemp` root, a sub-kilobyte
 synthetic file, an ephemeral PostgreSQL cluster bound to loopback, the real
 `LocalFilesManager`/HTTP API, the production `SullaFilesNativeBroker`, the real
 `SullaFilesSourceGateway`, and the real Python FUSE adapter in a disposable
-Docker container. The macOS chooser must
-return a security-scoped bookmark for the one file the harness created. Every
-other selection is rejected. It never reads a configured database URL, Sulla
+Docker container. The chooser must select the one file the harness created.
+Every other selection is rejected. Mac App Store builds must return a
+security-scoped bookmark. Non-MAS builds use an application-enforced session
+selection and a pinned broker handle, matching Desktop; this does not prove
+OS sandbox enforcement or durable permission. Restart requires reselection. It never reads a configured database URL, Sulla
 home, Desktop user-data directory, Files root, Vault, or wallet path.
 
-Committed source must still contain
-`SULLA_FILES_NATIVE_SOURCE_READY=false`. Native proof mode is a separate
-process and does not change that constant.
+Production rollout remains disabled during this proof. Native proof mode is a
+separate process and does not enable the production runtime.
 
 ### Host prerequisites
 
@@ -149,7 +150,7 @@ credentials, bookmarks, capabilities, database credentials, or host paths.
 
 ## Exit criteria
 
-The readiness constant may be proposed for review only when every trace above
+Production rollout may be considered only when every trace above
 is captured from the same implementation used by Desktop, no direct host mount
 or FUSE-to-host path exists, and all temporary synthetic data is removed. Any
 unexpected acknowledgement, missing visible conflict, reused revoked handle,
@@ -158,7 +159,7 @@ or source/Files hash mismatch fails the proof.
 The harness makes trace 7 runnable, but this change does not claim native macOS
 evidence. The proof still has to be run from the reviewed commit on macOS with
 the chooser and Docker FUSE. Linux/VM exercise is implementation evidence only.
-`SULLA_FILES_NATIVE_SOURCE_READY` remains `false`.
+Production rollout remains disabled pending combined runtime acceptance.
 
 ## Cleanup and evidence isolation
 
@@ -184,8 +185,8 @@ Evidence may contain only the PR SHA, harness image digest, fixture label,
 redacted handle prefix, operation/file/version ids, status/EIO results, and
 SHA-256 hashes. Do not capture the chooser, control-page tokens, process
 environment, Docker inspection output, temporary paths, file contents, or
-PostgreSQL logs. The readiness constant remains false after a successful run;
-enabling it requires a separate reviewed change.
+PostgreSQL logs. Production rollout remains disabled after a successful run;
+enabling it requires combined production lifecycle and agent acceptance.
 
 Trace 7 retains one owner-only `0700` synthetic fixture root between the two
 processes. Its owner-only `0600` marker contains only generated synthetic keys,
