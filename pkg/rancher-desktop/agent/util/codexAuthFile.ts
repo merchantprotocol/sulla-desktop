@@ -99,36 +99,37 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
   }
 }
 
-/**
- * Point the VM user's ~/.codex at the host's ~/.codex.
- *
- * `limactl shell` runs with HOME=/home/<user>.linux, so a plain `codex` in the
- * VM (an agent's exec, a terminal) looked for its login there and reported
- * "Not logged in" even though the host-path auth.json was fresh. Only
- * CodexService, which forces CODEX_HOME, saw it. The symlink gives every
- * `codex` in the VM the same login. Idempotent; a real directory already at
- * the VM path is moved aside, never deleted.
- */
+/** Copy the exact Codex auth file into the guest-owned CLI home. */
 export async function linkCodexHomeIntoVm(): Promise<void> {
   if (typeof process !== 'undefined' && process.type === 'renderer') return;
   if (process.platform !== 'darwin' && process.platform !== 'linux') return;
-  const target = codexHomeDir();
+  const target = codexAuthPath();
+  const staged = '/tmp/sulla-codex-auth.json';
   const script = [
-    't="$1"; d="$HOME/.codex"',
-    'if [ -L "$d" ]; then [ "$(readlink "$d")" = "$t" ] && exit 0; rm "$d";',
-    'elif [ -e "$d" ]; then mv "$d" "$d.vm-backup-$(date +%s)"; fi',
-    'ln -s "$t" "$d"',
+    'set -eu',
+    'd="$HOME/.codex"',
+    'if [ -L "$d" ]; then rm "$d"; fi',
+    'mkdir -p "$d"',
+    'install -m 600 "$1" "$d/auth.json"',
+    'rm -f "$1"',
   ].join('\n');
   try {
     const { default: paths } = await import('@pkg/utils/paths');
     const { execFile } = await import('child_process');
+    const env = { ...process.env, LIMA_HOME: paths.lima };
     await new Promise<void>((resolve, reject) => {
-      execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', script, 'sh', target], {
-        env:     { ...process.env, LIMA_HOME: paths.lima },
+      execFile(paths.limactl, ['copy', target, `0:${ staged }`], {
+        env,
         timeout: 30_000,
       }, err => (err ? reject(err) : resolve()));
     });
-    console.log(`[codexAuthFile] VM ~/.codex linked to ${ target }`);
+    await new Promise<void>((resolve, reject) => {
+      execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', script, 'sh', staged], {
+        env,
+        timeout: 30_000,
+      }, err => (err ? reject(err) : resolve()));
+    });
+    console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
   } catch (err) {
     console.warn('[codexAuthFile] Could not link ~/.codex into the VM (VM not running?):', err);
   }
@@ -136,10 +137,19 @@ export async function linkCodexHomeIntoVm(): Promise<void> {
 
 /** Delete ~/.codex/auth.json — called when the codex integration is
  *  disconnected so the CLI stops authenticating with revoked credentials. */
-export function removeCodexAuthFile(): void {
+export async function removeCodexAuthFile(): Promise<void> {
   try {
     fs.unlinkSync(codexAuthPath());
   } catch { /* already gone */ }
+  try {
+    const { default: paths } = await import('@pkg/utils/paths');
+    const { execFile } = await import('child_process');
+    await new Promise<void>((resolve, reject) => {
+      execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', 'rm -f "$HOME/.codex/auth.json"'], {
+        env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
+      }, err => (err ? reject(err) : resolve()));
+    });
+  } catch { /* VM may be stopped; host credential is already revoked. */ }
 }
 
 /**
@@ -149,7 +159,10 @@ export function removeCodexAuthFile(): void {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
-  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) return true;
+  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) {
+    await linkCodexHomeIntoVm();
+    return true;
+  }
   try {
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
@@ -167,14 +180,20 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     for (const accountId of accountIds) {
       try {
         const tokens = await oauthService.ensureFreshTokens('codex', accountId);
-        if (writeCodexAuthFile(tokens)) return true;
+        if (writeCodexAuthFile(tokens)) {
+          await linkCodexHomeIntoVm();
+          return true;
+        }
       } catch {
         const stored = await oauthService.getStoredTokens('codex', accountId);
         if (!stored?.raw_response) continue;
         const tokens = (typeof stored.raw_response === 'string'
           ? JSON.parse(stored.raw_response)
           : stored.raw_response) as OAuthTokenSet;
-        if (writeCodexAuthFile(tokens) && isAuthFileFresh()) return true;
+        if (writeCodexAuthFile(tokens) && isAuthFileFresh()) {
+          await linkCodexHomeIntoVm();
+          return true;
+        }
       }
     }
     return false;

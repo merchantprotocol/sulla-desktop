@@ -23,7 +23,7 @@ import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
-import { ensureCodexAuthFile, codexHomeDir } from '../util/codexAuthFile';
+import { ensureCodexAuthFile } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 
@@ -236,13 +236,6 @@ export class CodexService extends BaseLanguageModel {
     }
     codexArgs.push('-'); // read the prompt from stdin
 
-    // limactl shell sets HOME to the guest path (/home/<user>.linux), so
-    // codex would look for auth under the guest home and miss the host
-    // ~/.codex/auth.json written by CodexOAuth. Force CODEX_HOME (and HOME
-    // for any secondary path resolution) to the host home mount.
-    const hostCodexHome = shq(codexHomeDir());
-    const hostHome = shq(path.dirname(codexHomeDir()));
-
     // `exec` replaces the inner sh with codex so there's no shell layer
     // between the SSH session and the CLI — best chance of signal
     // propagation when we kill limactl on the host side.
@@ -252,7 +245,7 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 

@@ -38,8 +38,8 @@ services:
     ports:
       - "127.0.0.1:30118:8080"
     volumes:
-      - "{{sullaFunctionsDir}}:/var/functions:ro"
-      - "{{sullaRuntimeTempDir}}:/var/db-functions:ro"
+      - "/mnt/data/sulla/functions:/var/functions:ro"
+      - "/mnt/data/sulla/runtime/functions:/var/db-functions:ro"
       - "sulla_python_runtime_cache:/opt/sulla/cache/deps"
     restart: unless-stopped
     healthcheck:
@@ -54,8 +54,8 @@ services:
     ports:
       - "127.0.0.1:30119:8080"
     volumes:
-      - "{{sullaFunctionsDir}}:/var/functions:ro"
-      - "{{sullaRuntimeTempDir}}:/var/db-functions:ro"
+      - "/mnt/data/sulla/functions:/var/functions:ro"
+      - "/mnt/data/sulla/runtime/functions:/var/db-functions:ro"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
@@ -69,8 +69,8 @@ services:
     ports:
       - "127.0.0.1:30120:8080"
     volumes:
-      - "{{sullaFunctionsDir}}:/var/functions:ro"
-      - "{{sullaRuntimeTempDir}}:/var/db-functions:ro"
+      - "/mnt/data/sulla/functions:/var/functions:ro"
+      - "/mnt/data/sulla/runtime/functions:/var/db-functions:ro"
       - "sulla_node_runtime_cache:/opt/sulla/cache/node_modules"
     restart: unless-stopped
     healthcheck:

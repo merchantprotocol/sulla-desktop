@@ -1,9 +1,5 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
 import { BaseTool, ToolResponse } from '../base';
-import { hasContainerFileRuntime, writeContainerPath } from '../util/containerFileRuntime';
+import { hasContainerFileRuntime, writeContainerPath, writeGuestPath } from '../util/containerFileRuntime';
 
 /**
  * WriteFile Tool — write or overwrite file contents.
@@ -15,7 +11,7 @@ export class WriteFileWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    let filePath: string = input.path || input.filePath || '';
+    const filePath: string = input.path || input.filePath || '';
     const content: string = input.content;
 
     if (!filePath) {
@@ -26,51 +22,12 @@ export class WriteFileWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Missing required field: content' };
     }
 
-    if (hasContainerFileRuntime()) {
-      try {
-        const result = await writeContainerPath(filePath, String(content));
-
-        return { successBoolean: true, responseString: `Wrote ${ result.lines } lines to ${ result.path }` };
-      } catch (error) {
-        return { successBoolean: false, responseString: `Failed to write file: ${ error instanceof Error ? error.message : String(error) }` };
-      }
-    }
-
-    // Expand ~ to home directory
-    if (filePath.startsWith('~/')) {
-      filePath = filePath.replace('~', os.homedir());
-    } else if (filePath === '~') {
-      return { successBoolean: false, responseString: 'Cannot write to home directory itself' };
-    }
-
-    // Resolve to absolute
-    filePath = path.resolve(filePath);
-
-    // Safety: block paths outside home directory
-    if (!filePath.startsWith(os.homedir())) {
-      return { successBoolean: false, responseString: 'Write operations are restricted to the home directory' };
-    }
-
     try {
-      // Create parent directories if needed
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      const result = await (hasContainerFileRuntime() ? writeContainerPath(filePath, String(content)) : writeGuestPath(filePath, String(content)));
 
-      fs.writeFileSync(filePath, String(content), 'utf-8');
-
-      const lines = String(content).split('\n').length;
-
-      return {
-        successBoolean: true,
-        responseString: `Wrote ${ lines } lines to ${ filePath }`,
-      };
+      return { successBoolean: true, responseString: `Wrote ${ result.lines } lines to ${ result.path }` };
     } catch (error) {
-      return {
-        successBoolean: false,
-        responseString: `Failed to write file: ${ error instanceof Error ? error.message : String(error) }`,
-      };
+      return { successBoolean: false, responseString: `Failed to write guest file: ${ error instanceof Error ? error.message : String(error) }` };
     }
   }
 }

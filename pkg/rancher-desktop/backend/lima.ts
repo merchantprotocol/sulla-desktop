@@ -33,6 +33,7 @@ import {
 import BackendHelper from './backendHelper';
 import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerClient';
 import * as K8s from './k8s';
+import { replaceLimaMounts } from './limaMounts';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
@@ -67,8 +68,6 @@ import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
-import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
-import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
@@ -638,17 +637,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
   protected getMounts(): LimaMount[] {
     const mounts: LimaMount[] = [];
-    const locations = ['~', '/tmp/rancher-desktop'];
-    const homeDir = `${ os.homedir() }/`;
+    // Only app-owned transport/cache roots cross the VM boundary. User home,
+    // external volumes, and Darwin's broad temporary roots are Files-owned.
+    const locations = ['/tmp/rancher-desktop'];
     const extraDirs = [paths.cache, paths.logs, paths.resources];
-
-    if (os.platform() === 'darwin') {
-      // /var and /tmp are symlinks to /private/var and /private/tmp
-      locations.push('/Volumes', '/var/folders', '/private/tmp', '/private/var/folders');
-    }
     for (const extraDir of extraDirs) {
       const found = locations.some((loc) => {
-        loc = loc === '~' ? homeDir : path.normalize(loc);
+        loc = path.normalize(loc);
 
         return !path.relative(loc, path.normalize(extraDir)).startsWith('../');
       });
@@ -659,7 +654,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     for (const location of locations) {
-      const mount: LimaMount = { location, writable: true };
+      const mount: LimaMount = { location, writable: location !== paths.resources };
 
       if (this.cfg?.virtualMachine.mount.type === MountType.NINEP) {
         const nineP = this.cfg.experimental.virtualMachine.mount['9p'];
@@ -712,6 +707,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         },
       },
     });
+    // lodash merge combines arrays by index, which would retain stale broad
+    // host mounts from persisted configs when the desired list gets shorter.
+    replaceLimaMounts(config, this.getMounts());
 
     // Alpine can boot via UEFI now
     if (config.firmware) {
@@ -3017,12 +3015,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
-    // One-time migration: copy data from old VM paths to new host-mounted paths
-    await this.progressTracker.action('Migrating Sulla data to host storage', 40, async() => {
-      await this.migrateSullaDataToHost();
-      this.assertManagedServicesGeneration(generation);
-    });
-
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
@@ -3593,39 +3585,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     if (shouldRefreshSullaServiceImage(filesImage, process.env.SULLA_FILES_IMAGE)) {
       this.#managedSullaRefreshImages.set('sulla_files', filesImage.image);
     }
-    const filesUserRoot = resolveSullaFilesUserRoot();
-    const storedFileRoots = await SullaSettingsModel.get('sullaFilesRoots', []);
-    const storedDefaultFileRoot = (Array.isArray(storedFileRoots) ? storedFileRoots : []).find((root:any) => root?.id === 'default');
-    const protectedFileRootPaths = [
-      paths.appHome, paths.altAppHome, paths.sullaConfig,
-      path.join(os.homedir(), 'sulla', 'data'),
-      path.join(os.homedir(), 'sulla', 'crypto-wallet'),
-      path.join(os.homedir(), 'sulla', 'wallets'),
-      path.join(os.homedir(), 'Sites', 'crypto-wallet'),
-      path.join(os.homedir(), 'Library', 'Application Support', 'Sulla Wallet'),
-    ].filter(Boolean).map(value => path.resolve(value));
-    const containsPath = (parent:string, child:string) => { const relative = path.relative(parent, child); return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`)) };
-    const safeTrackedRoot = (value:unknown) => {
-      if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
-      const resolved = path.resolve(value);
-      if (resolved.split(path.sep).some(part => part.toLowerCase().includes('wallet') || ['vault', 'vaults'].includes(part.toLowerCase()))) return false;
-      return !protectedFileRootPaths.some(protectedPath => containsPath(resolved, protectedPath) || containsPath(protectedPath, resolved));
-    };
-    const secondaryFileRoots = (Array.isArray(storedFileRoots) ? storedFileRoots : [])
-      .filter((root:any) => root?.id !== 'default' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(root?.id) && safeTrackedRoot(root?.path))
-      .map((root:any) => ({
-        id:         String(root.id),
-        name:       String(root.name || path.basename(root.path)),
-        hostPath:   path.resolve(root.path),
-        path:       `/data/files-roots/${ root.id }`,
-        syncMode:   root.syncMode === 'server' ? 'server' : 'local',
-        paused:     root.paused === true,
-        exclusions: Array.isArray(root.exclusions) ? root.exclusions.filter((item:unknown):item is string => typeof item === 'string') : [],
-      }));
-    const configuredFileRoots = [
-      { id: 'default', name: 'Sulla Files', hostPath: filesUserRoot.activePath, path: '/data/files', syncMode: storedDefaultFileRoot ? (storedDefaultFileRoot.syncMode === 'server' ? 'server' : 'local') : (process.env.SULLA_FILES_SERVER_URL ? 'server' : 'local'), paused: storedDefaultFileRoot?.paused === true, exclusions: Array.isArray(storedDefaultFileRoot?.exclusions) ? storedDefaultFileRoot.exclusions.filter((item:unknown):item is string => typeof item === 'string') : [] as string[] },
-      ...secondaryFileRoots,
-    ];
     compose.services.sulla_files = {
       ...filesImage,
       image: resolvedFilesImage,
@@ -3642,7 +3601,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
-        SULLA_FILES_FOLDER:                '/data/files',
+        SULLA_FILES_STORED_ONLY:           '1',
         SULLA_FILES_MODE:                  'desktop',
         SULLA_FILES_DEVICE_ID:             os.hostname(),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
@@ -3654,11 +3613,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
         SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
-        SULLA_FILES_ROOTS_JSON:            JSON.stringify(configuredFileRoots.map(({ hostPath: _hostPath, ...root }) => root)),
-        ...(SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+        ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
           ? {
-            SULLA_FILES_FUSE_EXPERIMENT:     '1',
-            SULLA_FILES_NATIVE_SOURCE_URL:   'http://host.lima.internal:30125',
+            SULLA_FILES_FUSE_EXPERIMENT: '1',
           }
           : {}),
         ...(vaultIdentities ? {
@@ -3673,15 +3630,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
       ports: ['127.0.0.1:30124:8792'],
-      ...(SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
-        ? {
-          extra_hosts: ['host.lima.internal:192.168.5.2'],
-        }
-        : {}),
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
-        `${ filesUserRoot.activePath }:/data/files`,
-        ...secondaryFileRoots.map(root => ({ type: 'bind', source: root.hostPath, target: root.path })),
         filesTlsBind(),
         ...(vaultIdentities
           ? [vaultTlsBind(true)]
@@ -3708,64 +3658,20 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     // Resolve the persistent data directory for bind mounts (cross-platform via paths.appHome)
-    const sullaDataDir = path.join(paths.appHome, 'data');
+    const sullaDataDir = '/mnt/data/sulla';
 
-    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
-    await fs.promises.mkdir(filesUserRoot.activePath, { recursive: true });
-    await Promise.all(secondaryFileRoots.map(root => fs.promises.mkdir(root.hostPath, { recursive: true, mode: 0o700 })));
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
 
-    // Ensure data directory is writable by container user (postgres=UID 70)
-    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
-
-    // Resolve the user's functions directory for runtime containers (read-only bind mount).
-    // Lima mounts the host home directory into the VM at the same path, so the host path
-    // is valid for Docker bind mounts inside the VM.
-    const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
-    const sullaFunctionsDir = resolveSullaFunctionsDir();
-    const sullaRuntimeTempDir = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
-
-    await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
-    await fs.promises.mkdir(sullaRuntimeTempDir, { recursive: true });
+    const sullaFunctionsDir = '/mnt/data/sulla/functions';
+    const sullaRuntimeTempDir = '/mnt/data/sulla/runtime/functions';
+    await this.execCommand({ root: true }, 'mkdir', '-p', sullaFunctionsDir, sullaRuntimeTempDir);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
-  }
-
-  /**
-   * One-time migration: copies data from old VM-internal paths (/var/lib/sulla/*)
-   * to the new host-mounted paths under paths.appHome/data/. Skips if the
-   * destination already contains data or the source doesn't exist.
-   */
-  private async migrateSullaDataToHost(): Promise<void> {
-    const sullaDataDir = path.join(paths.appHome, 'data');
-    const migrations = [
-      { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
-    ];
-
-    for (const { src, dest } of migrations) {
-      try {
-        // Check if destination already has data (PG_VERSION for postgres, or any file for redis)
-        const destFiles = await fs.promises.readdir(dest);
-
-        if (destFiles.length > 0) {
-          console.log(`[Sulla] Migration skip: ${ dest } already has data`);
-          continue;
-        }
-
-        // Check if old VM path exists and has data, then copy
-        await this.execCommand({ root: true }, 'test', '-d', src);
-        console.log(`[Sulla] Migrating ${ src } -> ${ dest }`);
-        await this.execCommand({ root: true }, 'cp', '-a', `${ src }/.`, `${ dest }/`);
-        console.log(`[Sulla] Migration complete: ${ src } -> ${ dest }`);
-      } catch {
-        console.log(`[Sulla] Migration skip: ${ src } does not exist or copy failed`);
-      }
-    }
   }
 
   /**
@@ -3975,81 +3881,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await this.progressTracker.action(`Starting ${ serviceName }`, 50, async() => {
       await this.execCommand({ root: true }, '/sbin/rc-service', '--ifnotstarted', serviceName, 'start');
     });
-  }
-
-  /**
-   * Configure k3s to use Docker Hub credentials if available on the host.
-   * This helps avoid Docker Hub rate limiting for image pulls.
-   */
-  protected async configureDockerCredentials(): Promise<void> {
-    const dockerConfigPath = path.join(os.homedir(), '.docker', 'config.json');
-
-    try {
-      const configExists = await fs.promises.access(dockerConfigPath).then(() => true).catch(() => false);
-
-      if (!configExists) {
-        console.log('[Sulla] No Docker credentials found, using unauthenticated pulls');
-
-        return;
-      }
-
-      const dockerConfig = JSON.parse(await fs.promises.readFile(dockerConfigPath, 'utf-8'));
-
-      // Check if there are any auths configured
-      if (!dockerConfig.auths || Object.keys(dockerConfig.auths).length === 0) {
-        console.log('[Sulla] Docker config exists but no credentials stored');
-
-        return;
-      }
-
-      // Build k3s registries.yaml with Docker Hub credentials
-      const registriesConfig: Record<string, unknown> = { mirrors: {}, configs: {} };
-
-      // Check for Docker Hub credentials (can be under multiple keys)
-      const dockerHubKeys = ['https://index.docker.io/v1/', 'docker.io', 'registry-1.docker.io'];
-
-      for (const key of dockerHubKeys) {
-        if (dockerConfig.auths[key]) {
-          const auth = dockerConfig.auths[key];
-
-          // Docker stores credentials as base64 encoded "username:password"
-          if (auth.auth) {
-            const decoded = Buffer.from(auth.auth, 'base64').toString('utf-8');
-            const [username, password] = decoded.split(':');
-
-            (registriesConfig.configs as Record<string, unknown>)['docker.io'] = {
-              auth: { username, password },
-            };
-            console.log('[Sulla] Found Docker Hub credentials, configuring k3s registry auth');
-            break;
-          }
-        }
-      }
-
-      if (Object.keys(registriesConfig.configs as object).length === 0) {
-        console.log('[Sulla] No usable Docker Hub credentials found');
-
-        return;
-      }
-
-      // Write registries.yaml to k3s config directory
-      const registriesYaml = yaml.stringify(registriesConfig);
-      const workdir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-registry-'));
-
-      try {
-        const registriesPath = path.join(workdir, 'registries.yaml');
-
-        await fs.promises.writeFile(registriesPath, registriesYaml, 'utf-8');
-        await this.lima('copy', registriesPath, `${ MACHINE_NAME }:/tmp/registries.yaml`);
-        await this.execCommand({ root: true }, 'mkdir', '-p', '/etc/rancher/k3s');
-        await this.execCommand({ root: true }, 'mv', '/tmp/registries.yaml', '/etc/rancher/k3s/registries.yaml');
-        console.log('[Sulla] Docker Hub credentials configured for k3s');
-      } finally {
-        await fs.promises.rm(workdir, { recursive: true, force: true });
-      }
-    } catch (err) {
-      console.warn('[Sulla] Failed to configure Docker credentials:', err);
-    }
   }
 
   protected async installCACerts(): Promise<void> {

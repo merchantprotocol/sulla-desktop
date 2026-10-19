@@ -14,7 +14,8 @@
 // which maps to "omit --model and let the CLI pick" in CodexService.
 
 import { runCommand } from '../tools/util/CommandRunner';
-import { ensureCodexAuthFile, codexHomeDir } from '../util/codexAuthFile';
+import { ensureCodexAuthFile } from '../util/codexAuthFile';
+
 import Logging from '@pkg/utils/logging';
 
 const log = Logging.background;
@@ -43,11 +44,6 @@ interface RawCodexModel {
   visibility?:   string;
 }
 
-/** POSIX single-quote escape — literal in sh, no expansion fires. */
-function shq(s: string): string {
-  return `'${ s.replace(/'/g, "'\\''") }'`;
-}
-
 /**
  * Return the live Codex model catalog: the "Auto" sentinel followed by every
  * user-visible model the codex CLI reports for the signed-in account. Never
@@ -71,11 +67,7 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
     log.warn(`[codexModelCatalog] ensureCodexAuthFile failed (continuing — a live auth file may still exist): ${ err }`);
   }
 
-  // CODEX_HOME pins the CLI to the host-mounted ~/.codex (limactl shell would
-  // otherwise resolve HOME to the guest path and miss the auth file). runCommand
-  // already exports HOME=<macHome>, so $HOME/.codex == codexHomeDir(); we set
-  // CODEX_HOME explicitly to match CodexService's spawn exactly.
-  const command = `export CODEX_HOME=${ shq(codexHomeDir()) }; codex debug models`;
+  const command = 'export CODEX_HOME="$HOME/.codex"; codex debug models';
 
   try {
     const { stdout, exitCode } = await runCommand(command, [], {
