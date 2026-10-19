@@ -2,11 +2,12 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import express from 'express';
 
-import { resolveCollectionGrants, ROLE_LEVEL, searchableScopes } from './acl.js';
+import { prepareCollectionMembership, resolveCollectionGrants, ROLE_LEVEL, searchableScopes, type CollectionMembership } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
-import { executeDatabaseOperation, parseDatabaseOperation, restoreTrashedFile, trashFileWithoutReceipt, undoDatabaseOperation } from './databaseOperations.js';
+import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperations.js';
+import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
@@ -302,15 +303,41 @@ export function createApp(
     await db.query(`DELETE FROM file_stars WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND (($4::uuid IS NOT NULL AND file_id=$4) OR ($5::text IS NOT NULL AND folder_path=$5))`, [principal.type, principal.id, collectionId, fileId ?? null, folderPath ?? null]);
     response.status(204).end();
   } catch (error) { next(error) } });
-  const operationAccess = (request:RequestWithIdentity) => ({
-    file: (client:pg.PoolClient, id:string) => requireFile(request, id, 'edit', client),
-    path: (client:pg.PoolClient, collectionId:string, path:string) => requirePath(request, collectionId, path, 'edit', client),
-  });
+  const operationAccess = (request:RequestWithIdentity) => {
+    const memberships = new Map<string,CollectionMembership>();
+    const check = async(client:pg.PoolClient, collectionId:string, path:string, fileId?:string) => {
+      if (isProtectedPath(path)) throw protectedPathError();
+      const membership = memberships.get(collectionId);
+      if (!membership) throw new HttpError(409, 'Operation membership was not prepared');
+      const access = await resolveCollectionGrants(client, undefined, identity(request), collectionId, membership);
+      requireScratchRun(identity(request), access.collection);
+      const right = effectiveRight(request,'edit');
+      if ((access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[right]) || access.paths.some(g => ROLE_LEVEL[g.role] >= ROLE_LEVEL[right] && (path === g.folderPath || path.startsWith(g.folderPath + '/'))) || (fileId && access.files.some(g => g.fileId === fileId && ROLE_LEVEL[g.role] >= ROLE_LEVEL[right]))) return;
+      throw new HttpError(403,'access denied');
+    };
+    return {
+      prepare: async(collectionId:string) => { memberships.set(collectionId,await prepareCollectionMembership(db,identityDb,identity(request),collectionId)) },
+      file: async(client:pg.PoolClient,id:string) => { const file = await fileRow(id,client); await check(client,file.collection_id,file.path,id); return file },
+      path: (client:pg.PoolClient,collectionId:string,path:string) => check(client,collectionId,path),
+    };
+  };
   app.post('/v1/database-file-operations', async(request:RequestWithIdentity, response, next) => { try {
-    response.json(await executeDatabaseOperation(db, parseDatabaseOperation(request.body), identity(request), operationAccess(request)));
+    const result = await submitDatabaseBatch(db, parseDatabaseBatch(request.body), identity(request), operationAccess(request));
+    response.status(202).json(result);
+    void runDatabaseBatch(db, result.operationId, identity(request), operationAccess(request)).catch(() => undefined);
   } catch (error) { next(error) } });
-  app.post('/v1/database-file-operations/:id/undo', async(request:RequestWithIdentity, response, next) => { try {
-    response.json(await undoDatabaseOperation(db, request.params.id, identity(request), operationAccess(request)));
+  app.get('/v1/database-file-operations/capabilities', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? '');
+    await requireCollection(request, collectionId, 'edit', true, true);
+    response.json(await databaseOperationCapabilities(db, collectionId, operationAccess(request)));
+  } catch (error) { next(error) } });
+  app.get('/v1/database-file-operations/:id', async(request:RequestWithIdentity, response, next) => { try {
+    response.json(await getDatabaseBatch(db, request.params.id, identity(request), operationAccess(request)));
+  } catch (error) { next(error) } });
+  for (const action of ['cancel', 'retry', 'undo'] as const) app.post('/v1/database-file-operations/:id/' + action, async(request:RequestWithIdentity, response, next) => { try {
+    const result = await controlDatabaseBatch(db, request.params.id, action, request.body, identity(request), operationAccess(request));
+    response.json(result);
+    if (action === 'retry') void runDatabaseBatch(db, result.operationId, identity(request), operationAccess(request)).catch(() => undefined);
   } catch (error) { next(error) } });
   app.post('/v1/file-operations', async(request:RequestWithIdentity, response, next) => { try {
     const action = request.body.action; const collectionId = String(request.body.collectionId ?? ''); const items = request.body.items as FileOperationItem[];
@@ -723,6 +750,17 @@ export function createApp(
     await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
+  app.get('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? '');
+    await requireCollection(request, collectionId, 'view', true, true);
+    const rows = await db.query('SELECT path FROM file_folders WHERE collection_id=$1 ORDER BY path', [collectionId]);
+    const visible:string[] = [];
+    for (const row of rows.rows) {
+      try { await requirePath(request, collectionId, row.path, 'view'); visible.push(row.path) }
+      catch (error:any) { if (error.status !== 403) throw error }
+    }
+    response.json(visible);
+  } catch (error) { next(error) } });
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const required = effectiveRight(request, 'view'); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
@@ -910,5 +948,9 @@ export function createApp(
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
   registerDocumentLifecycleRoutes(app, db, { identity, requireFile, role: fileRole, audit, deleteChunk: (collectionId, chunkId) => store.delete(collectionId, chunkId) });
+  app.use('/v1/database-file-operations', (error:any, _request:any, response:any, _next:any) => {
+    const status = error.status ?? (error.code === '23505' ? 409 : 500);
+    response.status(status).json({ error: status < 500 ? error.message : 'Database operation failed', code: error.code ?? 'operation-failed' });
+  });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : error.code === '55000' ? 423 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error' })); return app;
 }

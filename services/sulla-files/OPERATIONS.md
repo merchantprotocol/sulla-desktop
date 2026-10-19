@@ -1,120 +1,174 @@
-# Database operation receipt foundation
+# Database Explorer operation contract
 
-This is stage one. It does not complete the Explorer operation feature set.
-The exported request/response types are in `src/databaseOperations.ts`.
-Apply `025_database_operation_receipts.sql` through normal service migration
-before using these routes. No migration is run by this change.
+Canonical exported types: `src/databaseOperationBatches.ts`, with file snapshots
+from `src/databaseOperations.ts`. This extends the existing endpoint; it does not
+add a duplicate mutation API. Apply 025_database_operation_receipts and
+027_database_operation_batches through normal service migration before enabling.
 
-## HTTP contract
+## HTTP routes
 
-`POST /v1/database-file-operations` accepts:
+- GET /v1/database-file-operations/capabilities?collectionId=UUID:
+  { enabled: boolean, reason?: 'native-custody-required' }. Missing route on an
+  older service means unsupported. Discovery requires current edit access.
+- POST /v1/database-file-operations: DatabaseBatchRequest; HTTP 202 durable batch,
+  returned before background processing starts. Legacy single-item input is
+  accepted but now also returns a batch.
+- GET /v1/database-file-operations/:operationId: HTTP 200 DatabaseBatchReceipt.
+- POST /v1/database-file-operations/:operationId/cancel: same receipt shape.
+- POST /v1/database-file-operations/:operationId/retry: DatabaseRetryRequest,
+  same receipt shape before resumed processing starts.
+- POST /v1/database-file-operations/:operationId/undo: same receipt shape after
+  reverse-order inverse attempts. Individual failures remain visible.
+- GET /v1/folders?collectionId=UUID: string[] of authorized explicit folder paths,
+  matching PR1230. No placeholder files.
+
+## Exact adapter types
 
 ```ts
-interface DatabaseOperationRequest {
-  idempotencyKey: string; // caller-generated UUID, retained across retries
-  collectionId: string;  // UUID
-  action: 'move' | 'rename' | 'trash';
-  fileId: string;        // UUID from service listing/detail
-  expectedVersionId: string;
-  expectedRevision: string; // operation_revision from listing/detail, decimal bigint
-  targetPath?: string;   // required for move/rename; canonical relative path
-  collisionPolicy?: 'keep-both' | 'skip'; // omitted means conflict
-}
+type DatabaseCollisionPolicy = 'replace' | 'keep-both' | 'skip';
+type DatabaseBatchState = 'pending' | 'completed' | 'partial' |
+  'failed' | 'cancelled' | 'undone';
+type DatabaseItemState = 'pending' | 'completed' | 'skipped' |
+  'failed' | 'cancelled' | 'undone';
 interface DatabaseOperationState {
-  fileId: string;
-  path: string;
-  versionId: string;
-  revision: string;
-  deleted: boolean;
+  fileId: string; path: string; versionId: string;
+  revision: string; deleted: boolean;
 }
-interface DatabaseOperationReceipt {
-  operationId: string; // service-generated UUID, never inferred from listing
-  collectionId: string;
-  action: 'move' | 'rename' | 'trash';
-  state: 'completed' | 'skipped' | 'undone';
-  undoSupported: boolean; // true only for completed
-  before: DatabaseOperationState;
-  after: DatabaseOperationState;
-  createdAt: string;
-  undoneAt: string | null;
+interface DatabaseFolderState {
+  folderId: string; path: string; revision: string;
+}
+interface DatabaseBatchItem {
+  itemId: string;
+  action: 'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
+  fileId?: string; expectedVersionId?: string; expectedRevision?: string;
+  targetPath?: string; collisionPolicy?: DatabaseCollisionPolicy;
+  expectedDestination?: DatabaseOperationState;
+}
+interface DatabaseBatchRequest {
+  idempotencyKey: string; collectionId: string;
+  items: DatabaseBatchItem[];
+}
+interface DatabaseRetryRequest {
+  items?: {
+    itemId: string; collisionPolicy?: DatabaseCollisionPolicy;
+    expectedDestination?: DatabaseOperationState;
+  }[];
+}
+interface DatabaseItemError {
+  status: number; code: string; message: string;
+  destination?: DatabaseOperationState;
+}
+interface DatabaseBatchItemReceipt {
+  itemId: string; action: DatabaseBatchItem['action'];
+  state: DatabaseItemState; receiptId: string | null;
+  before: DatabaseOperationState | null;
+  after: DatabaseOperationState | DatabaseFolderState | null;
+  displacedBefore?: DatabaseOperationState;
+  displacedAfter?: DatabaseOperationState;
+  error: DatabaseItemError | null;
+  undoSupported: boolean; retryable: boolean;
+}
+interface DatabaseBatchReceipt {
+  operationId: string; collectionId: string; state: DatabaseBatchState;
+  cancelRequested: boolean; undoSupported: boolean; retryable: boolean;
+  createdAt: string; updatedAt: string;
+  items: DatabaseBatchItemReceipt[];
 }
 ```
 
-Trash forbids destination/collision fields. Successful requests return 200 and
-the receipt. Replaying the identical request with the same actor/session scope
-and key returns the existing receipt, including its current undone state.
-Reusing a key for a different payload returns 409. After an ambiguous network
-outcome, replay the original payload/key; do not generate a fresh key.
-There is no automatic retry. Permissions are checked again on replay.
+All IDs are UUIDs. Supply 1–250 ordered items with unique itemId values.
+File actions require fileId, expectedVersionId and expectedRevision. Listing/detail
+already return operation_revision as a decimal string; adapters map it to
+operationRevision without converting bigint to number. Move/copy/rename require
+a canonical relative targetPath. Trash forbids destination/collision fields.
+Create-folder requires targetPath and optionally keep-both/skip; no Replace.
 
-`POST /v1/database-file-operations/:operationId/undo` accepts no required body
-and returns the same receipt shape. Repeated undo returns the undone receipt
-after current authorization. Undo uses the recorded file/version/path/revision;
-any intervening file update, including an ABA change, returns 409. Purged
-files are never recreated. Copy is not implemented and cannot be undone.
+Submission keys are scoped to authenticated user/device/agent/job/thread identity.
+Identical replay returns the existing batch; a changed payload returns HTTP409
+idempotency-conflict. After an ambiguous HTTP result, replay the original key and
+payload. Internal per-item keys and receipt IDs are service-generated. The initial
+request remains immutable; retry policies are stored separately.
 
-The existing `POST /v1/trash/:id/restore` retains
-`{ ok: true, versionId: string }`. It optionally accepts
-`{ expectedVersionId: string }` for the selected tombstone. It locks the file,
-rechecks permission and trash state, follows the current tombstone ancestry,
-locks the source version, and inserts the restored version, refcounts,
-journal and audit within one transaction. A second concurrent restore sees
-the first result and returns 409 rather than creating a duplicate restore.
-The legacy DELETE file route also reads its parent under the same lock and
-keeps its 204 response, preventing a concurrent stale trash from branching off
-the pre-restore parent. It does not issue a receipt.
+Omit retry items to resume pending/failed/cancelled items unchanged. An explicit
+array selects only those items. Completed/skipped/undone items cannot be rerun or
+overridden. Apply All expands to explicit item overrides; Replace needs a separately
+acknowledged destination snapshot for EACH item. Source CAS never silently refreshes:
+a changed source requires a new operation.
 
-## Concurrency and permissions
+Destination collisions return failed items with error.status=409 and
+error.code='destination-conflict'. Exact destination snapshots are included only
+after edit authorization. Folder/prefix collisions can lack a destination snapshot;
+do not offer Replace then. Other CAS/race errors use state-conflict. Request errors
+use HTTP status plus { error: string, code: string }. Native-root submission returns
+HTTP422 native-custody-required. Never silently fall back after an ambiguous request.
 
-The receipt is inserted and finalized within the mutation transaction. A
-transaction-scoped advisory lock serializes keys. A file table SHARE ROW
-EXCLUSIVE lock also constrains legacy upload/restore/purge/watcher writers,
-including namespace inserts that would not honor the advisory lock. File and
-receipt row locks protect decisions. SHARE locks protect local ACL, protected
-file and tracked-root metadata. Normal READ COMMITTED reads after acquiring
-these locks see the latest committed state. Deadlocks, lock/statement timeouts,
-serialization failures and unique conflicts return 409 without automatic retry.
+## Atomicity, cancellation and recovery
 
-This deliberately serializes file writes service-wide for a bounded operation;
-lock timeout is 5 seconds and statement timeout is 15 seconds. Replace this
-with a common per-collection namespace protocol only after every writer uses
-it. The external organization identity database is rechecked during execution
-but is not part of the Files database transaction.
+The batch header is durable before work starts. Each successful/skipped item receipt,
+mutation, journal/audit and batch timestamp commit together. Failure bookkeeping
+follows rollback and checks for a committed receipt first, including after an
+ambiguous COMMIT response. A crash before error bookkeeping leaves a pending item
+safe to resume. No startup worker retains old authorization: explicit retry obtains
+fresh membership and resumes uncommitted items. Pending does not promise a running
+process. Polling does not acquire batch row write locks. Cancel waits only for the
+current metadata transaction and stops subsequent items; committed work remains.
 
-Every file UPDATE advances `operation_revision`; background indexing can
-therefore conservatively invalidate undo. Single-file moves retain file ID,
-versions and direct grants. Moves across inherited folder-grant or public-link
-boundaries are rejected. Trash adds a tombstone and keeps publication metadata;
-undo restores its exact surviving parent pointer and retains the tombstone,
-without deleting content/history. Current checkout and record locks apply.
+Undo first stops forward execution, then attempts completed items in reverse order.
+It is not whole-batch rollback. Successful inverses remain committed if another
+fails. Failed inverses retain their completed state with error information.
 
-## Exact remaining work
+External identity membership queries run before transactions and refresh for each
+attempted item. Local ACL/protected-file/native-root/CAS decisions are rechecked
+inside SERIALIZABLE transactions. Namespace triggers make legacy path writers
+participate in the per-collection advisory-lock protocol. No service-wide files
+table lock spans network/content operations; new item transactions only manipulate
+database metadata. Lock/serialization/deadlock conflicts fail without automatic
+retry. External membership revocation is not atomically coupled to Files; the
+prepared membership is the authorization snapshot for that item.
 
-Copy, Replace, explicit empty folders, folder/batch operations, cancellation,
-retry queues, adapters and renderer wiring are not implemented here. Those
-actions return 422 on the new endpoint. Replace must preserve both source and
-displaced identities/history and record/guard both states on undo. Copy and
-Replace need lifecycle/publication and inherited-permission rules before a
-receipt can promise a correct inverse. Empty-folder integration must reconcile
-the separately owned stored-folder implementation.
+## Copy, Replace and guarded inverses
 
-Watched files and entire tracked-root collections are rejected with 422 by the
-new receipt API, even if temporarily detached. The legacy
-`POST /v1/file-operations` remains completion-only and explicitly reports
-`undoSupported:false`; it produces no operation ID.
+Copy references immutable manifests/chunks and increments refcounts, including
+remote key-context records. It preserves current/published visibility, lifecycle
+policy and direct grants. Original history is unchanged; historical versions and
+public-link bearer tokens are not duplicated into the new identity. Moves/copies
+across inherited folder/public-link audience boundaries are rejected.
 
-Native integration must extend the existing `files_path_operations` recovery
-journal and `FilesMutationCoordinator`: persist source/target fingerprints,
-root identity, displaced artifacts and inverse plan; validate current
-permissions and file/version/revision under the native custody lock; persist
-the user receipt in the same metadata commit as native publication state;
-recover ambiguous commit/publication outcomes before retry; and run inverse
-publication/quarantine through that coordinator. A metadata-only inverse or
-unlink is not sufficient.
+Replace CAS-checks the displayed destination identity/version/revision. The displaced
+file moves to a unique .replaced-<receipt UUID>-<name> sibling, preserving its ID,
+history, publication and direct grants. It remains a real visible recovery file.
+The incoming identity occupies the requested path. Undo guards both identities;
+changing the recovery file invalidates it. Copy undo moves the copy into Trash at
+a unique .undone-<receipt UUID> path, preserving history/chunks. No inverse purges.
 
-## Review evidence
+Semantic revisions and permission/public-link signatures guard undo. Indexing-only
+fields do not advance revision; file/lifecycle/path/expiry and version-publication
+changes do. Empty-folder undo requires its same ID/revision and no children/grants.
+It deletes only the created metadata row.
 
-Source and SQL reviewed against existing migrations, ACL resolution, lifecycle
-triggers, native recovery and route callers. No builds, lint, typechecks, tests,
-installs, production data reads, service changes or migration execution were
-performed. Runtime PostgreSQL acceptance remains unverified.
+Folder schema reconciles 026_stored_folders from feat/files-fuse-proof:
+file_folders(collection_id,path,created_by_type,created_by_id,created_at,updated_at).
+027 adds folder identity/revision. When integrating PR1230, keep its unchanged 026
+before 027; do not create a competing folder table.
+
+## Native boundary and outstanding acceptance
+
+Folder move/copy/trash remain legacy completion-only operations. Do not invent file
+IDs for folders or advertise receipt/undo/cancel/retry for those paths. This database
+slice does not complete all 14 Explorer features or native custody undo.
+
+Legacy native Trash/restore retain their old metadata-only semantics, now with locked
+current tombstone ancestry. They do not issue native receipts or promise local
+filesystem publication/inversion. New receipts reject tracked-root collections and
+watched identities even if temporarily detached.
+
+Native follow-up must extend files_path_operations and FilesMutationCoordinator:
+persist root identities/fingerprints/displaced artifacts/inverse plans; validate
+permission and CAS under custody; commit user receipts with metadata; recover
+ambiguous publication/commit before retry; run inverse publication/quarantine
+through that coordinator. Metadata-only inversion or direct unlink is insufficient.
+
+Validation: source/SQL/caller review and git diff --check only. No production builds,
+lint, typechecks, tests, installs, migrations, service changes, host commands or
+private-data reads. Runtime PostgreSQL and integrated adapter/browser acceptance
+remain parent verification work.
