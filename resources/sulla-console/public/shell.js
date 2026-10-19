@@ -4,6 +4,7 @@ const routes={
   devices:{title:'Devices',service:'accounts',audience:'sulla-accounts',href:'/services/accounts/?view=devices'},
   files:{title:'Files',service:'files',audience:'sulla-files',href:'/services/files/'},
   'audit-log':{title:'Audit Log',service:'vault',audience:'sulla-vault',href:'/services/vault/audit'},
+  credentials:{title:'Vault',service:'vault',audience:'sulla-vault',href:'/services/vault/credentials'},
   'agents-pods':{title:'Agents & pods',service:'agents',audience:'sulla-agents',href:'/services/agents/'},
   workflows:{title:'Workflows',service:'workflows',audience:'sulla-workflows',href:'/services/workflows/'},
   settings:{title:'Settings',service:'accounts',audience:'sulla-accounts',href:'/services/accounts/?view=settings'},
@@ -200,7 +201,10 @@ window.addEventListener('message',event=>{
     history.replaceState({sullaConsoleDepth:0,area:null},'',urlForArea(null));
     empty.hidden=false;setStatus('Verifying Accounts session…','idle');void verifyExpiredAccount();return;
   }
-  if(message.type==='sulla.console.open'&&active.route.service==='accounts'&&message.target==='projects')navigate('projects');
+  if(message.type==='sulla.console.open'){
+    if(active.route.service==='accounts'&&message.target==='projects')navigate('projects');
+    if(active.route.service==='vault'&&message.target==='credentials')navigate('credentials');
+  }
 });
 window.addEventListener('pagehide',()=>{advanceAuth();lockAll('pagehide');organizationId='';identityKey='';account=null});
 window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&account)void verifyAccount()});
