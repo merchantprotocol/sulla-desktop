@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Sulla Audit Log</title>
+  <link rel="stylesheet" href="./audit.css">
+</head>
+<body>
+  <main>
+    <header class="page-head">
+      <div><p class="eyebrow">Organization security</p><h1>Audit log</h1><p>Every person and agent action. Secret values are never written here.</p></div>
+      <div class="actions"><button id="refresh" type="button">Refresh</button></div>
+    </header>
+
+    <section id="signed-out" class="empty panel">
+      <h2>Accounts sign-in required</h2>
+      <p>Open Audit Log from the Sulla Server console. Your Accounts session authorizes this metadata view.</p>
+    </section>
+
+    <div id="content" hidden>
+      <section class="stats" aria-label="Audit summary">
+        <article class="panel"><strong id="total">—</strong><span>events in the last 7 days</span></article>
+        <article class="panel accent"><strong id="agents">—</strong><span>uses by agents</span></article>
+        <article class="panel danger"><strong id="blocked">—</strong><span>blocked attempts</span></article>
+        <article class="panel"><strong>0</strong><span>secret values in logs, ever</span></article>
+      </section>
+
+      <section class="filters panel" aria-label="Audit filters">
+        <label>Action<input id="action" placeholder="All actions" maxlength="120"></label>
+        <label>Person ID<input id="person" placeholder="Everyone"></label>
+        <label>Collection ID<input id="collection" placeholder="All collections"></label>
+        <label>Item ID<input id="item" placeholder="Any item"></label>
+        <label>From<input id="from" type="date"></label>
+        <label>Through<input id="to" type="date"></label>
+        <label class="check"><input id="blocked-only" type="checkbox">Blocked only</label>
+        <button id="apply" class="primary" type="button">Apply</button>
+      </section>
+
+      <p id="notice" class="notice" role="status" hidden></p>
+      <section class="audit-layout">
+        <div class="panel table-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Who</th><th>Did what</th><th>Item / collection</th><th>Where</th><th>Result</th></tr></thead>
+            <tbody id="events"><tr><td colspan="6">Waiting for Accounts authorization…</td></tr></tbody>
+          </table>
+          <footer><button id="previous" type="button">Previous</button><span id="page">Page 1</span><button id="next" type="button">Next</button></footer>
+        </div>
+        <aside id="detail" class="panel detail"><p class="muted">Select an event to see its metadata.</p></aside>
+      </section>
+    </div>
+  </main>
+  <script src="./audit.js"></script>
+</body>
+</html>
