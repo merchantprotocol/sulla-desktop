@@ -18,6 +18,7 @@ import { getSullaFilesWatcher } from './sullaFilesWatcher';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -368,7 +369,7 @@ export function initSullaFilesIpc():void {
     return pickAndImportChatFiles(owner);
   });
   ipcMain.handle('files-experiment:pick-native-source', async(event) => {
-    if (process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
+    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options:Electron.OpenDialogOptions = {
       title: 'Choose one synthetic file for the Files source experiment',
@@ -381,11 +382,13 @@ export function initSullaFilesIpc():void {
     const release = process.platform === 'darwin' && picked.bookmarks?.[0]
       ? app.startAccessingSecurityScopedResource(picked.bookmarks[0])
       : undefined;
-    const handle = await getSullaFilesSourceGateway().registerExactFile(picked.filePaths[0], release);
-    return { handle };
+    const gateway = getSullaFilesSourceGateway();
+    const handle = await gateway.registerExactFile(picked.filePaths[0], release);
+    const capability = gateway.issueCapability(handle, 'sulla-files', ['read', 'write']);
+    return { handle, capability, serviceId: 'sulla-files' as const };
   });
   ipcMain.handle('files-experiment:revoke-native-source', async(_event, handle:string) => {
-    if (process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
+    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
     const { getSullaFilesSourceGateway } = await import('./sullaFilesSourceGateway');
     getSullaFilesSourceGateway().revoke(handle);
   });

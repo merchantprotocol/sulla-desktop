@@ -39,7 +39,6 @@ export interface Config {
   fileRoots?:           FileRootConfig[];
   fuseExperiment?:      boolean;
   nativeSourceUrl?:     string;
-  nativeSourceToken?:   string;
 }
 
 export interface FileRootConfig {
@@ -126,6 +125,5 @@ export function loadConfig():Config {
     fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
     fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
     nativeSourceUrl:  process.env.SULLA_FILES_NATIVE_SOURCE_URL,
-    nativeSourceToken: process.env.SULLA_FILES_NATIVE_SOURCE_TOKEN,
   };
 }

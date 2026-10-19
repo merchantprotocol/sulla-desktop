@@ -67,6 +67,7 @@ import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
 import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -3654,11 +3655,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
         SULLA_FILES_ROOTS_JSON:            JSON.stringify(configuredFileRoots.map(({ hostPath: _hostPath, ...root }) => root)),
-        ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+        ...(SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
           ? {
             SULLA_FILES_FUSE_EXPERIMENT:     '1',
             SULLA_FILES_NATIVE_SOURCE_URL:   'http://host.lima.internal:30125',
-            SULLA_FILES_NATIVE_SOURCE_TOKEN: sullaServicePassword,
           }
           : {}),
         ...(vaultIdentities ? {
@@ -3673,7 +3673,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
       ports: ['127.0.0.1:30124:8792'],
-      ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+      ...(SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
         ? {
           extra_hosts: ['host.lima.internal:192.168.5.2'],
         }

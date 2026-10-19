@@ -6,6 +6,7 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
+import { lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -104,6 +105,9 @@ class SullaFilesWatcher {
 
   async lockService(): Promise<void> {
     this.lockGeneration++;
+    // Revoke native source descriptors and capabilities synchronously before
+    // waiting on the container-side key shutdown.
+    lockSullaFilesSourceGateway();
     // Invalidate the service generation first; an in-flight helper must not be
     // allowed to complete before the lock reaches the lifecycle authority.
     const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' }).catch(() => undefined);
@@ -130,6 +134,7 @@ class SullaFilesWatcher {
       }
     }
     await this.requireAppUnlocked();
+    unlockSullaFilesSourceGateway();
   }
 
   private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
