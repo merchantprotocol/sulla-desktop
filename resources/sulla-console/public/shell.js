@@ -135,7 +135,7 @@ window.addEventListener('message',event=>{
     history.replaceState({sullaConsoleDepth:0,area:null},'',urlForArea(null));
     empty.hidden=false;setStatus('Session expired. Reopen the section.','error');return;
   }
-  if(message.type==='sulla.console.navigate'&&active.route.service==='accounts'&&message.destination==='projects')navigate('projects');
+  if(message.type==='sulla.console.open'&&active.route.service==='accounts'&&message.target==='projects')navigate('projects');
 });
 window.addEventListener('pagehide',()=>{lockAll('pagehide');organizationId='';identityKey='';account=null});
 window.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&account)void verifyAccount()});
