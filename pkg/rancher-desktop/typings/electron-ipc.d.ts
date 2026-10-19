@@ -512,6 +512,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
   'files-ui:create-folder': (relativePath: string) => void;
+  'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
@@ -564,7 +565,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:unshare-file':    (input: { fileId: string; shareId: string }) => void;
   'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
   'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
+  'sulla-files:keep-conflict-copies': (input: { fileId: string; currentVersionId: string; sourceFileId: string; sourceVersionId: string }) => any;
   'files-experiment:pick-native-source': () => { handle:string; operationId:string; sourceRevision:string; contentHash:string; fileId:string; versionId:string; path:string } | undefined;
+  'files-experiment:list-native-sources': () => { fileId: string; name: string; state: string; lastError?: string; recovery: Record<string, unknown> }[];
+  'files-experiment:recover-native-source': (fileId: string) => { fileId: string; versionId: string } | undefined;
   'files-experiment:revoke-native-source': (handle:string) => void;
   'files-experiment:publish-native-source': (input:{ handle:string; sourceRevision:string; fileId:string; versionId:string }) => { operationId:string; sourceRevision:string; contentHash:string };
 
