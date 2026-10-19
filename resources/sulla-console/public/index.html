@@ -8,22 +8,66 @@
   <link rel="stylesheet" href="/console/shell.css">
 </head>
 <body>
-  <div id="menu" class="shell">
+  <div class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">S</span><span><b>Sulla</b><small>Server console</small></span></div>
-      <div class="sidebar-copy"><p class="eyebrow">Main menu</p><h2>Your services</h2><p>Each service keeps its own data and controls. Open one to work full-screen.</p></div>
-      <div class="connection"><span></span><div><b>Console online</b><small>Services connect independently</small></div></div>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">S</span>
+        <span class="brand-copy"><b id="organization-name">Sulla Server</b><small>Console</small></span>
+      </div>
+
+      <nav aria-label="Server console">
+        <button class="nav-item unavailable" type="button" disabled title="Overview is not available yet">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>Overview</span><small>Not available</small>
+        </button>
+        <button class="nav-item" type="button" data-service="accounts" data-path="">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 19h5a4.5 4.5 0 0 0-3-4.2"/></svg><span>People</span>
+        </button>
+        <button class="nav-item unavailable" type="button" disabled title="Devices is not available yet">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Devices</span><small>Not available</small>
+        </button>
+
+        <p class="nav-group">Data</p>
+        <button class="nav-item" type="button" data-service="files" data-path="">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Files</span>
+        </button>
+        <button class="nav-item" type="button" data-service="vault" data-path="audit">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M5 9h14M5 13h14M5 17h8"/><circle cx="17" cy="17" r="3"/></svg><span>Audit Log</span>
+        </button>
+
+        <p class="nav-group">Workloads</p>
+        <button class="nav-item" type="button" data-service="agents" data-path="">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1"/><circle cx="15" cy="13.5" r="1"/></svg><span>Agents &amp; pods</span>
+        </button>
+        <button class="nav-item" type="button" data-service="workflows" data-path="">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 6h8M18 8v8M16 18H9a3 3 0 0 1-3-3V8"/></svg><span>Workflows</span>
+        </button>
+
+        <p class="nav-group">Server</p>
+        <button class="nav-item unavailable" type="button" disabled title="Settings is not available yet">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg><span>Settings</span><small>Not available</small>
+        </button>
+      </nav>
+
+      <div class="account-controls">
+        <div class="connection"><span></span><div><b id="account-status" role="status">Checking sign-in…</b><small id="service-status">Console online</small></div></div>
+        <a id="signin" href="/accounts-api/v1/web/login">Sign in</a>
+        <label id="organization-label" hidden><span>Organization</span><select id="organization" aria-label="Organization"></select></label>
+        <button id="signout" type="button" hidden>Sign out</button>
+      </div>
     </aside>
+
     <main>
-      <header><div><p class="eyebrow">Sulla Server</p><h1>What do you want to manage?</h1><p class="lead">Choose a service. If one is unavailable, the rest of this console keeps working.</p></div></header>
-      <div class="account-controls"><a id="signin" href="/accounts-api/v1/web/login">Sign in</a><label id="organization-label" hidden>Organization <select id="organization"></select></label><button id="signout" type="button" hidden>Sign out</button><span id="account-status" role="status"></span></div>
-      <section id="services" class="service-grid" aria-label="Server services"></section>
+      <header>
+        <div><p>Sulla Server</p><h1 id="service-title">Console</h1></div>
+      </header>
+      <section id="empty-state" class="empty-state">
+        <span class="empty-mark" aria-hidden="true">S</span>
+        <h2>Server console</h2>
+        <p>Choose an available section from the sidebar.</p>
+      </section>
+      <iframe id="service-frame" title="Sulla service" referrerpolicy="no-referrer" hidden></iframe>
     </main>
   </div>
-  <section id="service-view" class="service-view" hidden>
-    <div class="service-bar"><button id="back" type="button">← Back to main menu</button><div><b id="service-title"></b><span id="service-status" role="status">Connecting…</span></div></div>
-    <iframe id="service-frame" title="Sulla service" referrerpolicy="no-referrer"></iframe>
-  </section>
   <script type="module" src="/console/shell.js"></script>
 </body>
 </html>
