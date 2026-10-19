@@ -3807,7 +3807,8 @@ start_pre() {
     const sullaFunctionsDir = '/mnt/data/sulla/runtime/functions/catalog';
     const sullaRuntimeTempDir = '/mnt/data/sulla/runtime/functions/invocations';
 
-    await this.execCommand({}, 'install', '-d', '-m', '0700', sullaFunctionsDir, sullaRuntimeTempDir);
+    // /mnt/data is root-owned, so creating /mnt/data/sulla needs root.
+    await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', sullaFunctionsDir, sullaRuntimeTempDir);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
