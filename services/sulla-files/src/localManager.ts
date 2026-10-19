@@ -13,12 +13,13 @@ import { NativeOperationJournal } from './nativeOperationJournal.js';
 import { streamFileContent } from './fileStream.js';
 import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
+import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
 import type { IndexingQueue } from './indexing.js';
 import type { OriginalRevealTarget } from './originalReveal.js';
-import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
+import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -35,6 +36,10 @@ export interface FileRootStatus {
   id: string; name: string; collectionId: string; syncMode: 'local' | 'server'; paused: boolean;
   exclusions: string[]; state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
   pendingFiles: number; serverConfigured: boolean; lastError?: string; lastScanAt?: string; lastSyncAt?: string;
+}
+export interface FuseTrackedFile {
+  id: string; collectionId: string; path: string; mime: string; size: number;
+  versionId: string; sourceHash: string; mtimeMs: number;
 }
 interface PathOperationPlanEntry {
   rootId: string;
@@ -64,6 +69,46 @@ interface PathOperationReceipt {
   targetPath: string;
   published: true;
   fingerprint?: { dev: string; ino: string; size: number; mtimeMs: number };
+}
+
+export interface NativeSourceOperationInput {
+  operationId: string;
+  handle: string;
+  sourceRevision: string;
+  fileId?: string;
+  baseVersionId?: string;
+  desiredHash: string;
+  collectionId?: string;
+  path?: string;
+}
+
+export interface NativeSourceIngestResult {
+  id: string;
+  current_version_id: string;
+  path: string;
+  mime: string;
+  size: number;
+}
+
+export interface NativePublicationAction {
+  operationId: string;
+  handle: string;
+  sourceRevision: string;
+  sourceHash: string;
+  desiredHash: string;
+  fileId: string;
+  baseVersionId: string;
+  versionId: string;
+  state: 'publishing' | 'recovery-required';
+}
+
+export interface NativePublicationCompletionProof {
+  nextSourceRevision: string;
+  originalSourceRevision: string;
+  originalSourceHash: string;
+  currentSourceHash: string;
+  filesBaseVersionId: string;
+  currentFilesVersionId: string;
 }
 
 function mime(path:string):string {
@@ -140,7 +185,7 @@ export class LocalFilesManager {
   private readonly store: Store;
   private collectionId?:  string;
   private stopped = false;
-  private running?:       Promise<void>;
+  private running?:       Promise<unknown>;
   private paused:         boolean;
   private lastError?:     string;
   private lastScanAt?:    string;
@@ -287,10 +332,18 @@ export class LocalFilesManager {
 
   async initialize(beforeScan?:()=>Promise<void>):Promise<void> {
     this.stopped = false;
-    if (!this.config.filesRoot) return;
-    for (const root of this.roots) await mkdir(root.path, { recursive: true, mode: 0o700 });
     await mkdir(this.config.dataRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.config.chunkRoot, { recursive: true, mode: 0o700 });
+    if (!this.config.filesRoot) {
+      this.collectionId = await this.ensureCollection({
+        id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+      });
+      await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW()");
+      await this.reconcileNativeSourceOperations();
+      await beforeScan?.();
+      return;
+    }
+    for (const root of this.roots) await mkdir(root.path, { recursive: true, mode: 0o700 });
     for (const root of this.roots) await assertSeparateStorageRoots(root.path, this.config.dataRoot, this.config.chunkRoot);
     for (const root of this.roots) {
       const collectionId = await this.ensureCollection(root);
@@ -304,6 +357,7 @@ export class LocalFilesManager {
     }
     await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW() WHERE NOT(id=ANY($1::text[]))", [this.roots.map(root => root.id)]);
     await this.recoverPathOperations();
+    await this.reconcileNativeSourceOperations();
     await beforeScan?.();
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
     if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
@@ -323,6 +377,315 @@ export class LocalFilesManager {
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
   }
 
+  async nativeCollectionId():Promise<string> {
+    this.collectionId ??= await this.ensureCollection({
+      id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+    });
+    return this.collectionId;
+  }
+
+  async ingestNativeSource(
+    input:NativeSourceOperationInput,
+    ingest:(client:pg.PoolClient, versionId:string)=>Promise<NativeSourceIngestResult>,
+  ):Promise<NativeSourceIngestResult> {
+    const versionId = randomUUID();
+    return this.serial(async() => {
+      const existing = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+      if (existing) {
+        if (existing.direction !== 'ingest' || existing.source_handle !== input.handle || existing.source_revision !== input.sourceRevision ||
+            existing.files_base_version_id !== (input.baseVersionId ?? null) || existing.desired_hash !== input.desiredHash) {
+          throw Object.assign(new Error('Native source operation id was reused with different immutable inputs'), { status: 409 });
+        }
+        if (existing.state === 'completed' && existing.file_id && existing.files_version_id) {
+          const file = (await this.db.query('SELECT * FROM files WHERE id=$1 AND current_version_id=$2', [existing.file_id, existing.files_version_id])).rows[0];
+          if (file) return file;
+        }
+      } else {
+        await this.db.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash)
+          VALUES($1,$2,'ingest','planned',$3,$7,$4,$5,$6,$7)`,
+        [input.operationId, input.handle, input.sourceRevision, input.fileId ?? null, input.baseVersionId ?? null, versionId, input.desiredHash]);
+      }
+      const operation = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+      if (operation.state !== 'planned') {
+        throw Object.assign(new Error('Native source ingestion requires reconciliation before it can be retried'), { status: 409 });
+      }
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        if (!input.collectionId) throw Object.assign(new Error('Native source collection is required'), { status: 400 });
+        await lockStoredNamespace(client, input.collectionId);
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ input.handle }`]);
+        if (input.fileId) {
+          const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
+          if (file?.current_version_id !== (input.baseVersionId ?? null)) throw Object.assign(new Error('Files base version changed before native source ingestion'), { status: 409 });
+        }
+        const result = await ingest(client, operation.files_version_id);
+        if (!input.collectionId || !input.path) throw Object.assign(new Error('Native source collection and display path are required'), { status: 400 });
+        await client.query(`INSERT INTO files_native_sources
+          (source_handle,collection_id,file_id,display_name,source_revision,source_hash,state,recovery,last_error)
+          VALUES($1,$2,$3,$4,$5,$6,'active','{}',NULL)
+          ON CONFLICT(file_id) DO UPDATE SET source_handle=EXCLUDED.source_handle,collection_id=EXCLUDED.collection_id,
+            display_name=EXCLUDED.display_name,source_revision=EXCLUDED.source_revision,source_hash=EXCLUDED.source_hash,
+            state='active',recovery='{}',last_error=NULL,updated_at=NOW()`,
+        [input.handle, input.collectionId, result.id, input.path, input.sourceRevision, input.desiredHash]);
+        const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',file_id=$2,files_version_id=$3,last_error=NULL,updated_at=NOW()
+          WHERE operation_id=$1 AND state='planned'`, [input.operationId, result.id, result.current_version_id]);
+        if (completed.rowCount !== 1) throw Object.assign(new Error('Native source ingestion operation changed while it was committing'), { status: 409 });
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        await this.db.query('UPDATE files_native_source_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [input.operationId, (error instanceof Error ? error.message : String(error)).slice(0, 2000)]).catch(() => undefined);
+        throw error;
+      } finally { client.release() }
+    });
+  }
+
+  async planNativePublication(input:NativeSourceOperationInput & { fileId:string; baseVersionId:string }):Promise<void> {
+    await this.db.query(`INSERT INTO files_native_source_operations
+      (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash)
+      SELECT $1,$2,'publish','publishing',$3,n.source_hash,$4,$5,$5,$6 FROM files_native_sources n
+      WHERE n.file_id=$4 AND n.source_handle=$2 AND n.source_revision=$3
+      ON CONFLICT(operation_id) DO NOTHING`,
+    [input.operationId, input.handle, input.sourceRevision, input.fileId, input.baseVersionId, input.desiredHash]);
+    const row = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+    const matches = row?.direction === 'publish' && row.source_handle === input.handle && row.source_revision === input.sourceRevision &&
+      row.file_id === input.fileId && row.files_base_version_id === input.baseVersionId && row.desired_hash === input.desiredHash;
+    if (!matches) {
+      throw Object.assign(new Error('Native source publication id was reused with different immutable inputs'), { status: 409 });
+    }
+  }
+
+  async finishNativePublication(operationId:string, proof?:NativePublicationCompletionProof, error?:string):Promise<void> {
+    if (!proof) {
+      const result = await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
+      if (result.rowCount === 1) return;
+      const operation = (await this.db.query('SELECT direction,state FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (operation?.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+      if (operation.state === 'recovery-required') return;
+      throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+    }
+
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const identity = (await client.query('SELECT file_id,direction FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (identity?.direction !== 'publish' || !identity.file_id) throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+
+      // Match fuseWriteNative's file -> source lock order. The completion proof,
+      // current Files version, and current source identity are then one atomic
+      // decision; neither a new FUSE commit nor a reselection can slip between
+      // validation and activation.
+      const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+      const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+      const operation = (await client.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1 FOR UPDATE', [operationId])).rows[0];
+      if (operation.state === 'completed' && proof.nextSourceRevision === operation.next_source_revision) {
+        await client.query('COMMIT');
+        return;
+      }
+      const exactProof = proof.originalSourceRevision === operation.source_revision && proof.originalSourceHash === operation.source_hash &&
+        proof.currentSourceHash === operation.desired_hash && proof.filesBaseVersionId === operation.files_base_version_id &&
+        proof.currentFilesVersionId === operation.files_version_id;
+      if (!exactProof) throw Object.assign(new Error('Native publication acknowledgement does not match its durable source and Files identities'), { status: 409 });
+      if (file?.current_version_id !== operation.files_version_id) {
+        await client.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
+          last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW()
+          WHERE operation_id=$1 AND state IN('publishing','recovery-required')`,
+        [operationId, proof.nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
+        await client.query('COMMIT');
+        throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
+      }
+      const directlyBound = source?.state === 'active' && source.source_handle === operation.source_handle &&
+        source.source_revision === operation.source_revision && source.source_hash === operation.source_hash;
+      const recoveryBound = ['active', 'reselect-required'].includes(source?.state) && source.source_hash === operation.source_hash &&
+        source.source_revision === proof.nextSourceRevision && source.recovery?.publicationOperationId === operationId;
+      if (!directlyBound && !recoveryBound) {
+        throw Object.assign(new Error('Native publication acknowledgement no longer matches the selected source identity'), { status: 409 });
+      }
+      const activated = await client.query(`UPDATE files_native_sources SET source_revision=$2,source_hash=$3,state='active',recovery='{}',last_error=NULL,updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$4 AND source_revision=$5 AND source_hash=$6 RETURNING file_id`,
+      [identity.file_id, proof.nextSourceRevision, operation.desired_hash, source.source_handle, source.source_revision, source.source_hash]);
+      const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state IN('publishing','recovery-required') RETURNING operation_id`,
+      [operationId, proof.nextSourceRevision]);
+      if (activated.rowCount !== 1 || completed.rowCount !== 1) {
+        throw Object.assign(new Error('Native source publication changed while it was committing'), { status: 409 });
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release() }
+  }
+
+  async reselectInterruptedNativePublication(input:{ fileId:string; previousHandle:string; handle:string; sourceRevision:string; sourceHash:string }):Promise<boolean> {
+    if (input.handle === input.previousHandle) throw Object.assign(new Error('Interrupted publication recovery requires a new source handle'), { status: 409 });
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
+      const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [input.fileId])).rows[0];
+      if (source?.state !== 'reselect-required' || source.source_handle !== input.previousHandle) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      const boundOperationId = typeof source.recovery?.publicationOperationId === 'string' ? source.recovery.publicationOperationId : null;
+      const operations = (await client.query(`SELECT * FROM files_native_source_operations
+        WHERE file_id=$1 AND direction='publish' AND state='recovery-required'
+          AND ($2::uuid IS NULL OR operation_id=$2::uuid) ORDER BY created_at DESC FOR UPDATE`, [input.fileId, boundOperationId])).rows;
+      const candidates = operations.filter(operation => operation.source_hash === source.source_hash && operation.desired_hash === input.sourceHash &&
+        operation.files_version_id === file?.current_version_id && (boundOperationId
+          ? source.source_revision === input.sourceRevision
+          : operation.source_revision === source.source_revision));
+      if (candidates.length !== 1) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      const operation = candidates[0];
+      await client.query(`UPDATE files_native_sources SET source_handle=$2,source_revision=$3,recovery=jsonb_build_object(
+        'action','compare-source-to-files-version','publicationOperationId',$4::text,'originalHandle',$5::text,'previousHandle',$6::text),
+        last_error='Interrupted native publication requires verified acknowledgement',updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$6 RETURNING file_id`,
+      [input.fileId, input.handle, input.sourceRevision, operation.operation_id, operation.source_handle, input.previousHandle]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release() }
+  }
+
+  async finishNativePublicationConflict(operationId:string, input:{ conflictFileId:string; currentSourceRevision:string; currentSourceHash:string; currentFilesVersionId:string }):Promise<void> {
+    const verified = await this.db.query(`WITH verified AS (UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
+      recovery=jsonb_build_object('action','visible-conflict','conflictFileId',$2::text),updated_at=NOW()
+      FROM files_native_sources n,files f,files_native_sources c
+      WHERE o.operation_id=$1 AND o.direction='publish' AND o.state IN('publishing','recovery-required')
+        AND n.source_handle=o.source_handle AND n.file_id=o.file_id AND n.source_revision=$3 AND n.source_hash=$4
+        AND f.id=o.file_id AND f.current_version_id=$5
+        AND c.file_id=$2 AND c.source_hash=o.desired_hash
+      RETURNING o.file_id,o.desired_hash)
+      INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash)
+      SELECT $2,file_id,desired_hash FROM verified
+      ON CONFLICT(file_id) DO UPDATE SET source_file_id=EXCLUDED.source_file_id,content_hash=EXCLUDED.content_hash
+      RETURNING file_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
+    if (verified.rowCount !== 1) throw Object.assign(new Error('Native conflict recovery did not match both source and Files outcomes'), { status: 409 });
+  }
+
+  async nativePublicationActions():Promise<NativePublicationAction[]> {
+    const rows = await this.db.query(`SELECT o.operation_id::text,n.source_handle,o.source_revision,o.source_hash,o.desired_hash,o.file_id::text,
+      o.files_base_version_id::text,o.files_version_id::text,o.state FROM files_native_source_operations o
+      JOIN files_native_sources n ON n.file_id=o.file_id JOIN files f ON f.id=o.file_id
+      WHERE o.direction='publish' AND o.state IN('publishing','recovery-required') AND f.current_version_id=o.files_version_id
+        AND ((n.state='active' AND n.source_handle=o.source_handle AND n.source_revision=o.source_revision AND n.source_hash=o.source_hash)
+          OR (n.state IN('active','reselect-required') AND n.source_hash=o.source_hash AND n.recovery->>'publicationOperationId'=o.operation_id::text))
+      ORDER BY o.created_at LIMIT 8`);
+    return rows.rows.map(row => ({
+      operationId:    row.operation_id,
+      handle:         row.source_handle,
+      sourceRevision: row.source_revision,
+      sourceHash:     row.source_hash,
+      desiredHash:    row.desired_hash,
+      fileId:         row.file_id,
+      baseVersionId:  row.files_base_version_id,
+      versionId:      row.files_version_id,
+      state:          row.state,
+    }));
+  }
+
+  async listNativeSources():Promise<{ fileId:string; versionId:string; path:string; handle:string; name:string; sourceRevision:string; sourceHash:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> {
+    const rows = await this.db.query(`SELECT n.file_id::text,f.current_version_id::text AS version_id,f.path,n.source_handle,n.display_name,n.source_revision,n.source_hash,n.state,n.last_error,n.recovery
+      FROM files_native_sources n JOIN files f ON f.id=n.file_id ORDER BY n.created_at`);
+    return rows.rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, path: row.path, handle: row.source_handle, name: row.display_name,
+      sourceRevision: row.source_revision, sourceHash: row.source_hash, state: row.state, lastError: row.last_error ?? undefined, recovery: row.recovery ?? {} }));
+  }
+
+  async revalidateNativeSessions(handles:string[]):Promise<void> {
+    await this.db.query(`UPDATE files_native_sources SET state=CASE WHEN source_handle=ANY($1::text[]) THEN 'active' ELSE 'reselect-required' END,
+      last_error=CASE WHEN source_handle=ANY($1::text[]) THEN NULL ELSE 'Native access must be reselected after the Electron session changed' END,
+      recovery=CASE WHEN recovery ? 'publicationOperationId' THEN recovery || jsonb_build_object(
+          'action',CASE WHEN source_handle=ANY($1::text[]) THEN 'compare-source-to-files-version' ELSE 'reselect-native-source' END,
+          'previousHandle',source_handle)
+        WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb
+        ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
+      WHERE state<>'revoked'`, [handles]);
+  }
+
+  async fuseWriteNative(
+    fileId:string,
+    expectedVersionId:string,
+    expectedSourceHash:string,
+    bytes:Buffer,
+    actor:FilesIdentity,
+    ingest:(client:pg.PoolClient, versionId:string, current:FuseTrackedFile)=>Promise<NativeSourceIngestResult>,
+    preserveConflict:(client:pg.PoolClient, versionId:string, current:FuseTrackedFile)=>Promise<NativeSourceIngestResult>,
+  ):Promise<FuseTrackedFile> {
+    const desiredHash = createHash('sha256').update(bytes).digest('hex');
+    const operationId = randomUUID();
+    let staleConflict:NativeSourceIngestResult | undefined;
+    await this.serial(async() => {
+      const current = await this.fuseRow(fileId);
+      if (!current.native || !current.sourceHandle || !current.sourceRevision) throw Object.assign(new Error('Native source is unavailable'), { status: 404 });
+      const versionId = randomUUID();
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        await lockStoredNamespace(client, current.collectionId);
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ current.sourceHandle }`]);
+        const locked = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+        const source = (await client.query('SELECT source_revision,source_hash,state FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [fileId])).rows[0];
+        if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash ||
+            locked?.current_version_id !== expectedVersionId || source?.source_hash !== expectedSourceHash || source?.state !== 'active') {
+          staleConflict = await preserveConflict(client, versionId, current);
+          await client.query('INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash) VALUES($1,$2,$3)', [staleConflict.id, fileId, desiredHash]);
+          await client.query('COMMIT');
+          return;
+        }
+        const result = desiredHash === current.sourceHash
+          ? { current_version_id: current.versionId }
+          : await ingest(client, versionId, current);
+        await client.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash,recovery)
+          VALUES($1,$2,'publish','publishing',$3,$4,$5,$6,$7,$8,$9)`,
+        [operationId, current.sourceHandle, current.sourceRevision, current.sourceHash, fileId, expectedVersionId, result.current_version_id, desiredHash,
+          JSON.stringify({ action: 'publish-files-version-through-electron', actor: actor.deviceId || 'files' })]);
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    });
+    if (staleConflict) {
+      throw Object.assign(new Error('Native source or Files base version changed; the FUSE bytes were preserved as a visible conflict'), {
+        status: 409, recovery: { action: 'visible-conflict', conflictFileId: staleConflict.id },
+      });
+    }
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const operation = (await this.db.query('SELECT state,last_error,recovery FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (operation?.state === 'completed') {
+        if (operation.recovery?.action === 'visible-conflict') throw Object.assign(new Error('Native source changed; both versions are visible in Files'), { status: 409, recovery: operation.recovery });
+        return this.fuseRow(fileId);
+      }
+      if (operation?.state === 'recovery-required') throw Object.assign(new Error(operation.last_error ?? 'Native publication requires recovery'), { status: 409, recovery: operation.recovery });
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error='Electron publication did not complete before the Files durability deadline',updated_at=NOW()
+      WHERE operation_id=$1 AND state='publishing'`, [operationId]);
+    throw Object.assign(new Error('Native publication did not complete before the durability deadline'), { status: 503 });
+  }
+
+  private async reconcileNativeSourceOperations():Promise<void> {
+    await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error=NULL,updated_at=NOW()
+      FROM files f WHERE o.direction='ingest' AND o.state='planned' AND o.file_id=f.id AND o.files_version_id=f.current_version_id`);
+    // An ingest transaction commits the Files version and operation receipt
+    // together. A remaining planned row is therefore safe to retry with the
+    // same immutable inputs. Publication crosses the native filesystem and
+    // must be reconciled because its outcome cannot be inferred from SQL.
+    await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',
+      recovery=jsonb_build_object('action','compare-source-to-files-version'),
+      last_error=COALESCE(last_error,'Native source session ended before the operation outcome was acknowledged'),updated_at=NOW()
+      WHERE direction='publish' AND state='publishing'`);
+  }
+
   async listRoots():Promise<FileRootStatus[]> {
     const rows = await this.db.query(`SELECT id,display_name,collection_id,sync_mode,paused,exclusions,state,pending_files,last_error,last_scan_at,last_sync_at
       FROM file_roots WHERE enabled=TRUE ORDER BY created_at`);
@@ -332,6 +695,156 @@ export class LocalFilesManager {
       serverConfigured: Boolean(this.config.serverUrl),
       lastError: row.last_error ?? undefined, lastScanAt: row.last_scan_at?.toISOString?.(), lastSyncAt: row.last_sync_at?.toISOString?.(),
     }));
+  }
+
+  /** Experimental Files mount view over watched roots and indexed native sources. */
+  async fuseSnapshot(collectionId:string, scope?:{ paths:string[]; fileIds:string[] }):Promise<FuseTrackedFile[]> {
+    const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+    if (root) await this.serial(() => this.scanRoot(root));
+    const params:any[] = [collectionId, root?.id ?? null];
+    const scopeFilter = scope
+      ? ` AND (f.id::text=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($4::text[]) granted(path) WHERE f.path=granted.path OR starts_with(f.path, granted.path||'/')))`
+      : '';
+    if (scope) params.push(scope.fileIds, scope.paths);
+    const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms
+      FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND (n.file_id IS NOT NULL OR c.file_id IS NOT NULL OR ($2::text IS NOT NULL AND w.root_id=$2))
+        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)${ scopeFilter } ORDER BY f.path`, params);
+    return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
+      id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
+      size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms),
+    }));
+  }
+
+  async fuseRead(fileId:string):Promise<{ file:FuseTrackedFile; bytes:Buffer }> {
+    const row = await this.fuseRow(fileId);
+    if (row.native || row.storedNativeConflict) return { file: row, bytes: await this.readStoredVersion(fileId, row.versionId) };
+    const root = this.rootForCollection(row.collectionId);
+    const pinned = await this.rootMutations.get(root.id)!.pinVerified(row.path, file => this.verifyHash(file, row.sourceHash));
+    try {
+      const chunks:Buffer[] = [];
+      for await (const chunk of pinned.createReadStream()) chunks.push(Buffer.from(chunk));
+      await pinned.assertUnchanged();
+      return { file: row, bytes: Buffer.concat(chunks) };
+    } finally { await pinned.close() }
+  }
+
+  async fuseWrite(fileId:string, expectedVersionId:string, expectedSourceHash:string, bytes:Buffer, actor:FilesIdentity):Promise<FuseTrackedFile & { conflictPath?:string }> {
+    const initial = await this.fuseRow(fileId);
+    if (initial.native) throw Object.assign(new Error('Native source writes require the Electron publication transaction'), { status: 409, code: 'NATIVE_PUBLICATION_REQUIRED' });
+    if (initial.storedNativeConflict) throw Object.assign(new Error('Files-only native conflict entries are read-only in the experimental mount'), { status: 409 });
+    const root = this.rootForCollection(initial.collectionId);
+    const mutations = this.rootMutations.get(root.id)!;
+    const operationId = randomUUID();
+    const stagedPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.write`;
+    const backupPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.source`;
+    const conflict = conflictPath(initial.path, `${ actor.deviceId || 'fuse' }-${ operationId.slice(0, 8) }`);
+    const desiredHash = createHash('sha256').update(bytes).digest('hex');
+    return this.serial(() => mutations.runExclusive([initial.path, stagedPath, backupPath, conflict], async() => {
+      const current = await this.fuseRow(fileId);
+      if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash) {
+        if (desiredHash === expectedSourceHash) {
+          throw Object.assign(new Error('Tracked source changed before the no-op FUSE write was verified; no source bytes were replaced'), { status: 409 });
+        }
+        const output = await mutations.openPrivateExclusive(stagedPath);
+        try {
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const result = await output.write(bytes, offset);
+            if (!result.bytesWritten) throw new Error('FUSE staging made no write progress');
+            offset += result.bytesWritten;
+          }
+          await output.sync();
+        } finally { await output.close() }
+        const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: file => this.verifyHash(file, desiredHash) });
+        await mutations.finalizePublication(publication);
+        await this.scanRoot(root);
+        throw Object.assign(new Error('Tracked source changed before the FUSE write was committed; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict });
+      }
+      const verifyExpected = (file:PinnedRegularFile) => this.verifyHash(file, expectedSourceHash);
+      if (desiredHash === expectedSourceHash) {
+        const unchanged = await mutations.pinVerified(current.path, verifyExpected);
+        try { await unchanged.assertUnchanged() } finally { await unchanged.close() }
+        return current;
+      }
+      const output = await mutations.openPrivateExclusive(stagedPath);
+      try {
+        let offset = 0;
+        while (offset < bytes.byteLength) {
+          const result = await output.write(bytes, offset);
+          if (!result.bytesWritten) throw new Error('FUSE staging made no write progress');
+          offset += result.bytesWritten;
+        }
+        await output.sync();
+      } finally { await output.close() }
+      const verifyDesired = (file:PinnedRegularFile) => this.verifyHash(file, desiredHash);
+      let receipt:ReplacementReceipt | undefined;
+      try {
+        receipt = await mutations.replaceVerified({ staged: stagedPath, target: current.path, backup: backupPath, conflict, verifyStaged: verifyDesired, verifyTarget: verifyExpected });
+      } catch (error) {
+        if (await mutations.exists(stagedPath).catch(() => false)) {
+          const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: verifyDesired });
+          await mutations.finalizePublication(publication);
+        }
+        await this.scanRoot(root);
+        throw Object.assign(new Error('Tracked source changed during the FUSE write; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict, cause: error });
+      }
+      try {
+        await this.scanRoot(root);
+        const committed = await this.fuseRow(fileId);
+        if (committed.sourceHash !== desiredHash || committed.versionId === expectedVersionId) throw new Error('Files ingestion did not durably record the replacement');
+        await mutations.finalizeReplacement(receipt);
+        return committed;
+      } catch (error) {
+        let preserved = false;
+        try { await mutations.preserveReplacement(receipt, conflict, verifyDesired); preserved = true } catch { /* Keep both private recovery and current path; never overwrite after failed preservation. */ }
+        await this.scanRoot(root).catch(() => undefined);
+        throw Object.assign(new Error(preserved
+          ? 'Files could not durably ingest the FUSE write; agent and prior-source bytes were retained for recovery'
+          : 'Files could not durably ingest the FUSE write; automatic recovery stopped without overwriting the current path'), { status: 503, ...(preserved ? { conflictPath: conflict } : {}), cause: error });
+      }
+    }));
+  }
+
+  async fuseRow(fileId:string):Promise<FuseTrackedFile & { native?:boolean; storedNativeConflict?:boolean; sourceRevision?:string; sourceHandle?:string }> {
+    const result = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms,
+      w.root_id,n.source_handle,n.source_revision,c.file_id AS native_conflict_file_id FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [fileId]);
+    const row = result.rows[0];
+    if (!row || isProtectedPath(row.path)) throw Object.assign(new Error('Tracked file is unavailable'), { status: 404 });
+    if (row.source_handle) return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), native: true, sourceRevision: row.source_revision, sourceHandle: row.source_handle };
+    if (row.native_conflict_file_id) return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), storedNativeConflict: true };
+    const root = this.rootForCollection(row.collection_id);
+    if (row.root_id !== root.id) throw Object.assign(new Error('Tracked file is not watched by its configured Files root'), { status: 409 });
+    return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms) };
+  }
+
+  async readStoredVersion(fileId:string, versionId:string):Promise<Buffer> {
+    const row = (await this.db.query(`SELECT v.chunk_collection_id,v.size,m.chunk_ids FROM file_versions v
+      JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.file_id=$2`, [versionId, fileId])).rows[0];
+    if (!row || Number(row.size) > 64 * 1024 * 1024) throw Object.assign(new Error('Files version is unavailable or exceeds the native source bound'), { status: 413 });
+    const keys = await this.config.keyring!.keys(row.chunk_collection_id);
+    const chunks:Buffer[] = [];
+    for (const id of row.chunk_ids as string[]) chunks.push(Buffer.from(await decryptChunk(await this.store.get(row.chunk_collection_id, id), keys.data, id)));
+    const bytes = Buffer.concat(chunks).subarray(0, Number(row.size));
+    if (bytes.byteLength !== Number(row.size)) throw new Error('Files version length does not match its manifest');
+    return bytes;
+  }
+
+  private async verifyHash(file:PinnedRegularFile, expected:string):Promise<void> {
+    const hash = createHash('sha256');
+    for await (const chunk of file.createReadStream()) hash.update(chunk);
+    if (hash.digest('hex') !== expected) throw Object.assign(new Error('Tracked source hash changed'), { status: 409 });
   }
 
   async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<FileRootStatus> {
@@ -422,7 +935,9 @@ export class LocalFilesManager {
     const client = await this.db.connect(); let transaction = false; let intentCreated = false; let commitAttempted = false; let clientReleased = false;
     try {
       await client.query('BEGIN'); transaction = true;
+      await lockStoredNamespace(client, collectionId);
       const lockedRows:any[][] = [];
+      const storedFolders:{ sourcePath:string; targetPath:string }[] = [];
       for (const item of items) {
         const snapshots = new Map(item.fileSnapshots.map(file => [file.id, file]));
         const rows = await client.query(`SELECT f.*,f.id::text,w.path AS watched_path,w.content_hash,w.size AS watched_size,w.mtime_ms,f.current_version_id::text
@@ -433,8 +948,14 @@ export class LocalFilesManager {
         if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.watched_path || snapshot.currentVersionId !== row.current_version_id })) throw Object.assign(new Error('A selected file changed or became protected while this operation was starting. Refresh Files and try again.'), { status: 409 });
         for (const row of rows.rows) {
           const nextPath = `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`;
-          const collision = await client.query('SELECT 1 FROM files WHERE collection_id=$1 AND path=$2 AND id<>$3 AND deleted_at IS NULL', [collectionId, nextPath, row.id]);
-          if (collision.rowCount) throw Object.assign(new Error(`An item already exists at ${ nextPath }`), { status: 409 });
+          await assertStoredFilePath(client, collectionId, nextPath);
+        }
+        if (item.folder) {
+          const folders = await client.query(`SELECT path FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path FOR UPDATE`, [collectionId, item.sourcePath]);
+          for (const folder of folders.rows) storedFolders.push({ sourcePath: folder.path, targetPath: `${ item.targetPath }${ folder.path.slice(item.sourcePath.length) }` });
+          await assertStoredFolderPath(client, collectionId, item.targetPath);
+          const occupied = await client.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 LIMIT 1', [collectionId, item.targetPath]);
+          if (occupied.rowCount) throw Object.assign(new Error(`A folder already exists at ${ item.targetPath }`), { status: 409 });
         }
         lockedRows.push(rows.rows);
       }
@@ -519,6 +1040,17 @@ export class LocalFilesManager {
           for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
           for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [collectionId, item.sourcePath, item.targetPath]);
         }
+      }
+      if (action === 'copy') {
+        for (const folder of storedFolders) await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+      } else {
+        for (const folder of [...storedFolders].sort((left, right) => right.sourcePath.length - left.sourcePath.length)) {
+          await client.query('UPDATE file_folders SET path=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId, folder.sourcePath, folder.targetPath]);
+        }
+        for (const folder of storedFolders) await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+      }
+      for (const [index, item] of items.entries()) {
+        for (const row of lockedRows[index]) await ensureStoredFileParents(client, collectionId, `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`, actor);
       }
       await client.query("UPDATE files_path_operations SET state='db-committed',updated_at=NOW() WHERE operation_id=$1", [operationId]);
       commitAttempted = true;
@@ -728,7 +1260,9 @@ export class LocalFilesManager {
   private async ignores(root:FileRootConfig):Promise<string[]> { try { return [...DEFAULT_IGNORES, ...root.exclusions, ...(await readFile(join(root.path, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return [...DEFAULT_IGNORES, ...root.exclusions] } }
   private safe(relativePath:string, root = this.roots.find(item => item.primary)!):string { const absolute = resolve(root.path, relativePath); if (absolute !== root.path && !absolute.startsWith(`${ root.path }${ sep }`)) throw new Error('path escapes Files folder'); return absolute }
   private rootForCollection(collectionId:string):FileRootConfig {
-    return this.roots.find(root => this.rootCollections.get(root.id) === collectionId) ?? this.roots.find(root => root.primary)!;
+    const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+    if (!root) throw Object.assign(new Error('Collection is not mapped to a configured Files root'), { status: 404 });
+    return root;
   }
 
   private async diskFiles(configuredRoot:FileRootConfig, current = configuredRoot.path, prefix = '', patterns?:string[]):Promise<DiskScan> {
@@ -813,10 +1347,13 @@ export class LocalFilesManager {
     }
     const client = await this.db.connect(); await client.query('BEGIN');
     try {
+      await lockStoredNamespace(client, collectionId);
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
       for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
       let fileId = old?.file_id ?? renameFrom?.file_id ?? existing?.id; let parent:string | null = null;
+      await assertStoredFilePath(client, collectionId, filePath, fileId);
       if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query("UPDATE files SET path=$2,mime=$3,size=$4,search_text=NULL,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, filePath, mime(filePath), total]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, filePath, this.config.userId, mime(filePath), total])).rows[0].id }
+      await ensureStoredFileParents(client, collectionId, filePath, { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability' });
       const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
         VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ filePath }` : 'Watched folder change', this.config.deviceId])).rows[0];
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);

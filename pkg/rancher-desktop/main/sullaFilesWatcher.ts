@@ -6,6 +6,10 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
+import { readBoundedResponse } from './sullaFilesBoundedResponse';
+import { getSullaFilesMountManager } from './sullaFilesMountManager';
+import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
+import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -13,6 +17,7 @@ import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { sullaFilesNativeSourceRolloutRequested, type SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
 const console = Logging.background;
@@ -35,18 +40,26 @@ export interface SullaFilesStatus {
 }
 
 export interface SullaFilesRootStatus {
-  id: string;
-  name: string;
-  collectionId: string;
-  syncMode: 'local' | 'server';
-  paused: boolean;
-  exclusions: string[];
-  state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
-  pendingFiles: number;
+  id:               string;
+  name:             string;
+  collectionId:     string;
+  syncMode:         'local' | 'server';
+  paused:           boolean;
+  exclusions:       string[];
+  state:            'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
+  pendingFiles:     number;
   serverConfigured: boolean;
-  lastError?: string;
-  lastScanAt?: string;
-  lastSyncAt?: string;
+  lastError?:       string;
+  lastScanAt?:      string;
+  lastSyncAt?:      string;
+}
+
+export interface NativeSourceFileResult {
+  id:                 string;
+  current_version_id: string;
+  path:               string;
+  mime:               string;
+  size:               number;
 }
 
 export interface RecentSullaFile {
@@ -88,10 +101,34 @@ class SullaFilesWatcher {
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
+  private nativeTimer?: NodeJS.Timeout;
+  private nativePolling = false;
+  private nativeEnabled = false;
   private started = false;
   private stopped = false;
   private lockGeneration = 0;
+  private unlockPermitted = false;
+  private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
+  private readonly nativeBroker = new SullaFilesNativeBroker({
+    actions: async() => {
+      const response = await this.rawLocalRequest('/v1/local/native-sources/actions');
+
+      if (!response.ok) throw new Error(`Native publication actions failed (${ response.status })`);
+      return response.json();
+    },
+    sources: () => this.listNativeSourcesRaw(),
+    content: async(operationId) => {
+      const response = await this.rawLocalRequest(`/v1/local/native-sources/actions/${ encodeURIComponent(operationId) }/content`);
+
+      return readBoundedResponse(response);
+    },
+    read:     handle => getSullaFilesSourceGateway().read(handle),
+    write:    (handle, expectedRevision, bytes) => getSullaFilesSourceGateway().write(handle, expectedRevision, bytes),
+    ingest:   input => this.ingestNativeSource(input),
+    finish:   (operationId, result) => this.finishNativePublication(operationId, result),
+    logError: (message, error) => console.debug(`[SullaFiles] ${ message }:`, error),
+  });
 
   private async appUnlocked(): Promise<boolean> {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
@@ -103,33 +140,76 @@ class SullaFilesWatcher {
   }
 
   async lockService(): Promise<void> {
+    if (this.lockPromise) return this.lockPromise;
     this.lockGeneration++;
-    // Invalidate the service generation first; an in-flight helper must not be
-    // allowed to complete before the lock reaches the lifecycle authority.
-    const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' }).catch(() => undefined);
-    await this.bootstrap.settled();
-    const postHelper = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
-    if (!response?.ok || !postHelper.ok) throw new Error('Files service could not be locked');
+    this.unlockPermitted = false;
+    this.nativePolling = false;
+    const lock = (async() => {
+      // Stop guest admission first so dirty FUSE handles can flush through the
+      // still-live broker. Then drain publication work, revoke host handles,
+      // and finally zero Files keys.
+      await getSullaFilesMountManager().stop();
+      await this.nativeBroker.suspendAndDrain(lockSullaFilesSourceGateway);
+      const response = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' }).catch(() => undefined);
+
+      await this.bootstrap.settled();
+      const postHelper = await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
+
+      if (!response?.ok || !postHelper.ok) throw new Error('Files service could not be locked');
+    })();
+
+    this.lockPromise = lock;
+    try { await lock } finally { if (this.lockPromise === lock) this.lockPromise = undefined; }
+  }
+
+  async unlockService():Promise<void> {
+    if (this.lockPromise) await this.lockPromise;
+    this.lockGeneration++;
+    this.unlockPermitted = true;
+    await this.ensureUnlocked();
   }
 
   private async ensureUnlocked(): Promise<void> {
+    const generation = this.lockGeneration;
+
+    this.assertUnlockGeneration(generation);
     await this.requireAppUnlocked();
+    this.assertUnlockGeneration(generation);
     const response = await this.rawLocalRequest('/healthz');
+
+    this.assertUnlockGeneration(generation);
     if (!response.ok) throw new Error('Files service is unavailable');
     const health = await response.json();
+
+    this.assertUnlockGeneration(generation);
     // Never send a master key to an older image with no memory-only protocol.
     if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
     if (!health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state)) throw new Error('Files service requires a legacy-preflight-compatible update');
     if (health.locked) {
-      const generation = this.lockGeneration;
       const result = await this.bootstrap.initialize();
+
+      this.assertUnlockGeneration(generation);
       if (!result.ok || result.state !== 'unlocked') throw new Error(result.code ?? 'Files secure bootstrap failed');
-      if (generation !== this.lockGeneration || this.stopped || !await this.appUnlocked()) {
-        await this.rawLocalRequest('/v1/local/lock', { method: 'POST' });
-        throw new Error('Files is shutting down');
-      }
     }
     await this.requireAppUnlocked();
+    this.assertUnlockGeneration(generation);
+    unlockSullaFilesSourceGateway();
+    if (this.nativeEnabled) {
+      const handles = getSullaFilesSourceGateway().activeHandles();
+      const revalidated = await this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) });
+
+      this.assertUnlockGeneration(generation);
+      if (!revalidated.ok) throw new Error('Native source sessions could not be revalidated');
+      if (!this.nativePolling) {
+        this.nativeBroker.resume();
+        this.nativePolling = true;
+      }
+      await getSullaFilesMountManager().start(() => this.fuseMountCredentials());
+    }
+  }
+
+  private assertUnlockGeneration(generation:number):void {
+    if (!this.unlockPermitted || generation !== this.lockGeneration || this.stopped) throw new Error('Files is shutting down');
   }
 
   private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
@@ -157,10 +237,11 @@ class SullaFilesWatcher {
 
   async initialize():Promise<void> {
     if (this.started) return; this.started = true; this.stopped = false;
+    this.nativeEnabled = sullaFilesNativeSourceRolloutRequested();
     const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
     const registry = getSullaFilesRootRegistry();
     await registry.startBookmarks();
-    app.once('before-quit', () => { registry.stopBookmarks(); this.shutdown() }); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
+    app.once('before-quit', () => { registry.stopBookmarks(); this.shutdown().catch(error => console.warn('[SullaFiles] shutdown failed:', error)) }); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     if (process.platform === 'darwin') {
       try { await spawnFile('/usr/bin/defaults', ['write', 'group.io.sulla.desktop', 'FilesRoot', this.folder]) } catch (error) { console.warn('[SullaFiles] Finder extension root configuration failed:', error) }
     }
@@ -179,9 +260,13 @@ class SullaFilesWatcher {
     const pauseUntil = Number(await SullaSettingsModel.get('sullaFilesPauseUntil', 0));
     if (pauseUntil > Date.now()) await this.pauseFor(pauseUntil - Date.now());
     else if (pauseUntil) await SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number');
+    if (this.nativeEnabled) {
+      this.nativeTimer = setInterval(() => this.pollNativePublications().catch(error => console.debug('[SullaFiles] native publication poll failed:', error)), 250);
+      this.nativeTimer.unref();
+    }
   }
 
-  shutdown():void { this.stopped = true; this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void { if (this.rescanTimer) clearTimeout(this.rescanTimer); this.rescanTimer = setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] debounced rescan failed:', error)), 350) }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
@@ -194,6 +279,25 @@ class SullaFilesWatcher {
     return this.localRequest(endpoint, init);
   }
 
+  async prepareNativeSourceSession():Promise<void> {
+    // This also advances the gateway unlock epoch only after Files and the
+    // application vault have both proved they are unlocked.
+    await this.ensureUnlocked();
+  }
+
+  async listNativeSources():Promise<{ fileId: string; versionId: string; path: string; handle: string; name: string; sourceRevision: string; sourceHash: string; state: string; lastError?: string; recovery: Record<string, unknown> }[]> {
+    const response = await this.request('/v1/local/native-sources');
+    if (!response.ok) throw new Error(`Native source inventory failed (${ response.status })`);
+    return response.json();
+  }
+
+  private async listNativeSourcesRaw():Promise<{ fileId: string; versionId: string; path: string; handle: string; name: string; sourceRevision: string; sourceHash: string; state: string; lastError?: string; recovery: Record<string, unknown> }[]> {
+    const response = await this.rawLocalRequest('/v1/local/native-sources');
+
+    if (!response.ok) throw new Error(`Native source inventory failed (${ response.status })`);
+    return response.json();
+  }
+
   private async localPrincipalId():Promise<string> {
     const response = await this.rawLocalRequest('/v1/local/identity');
     if (!response.ok) throw new Error('Files service identity is unavailable');
@@ -203,16 +307,45 @@ class SullaFilesWatcher {
     return body.principalId;
   }
 
-  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user', context: SullaFilesCapabilityContext = {}):Promise<string> {
+  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user', context: SullaFilesCapabilityContext = {}, scopes = ['files/*'], collectionId?:string):Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
     const payload = encode(JSON.stringify({
-      sub: userId, device_id: deviceId, scopes: ['files/*'],
-      agent_id: context.agentId, job_id: context.jobId, thread_id: context.threadId,
-      v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID(),
+      sub:       userId,
+      device_id: deviceId,
+      scopes,
+      agent_id:  context.agentId,
+      job_id:    context.jobId,
+      thread_id: context.threadId,
+      ...(collectionId ? { collection_id: collectionId } : {}),
+      v:         1,
+      iss:       'sulla-files',
+      aud:       'sulla-tools',
+      iat:       now,
+      exp:       now + 300,
+      jti:       crypto.randomUUID(),
     }));
 
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
+  }
+
+  nativeRuntimeStatus():SullaFilesNativeRuntimeStatus {
+    return getSullaFilesMountManager().status();
+  }
+
+  private async fuseMountCredentials():Promise<{ collectionId:string; token:string }> {
+    await this.requireAppUnlocked();
+    const [principalId, collectionResponse] = await Promise.all([
+      this.localPrincipalId(),
+      this.rawLocalRequest('/v1/local/native-sources/collection'),
+    ]);
+    if (!collectionResponse.ok) throw new Error('The native Files collection is unavailable');
+    const collection = await collectionResponse.json() as { collectionId?:unknown };
+    if (typeof collection.collectionId !== 'string') throw new Error('Files returned an invalid native collection');
+    return {
+      collectionId: collection.collectionId,
+      token: await this.capabilityToken(principalId, {}, ['files/fuse'], collection.collectionId),
+    };
   }
 
   async requestFiles(endpoint:string, init:RequestInit = {}, server = false, capability: SullaFilesCapabilityContext = {}):Promise<Response> {
@@ -340,7 +473,7 @@ class SullaFilesWatcher {
     return roots;
   }
 
-  async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<SullaFilesRootStatus> {
+  async configureRoot(id:string, input:{ paused?: boolean; syncMode?: 'local' | 'server'; exclusions?: string[] }):Promise<SullaFilesRootStatus> {
     const response = await this.rawLocalRequest(`/v1/local/roots/${ encodeURIComponent(id) }`, { method: 'PATCH', body: JSON.stringify(input) });
     if (!response.ok) throw new Error(`Files root update failed (${ response.status })`);
     return await response.json() as SullaFilesRootStatus;
@@ -371,6 +504,75 @@ class SullaFilesWatcher {
     const response = await this.request(`/v1/local/recent?limit=100&path=${ encodeURIComponent(relativePath) }`);
     if (!response.ok) return undefined;
     return (await response.json() as RecentSullaFile[])[0];
+  }
+
+  async ingestNativeSource(input:{
+    operationId:    string;
+    handle:         string;
+    sourceRevision: string;
+    contentHash:    string;
+    name:           string;
+    mime?:          string;
+    bytes:          Buffer;
+    fileId?:        string;
+    baseVersionId?: string;
+    filesPath?:     string;
+  }):Promise<NativeSourceFileResult> {
+    const collectionResponse = await this.request('/v1/local/native-sources/collection');
+    if (!collectionResponse.ok) throw new Error(`Files collection request failed (${ collectionResponse.status })`);
+    const collection = await collectionResponse.json() as { collectionId?: unknown };
+    if (typeof collection.collectionId !== 'string' || !collection.collectionId) throw new Error('Files returned an invalid native source collection');
+    const name = path.basename(input.name).replaceAll('/', '_');
+    if (!name || name === '.' || name === '..') throw new Error('Native source name is invalid');
+    const query = new URLSearchParams({ collectionId: collection.collectionId, path: input.filesPath ?? `Native Sources/${ name }` });
+    if (input.fileId) query.set('fileId', input.fileId);
+    const headers:Record<string, string> = {
+      'content-type':                    input.mime ?? 'application/octet-stream',
+      'x-sulla-operation-id':            input.operationId,
+      'x-sulla-source-handle':           input.handle,
+      'x-sulla-source-revision':         input.sourceRevision,
+      'x-sulla-source-hash':             input.contentHash,
+    };
+    if (input.baseVersionId) headers['x-sulla-files-base-version'] = input.baseVersionId;
+    const body = new ArrayBuffer(input.bytes.byteLength);
+    new Uint8Array(body).set(input.bytes);
+    const response = await this.request(`/v1/local/native-sources/ingest?${ query }`, { method: 'PUT', headers, body });
+    if (!response.ok) throw new Error(`Native source ingestion failed (${ response.status }): ${ await response.text() }`);
+    return await response.json() as NativeSourceFileResult;
+  }
+
+  async planNativePublication(input:{ operationId: string; handle: string; sourceRevision: string; contentHash: string; fileId: string; baseVersionId: string }):Promise<void> {
+    const response = await this.request('/v1/local/native-sources/publications', {
+      method:  'POST',
+      headers: {
+        'x-sulla-operation-id':    input.operationId,
+        'x-sulla-source-handle':   input.handle,
+        'x-sulla-source-revision': input.sourceRevision,
+        'x-sulla-source-hash':     input.contentHash,
+      },
+      body: JSON.stringify({ fileId: input.fileId, baseVersionId: input.baseVersionId }),
+    });
+    if (!response.ok) throw new Error(`Native source publication planning failed (${ response.status }): ${ await response.text() }`);
+  }
+
+  async finishNativePublication(operationId:string, result:{ nextSourceRevision?: string; originalSourceRevision?: string; originalSourceHash?: string; currentSourceHash?: string; filesBaseVersionId?: string; currentFilesVersionId?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string }):Promise<void> {
+    const response = await this.request(`/v1/local/native-sources/publications/${ encodeURIComponent(operationId) }/finish`, {
+      method: 'POST', body: JSON.stringify(result),
+    });
+    if (!response.ok) throw new Error(`Native source publication finalization failed (${ response.status }): ${ await response.text() }`);
+  }
+
+  async reselectInterruptedNativePublication(input:{ fileId:string; previousHandle:string; handle:string; sourceRevision:string; sourceHash:string }):Promise<boolean> {
+    const response = await this.request('/v1/local/native-sources/reselect-interrupted-publication', {
+      method: 'POST', body: JSON.stringify(input),
+    });
+    if (!response.ok) throw new Error(`Interrupted native publication reselection failed (${ response.status }): ${ await response.text() }`);
+    return Boolean((await response.json() as { recovered?:boolean }).recovered);
+  }
+
+  private async pollNativePublications():Promise<void> {
+    if (!this.nativePolling || this.stopped) return;
+    await this.nativeBroker.poll();
   }
 
   async folderForCollection(collectionId?:string):Promise<string> {

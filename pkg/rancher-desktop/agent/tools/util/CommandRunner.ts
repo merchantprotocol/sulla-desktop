@@ -1,5 +1,4 @@
 import { spawn } from 'child_process';
-import os from 'os';
 
 import { currentAgentContainerRuntime } from '../../services/AgentContainerRuntimeRegistry';
 
@@ -22,15 +21,6 @@ function quoteShellArg(value: string): string {
     return value;
   }
   return `'${ value.replace(/'/g, `"'"'`) }'`;
-}
-
-export function shouldFallbackFromLimaShell(result: { stdout?: string; stderr?: string; exitCode: number }): boolean {
-  if (result.exitCode === 0) {
-    return false;
-  }
-
-  const combinedOutput = `${ result.stderr || '' }\n${ result.stdout || '' }`;
-  return /instance\s+"[^"]+"\s+does not exist/i.test(combinedOutput);
 }
 
 /**
@@ -141,7 +131,7 @@ export async function runCommand(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const runtime = currentAgentContainerRuntime();
 
-  if (runtime) {
+  if (runtime && !options.runInLimaShell) {
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
@@ -176,22 +166,16 @@ export async function runCommand(
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
 
-    // The Lima VM's ~ resolves to /home/<user>.linux/ but the macOS home
-    // directory is mounted at its real path via virtiofs. Override HOME so
-    // that ~ and $HOME in agent commands resolve to the macOS home dir.
-    const macHome = os.homedir();
+    // Keep Lima's guest-owned HOME. User-selected host content is reachable
+    // only through Files; a failed VM lookup must never become host execution.
     const limaPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-    const script = `export HOME=${ quoteShellArg(macHome) }; export PATH=${ quoteShellArg(limaPath) }; ${ rawScript }`;
+    const script = `export PATH=${ quoteShellArg(limaPath) }; ${ rawScript }`;
 
     const limactlArgs = ['shell', limaInstance, '--', 'sh', '-lc', script];
     let result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, limactlPath, ...limactlArgs], options);
 
     if (result.exitCode === 127) {
       result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, 'limactl', ...limactlArgs], options);
-    }
-
-    if (shouldFallbackFromLimaShell(result)) {
-      return executeSpawn('sh', ['-lc', script], options);
     }
 
     return result;

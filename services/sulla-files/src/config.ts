@@ -37,6 +37,7 @@ export interface Config {
   paused:               boolean;
   modelDir:             string;
   fileRoots?:           FileRootConfig[];
+  fuseExperiment?:      boolean;
 }
 
 export interface FileRootConfig {
@@ -90,7 +91,9 @@ export function loadConfig():Config {
   if (Buffer.byteLength(capabilitySigningKey) < 32) throw new Error('SULLA_FILES_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
   const mode = process.env.SULLA_FILES_MODE === 'server' ? 'server' : 'desktop';
 
-  const filesRoot = mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined;
+  const filesRoot = mode === 'desktop' && process.env.SULLA_FILES_STORED_ONLY !== '1'
+    ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files')
+    : undefined;
   return {
     port:             Number(process.env.SULLA_FILES_PORT ?? 8792),
     databaseUrl,
@@ -121,5 +124,6 @@ export function loadConfig():Config {
     paused:           process.env.SULLA_FILES_PAUSED === '1',
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
     fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
+    fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
   };
 }

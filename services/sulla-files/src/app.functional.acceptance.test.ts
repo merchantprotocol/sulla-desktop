@@ -131,9 +131,17 @@ test('real handlers provision collections and preserve authenticated content acr
     const uploaded = await upload.json();
     assert.equal(uploaded.path, 'Proof/acceptance.txt');
 
+    // Pre-migration files have implicit parents without file_folders rows.
+    await db.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof']);
+    const ancestorUpload = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: Buffer.from('must not replace a directory'),
+    });
+    assert.equal(ancestorUpload.status, 409);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof'])).rows[0].count, 0);
+
     await waitForIndex(uploaded.id, uploaded.current_version_id);
     let indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: firstBytes.toString(), version_id: uploaded.current_version_id, content: firstBytes.toString(), status: 'indexed' }]);
 
@@ -202,7 +210,8 @@ test('real handlers provision collections and preserve authenticated content acr
     const audit = await db.query('SELECT action FROM audit_log WHERE file_id=$1 ORDER BY id', [uploaded.id]);
     assert.deepEqual(audit.rows.map(row => row.action), ['upload', 'preview', 'download', 'trash', 'trash-restore', 'preview', 'version-restore', 'download']);
     const refs = await db.query('SELECT refcount FROM chunks WHERE collection_id=$1', [collectionId]);
-    assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [1]);
+    // The original and both restored versions each retain the chunk.
+    assert.deepEqual(refs.rows.map(row => Number(row.refcount)), [3]);
 
     await db.query('INSERT INTO files_protected_files(file_id) VALUES($1)', [uploaded.id]);
     const protectedState = async() => (await db!.query(`SELECT f.path,f.mime,f.size,f.current_version_id,
@@ -232,7 +241,7 @@ test('real handlers provision collections and preserve authenticated content acr
     await waitForIndex(uploaded.id, changedBody.current_version_id);
 
     indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
+      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: secondBytes.toString(), version_id: changedBody.current_version_id, content: secondBytes.toString(), status: 'indexed' }]);
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });
@@ -253,6 +262,37 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.notEqual(concurrentBodies[0].current_version_id, concurrentBodies[1].current_version_id);
     assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof/concurrent.txt'])).rows[0].count, 1);
     assert.equal((await db.query('SELECT count(*)::int AS count FROM file_versions WHERE file_id=$1', [concurrentBodies[0].id])).rows[0].count, 2);
+
+    const folder = await requestJson('/v1/folders', { method: 'POST', body: JSON.stringify({ collectionId, path: 'Empty/Child' }) });
+    assert.equal(folder.response.status, 201);
+    const moved = await requestJson('/v1/file-operations', { method: 'POST', body: JSON.stringify({ action: 'move', collectionId, items: [{ folderPath: 'Empty', targetPath: 'Moved' }] }) });
+    assert.equal(moved.response.status, 200);
+    const folders = await requestJson(`/v1/folders?collectionId=${ collectionId }`);
+    assert(folders.body.includes('Moved/Child'));
+    assert(!folders.body.includes('Empty'));
+
+    // A rename and upload cannot turn the same path into both file and folder.
+    const namespaceRace = await Promise.all([
+      requestJson('/v1/file-operations', { method: 'POST', body: JSON.stringify({ action: 'move', collectionId, items: [{ fileId: concurrentBodies[0].id, targetPath: 'Race' }] }) }).then(result => result.response),
+      fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Race%2Fchild.txt`, { method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: Buffer.from('race child') }),
+    ]);
+    assert.equal(namespaceRace.filter(response => response.status === 409).length, 1);
+    assert.equal(namespaceRace.filter(response => response.status === 200 || response.status === 201).length, 1);
+
+    const conflictId = concurrentBodies[0].id;
+    const conflictVersionId = (await db.query('SELECT current_version_id FROM files WHERE id=$1', [conflictId])).rows[0].current_version_id;
+    await db.query('INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash) VALUES($1,$2,$3)', [conflictId, uploaded.id, 'a'.repeat(64)]);
+    const keepBoth = (sourceVersionId:string) => requestJson(`/v1/files/${ conflictId }/conflicts/keep-both`, { method: 'POST', body: JSON.stringify({ currentVersionId: conflictVersionId, sourceFileId: uploaded.id, sourceVersionId }) });
+    assert.equal((await keepBoth(uploaded.current_version_id)).response.status, 409);
+    const pendingId = randomUUID();
+    await db.query(`INSERT INTO files_native_source_operations(operation_id,source_handle,direction,state,source_revision,file_id,source_hash)
+      VALUES($1,$2,'publish','recovery-required',$3,$4,$3)`, [pendingId, 'a'.repeat(43), 'b'.repeat(64), uploaded.id]);
+    assert.equal((await keepBoth(changedBody.current_version_id)).response.status, 409);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files_native_conflicts WHERE file_id=$1', [conflictId])).rows[0].count, 1);
+    await db.query("UPDATE files_native_source_operations SET state='completed' WHERE operation_id=$1", [pendingId]);
+    assert.equal((await keepBoth(changedBody.current_version_id)).response.status, 204);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files_native_conflicts WHERE file_id=$1', [conflictId])).rows[0].count, 0);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE id=ANY($1::uuid[]) AND deleted_at IS NULL', [[conflictId, uploaded.id]])).rows[0].count, 2);
 
     await new Promise<void>(resolve => server!.close(() => resolve()));
     server = undefined;

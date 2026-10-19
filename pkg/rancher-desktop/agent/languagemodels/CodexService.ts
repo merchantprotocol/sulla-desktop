@@ -1,7 +1,5 @@
 import * as childProcess from 'child_process';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
 import {
@@ -13,7 +11,6 @@ import {
   type ProviderTransportContext,
 } from './ProviderExecutionTransport';
 import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
-import { isObserverSpawn } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
@@ -23,7 +20,7 @@ import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
-import { ensureCodexAuthFile, codexHomeDir } from '../util/codexAuthFile';
+import { ensureCodexAuthFile } from '../util/codexAuthFile';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 
@@ -55,6 +52,7 @@ interface CodexPrewarmRecord {
   proc:             childProcess.ChildProcessWithoutNullStreams;
   transport:        ProviderExecutionTransport;
   transportContext: ProviderTransportContext;
+  instructionsFile: ProviderFileRef;
   mcpSession:       RegisteredSession | null;
   /** VM-side pidfile of this process (see buildRemoteKillCommand). */
   pidFile:          string;
@@ -236,13 +234,6 @@ export class CodexService extends BaseLanguageModel {
     }
     codexArgs.push('-'); // read the prompt from stdin
 
-    // limactl shell sets HOME to the guest path (/home/<user>.linux), so
-    // codex would look for auth under the guest home and miss the host
-    // ~/.codex/auth.json written by CodexOAuth. Force CODEX_HOME (and HOME
-    // for any secondary path resolution) to the host home mount.
-    const hostCodexHome = shq(codexHomeDir());
-    const hostHome = shq(path.dirname(codexHomeDir()));
-
     // `exec` replaces the inner sh with codex so there's no shell layer
     // between the SSH session and the CLI — best chance of signal
     // propagation when we kill limactl on the host side.
@@ -252,7 +243,7 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -289,10 +280,6 @@ export class CodexService extends BaseLanguageModel {
     try {
       const transport = getProviderExecutionTransport();
       if (transport.runtime === 'lima' && process.platform === 'win32') return;
-      // A Codex prewarm starts before the turn's caller-built instructions
-      // exist. Lima can read its stable host AGENTS.md; a bounded container
-      // cannot, so cold-start it with an explicit staged instructions file.
-      if (transport.runtime === 'container') return;
       if (!await this.speculativeBootEnabled()) return;
 
       const convId = typeof (state.metadata as any)?.threadId === 'string'
@@ -328,32 +315,48 @@ export class CodexService extends BaseLanguageModel {
       const limaHome = paths.lima;
       const readOnly = !!(state.metadata as any)?.verifierReadOnly;
       const pidFile = newRemotePidFile('sulla-codex');
+      const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
+      const instructionsFile = transport.files.write({
+        context:       transportContext,
+        purpose:       'system-prompt',
+        suggestedName: `codex-prewarm-${ crypto.randomUUID() }.md`,
+        data:          await buildFullSystemPrompt({ provider: 'openai' }),
+      });
       const args = this.buildSpawnArgs({
         existingSession,
         mcpSession: transportContext.runtime === 'lima' ? mcpSession : null,
         readOnly,
+        instructionsPath: instructionsFile.path,
         pidFile,
       });
       const providerCommand = this.buildProviderCommand({
         existingSession,
         readOnly,
+        instructionsPath: instructionsFile.path,
         environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
         configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
       });
-      const proc = transport.spawn({
-        context: transportContext,
-        providerCommand,
-        ...(transportContext.runtime === 'lima'
-          ? {
-            limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
-          }
-          : {}),
-      });
+      let proc: childProcess.ChildProcessWithoutNullStreams;
+      try {
+        proc = transport.spawn({
+          context: transportContext,
+          providerCommand,
+          ...(transportContext.runtime === 'lima'
+            ? {
+              limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+            }
+            : {}),
+        });
+      } catch (error) {
+        instructionsFile.dispose();
+        throw error;
+      }
 
       const record: CodexPrewarmRecord = {
         proc,
         transport,
         transportContext,
+        instructionsFile,
         mcpSession,
         pidFile,
         model:     this.model || 'codex',
@@ -432,6 +435,7 @@ export class CodexService extends BaseLanguageModel {
     }, 5_000);
     escalation.unref?.();
     try { rec.mcpSession?.revoke() } catch { /* already revoked */ }
+    rec.instructionsFile.dispose();
   }
 
   override getContextWindow(): number {
@@ -537,8 +541,8 @@ export class CodexService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Save a base64 image block to ~/sulla/workspaces/attachments/ so the
-   * Lima VM agent can read it from disk. Returns the saved path.
+   * Transport a base64 image block into the provider's guest-owned staging
+   * area. Returns the provider-visible path.
    */
   private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
     try {
@@ -555,16 +559,7 @@ export class CodexService extends BaseLanguageModel {
         refs?.push(ref);
         return ref.path;
       }
-      const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
-      fs.mkdirSync(dir, { recursive: true });
-
-      // Random suffix: two image blocks in one message save within the same
-      // millisecond, and Date.now() alone would overwrite the first.
-      const filepath = path.join(dir, filename);
-      fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
-
-      log.info(`[CodexService] Image saved: ${ filepath }`);
-      return filepath;
+      throw new Error('Attachment transport context is required');
     } catch (err) {
       log.error('[CodexService] Failed to save image attachment:', err);
       return null;
@@ -636,9 +631,9 @@ export class CodexService extends BaseLanguageModel {
   /**
    * Serialize Sulla's curated conversation into a full transcript — used
    * only when seeding a fresh codex session. System-role messages are
-   * INTENTIONALLY excluded — the system prompt reaches codex via
-   * ~/.codex/AGENTS.md (see generateCodexMemoryFile), so including them
-   * here would deliver it twice.
+   * INTENTIONALLY excluded — the system prompt reaches codex through the
+   * per-spawn guest instruction file, so including it here would deliver it
+   * twice.
    */
   private serializeFullTranscript(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
     const blockToText = (b: any): string => {
@@ -678,7 +673,7 @@ export class CodexService extends BaseLanguageModel {
 
     const lines: string[] = [];
     for (const m of messages) {
-      if (m.role === 'system') continue; // delivered via ~/.codex/AGENTS.md
+      if (m.role === 'system') continue; // delivered via the guest instruction file
       const text = msgToText(m).trim();
       if (!text) continue;
       lines.push(`${ labelFor(m.role) }: ${ text }`);
@@ -831,21 +826,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const limactlPath = paths.limactl;
     const limaHome = paths.lima;
 
-    // Refresh ~/.codex/AGENTS.md with the full system prompt before spawning.
-    // AGENTS.md is the sole source of system context for codex. On a NEW
-    // session the write must land before the spawn — codex reads the file at
-    // startup, and a seed turn launched without it runs unconfigured for the
-    // lifetime of the thread (resume only sends the latest user message).
-    // Resume turns tolerate a stale file, so they don't pay the build latency.
-    const memoryFileWrite = transport.runtime === 'lima'
-      ? import('../prompts/generateCodexMemoryFile')
-        .then(({ generateCodexMemoryFile }) => generateCodexMemoryFile())
-        .catch(() => {})
-      : Promise.resolve();
-    if (!existingSession && transport.runtime === 'lima') {
-      await memoryFileWrite;
-    }
-
     // Speculative boot: adopt a process pre-warmed for this conversation
     // during the accumulator phase; otherwise spawn fresh below. Flag off →
     // adopted is always null and the legacy path runs byte-for-byte as
@@ -889,17 +869,17 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const toolConfig = transportContext.runtime === 'container' && mcpSession
       ? requireContainerToolConfig(transportContext)
       : undefined;
-    // Subconscious agents get their own caller-built prompt as codex's model
-    // instructions; primaries keep codex's base prompt plus AGENTS.md.
-    const needsInstructionsFile = !adopted && (transportContext.runtime === 'container' || isObserverSpawn(options.state?.metadata as any));
-    const instructionsFile = needsInstructionsFile
-      ? transport.files.write({
-        context:       transportContext,
-        purpose:       'system-prompt',
-        suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,
-        data:          systemPromptFromMessages(messages),
-      })
-      : null;
+    // Primary and child instructions share one custody path: the exact
+    // caller-built system prompt is staged inside the guest for every spawn.
+    // Nothing depends on a host ~/.codex/AGENTS.md or broad home mount.
+    const systemInstructions = systemPromptFromMessages(messages);
+    if (!systemInstructions.trim()) throw new Error('Codex system instructions are unavailable for this run');
+    const instructionsFile = adopted ? null : transport.files.write({
+      context:       transportContext,
+      purpose:       'system-prompt',
+      suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,
+      data:          systemInstructions,
+    });
     const instructionsPath = instructionsFile?.path ?? null;
     const pidFile = adopted ? adopted.pidFile : newRemotePidFile('sulla-codex');
     const args = this.buildSpawnArgs({
@@ -945,6 +925,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         proc.removeAllListeners('exit');
         proc.removeAllListeners('error');
         proc.stdin.removeAllListeners('error');
+        proc.once('exit', () => adopted.instructionsFile.dispose());
       } else {
         proc = transport.spawn({
           context: transportContext,

@@ -51,7 +51,7 @@ class CodexOAuthProvider extends OAuthProvider {
   override async onTokensRevoked(): Promise<void> {
     // Disconnect must actually stop authentication — the CLI would otherwise
     // keep using (and self-refreshing) the leftover auth file forever.
-    removeCodexAuthFile();
+    await removeCodexAuthFile();
     console.log('[CodexOAuth] ~/.codex/auth.json removed');
   }
 }

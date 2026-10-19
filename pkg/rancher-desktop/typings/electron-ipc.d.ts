@@ -476,6 +476,7 @@ export interface IpcMainInvokeEvents {
 
   // #region Filesystem
   'files-ui:status':        () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:native-runtime': () => import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus;
   'files-ui:set-paused':    (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:capabilities':  () => {
     orgSharing: boolean;
@@ -563,6 +564,9 @@ export interface IpcMainInvokeEvents {
   'sulla-files:unshare-file':    (input: { fileId: string; shareId: string }) => void;
   'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
   'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
+  'files-experiment:pick-native-source': () => { handle:string; operationId:string; sourceRevision:string; contentHash:string; fileId:string; versionId:string; path:string } | undefined;
+  'files-experiment:revoke-native-source': (handle:string) => void;
+  'files-experiment:publish-native-source': (input:{ handle:string; sourceRevision:string; fileId:string; versionId:string }) => { operationId:string; sourceRevision:string; contentHash:string };
 
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
@@ -1217,6 +1221,7 @@ export interface IpcMainInvokeEvents {
  */
 export interface IpcRendererEvents {
   'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
+  'files-ui:native-runtime-changed': (status: import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;

@@ -1,0 +1,14 @@
+FROM python:3.12.12-slim-bookworm
+
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+    build-essential \
+    fuse3 \
+    libfuse3-dev \
+    pkg-config \
+    util-linux \
+  && pip install --no-cache-dir pyfuse3==3.3.0 trio==0.32.0 \
+  && apt-get purge --yes --auto-remove build-essential libfuse3-dev pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /mnt/proof

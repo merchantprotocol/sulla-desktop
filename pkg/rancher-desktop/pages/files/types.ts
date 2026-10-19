@@ -77,6 +77,8 @@ export interface FilesItem {
   ownerAvatarUrl?: string;
   syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
   conflictDevices?: number;
+  conflictSourceFileId?: string;
+  conflictSourceVersionId?: string;
   indexStatus: FilesIndexState;
   indexReasonCode?: string;
   indexReason: string;
@@ -398,6 +400,7 @@ export interface ShareActivity {
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
+  nativeSourceReady?:boolean;
   submitOperation?(request:FilesOperationRequest):Promise<FilesOperationReceipt>;
   getOperation?(operationId:string):Promise<FilesOperationReceipt>;
   cancelOperation?(operationId:string):Promise<FilesOperationReceipt>;
@@ -415,8 +418,13 @@ export interface FilesDataSource {
   reindex(fileId:string):Promise<void>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
   chooseUpload(destination?:string): Promise<number>;
+  chooseNativeSource?():Promise<boolean>;
+  listNativeSources?():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>;
+  recoverNativeSource?(fileId:string):Promise<boolean>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
+  uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
@@ -429,6 +437,7 @@ export interface FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
+  keepConflictCopies?(file:FilesItem): Promise<void>;
   updateLifecycle?(fileId:string, settings:FilesVersioningSettings): Promise<void>;
   checkout?(fileId:string, force?:boolean): Promise<void>;
   checkin?(fileId:string, versionId:string, kind:'major' | 'minor', comment:string, publish:boolean): Promise<void>;

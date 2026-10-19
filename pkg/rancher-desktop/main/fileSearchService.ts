@@ -14,7 +14,7 @@
  * index, exact-term FTS queries) and by chunking background index passes so
  * live searches are never stuck behind long maintenance work.
  *
- * Storage is a contentless FTS5 index (~/.cache/sulla-search/index.sqlite):
+ * Storage is a contentless FTS5 index in the app-owned cache directory:
  * tokens only, never file bodies — the old qmd store kept full bodies and grew
  * to 692 MB over a ~5 MB corpus. Snippets are re-read from disk at query time.
  *
@@ -25,10 +25,10 @@
  */
 
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 
@@ -155,7 +155,7 @@ function getAppRoot(): string {
 }
 
 function getSidecarPath(): string {
-  const sidecarDir = path.join(os.homedir(), '.cache', 'sulla-search');
+  const sidecarDir = path.join(paths.cache, 'sulla-search');
 
   fs.mkdirSync(sidecarDir, { recursive: true });
 
@@ -174,7 +174,7 @@ function cleanupLegacyIndex(): void {
     return;
   }
   _legacyCleaned = true;
-  const legacyDir = path.join(os.homedir(), '.cache', 'sulla-qmd');
+  const legacyDir = path.join(paths.cache, 'sulla-qmd');
 
   try {
     if (!fs.existsSync(legacyDir)) {
@@ -485,7 +485,10 @@ async function warmupLoop(root: string): Promise<void> {
  * keep it fresh with an incremental pass every MAINTENANCE_INTERVAL_MS.
  * Idempotent; stop with stopFileSearchMaintenance().
  */
-export function startFileSearchMaintenance(root: string = os.homedir()): void {
+export function startFileSearchMaintenance(root?: string): void {
+  // Never infer the user's host home as an index root. Callers must provide
+  // an explicit app-owned root; agent search itself runs inside the guest.
+  if (!root) return;
   if (_maintenanceStarted) {
     return;
   }
@@ -640,7 +643,7 @@ let _db = null;
 
 function getDb() {
   if (_db) return _db;
-  const dbDir = path.join(os.homedir(), '.cache', 'sulla-search');
+  const dbDir = path.join(paths.cache, 'sulla-search');
   fs.mkdirSync(dbDir, { recursive: true });
   const db = new Database(path.join(dbDir, 'index.sqlite'));
   // contentless_delete needs SQLite >= 3.43; better-sqlite3 12.x bundles >= 3.45.

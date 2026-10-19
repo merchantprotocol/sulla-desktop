@@ -49,6 +49,8 @@ export function filesItem(file:FilesApiFile):FilesItem {
     ownerAvatarUrl:   file.owner_avatar_url,
     syncState:        file.sync_state,
     conflictDevices:  file.conflict_devices === undefined ? undefined : Number(file.conflict_devices),
+    conflictSourceFileId: file.conflict_source_file_id,
+    conflictSourceVersionId: file.conflict_source_version_id,
     indexStatus:      file.extraction_status ?? 'pending',
     indexReasonCode:  file.extraction_reason_code,
     indexReason:      file.extraction_reason ?? 'Waiting for local indexing.',

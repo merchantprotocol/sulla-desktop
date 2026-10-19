@@ -1,9 +1,14 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import * as childProcess from 'node:child_process';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { buildRemoteKillCommand } from './claudeLaunchCommand';
+import {
+  createGuestRuntimeDirectory,
+  GUEST_PROVIDER_FILES_ROOT,
+  removeGuestPathAtomic,
+  writeGuestFileAtomic,
+} from '../services/GuestRuntimeTransport';
 
 import paths from '@pkg/utils/paths';
 
@@ -125,20 +130,11 @@ function assertInside(root: string, candidate: string): void {
 
 class LimaProviderFileTransport implements ProviderFileTransport {
   write(request: ProviderFileRequest): ProviderFileRef {
-    const root = path.join(paths.sullaHome, 'workspaces', 'provider-transport');
-    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-    const dir = fs.mkdtempSync(path.join(root, 'file-'));
-    fs.chmodSync(dir, 0o700);
+    const dir = createGuestRuntimeDirectory(GUEST_PROVIDER_FILES_ROOT, 'file-');
     const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-');
-    const target = path.join(dir, safeName || 'provider-file');
+    const target = path.posix.join(dir, safeName || 'provider-file');
     assertInside(dir, target);
-    const noFollow = fs.constants.O_NOFOLLOW ?? 0;
-    const fd = fs.openSync(target, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | noFollow, request.mode ?? 0o600);
-    try {
-      fs.writeFileSync(fd, request.data);
-    } finally {
-      fs.closeSync(fd);
-    }
+    writeGuestFileAtomic(target, request.data, request.mode ?? 0o600);
     let disposed = false;
 
     return {
@@ -146,8 +142,7 @@ class LimaProviderFileTransport implements ProviderFileTransport {
       dispose() {
         if (disposed) return;
         disposed = true;
-        try { fs.unlinkSync(target) } catch { /* already removed */ }
-        try { fs.rmdirSync(dir) } catch { /* non-empty or already removed */ }
+        try { removeGuestPathAtomic(dir) } catch { /* already removed */ }
       },
     };
   }

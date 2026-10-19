@@ -141,7 +141,7 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
-            v-if="dataSource.capabilities.nativeFilesystem || dataSource.capabilities.durableOperations"
+            v-if="dataSource.capabilities.upload || dataSource.capabilities.durableOperations"
             class="btn"
             type="button"
             :disabled="busy || loading || section !== 'files'"
@@ -152,6 +152,13 @@
               v-html="icons.plus"
             /> New folder
           </button>
+          <button
+            v-if="dataSource.nativeSourceReady && dataSource.chooseNativeSource"
+            class="btn"
+            type="button"
+            :disabled="busy"
+            @click="chooseNativeSource"
+          >Add native file</button>
           <button
             class="btn pri"
             type="button"
@@ -236,6 +243,10 @@
         </div>
         <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
           Search coverage is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.partial }} partially indexed, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Partial files can still match within the extracted portion; unsupported and failed files cannot contribute content matches.
+        </div>
+        <div v-for="source in nativeSources.filter(item => item.state !== 'active')" :key="source.fileId" class="operation-error" role="status">
+          {{ source.name }} needs native access restored. {{ source.lastError || '' }}
+          <button class="btn sm" type="button" :disabled="busy || !dataSource.recoverNativeSource" @click="recoverNativeSource(source.fileId)">Reselect file</button>
         </div>
 
         <div class="filters">
@@ -363,12 +374,12 @@
             >
               Try again
             </button><button
-              v-if="dataSource.capabilities.nativeFilesystem"
+              v-if="dataSource.capabilities.upload"
               class="btn"
               type="button"
-              @click="dataSource.openFolder()"
+              @click="upload"
             >
-              Open ~/sulla/files
+              Choose files
             </button>
           </div>
         </div>
@@ -529,9 +540,11 @@
                       <button
                         class="btn sm danger"
                         type="button"
-                        @click.stop="resolveConflict(entry)"
+                        :disabled="busy || !props.dataSource.keepConflictCopies || !entry.conflictSourceFileId || !entry.conflictSourceVersionId"
+                        title="Keep both preserved files and clear this conflict warning"
+                        @click.stop="keepBothConflict(entry)"
                       >
-                        Resolve
+                        Keep both
                       </button><button
                         class="btn ico"
                         type="button"
@@ -704,7 +717,7 @@
     />
 
     <div
-      v-if="dragging && dataSource.capabilities.nativeFilesystem"
+      v-if="dragging && dataSource.capabilities.upload"
       class="drop-overlay"
     >
       <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
@@ -882,6 +895,7 @@ const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
 const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>([]);
 const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
@@ -937,9 +951,9 @@ const sections = computed(() => [
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: trashItems.value.length, warn: trashItems.value.some(item => item.currentTombstone.undo.state === 'recovery-required') },
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: props.dataSource.capabilities.nativeFilesystem ? 'Drop files here or choose files. They stay in ~/sulla/files.' : 'Choose files to upload. Files sync to the server and are versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
-const uploadHeading = computed(() => props.dataSource.capabilities.nativeFilesystem ? `Drop files here to upload to ${ pageTitle.value }` : `Choose files to upload to ${ pageTitle.value }`);
-const dropCopy = computed(() => props.dataSource.capabilities.nativeFilesystem ? (snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.') : 'Browser uploads use the file chooser.');
+const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
+const uploadHeading = computed(() => `Drop files here to upload to ${ pageTitle.value }`);
+const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Files sync to the server and are versioned on every change.' : 'Files are encrypted and versioned in Sulla.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
   { key: 'person' as const, label: 'Person', any: 'Anyone', options: [...new Set(activeFiles.value.map(ownerName))].sort() },
@@ -976,7 +990,7 @@ function kindLabel(mime:string, path = '') {
 function toDisplay(file:FilesItem):DisplayEntry {
   const glyph = fileGlyph(file.mime, file.path); const conflict = entrySync(file) === 'conflict';
 
-  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
+  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · both copies preserved` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
 function toTrashDisplay(item:FilesTrashItem):DisplayEntry {
   const undo = item.currentTombstone.undo.state.replace('-', ' ');
@@ -1000,7 +1014,7 @@ function folderEntry(prefix:string, name:string, children:FilesItem[], folderSta
   const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
   const agent = children.length > 0 && children.every(file => file.createdByType === 'agent-run');
   const state = children.some(file => entrySync(file) === 'conflict') ? 'conflict' : children.some(file => entrySync(file) === 'syncing') ? 'syncing' : children.length && children.every(file => entrySync(file) === 'online-only') ? 'online-only' : 'synced';
-  const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'kept on this computer';
+  const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'stored in Sulla';
   const size = children.reduce((sum, file) => sum + file.size, 0);
 
   return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, folderState, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
@@ -1088,9 +1102,9 @@ async function refresh(silent = false, afterMutation = false) {
   try {
     const loaded = await source.load();
     if (!isCurrent()) return;
-    const stars = await source.listStars(loaded.collection.id);
+    const [stars, sources] = await Promise.all([source.listStars(loaded.collection.id), source.listNativeSources?.() ?? Promise.resolve([])]);
     if (!isCurrent()) return;
-    snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
+    nativeSources.value = sources; snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
     await operations.restore(loaded.collection.id);
     if (!isCurrent()) return;
     selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key)));
@@ -1133,13 +1147,15 @@ async function onCollectionDrop(collectionId:string,event:DragEvent) {
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
 async function newFolder() {
-  if (busy.value || loading.value || section.value !== 'files' || (!props.dataSource.capabilities.nativeFilesystem && !operations.supported())) return;
+  if (busy.value || loading.value || section.value !== 'files' || (!props.dataSource.capabilities.upload && !operations.supported())) return;
   const name = window.prompt('Name this folder')?.trim(); if (!name) return;
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
   const path = joinPath(currentPath.value, name);
   if (operations.supported()) await submitReceiptItems([{ itemId: crypto.randomUUID(), action: 'create-folder', targetPath: path }]);
   else await runMutation(() => props.dataSource.createFolder(path));
 }
+async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
+async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
 function shareEntry(entry:DisplayEntry | null) {
   if (busy.value || !entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
   const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
@@ -1212,19 +1228,28 @@ async function activate(entry:DisplayEntry) { if (section.value === 'trash') { s
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
-function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
-function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
+function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
+function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
 async function onDrop(event:DragEvent) {
   dragging.value = false;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
   if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
-  if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
-  const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
-  if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return }
-  const destination = currentPath.value; await runMutation(async() => { await props.dataSource.uploadPaths(paths, destination) });
+  if (!props.dataSource.capabilities.upload) return;
+  const files = [...event.dataTransfer.files];
+  if (!files.length) return;
+  const destination = currentPath.value;
+  await runMutation(async() => {
+    if (props.dataSource.uploadDroppedFiles) await props.dataSource.uploadDroppedFiles(files, destination);
+    else {
+      const paths = files.map(file => (file as File & { path?:string }).path).filter((value):value is string => Boolean(value));
+      if (paths.length !== files.length) throw new Error('This Desktop build cannot read one or more dropped files. Use Choose files instead.');
+      await props.dataSource.uploadPaths(paths, destination);
+    }
+  });
 }
+async function keepBothConflict(entry:DisplayEntry) { if (!props.dataSource.keepConflictCopies) return; selectedKeys.value = new Set([entry.key]); selectEntry(entry); await runMutation(() => props.dataSource.keepConflictCopies!(entry)); const updated = snapshot.value?.files.find(file => file.id === entry.id); selected.value = updated ? toDisplay(updated) : null }
 function dragEntriesFor(entry:DisplayEntry) {
   const selected = selectedEntries.value;
   const requested = selectedKeys.value.has(entry.key) && selected.length ? selected : [entry];
@@ -1346,10 +1371,10 @@ function ownerName(entry:FilesItem) { const collection = snapshot.value?.collect
 function initials(name:string) { const words = name.replace(/\(.*?\)/g, '').trim().split(/\s+/).filter(Boolean); return ((words[0]?.[0] ?? '?') + (words.length > 1 ? words[1][0] : '')).toUpperCase() }
 function ownerInitials(entry:FilesItem) { return entry.createdByType === 'agent-run' ? ownerName(entry).charAt(0).toUpperCase() : initials(ownerName(entry)) }
 function avatarClass(entry:FilesItem) { if (entry.createdByType === 'agent-run') return 'a'; const name = ownerName(entry); if (name === accountName.value || name.toLowerCase() === snapshot.value?.collection.accountName?.toLowerCase()) return ''; const tones = ['m', 'd', 'p']; return tones[[...name].reduce((sum, char) => sum + char.charCodeAt(0), 0) % tones.length] }
-function entrySync(entry:FilesItem) { return entry.syncState || (/\(conflicted copy [^)]+\)/i.exec(entry.path) ? 'conflict' : syncState.value === 'syncing' ? 'syncing' : 'synced') }
+function entrySync(entry:FilesItem) { return entry.syncState || (syncState.value === 'syncing' ? 'syncing' : 'synced') }
 function syncClass(entry:FilesItem) { return ({ synced: 'local', syncing: 'syncing', 'online-only': 'online', conflict: 'conflict' } as Record<string, string>)[entrySync(entry)] ?? 'local' }
 function syncIcon(entry:FilesItem) { return ({ synced: icons.syncLocal, syncing: icons.syncSpin, 'online-only': icons.syncOnline, conflict: icons.alert } as Record<string, string>)[entrySync(entry)] ?? icons.syncLocal }
-function syncText(entry:FilesItem) { return ({ synced: 'On this computer', syncing: 'Syncing', 'online-only': 'Online only', conflict: 'Conflict' } as Record<string, string>)[entrySync(entry)] ?? 'On this computer' }
+function syncText(entry:FilesItem) { return ({ synced: snapshot.value?.status.location === 'server' ? 'Stored on Sulla Server' : 'Stored in Sulla', syncing: 'Syncing', 'online-only': 'Online only', conflict: 'Conflict' } as Record<string, string>)[entrySync(entry)] ?? 'Stored in Sulla' }
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }

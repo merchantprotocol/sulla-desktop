@@ -1,9 +1,5 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-
 import { BaseTool, ToolResponse } from '../base';
-import { hasContainerFileRuntime, readContainerPath } from '../util/containerFileRuntime';
+import { hasContainerFileRuntime, readContainerPath, readGuestPath } from '../util/containerFileRuntime';
 
 /**
  * ReadFile Tool — read file contents with optional line range.
@@ -15,90 +11,27 @@ export class ReadFileWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    let filePath: string = input.path || input.filePath || '';
+    const filePath: string = input.path || input.filePath || '';
 
     if (!filePath) {
       return { successBoolean: false, responseString: 'Missing required field: path' };
     }
 
-    if (hasContainerFileRuntime()) {
-      try {
-        const result = await readContainerPath(filePath);
-        if (result.kind === 'directory') {
-          return { successBoolean: true, responseString: `Directory listing (${ result.entries?.length ?? 0 } entries):\n${ (result.entries ?? []).join('\n') }` };
-        }
-        const lines = (result.content ?? '').split('\n');
-        const totalLines = result.totalLines ?? lines.length;
-        const startLine = Math.max(1, input.startLine || 1);
-        const endLine = Math.min(totalLines, input.endLine || totalLines);
-        const numbered = lines.slice(startLine - 1, endLine).map((line, index) => `${ startLine + index }: ${ line }`).join('\n');
-        const rangeInfo = startLine > 1 || endLine < totalLines ? ` (showing lines ${ startLine }-${ endLine })` : '';
-
-        return { successBoolean: true, responseString: `${ result.path } — ${ totalLines } total lines${ rangeInfo }\n\n${ numbered }` };
-      } catch (error) {
-        return { successBoolean: false, responseString: `Failed to read file: ${ error instanceof Error ? error.message : String(error) }` };
-      }
-    }
-
-    // Expand ~ to home directory
-    if (filePath.startsWith('~/')) {
-      filePath = filePath.replace('~', os.homedir());
-    } else if (filePath === '~') {
-      filePath = os.homedir();
-    }
-
-    // Resolve to absolute
-    filePath = path.resolve(filePath);
-
-    // Safety: block obvious bad paths
-    if (filePath.includes('..') && !filePath.startsWith(os.homedir())) {
-      return { successBoolean: false, responseString: 'Path traversal not allowed outside home directory' };
-    }
-
     try {
-      if (!fs.existsSync(filePath)) {
-        return { successBoolean: false, responseString: `File not found: ${ filePath }` };
+      const result = await (hasContainerFileRuntime() ? readContainerPath(filePath) : readGuestPath(filePath));
+      if (result.kind === 'directory') {
+        return { successBoolean: true, responseString: `Directory listing (${ result.entries?.length ?? 0 } entries):\n${ (result.entries ?? []).join('\n') }` };
       }
-
-      const stat = fs.statSync(filePath);
-      if (stat.isDirectory()) {
-        // List directory contents instead
-        const entries = fs.readdirSync(filePath);
-        return {
-          successBoolean: true,
-          responseString: `Directory listing (${ entries.length } entries):\n${ entries.join('\n') }`,
-        };
-      }
-
-      // Read the file
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-      const totalLines = lines.length;
-
+      const lines = (result.content ?? '').split('\n');
+      const totalLines = result.totalLines ?? lines.length;
       const startLine = Math.max(1, input.startLine || 1);
       const endLine = Math.min(totalLines, input.endLine || totalLines);
+      const numbered = lines.slice(startLine - 1, endLine).map((line, index) => `${ startLine + index }: ${ line }`).join('\n');
+      const rangeInfo = startLine > 1 || endLine < totalLines ? ` (showing lines ${ startLine }-${ endLine })` : '';
 
-      // Extract requested range (1-indexed)
-      const selectedLines = lines.slice(startLine - 1, endLine);
-
-      // Format with line numbers
-      const numbered = selectedLines
-        .map((line, i) => `${ startLine + i }: ${ line }`)
-        .join('\n');
-
-      const rangeInfo = (startLine > 1 || endLine < totalLines)
-        ? ` (showing lines ${ startLine }-${ endLine })`
-        : '';
-
-      return {
-        successBoolean: true,
-        responseString: `${ filePath } — ${ totalLines } total lines${ rangeInfo }\n\n${ numbered }`,
-      };
+      return { successBoolean: true, responseString: `${ result.path } — ${ totalLines } total lines${ rangeInfo }\n\n${ numbered }` };
     } catch (error) {
-      return {
-        successBoolean: false,
-        responseString: `Failed to read file: ${ error instanceof Error ? error.message : String(error) }`,
-      };
+      return { successBoolean: false, responseString: `Failed to read guest file: ${ error instanceof Error ? error.message : String(error) }` };
     }
   }
 }

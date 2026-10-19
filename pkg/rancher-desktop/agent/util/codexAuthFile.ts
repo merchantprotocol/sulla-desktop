@@ -1,13 +1,10 @@
 // ~/.codex/auth.json — the Codex CLI's credential store.
 //
-// The Lima VM mounts the host home directory writable at the same path, so a
-// single file serves both sides: Sulla's OAuth layer writes it from the host
-// (on initial sign-in and on every scheduled refresh), and the codex CLI
-// inside the VM reads it and self-refreshes tokens in place. With ChatGPT
-// sign-in tokens present, codex usage draws from the user's ChatGPT plan —
-// no metered API billing.
+// Sulla's OAuth layer owns the host copy and explicitly transfers it into the
+// guest-owned Codex home. The host home is never mounted into the VM.
 
 import * as fs from 'fs';
+import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -21,6 +18,36 @@ export function codexHomeDir(): string {
 
 export function codexAuthPath(): string {
   return path.join(codexHomeDir(), 'auth.json');
+}
+
+function codexRevocationPath(): string {
+  return path.join(codexHomeDir(), 'auth.revoked');
+}
+
+async function removeGuestCodexAuthFile(): Promise<void> {
+  const { default: paths } = await import('@pkg/utils/paths');
+  const { execFile } = await import('child_process');
+
+  await new Promise<void>((resolve, reject) => {
+    execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', [
+      'set -eu',
+      'd="$HOME/.codex"',
+      // Old releases created this exact guest-side link. Remove the link
+      // itself; never append a child path and accidentally follow it into the
+      // host credential directory.
+      'if [ -L "$d" ]; then rm -- "$d"; exit 0; fi',
+      '[ ! -e "$d" ] || [ -d "$d" ]',
+      'rm -f -- "$d/auth.json"',
+    ].join('\n')], {
+      env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
+    }, err => (err ? reject(err) : resolve()));
+  });
+}
+
+/** Apply a durable host-side disconnect marker after a stopped VM boots. */
+export async function reconcileCodexAuthRevocationInVm(): Promise<void> {
+  if (!fs.existsSync(codexRevocationPath())) return;
+  await removeGuestCodexAuthFile();
 }
 
 /**
@@ -91,7 +118,15 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
       last_refresh: new Date().toISOString(),
     };
     fs.mkdirSync(codexHomeDir(), { recursive: true });
-    fs.writeFileSync(codexAuthPath(), JSON.stringify(payload, null, 2), { mode: 0o600 });
+    const temporary = path.join(codexHomeDir(), `.auth.json.${ randomUUID() }`);
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(payload, null, 2), { mode: 0o600, flag: 'wx' });
+      fs.renameSync(temporary, codexAuthPath());
+      fs.chmodSync(codexAuthPath(), 0o600);
+      try { fs.unlinkSync(codexRevocationPath()) } catch { /* no prior revocation marker */ }
+    } finally {
+      try { fs.unlinkSync(temporary) } catch { /* rename succeeded or write failed */ }
+    }
     return true;
   } catch (err) {
     console.error('[codexAuthFile] Failed to write auth.json:', err);
@@ -99,47 +134,101 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
   }
 }
 
-/**
- * Point the VM user's ~/.codex at the host's ~/.codex.
- *
- * `limactl shell` runs with HOME=/home/<user>.linux, so a plain `codex` in the
- * VM (an agent's exec, a terminal) looked for its login there and reported
- * "Not logged in" even though the host-path auth.json was fresh. Only
- * CodexService, which forces CODEX_HOME, saw it. The symlink gives every
- * `codex` in the VM the same login. Idempotent; a real directory already at
- * the VM path is moved aside, never deleted.
- */
-export async function linkCodexHomeIntoVm(): Promise<void> {
-  if (typeof process !== 'undefined' && process.type === 'renderer') return;
-  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
-  const target = codexHomeDir();
-  const script = [
-    't="$1"; d="$HOME/.codex"',
-    'if [ -L "$d" ]; then [ "$(readlink "$d")" = "$t" ] && exit 0; rm "$d";',
-    'elif [ -e "$d" ]; then mv "$d" "$d.vm-backup-$(date +%s)"; fi',
-    'ln -s "$t" "$d"',
-  ].join('\n');
+/** Copy the exact Codex auth file into the guest-owned CLI home. */
+export async function linkCodexHomeIntoVm(): Promise<boolean> {
+  if (typeof process !== 'undefined' && process.type === 'renderer') return false;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return false;
+  const target = codexAuthPath();
+  let staged: string | null = null;
   try {
     const { default: paths } = await import('@pkg/utils/paths');
     const { execFile } = await import('child_process');
+    const env = { ...process.env, LIMA_HOME: paths.lima };
+    const lima = (args: string[]) => new Promise<string>((resolve, reject) => {
+      execFile(paths.limactl, args, { env, timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    });
+    if (fs.existsSync(codexRevocationPath())) {
+      await removeGuestCodexAuthFile();
+      return false;
+    }
+    staged = (await lima([
+      'shell', '0', '--', 'sh', '-c',
+      'set -eu; umask 077; mktemp -d /tmp/sulla-codex-auth.XXXXXXXX',
+    ])).trim();
+    if (!/^\/tmp\/sulla-codex-auth\.[A-Za-z0-9]+$/.test(staged)) {
+      throw new Error('Guest returned an invalid Codex auth staging path');
+    }
+    const incoming = `${ staged }/auth.json.incoming`;
+    const hostAuthMtime = Math.trunc(fs.statSync(target).mtimeMs / 1_000);
+    const script = [
+      'set -eu',
+      'stage="$1"',
+      'incoming="$2"',
+      'host_mtime="$3"',
+      'd="$HOME/.codex"',
+      'tmp=""',
+      'cleanup() { rm -f -- "$incoming"; [ -z "$tmp" ] || rm -f -- "$tmp"; rmdir -- "$stage" 2>/dev/null || true; }',
+      'trap cleanup EXIT HUP INT TERM',
+      // Retire only the legacy link created by prior Sulla releases. `rm`
+      // unlinks it and cannot traverse to or delete its host-side target.
+      'if [ -L "$d" ]; then rm -- "$d"; fi',
+      '[ ! -e "$d" ] || [ -d "$d" ]',
+      'umask 077',
+      'mkdir -p "$d"',
+      '[ -d "$d" ] && [ "$(stat -c %u "$d")" = "$(id -u)" ]',
+      'chmod 700 "$d"',
+      // Once the homes are independent, Codex may have rotated the guest
+      // refresh token. Compare against the host file's original timestamp,
+      // rather than copy metadata that the Lima transport may have changed.
+      'if [ -f "$d/auth.json" ] && [ ! -L "$d/auth.json" ] && [ "$(stat -c %Y "$d/auth.json")" -ge "$host_mtime" ]; then exit 0; fi',
+      'tmp=$(mktemp "$d/.auth.json.XXXXXXXX")',
+      'install -m 600 "$incoming" "$tmp"',
+      'mv -f -- "$tmp" "$d/auth.json"',
+      'tmp=""',
+    ].join('\n');
     await new Promise<void>((resolve, reject) => {
-      execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', script, 'sh', target], {
-        env:     { ...process.env, LIMA_HOME: paths.lima },
+      execFile(paths.limactl, ['copy', target, `0:${ incoming }`], {
+        env,
         timeout: 30_000,
       }, err => (err ? reject(err) : resolve()));
     });
-    console.log(`[codexAuthFile] VM ~/.codex linked to ${ target }`);
+    await lima(['shell', '0', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
+    console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
+    return true;
   } catch (err) {
+    if (staged && /^\/tmp\/sulla-codex-auth\.[A-Za-z0-9]+$/.test(staged)) {
+      try {
+        const { default: paths } = await import('@pkg/utils/paths');
+        const { execFile } = await import('child_process');
+        await new Promise<void>((resolve) => {
+          execFile(paths.limactl, ['shell', '0', '--', 'rm', '-rf', '--', staged!], {
+            env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
+          }, () => resolve());
+        });
+      } catch { /* VM may have stopped during cleanup */ }
+    }
     console.warn('[codexAuthFile] Could not link ~/.codex into the VM (VM not running?):', err);
+    return false;
   }
 }
 
 /** Delete ~/.codex/auth.json — called when the codex integration is
  *  disconnected so the CLI stops authenticating with revoked credentials. */
-export function removeCodexAuthFile(): void {
+export async function removeCodexAuthFile(): Promise<void> {
+  fs.mkdirSync(codexHomeDir(), { recursive: true });
+  const markerTemp = path.join(codexHomeDir(), `.auth.revoked.${ randomUUID() }`);
+  try {
+    fs.writeFileSync(markerTemp, 'revoked\n', { mode: 0o600, flag: 'wx' });
+    fs.renameSync(markerTemp, codexRevocationPath());
+  } finally {
+    try { fs.unlinkSync(markerTemp) } catch { /* rename succeeded or write failed */ }
+  }
   try {
     fs.unlinkSync(codexAuthPath());
   } catch { /* already gone */ }
+  try {
+    await removeGuestCodexAuthFile();
+  } catch { /* VM may be stopped; host credential is already revoked. */ }
 }
 
 /**
@@ -149,7 +238,9 @@ export function removeCodexAuthFile(): void {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
-  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) return true;
+  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) {
+    return linkCodexHomeIntoVm();
+  }
   try {
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
@@ -167,14 +258,18 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     for (const accountId of accountIds) {
       try {
         const tokens = await oauthService.ensureFreshTokens('codex', accountId);
-        if (writeCodexAuthFile(tokens)) return true;
+        if (writeCodexAuthFile(tokens)) {
+          return linkCodexHomeIntoVm();
+        }
       } catch {
         const stored = await oauthService.getStoredTokens('codex', accountId);
         if (!stored?.raw_response) continue;
         const tokens = (typeof stored.raw_response === 'string'
           ? JSON.parse(stored.raw_response)
           : stored.raw_response) as OAuthTokenSet;
-        if (writeCodexAuthFile(tokens) && isAuthFileFresh()) return true;
+        if (writeCodexAuthFile(tokens) && isAuthFileFresh()) {
+          return linkCodexHomeIntoVm();
+        }
       }
     }
     return false;

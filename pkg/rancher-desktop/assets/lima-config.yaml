@@ -121,11 +121,8 @@ provision:
     mkdir -p /etc/docker
     [ -L /etc/docker/certs.d ] && rm /etc/docker/certs.d
     if [ ! -e /etc/docker/certs.d ]; then
-      if [ -d "/Users/{{.User}}" ]; then
-        ln -s "/Users/{{.User}}/.docker/certs.d" /etc/docker
-      elif [ -d "/home/{{.User}}" ]; then
-        ln -s "/home/{{.User}}/.docker/certs.d" /etc/docker
-      fi
+      mkdir -p "/home/{{.User}}/.docker/certs.d"
+      ln -s "/home/{{.User}}/.docker/certs.d" /etc/docker/certs.d
     fi
 
     # --- Hostname ---

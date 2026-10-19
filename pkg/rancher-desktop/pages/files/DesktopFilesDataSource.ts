@@ -5,6 +5,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { FilesRevealResult, FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from './types';
 import type { IpcRendererEvent } from 'electron';
+import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 
 interface RemoteCapabilities {
   orgSharing: boolean;
@@ -71,6 +72,7 @@ function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
+  nativeSourceReady = false;
   readonly capabilities = {
     upload:          true,
     versionHistory:  true,
@@ -98,6 +100,25 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private rootId = '';
   private capabilitiesGeneration = 0;
   private capabilitiesListeners = new Set<() => void>();
+  private nativeRuntimeGeneration = -1;
+
+  constructor() {
+    const changed = (_event:IpcRendererEvent, status:SullaFilesNativeRuntimeStatus) => this.applyNativeRuntime(status);
+
+    ipcRenderer.on('files-ui:native-runtime-changed', changed);
+    (ipcRenderer.invoke('files-ui:native-runtime') as Promise<SullaFilesNativeRuntimeStatus>)
+      .then(status => this.applyNativeRuntime(status))
+      .catch(() => this.applyNativeRuntime({ state: 'disabled', ready: false, generation: 0, sourceGrant: 'unsupported' }));
+  }
+
+  private applyNativeRuntime(status:SullaFilesNativeRuntimeStatus):void {
+    if (!status || status.generation < this.nativeRuntimeGeneration) return;
+    this.nativeRuntimeGeneration = status.generation;
+    const ready = status.state === 'ready' && status.ready;
+    if (ready === this.nativeSourceReady) return;
+    this.nativeSourceReady = ready;
+    this.capabilitiesListeners.forEach(listener => listener());
+  }
 
   selectCollection(collectionId:string):void { this.collectionId = collectionId }
 
@@ -160,7 +181,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
-    if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
+    if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
     this.collectionId = collection.id;
     const currentOperationCapabilities = await this.operationCapabilities(collection.id);
     if (capabilitiesGeneration === this.capabilitiesGeneration) Object.assign(this.capabilities, {
@@ -172,7 +193,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     });
     const selectedRoot = roots.find(root => root.collectionId === collection.id);
     this.capabilities.nativeFilesystem = Boolean(selectedRoot?.activation === 'active');
-    this.capabilities.upload = this.capabilities.nativeFilesystem;
+    this.capabilities.upload = true;
     this.rootId = selectedRoot?.id ?? '';
     if (selectedRoot) {
       status.state = ({ idle: 'synced', scanning: 'syncing', syncing: 'syncing', paused: 'paused', offline: 'error', error: 'error', detached: 'error' } as Record<string, string>)[selectedRoot.state ?? ''] ?? status.state;
@@ -196,7 +217,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
     this.files = active.map(file => filesItem(file));
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
-    if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
+    if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
       folders: await ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id, details: true }).catch(() => []) as FilesFolderState[],
@@ -258,8 +279,16 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
+  async chooseNativeSource():Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:pick-native-source')) }
+  listNativeSources():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> { return ipcRenderer.invoke('files-experiment:list-native-sources') }
+  async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+  deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
+  keepConflictCopies(file:FilesItem):Promise<void> {
+    if (!file.conflictSourceFileId || !file.conflictSourceVersionId) throw new Error('This conflict cannot be acknowledged safely. Refresh Files and try again.');
+    return ipcRenderer.invoke('sulla-files:keep-conflict-copies', { fileId: file.id, currentVersionId: file.currentVersionId, sourceFileId: file.conflictSourceFileId, sourceVersionId: file.conflictSourceVersionId });
+  }
   async operationCapabilities(collectionId:string):Promise<FilesOperationCapabilities> {
     const value = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId }).catch(() => ({ enabled:false, crossCollectionOperations:'unavailable' })) as OperationCapabilities;
 

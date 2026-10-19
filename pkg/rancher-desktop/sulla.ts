@@ -133,6 +133,8 @@ async function onVaultUnlocked(): Promise<void> {
   try {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     await getDesktopVaultClient().status();
+    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+    await getSullaFilesWatcher().unlockService();
   } catch (err) {
     console.warn('[Vault] Container state is unavailable:', (err as Error).message);
   }
@@ -356,7 +358,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const unlocked = await vaultKeyService.initialize();
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
-      await onVaultUnlocked();
+      // Files starts in its own lifecycle stage after the vault is ready.
     },
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
@@ -366,6 +368,31 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       getVaultKeyService().lock();
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
       await getSullaFilesWatcher().lockService().catch(() => undefined);
+    },
+  );
+
+  lifecycle.registerOnce('sulla-files-runtime', ['vault'],
+    async() => {
+      const { startSullaFilesSourceGateway, stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      const watcher = getSullaFilesWatcher();
+      startSullaFilesSourceGateway();
+      try {
+        await watcher.initialize();
+        const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+        if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
+        console.log('[Background] Sulla Files runtime initialized');
+      } catch (error) {
+        await watcher.shutdown().catch(() => undefined);
+        await stopSullaFilesSourceGateway();
+        throw error;
+      }
+    },
+    async() => {
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      const { stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
+      await getSullaFilesWatcher().shutdown();
+      await stopSullaFilesSourceGateway();
     },
   );
 
