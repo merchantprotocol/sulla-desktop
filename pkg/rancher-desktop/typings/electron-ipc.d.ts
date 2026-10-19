@@ -548,10 +548,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:record-lock': (input: { fileId: string; status: 'ordinary' | 'policy' }) => void;
   'sulla-files:record-unlock': (input: { fileId: string }) => void;
   'sulla-files:disposal-review': (input: { fileId: string; decision: 'approve' | 'reject' | 'extend'; extendedUntil?: string }) => void;
-  'sulla-files:trash-list':      (input: { collectionId: string }) => any[];
+  'sulla-files:trash-list':      (input: { collectionId: string }) => import('@pkg/pages/files/types').FilesTrashItem[];
   'sulla-files:trash':           (input: { fileId: string }) => void;
-  'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
-  'sulla-files:trash-purge':     (input: { fileId: string }) => void;
+  'sulla-files:trash-restore':   (input: { id:string; kind:import('@pkg/pages/files/types').FilesTrashItem['kind']; expectedRevision:string; currentTombstone:{ id:string; receiptId?:string } }) => import('@pkg/pages/files/types').FilesTrashRestoreResult;
+  'sulla-files:trash-purge':     (input: { id:string; kind?:'folder'; expectedRevision:string; currentTombstone:{ id:string; kind?:'receipt'; receiptId?:string }; invalidateUndo?:true }) => import('@pkg/pages/files/types').FilesTrashPurgeResult;
   'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
   'sulla-files:shares':          (input: { collectionId: string }) => any[];
   'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
