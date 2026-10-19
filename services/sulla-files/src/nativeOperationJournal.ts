@@ -17,9 +17,11 @@ interface Plan {
   leaves:Leaf[]; inverse?:Leaf[]; watched:any[];
   committed?:Committed; inverseCommitted?:Committed;
   treeBefore?:string; treeAfter?:string;
+  treesAfter?:string[]; absentAfter?:string[]; treesUndo?:string[]; absentUndo?:string[];
+  grants?:any;
   disposal?:{undoInvalidatedAt:string;invalidatedBy:string;reason:string;disposedPaths?:string[];artifactsDisposedAt?:string;lastError?:string};
 }
-interface Committed { fileIds:string[]; folderIds:string[]; files:any[]; folders:any[]; watched:any[] }
+interface Committed { fileIds:string[]; folderIds:string[]; files:any[]; folders:any[]; watched:any[]; grants?:any }
 export interface NativeJournalRoot { id:string; collectionId:string; mutations:FilesMutationCoordinator }
 const packed = (value:FileFingerprint):Fingerprint => ({ ...value,dev:String(value.dev),ino:String(value.ino) });
 const same = (a:Fingerprint,b:Fingerprint) => a.dev===b.dev && a.ino===b.ino && a.size===b.size && a.mtimeMs===b.mtimeMs;
@@ -45,11 +47,28 @@ export class NativeOperationJournal {
   }
 
   async folders(collectionId:string,path:string,files:string[]):Promise<string[]> {
-    const root=await this.resolve(collectionId); if (!root) return [];
+    return (await this.folderSnapshot(collectionId,path,files)).directories;
+  }
+
+  async folderSnapshot(collectionId:string,path:string,files:string[]):Promise<{directories:string[];nativeSignature:string}> {
+    const root=await this.resolve(collectionId);
+    if (!root) return {directories:[],nativeSignature:createHash('sha256').update(canonical({files:[],directories:[]})).digest('hex')};
     const tree=await root.mutations.inspectTree(path,path=>!isProtectedPath(path) && !path.split('/').includes('.sulla-trash'));
     if ([...tree.directories,...tree.files].some(isProtectedPath)) throw protectedPathError();
     if (tree.files.length!==files.length || tree.files.some(path=>!files.includes(path))) throw failure();
-    return tree.directories;
+    const directories:DirectoryReceipt[]=[];
+    for (const directoryPath of [...tree.directories].sort()) directories.push(await root.mutations.directory(directoryPath));
+    const nativeFiles:{path:string;fingerprint:Fingerprint;hash:string}[]=[];
+    for (const filePath of [...tree.files].sort()) {
+      const pin=await root.mutations.pinVerified(filePath,async()=>undefined);
+      try {
+        const digest=createHash('sha256');
+        for await (const chunk of pin.createReadStream()) digest.update(chunk);
+        await pin.assertUnchanged();
+        nativeFiles.push({path:filePath,fingerprint:packed(pin.fingerprint),hash:digest.digest('hex')});
+      } finally { await pin.close() }
+    }
+    return {directories:tree.directories,nativeSignature:createHash('sha256').update(canonical({files:nativeFiles,directories})).digest('hex')};
   }
 
   async publish(client:pg.PoolClient,receipt:any,undo:boolean):Promise<void> {
@@ -63,44 +82,69 @@ export class NativeOperationJournal {
       const operationId=receipt.request.batchOperationId ?? receipt.id;
       const prefix=`.sulla-trash/.operations/${operationId}/${itemId}/${receipt.id}`;
       const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
-      const records=folderPlan?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [receipt];
+      const incomingRecords=folderPlan?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [receipt];
+      const displacedRecords=folderPlan?.displaced?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [];
+      const records=[...displacedRecords,...incomingRecords];
+      const displacedFileBefore=!folderPlan && receipt.displaced_before?.fileId ? receipt.displaced_before : null;
+      const displacedFileAfter=displacedFileBefore && receipt.displaced_after?.fileId ? receipt.displaced_after : null;
       const watched=(await client.query('SELECT * FROM watched_folder_state WHERE file_id=ANY($1::uuid[]) FOR UPDATE',
-        [[...records.map((r:any)=>r.before_state?.fileId),receipt.displaced_before?.fileId].filter(Boolean)])).rows;
+        [[...records.map((r:any)=>r.before_state?.fileId),displacedFileBefore?.fileId].filter(Boolean)])).rows;
       const plan:Plan={ version:2,rootId:root.id,collectionId:receipt.collection_id,operationId,itemId,leaves:[],watched };
       if (folderPlan) {
         if (receipt.action!=='copy') plan.treeBefore=folderPlan.source;
         if (receipt.action!=='trash') plan.treeAfter=folderPlan.target;
+        if (folderPlan.displaced) {
+          plan.treesAfter=[folderPlan.target,folderPlan.displaced.target];
+          plan.absentAfter=receipt.action==='copy'?[]:[folderPlan.source];
+          plan.treesUndo=[folderPlan.source,folderPlan.displaced.source];
+          plan.absentUndo=[folderPlan.displaced.target];
+          plan.grants=folderPlan.displaced.grants;
+        }
       } else if (receipt.action==='create-folder') plan.treeAfter=receipt.after_state.path;
-      const fileLeaf=async(before:any,after:any,kind:Leaf['kind'],stage:string) => {
+      const fileLeaf=async(before:any,after:any,kind:Leaf['kind'],stage:string,leaves=plan.leaves) => {
         const w=watched.find(w=>w.file_id===before.fileId);
         if (!w || w.root_id!==root.id || w.path!==before.path) throw failure();
         await this.verifyVersion(before.fileId,before.versionId,w.content_hash);
         const pin=await m.pinVerified(before.path,p=>verify(p,w.content_hash));
         try {
           if (pin.fingerprint.size!==Number(w.size) || pin.fingerprint.mtimeMs!==Number(w.mtime_ms)) throw failure();
-          plan.leaves.push({ kind,source:before.path,target:after?.path,stage,hash:w.content_hash,before:packed(pin.fingerprint) });
+          leaves.push({ kind,source:before.path,target:after?.path,stage,hash:w.content_hash,before:packed(pin.fingerprint) });
         } finally { await pin.close() }
       };
-      if (receipt.displaced_before) await fileLeaf(receipt.displaced_before,receipt.displaced_after,'move',`${prefix}/displaced`);
-      const directories:any[]=folderPlan?.folders??[];
-      const desired=new Set<string>();
+      if (displacedFileBefore) await fileLeaf(displacedFileBefore,displacedFileAfter,'move',`${prefix}/displaced`);
+      const incomingDirectories:any[]=folderPlan?.folders??[];
+      const displacedDirectories:any[]=folderPlan?.displaced?.folders??[];
       const includeParents=(path:string,includeSelf=false)=>{
         const parts=path.split('/'); if (!includeSelf) parts.pop();
         for (let n=1;n<=parts.length;n++) desired.add(parts.slice(0,n).join('/'));
       };
-      if (receipt.action==='create-folder') includeParents(receipt.after_state.path,true);
-      for (const directory of directories) if (!directory.deleted) includeParents(directory.after.path,true);
-      for (const record of records) if (record.after_state?.fileId && !record.after_state.deleted) includeParents(record.after_state.path);
-      if (receipt.displaced_after) includeParents(receipt.displaced_after.path);
-      const mkdirs:Leaf[]=[];
-      for (const path of [...desired].sort((a,b)=>a.split('/').length-b.split('/').length || a.localeCompare(b))) {
-        if (await m.exists(path)) { await m.directory(path); continue }
-        mkdirs.push({kind:'mkdir',target:path,stage:`${prefix}/dir-${mkdirs.length}`});
+      const desired=new Set<string>();
+      const mkdirs=async(paths:Set<string>,label:string,forceWithin?:string):Promise<Leaf[]> => {
+        const leaves:Leaf[]=[];
+        for (const path of [...paths].sort((a,b)=>a.split('/').length-b.split('/').length || a.localeCompare(b))) {
+          const forced=Boolean(forceWithin && (path===forceWithin || path.startsWith(forceWithin+'/')));
+          if (!forced && await m.exists(path)) { await m.directory(path); continue }
+          leaves.push({kind:'mkdir',target:path,stage:`${prefix}/${label}-${leaves.length}`});
+        }
+        return leaves;
+      };
+      if (folderPlan?.displaced) {
+        for (const directory of displacedDirectories) includeParents(directory.after.path,true);
+        for (const record of displacedRecords) if (record.after_state?.fileId && !record.after_state.deleted) includeParents(record.after_state.path);
+        plan.leaves.push(...await mkdirs(desired,'displaced-dir'));
+        for (const [index,record] of displacedRecords.entries()) await fileLeaf(record.before_state,record.after_state,'move',`${prefix}/displaced-source-${index}`);
+        for (const [index,directory] of [...displacedDirectories].reverse().entries()) plan.leaves.push({kind:'rmdir',source:directory.before.path,
+          directory:await m.directory(directory.before.path),stage:`${prefix}/displaced-removed-dir-${index}`});
+        desired.clear();
       }
-      plan.leaves.unshift(...mkdirs);
-      if (receipt.action!=='create-folder') for (const [index,record] of records.entries()) await fileLeaf(record.before_state,record.after_state,record.action==='rename'?'move':record.action,`${prefix}/source-${index}`);
-      if (directories.length && receipt.action!=='copy') {
-        for (const [index,directory] of [...directories].reverse().entries()) plan.leaves.push({kind:'rmdir',source:directory.before.path,
+      if (receipt.action==='create-folder') includeParents(receipt.after_state.path,true);
+      for (const directory of incomingDirectories) if (!directory.deleted) includeParents(directory.after.path,true);
+      for (const record of incomingRecords) if (record.after_state?.fileId && !record.after_state.deleted) includeParents(record.after_state.path);
+      if (displacedFileAfter) includeParents(displacedFileAfter.path);
+      plan.leaves.push(...await mkdirs(desired,'dir',folderPlan?.displaced?.source));
+      if (receipt.action!=='create-folder') for (const [index,record] of incomingRecords.entries()) await fileLeaf(record.before_state,record.after_state,record.action==='rename'?'move':record.action,`${prefix}/source-${index}`);
+      if (incomingDirectories.length && receipt.action!=='copy') {
+        for (const [index,directory] of [...incomingDirectories].reverse().entries()) plan.leaves.push({kind:'rmdir',source:directory.before.path,
           directory:await m.directory(directory.before.path),stage:`${prefix}/removed-dir-${index}`});
       }
       await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3)`,[receipt.id,receipt.action,plan]);
@@ -117,8 +161,9 @@ export class NativeOperationJournal {
         await this.save(receipt.id,plan);
       }
       assertOperationNotCancelled(operationId);
-      for (const w of watched) if (receipt.action!=='copy' || w.file_id===receipt.displaced_before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[w.file_id]);
-      for (const state of [...records.map((r:any)=>r.after_state),receipt.displaced_after]) {
+      const displacedFileIds=new Set(displacedRecords.map((record:any)=>record.before_state?.fileId).filter(Boolean));
+      for (const w of watched) if (receipt.action!=='copy' || displacedFileIds.has(w.file_id) || w.file_id===displacedFileBefore?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[w.file_id]);
+      for (const state of [...records.map((r:any)=>r.after_state),displacedFileAfter]) {
         if (!state?.fileId || state.deleted) continue;
         const leaf=plan.leaves.find(l=>l.target===state.path);
         if (!leaf?.published) throw failure();
@@ -189,10 +234,12 @@ export class NativeOperationJournal {
     await this.db.query("UPDATE files_path_operations SET state='undo-publishing' WHERE operation_id=$1",[receipt.id]);
     for (const leaf of plan.inverse) { await this.forward(root.mutations,leaf); await this.save(receipt.id,plan) }
     const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
-    const states=folderPlan?folderPlan.children.map((c:any)=>c.after):[receipt.after_state,receipt.displaced_after];
+    const states=folderPlan?[...folderPlan.children,...(folderPlan.displaced?.children??[])].map((c:any)=>c.after):[receipt.after_state,receipt.displaced_after];
     for (const state of states) if (state?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[state.fileId]);
+    const displacedFileIds=new Set((folderPlan?.displaced?.children??[]).map((child:any)=>child.before?.fileId).filter(Boolean));
+    const displacedFileId=!folderPlan ? receipt.displaced_before?.fileId : undefined;
     for (const w of plan.watched) {
-      if (receipt.action==='copy' && w.file_id!==receipt.displaced_before?.fileId) continue;
+      if (receipt.action==='copy' && !displacedFileIds.has(w.file_id) && w.file_id!==displacedFileId) continue;
       const pin=await root.mutations.pinVerified(w.path,p=>verify(p,w.content_hash));
       try { await this.watch(client,root,w.file_id,w.path,w.content_hash,packed(pin.fingerprint)) } finally { await pin.close() }
     }
@@ -202,11 +249,26 @@ export class NativeOperationJournal {
 
   private async capture(client:Pick<pg.PoolClient,'query'>,receipt:any):Promise<Committed> {
     const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
-    const records=folderPlan?.children??[{before:receipt.before_state,after:receipt.after_state},
+    const records=folderPlan?[...folderPlan.children,...(folderPlan.displaced?.children??[])]:[{before:receipt.before_state,after:receipt.after_state},
       {before:receipt.displaced_before,after:receipt.displaced_after}];
     const fileIds=[...new Set<string>(records.flatMap((r:any)=>[r.before?.fileId,r.after?.fileId]).filter(Boolean))].sort();
-    const folderIds=[...new Set<string>((folderPlan?.folders??[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
-    return this.captureIds(client,fileIds,folderIds);
+    const folderIds=[...new Set<string>((folderPlan?[...folderPlan.folders,...(folderPlan.displaced?.folders??[])]:[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
+    const committed=await this.captureIds(client,fileIds,folderIds);
+    if (folderPlan?.displaced?.grants) committed.grants=await this.captureGrants(client,folderPlan.displaced.grants);
+    return committed;
+  }
+
+  private async captureGrants(client:Pick<pg.PoolClient,'query'>,grants:any):Promise<any> {
+    const folderShareIds=(grants.folderShares??[]).map((item:any)=>item.id);
+    const publicLinkIds=(grants.publicLinks??[]).map((item:any)=>item.id);
+    const fileIds=grants.fileIds??[];
+    const signature=async(table:string,column:string,order:string,ids:string[],cast:string) => (await client.query(
+      `SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.${order}),'[]'::jsonb)::text) signature FROM ${table} item WHERE item.${column}=ANY($1::${cast}[])`,[ids])).rows[0].signature;
+    return {folderShareIds,publicLinkIds,fileIds,
+      folderSharesSignature:await signature('folder_shares','id','id',folderShareIds,'uuid'),
+      publicLinksSignature:await signature('file_share_links','id','id',publicLinkIds,'text'),
+      fileSharesSignature:await signature('file_shares','file_id','id',fileIds,'uuid'),
+      fileLinksSignature:await signature('file_share_links','file_id','id',fileIds,'uuid')};
   }
 
   private async captureIds(client:Pick<pg.PoolClient,'query'>,fileIds:string[],folderIds:string[]):Promise<Committed> {
@@ -221,18 +283,42 @@ export class NativeOperationJournal {
 
   private async verifyCommitted(root:NativeJournalRoot,plan:Plan,undo:boolean):Promise<void> {
     const expected=undo?plan.inverseCommitted:plan.committed;
-    if (!expected || canonical(expected)!==canonical(await this.captureIds(this.db,expected.fileIds,expected.folderIds))) throw failure();
+    if (!expected) throw failure();
+    const actual=await this.captureIds(this.db,expected.fileIds,expected.folderIds);
+    if (expected.grants) actual.grants=await this.captureGrants(this.db,plan.grants);
+    if (canonical(expected)!==canonical(actual)) throw failure();
     const leaves=undo?plan.inverse!:plan.leaves;
     const finalTargets=new Set(leaves.filter(l=>['move','copy','restore','mkdir'].includes(l.kind)).map(l=>l.target));
+    const directoryPath=(leaf:Leaf):string|undefined => leaf.kind==='mkdir' ? leaf.target
+      : ['rmdir','restore-dir'].includes(leaf.kind) ? leaf.directory?.path : undefined;
+    const finalDirectoryOperations=new Map<string,Leaf>();
+    for (const leaf of leaves) {
+      const path=directoryPath(leaf);
+      if (path) finalDirectoryOperations.set(path,leaf);
+    }
     for (const leaf of leaves) {
       if (leaf.kind==='mkdir' || leaf.kind==='restore-dir') {
-        const actual=await root.mutations.directory(leaf.directory!.path);
-        if (actual.dev!==leaf.directory!.dev || actual.ino!==leaf.directory!.ino) throw failure();
+        const path=directoryPath(leaf)!;
+        const finalOperation=finalDirectoryOperations.get(path);
+        if (finalOperation===leaf) {
+          const actual=await root.mutations.directory(path);
+          if (actual.dev!==leaf.directory!.dev || actual.ino!==leaf.directory!.ino) throw failure();
+        } else if (finalOperation?.kind!=='rmdir' || finalOperation.directory?.dev!==leaf.directory!.dev || finalOperation.directory?.ino!==leaf.directory!.ino) {
+          throw failure();
+        }
       } else if (leaf.kind==='rmdir') {
         const retained=await root.mutations.directory(leaf.stage);
-        if (retained.dev!==leaf.directory!.dev || retained.ino!==leaf.directory!.ino || await root.mutations.exists(leaf.directory!.path)) throw failure();
+        if (retained.dev!==leaf.directory!.dev || retained.ino!==leaf.directory!.ino) throw failure();
         const tree=await root.mutations.inspectTree(leaf.stage);
         if (tree.files.length || tree.directories.length!==1) throw failure();
+        const replacement=finalDirectoryOperations.get(leaf.directory!.path);
+        if (replacement===leaf) {
+          if (await root.mutations.exists(leaf.directory!.path)) throw failure();
+        } else {
+          if (!replacement || !['mkdir','restore-dir'].includes(replacement.kind) || !replacement.directory) throw failure();
+          const published=await root.mutations.directory(leaf.directory!.path);
+          if (published.dev!==replacement.directory.dev || published.ino!==replacement.directory.ino) throw failure();
+        }
       } else {
         const pin=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.kind==='copy'?leaf.published:leaf.before)); await pin.close();
         if (leaf.kind!=='trash') {
@@ -241,10 +327,10 @@ export class NativeOperationJournal {
         if ((leaf.kind==='move' || leaf.kind==='trash') && !finalTargets.has(leaf.source) && await root.mutations.exists(leaf.source!)) throw failure();
       }
     }
-    const treePath=undo?plan.treeBefore:plan.treeAfter;
-    const absentPath=undo?plan.treeAfter:plan.treeBefore;
-    if (absentPath && absentPath!==treePath && await root.mutations.exists(absentPath)) throw failure();
-    if (treePath) {
+    const treePaths=undo?(plan.treesUndo??(plan.treeBefore?[plan.treeBefore]:[])):(plan.treesAfter??(plan.treeAfter?[plan.treeAfter]:[]));
+    const absentPaths=undo?(plan.absentUndo??(plan.treeAfter?[plan.treeAfter]:[])):(plan.absentAfter??(plan.treeBefore?[plan.treeBefore]:[]));
+    for (const absentPath of absentPaths) if (!treePaths.includes(absentPath) && await root.mutations.exists(absentPath)) throw failure();
+    for (const treePath of treePaths) {
       const tree=await root.mutations.inspectTree(treePath,path=>!isProtectedPath(path));
       const inTree=(entry:any)=>!entry.deleted && (entry.path===treePath || entry.path.startsWith(treePath+'/'));
       const files=expected.files.filter(inTree).map(f=>f.path).sort();

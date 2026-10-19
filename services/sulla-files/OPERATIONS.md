@@ -12,9 +12,13 @@ existing file/create-folder behavior. Folder move/copy/rename/trash uses
 do not supply fileId/expectedVersionId. The optional explicit-folder snapshot is
 CAS checked. An implicit folder is snapshotted and each descendant is authorized
 at execution. Descendant files, explicit folders, and native empty directories
-form a stable plan. Folder collision policies are `keep-both` and `skip`; folder
-Replace is rejected, not silently merged. Unknown native files, symlinks, protected
-paths, nested folder/public-link grants, and mixed live/trashed trees block an item.
+form a stable plan. Folder collision policies are `replace`, `keep-both`, and
+`skip`. Replace requires the exact displayed destination
+`{folderId,path,revision,subtreeSignature}`; the signature covers every descendant
+identity/revision, grant/link and native inode/hash snapshot. The complete target
+tree moves to a receipt-owned recovery sibling before the source is published;
+it is never silently merged. Unknown native files, symlinks, protected paths,
+source-side nested folder/public-link grants, and mixed live/trashed trees block an item.
 
 GET `/v1/folders?collectionId=UUID` remains `string[]`. Add `details=true` for
 `{folderId:string,path:string,revision:string}[]`, excluding trashed explicit rows.
@@ -31,7 +35,7 @@ cross-root, stored/native, cross-collection folders, and cross-collection Replac
 return explicit 422 errors. They are not advertised as supported transfers.
 
 Capabilities adds `folderReceipts:boolean`, `nativeFolderReceipts:boolean`,
-`folderCollisionPolicies:['keep-both','skip']`, and
+`folderCollisionPolicies:['replace','keep-both','skip']`, and
 `crossCollectionOperations:'stored-same-audience-files'|'unavailable'`.
 Root availability, authorization, collision and CAS are checked on execution.
 
@@ -147,10 +151,6 @@ rollback or a committed, discoverable GC stage; raw recursive deletion and a
 parallel audit cleanup queue are not used.
 
 ### Full14 continuation — separate open scope
-- Folder Replace: extend `folderOperationBatches.ts` to snapshot/authorize both
-  complete trees, displace the target tree to a visible recovery sibling, then
-  publish incoming leaves in one journal. Preserve both identities/grants/history,
-  encode both trees in the inverse and reject unknown children at every boundary.
 - Native/mixed cross-collection and folder transfers: extend leaf plans with
   source and destination root/collection identity, lock both roots deterministically,
   stage verified bytes on the destination filesystem (never cross-device rename),

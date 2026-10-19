@@ -334,7 +334,7 @@
           <label><input v-model="applyCollisionToAll" type="checkbox">Apply to all current conflicts</label>
           <button class="btn sm" :disabled="busy" @click="resolveCollision('keep-both')">Keep Both</button>
           <button class="btn sm" :disabled="busy" @click="resolveCollision('skip')">Skip</button>
-          <button class="btn sm danger" :disabled="busy || collisionItem.action === 'create-folder' || !collisionItem.error?.destination || collisionItem.error.destination.deleted" @click="resolveCollision('replace')">Replace</button>
+          <button class="btn sm danger" :disabled="busy || !canReplaceCollision" @click="resolveCollision('replace')">Replace</button>
         </div>
         <div v-if="busy && !operationReceipt" class="operation-panel" role="status">Working…</div>
 
@@ -779,7 +779,7 @@ import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesCollisionPolicy, FilesDataSource, FilesFolderState, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot, FilesTrashItem } from './types';
+import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperationState, type FilesCollisionDestination, type FilesCollisionPolicy, type FilesDataSource, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationItem, type FilesOperationItemReceipt, type FilesOperationReceipt, type FilesOperationRetry, type FilesSnapshot, type FilesTrashItem } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
@@ -838,6 +838,12 @@ const operationReceipt = computed(() => operationHistory.value[0] ?? null);
 const undoReceipt = computed(() => [...operationHistory.value].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).find(receipt => receipt.undoSupported && receipt.state !== 'pending'));
 const collisionItem = computed(() => operationReceipt.value?.items.find(item => item.state === 'failed' && item.error?.code === 'destination-conflict'));
 const applyCollisionToAll = ref(false);
+const collisionItems = computed(() => {
+  const receipt=operationReceipt.value; const selected=collisionItem.value;
+
+  return receipt && selected ? (applyCollisionToAll.value ? receipt.items.filter(item => item.state === 'failed' && item.error?.code === 'destination-conflict') : [selected]) : [];
+});
+const canReplaceCollision = computed(() => collisionItems.value.length > 0 && collisionItems.value.every(canReplaceCollisionItem));
 const canUndo = computed(() => !busy.value && !loading.value && !operations.receipts.value.some(receipt => receipt.state === 'pending') && Boolean(props.dataSource.undoOperation && undoReceipt.value?.collectionId === snapshot.value?.collection.id));
 const { backStack, forwardStack, clipboard } = explorer;
 const canGoBack = computed(() => backStack.value.length > 0); const canGoForward = computed(() => forwardStack.value.length > 0);
@@ -1370,12 +1376,46 @@ async function retryReceipt(itemId?:string) {
   if (!receipt || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
   await runMutation(async() => { await operations.retry(receipt.operationId, itemId ? { items: [{ itemId }] } : undefined) });
 }
+function operationItemKind(item:FilesOperationItemReceipt):'file' | 'folder' | undefined {
+  const state=item.before ?? item.after;
+
+  if (isFilesOperationState(state)) return 'file';
+  if (isFilesFolderState(state)) return 'folder';
+}
+function replaceCollisionDestination(item:FilesOperationItemReceipt):FilesCollisionDestination | undefined {
+  if (item.action === 'create-folder') return;
+  const destination=item.error?.destination;
+  const sourceKind=operationItemKind(item);
+
+  if (isFilesOperationState(destination)) {
+    if (sourceKind && sourceKind !== 'file') return;
+    return destination.deleted ? undefined : destination;
+  }
+  if (isFilesFolderReplacementDestination(destination)) {
+    if (sourceKind && sourceKind !== 'folder') return;
+    return props.dataSource.capabilities.folderCollisionPolicies?.includes('replace') === true ? destination : undefined;
+  }
+}
+function canReplaceCollisionItem(item:FilesOperationItemReceipt):boolean {
+  return Boolean(replaceCollisionDestination(item));
+}
 async function resolveCollision(policy:FilesCollisionPolicy) {
   const receipt = operationReceipt.value; const selected = collisionItem.value;
   if (!receipt || !selected || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
-  const items = (applyCollisionToAll.value ? receipt.items.filter(item => item.state === 'failed' && item.error?.code === 'destination-conflict') : [selected]);
-  if (policy === 'replace' && items.some(item => item.action === 'create-folder' || !item.error?.destination || item.error.destination.deleted)) { operationError.value = 'Replace requires an authorized, current file destination for every selected conflict. Folder creation supports Keep Both or Skip.'; return }
-  await runMutation(async() => { await operations.retry(receipt.operationId, { items: items.map(item => ({ itemId: item.itemId, collisionPolicy: policy, ...(policy === 'replace' ? { expectedDestination: item.error!.destination! } : {}) })) }) });
+  const items = collisionItems.value;
+  const retryItems:NonNullable<FilesOperationRetry['items']>=[];
+
+  for (const item of items) {
+    if (policy === 'replace') {
+      const expectedDestination=replaceCollisionDestination(item);
+
+      if (!expectedDestination) { operationError.value = 'Replace requires an authorized, current destination snapshot for every selected conflict. Folder creation supports Keep Both or Skip.'; return }
+      retryItems.push({ itemId: item.itemId, collisionPolicy:policy, expectedDestination });
+    } else {
+      retryItems.push({ itemId: item.itemId, collisionPolicy:policy });
+    }
+  }
+  await runMutation(async() => { await operations.retry(receipt.operationId, { items:retryItems }) });
 }
 async function recoverOperation() {
   const request = pendingRequest.value; const receipt = operationReceipt.value;
