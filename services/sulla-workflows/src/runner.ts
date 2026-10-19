@@ -10,6 +10,7 @@ import {
 import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
 
 import { config } from './config.js';
+import { agentOccurrence, consumeAgentOccurrence } from './agentInvocation.js';
 import { closeDb, pool } from './db.js';
 import { closeEvents, emitEvent } from './events.js';
 import { OnDemandRuntimeLauncher } from './runtime.js';
@@ -53,9 +54,9 @@ async function checkpoint(playbook: WorkflowPlaybookState, nodeId: string, resul
   await persistState(playbook);
 }
 
-async function completeNode(playbook: WorkflowPlaybookState, nodeId: string, result: unknown, threadId?: string): Promise<WorkflowPlaybookState> {
+async function completeNode(playbook: WorkflowPlaybookState, nodeId: string, result: unknown, threadId?: string, consumedAgent = false): Promise<WorkflowPlaybookState> {
   const completed = completeSubAgent(playbook, nodeId, result, threadId);
-  const next = completed.updatedPlaybook;
+  const next = consumedAgent ? consumeAgentOccurrence(completed.updatedPlaybook, nodeId) : completed.updatedPlaybook;
   await emitEvent(executionId, next.workflowId, 'node_completed', {
     nodeLabel: node(next, nodeId)?.data?.label ?? nodeId,
     output: result,
@@ -67,8 +68,8 @@ async function completeNode(playbook: WorkflowPlaybookState, nodeId: string, res
 async function callAgent(playbook: WorkflowPlaybookState, nodeId: string, agentId: string, prompt: string): Promise<WorkflowPlaybookState> {
   const label = node(playbook, nodeId)?.data?.label ?? nodeId;
   await emitEvent(executionId, playbook.workflowId, 'node_started', { nodeLabel: label }, nodeId);
-  const result = await agents.run(agentId || 'sulla-desktop', prompt, label, nodeId);
-  return completeNode(playbook, nodeId, result.output, result.threadId);
+  const result = await agents.run(agentId || 'sulla-desktop', prompt, label, nodeId, agentOccurrence(playbook, nodeId));
+  return completeNode(playbook, nodeId, result.output, result.threadId, true);
 }
 
 async function waitForChild(childExecutionId: string): Promise<unknown> {
@@ -160,24 +161,27 @@ async function executeStep(playbook: WorkflowPlaybookState, step: PlaybookStepRe
   case 'spawn_sub_agent':
     return { playbook: await callAgent(playbook, step.nodeId, step.agentId, step.prompt) };
   case 'spawn_parallel_agents': {
-    const results = await Promise.all(step.nodes.map(item => agents.run(item.agentId, item.prompt, node(playbook, item.nodeId)?.data?.label ?? item.nodeId, item.nodeId)));
+    const results = await Promise.all(step.nodes.map(item => agents.run(item.agentId, item.prompt, node(playbook, item.nodeId)?.data?.label ?? item.nodeId, item.nodeId, agentOccurrence(playbook, item.nodeId))));
     let next = playbook;
-    for (let index = 0; index < step.nodes.length; index++) next = await completeNode(next, step.nodes[index].nodeId, results[index].output, results[index].threadId);
+    for (let index = 0; index < step.nodes.length; index++) next = await completeNode(next, step.nodes[index].nodeId, results[index].output, results[index].threadId, true);
     return { playbook: next };
   }
   case 'prompt_agent': {
     const pendingNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
     if (!pendingNodeId) throw new Error('Prompt action has no pending decision node');
     await emitEvent(executionId, playbook.workflowId, 'node_started', { nodeLabel: node(playbook, pendingNodeId)?.data?.label ?? pendingNodeId }, pendingNodeId);
-    const result = await agents.run('sulla-desktop', step.prompt, `workflow-${ pendingNodeId }`, pendingNodeId);
+    // Pending decisions must survive a restart before their Agent completes.
+    await persistState(step.updatedPlaybook);
+    const result = await agents.run('sulla-desktop', step.prompt, `workflow-${ pendingNodeId }`, pendingNodeId, agentOccurrence(step.updatedPlaybook, pendingNodeId));
     const resolved = resolveDecision(step.updatedPlaybook, outputText(result.output));
+    resolved.updatedPlaybook = consumeAgentOccurrence(resolved.updatedPlaybook, pendingNodeId);
     await emitEvent(executionId, playbook.workflowId, 'node_completed', { output: result.output }, pendingNodeId);
     await checkpoint(resolved.updatedPlaybook, pendingNodeId, result.output);
     return { playbook: resolved.updatedPlaybook };
   }
   case 'prompt_orchestrator': {
-    const result = await agents.run('sulla-desktop', step.prompt, `workflow-${ step.nodeId }`, step.nodeId);
-    return { playbook: await completeNode(playbook, step.nodeId, result.output, result.threadId) };
+    const result = await agents.run('sulla-desktop', step.prompt, `workflow-${ step.nodeId }`, step.nodeId, agentOccurrence(playbook, step.nodeId));
+    return { playbook: await completeNode(playbook, step.nodeId, result.output, result.threadId, true) };
   }
   case 'spawn_sub_workflow': {
     const child = await startChild(step.workflowId, step.payload);

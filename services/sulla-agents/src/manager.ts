@@ -16,7 +16,7 @@ import {
 } from './auth.js';
 import { config } from './config.js';
 import { migrate, pool } from './db.js';
-import { messageAgentRun, recoverRuns, startAgentRun, stopAgentRun } from './runtime.js';
+import { messageAgentRun, publicRunColumns, recoverRuns, startAgentRun, stopAgentRun } from './runtime.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -198,12 +198,12 @@ app.patch('/v1/agents/:id', requireEditor, async(request: AuthenticatedRequest, 
 app.get('/v1/runs', async(request: AuthenticatedRequest, response, next) => {
   try {
     const limit = Math.min(200, Math.max(1, Number(request.query.limit ?? 100)));
-    response.json((await pool.query(`SELECT * FROM server_agent_runs WHERE ${ tenantSql } ORDER BY created_at DESC LIMIT $3`, [...tenantParams(request.identity!), limit])).rows);
+    response.json((await pool.query(`SELECT ${ publicRunColumns } FROM server_agent_runs WHERE ${ tenantSql } ORDER BY created_at DESC LIMIT $3`, [...tenantParams(request.identity!), limit])).rows);
   } catch (error) { next(error) }
 });
 app.get('/v1/runs/:id', async(request: AuthenticatedRequest, response, next) => {
   try {
-    const row = (await pool.query(`SELECT * FROM server_agent_runs WHERE id=$3 AND ${ tenantSql }`, [...tenantParams(request.identity!), request.params.id])).rows[0];
+    const row = (await pool.query(`SELECT ${ publicRunColumns } FROM server_agent_runs WHERE id=$3 AND ${ tenantSql }`, [...tenantParams(request.identity!), request.params.id])).rows[0];
     if (!row) return response.status(404).json({ error: 'run not found' }); response.json(row);
   } catch (error) { next(error) }
 });

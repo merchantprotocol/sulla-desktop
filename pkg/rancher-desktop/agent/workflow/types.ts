@@ -30,6 +30,8 @@ export interface WorkflowPlaybookState {
   /** Results from completed nodes, keyed by nodeId */
   nodeOutputs:      Record<string, PlaybookNodeOutput>;
   status:           WorkflowPlaybookStatus;
+  /** Completed server Agent invocations per node; persisted with result checkpoints. */
+  agentInvocationCounts?: Record<string, number>;
   /** When a router/condition node needs the agent to decide, this holds the pending prompt */
   pendingDecision?: {
     nodeId:      string;

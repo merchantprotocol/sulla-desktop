@@ -25,6 +25,8 @@ import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js'
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
 import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
 import { workflowConcurrencyLimit } from '../../../pkg/rancher-desktop/agent/workflow/workflowConcurrency.js';
+import { agentOccurrence } from './agentInvocation.js';
+
 import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 
 import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
@@ -987,6 +989,10 @@ app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response,
       `SELECT playbook_state FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
       [...identityParams(identity), identity.executionId],
     )).rows[0];
+    const occurrence = request.body?.occurrence;
+    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || occurrence !== agentOccurrence(execution?.playbook_state ?? {}, nodeId)) {
+      return response.status(409).json({ error: 'stale workflow agent occurrence' });
+    }
     const declaredNode = execution?.playbook_state?.definition?.nodes?.find((node: any) => node.id === nodeId);
     const subtype = declaredNode?.data?.subtype;
     const expectedAgent = subtype === 'agent' ? (declaredNode.data.config?.agentId || 'sulla-desktop') : 'sulla-desktop';
@@ -995,16 +1001,16 @@ app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response,
     }
     const inserted = await pool.query(
       `INSERT INTO workflow_agent_runs
-         (execution_id,node_id,invocation_id,owner_issuer,owner_subject,authority_id,organization_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       ON CONFLICT (execution_id,node_id) DO NOTHING
+         (execution_id,node_id,invocation_id,owner_issuer,owner_subject,authority_id,organization_id,occurrence)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (execution_id,node_id,occurrence) DO NOTHING
        RETURNING invocation_id,agent_run_id`,
-      [identity.executionId, nodeId, crypto.randomUUID(), ...identityParams(identity)],
+      [identity.executionId, nodeId, crypto.randomUUID(), ...identityParams(identity), occurrence],
     );
     const binding = inserted.rows[0] ?? (await pool.query(
       `SELECT invocation_id,agent_run_id FROM workflow_agent_runs
-        WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }`,
-      [...identityParams(identity), identity.executionId, nodeId],
+        WHERE execution_id=$5 AND node_id=$6 AND occurrence=$7 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId, occurrence],
     )).rows[0];
     if (!binding?.invocation_id) throw new Error('Could not bind workflow node to an agent invocation');
     const invocationId = String(binding.invocation_id);
@@ -1024,9 +1030,9 @@ app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response,
     const recorded = await pool.query(
       `UPDATE workflow_agent_runs SET agent_run_id=$7
         WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }
-          AND (agent_run_id IS NULL OR agent_run_id=$7)
+          AND occurrence=$8 AND (agent_run_id IS NULL OR agent_run_id=$7)
         RETURNING agent_run_id`,
-      [...identityParams(identity), identity.executionId, nodeId, runId],
+      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
     );
     if (!recorded.rowCount) throw new Error('Agents returned a run outside the workflow node binding');
     response.status(202).json({ id: runId, status: launched.status ?? 'starting' });
@@ -1039,13 +1045,14 @@ app.post('/internal/agents/runs/status', async(request: AuthenticatedRequest, re
     const identity = request.identity!;
     const runId = typeof request.body?.runId === 'string' ? request.body.runId.trim() : '';
     const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId.trim() : '';
-    if (!runId || runId.length > 300 || !nodeId || nodeId.length > 300) {
+    const occurrence = request.body?.occurrence;
+    if (!Number.isSafeInteger(occurrence) || occurrence < 0 || !runId || runId.length > 300 || !nodeId || nodeId.length > 300) {
       return response.status(400).json({ error: 'bounded runId and nodeId are required' });
     }
     const owned = await pool.query(
       `SELECT 1 FROM workflow_agent_runs
-        WHERE execution_id=$5 AND node_id=$6 AND agent_run_id=$7 AND ${ identitySql }`,
-      [...identityParams(identity), identity.executionId, nodeId, runId],
+        WHERE execution_id=$5 AND node_id=$6 AND agent_run_id=$7 AND occurrence=$8 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId, runId, occurrence],
     );
     if (!owned.rowCount) return response.status(404).json({ error: 'agent run not found' });
     const run = await agentsJson('/internal/workflow-runs/status', {

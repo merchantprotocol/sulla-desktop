@@ -43,6 +43,7 @@ export async function migrate(): Promise<void> {
     expires_at timestamptz NOT NULL
   )`);
   await pool.query(`ALTER TABLE service_agent_definitions ADD COLUMN IF NOT EXISTS prompt_files jsonb NOT NULL DEFAULT '{}'::jsonb`);
+  await pool.query("ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS diagnostic_log text NOT NULL DEFAULT ''");
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS owner_issuer text');
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS owner_subject text');
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS authority_id uuid');

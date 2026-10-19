@@ -45,7 +45,7 @@ function findJob(value: any, jobId: string): any | null {
 export class DesktopAgentLauncher {
   constructor(private readonly tools: ScopedToolClient) {}
 
-  async run(agentId: string, prompt: string, label: string, nodeId?: string): Promise<{ output: unknown; threadId?: string }> {
+  async run(agentId: string, prompt: string, label: string, nodeId?: string, occurrence = 0): Promise<{ output: unknown; threadId?: string }> {
     const launched = await this.tools.call('spawn_agent', {
       tasks: [{ prompt, agentId, label }],
     });
@@ -91,14 +91,14 @@ export class ServerAgentLauncher {
     return json;
   }
 
-  async run(agentId: string, prompt: string, label: string, nodeId?: string): Promise<{ output: unknown; threadId?: string }> {
-    const launched = await this.request('/internal/agents/runs', { agentId, prompt, label, nodeId });
+  async run(agentId: string, prompt: string, label: string, nodeId?: string, occurrence = 0): Promise<{ output: unknown; threadId?: string }> {
+    const launched = await this.request('/internal/agents/runs', { agentId, prompt, label, nodeId, occurrence });
     const runId = typeof launched.id === 'string' ? launched.id : '';
     if (!runId) throw new Error('Agents service did not return a run id');
 
     const deadline = Date.now() + 30 * 60_000;
     while (Date.now() < deadline) {
-      const run = await this.request('/internal/agents/runs/status', { runId, nodeId });
+      const run = await this.request('/internal/agents/runs/status', { runId, nodeId, occurrence });
       const status = String(run.status ?? '').toLowerCase();
       if (status === 'completed') return { output: run.output ?? '', threadId: runId };
       if (['failed', 'stopped', 'cancelled'].includes(status)) {

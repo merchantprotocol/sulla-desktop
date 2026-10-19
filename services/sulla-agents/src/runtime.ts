@@ -4,10 +4,16 @@ import tar from 'tar-stream';
 
 import { config } from './config.js';
 import { pool } from './db.js';
+import { providerResult } from './providerOutput.js';
 import { DockerRuntimeDriver } from '../../../pkg/rancher-desktop/runtime/containerRuntime.js';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
 
 import type { RequestIdentity } from './auth.js';
+
+// Explicit public projection: provider diagnostics stay server-side.
+export const publicRunColumns = `id,agent_id,label,prompt,provider,model,status,container_id,output,error,
+  requested_by,owner_issuer,owner_subject,authority_id,organization_id,workflow_execution_id,
+  workflow_invocation_id,created_at,started_at,finished_at,updated_at`;
 
 const docker = new DockerRuntimeDriver();
 const monitors = new Set<string>();
@@ -33,14 +39,16 @@ async function monitor(id: string, containerId: string, tenant: [string | null, 
       if (!details?.State?.Running) break;
       await new Promise(resolve => setTimeout(resolve, 1_000));
     }
-    const current = (await pool.query('SELECT status FROM server_agent_runs WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid', [id, ...tenant])).rows[0];
+    const current = (await pool.query('SELECT status,provider FROM server_agent_runs WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid', [id, ...tenant])).rows[0];
     if (!current || current.status === 'stopped') return;
-    const output = (await docker.logs(containerId, 4_000).catch(() => '')).slice(-200_000);
+    const diagnostics = (await docker.logs(containerId, 4_000).catch(() => '')).slice(-200_000);
+    const output = providerResult(current.provider, diagnostics);
     const exitCode = Number(details?.State?.ExitCode ?? 1);
     await pool.query(
-      `UPDATE server_agent_runs SET status=$4,output=$5,error=$6,finished_at=NOW(),updated_at=NOW()
+      `UPDATE server_agent_runs SET status=$4,output=$5,error=$6,diagnostic_log=$7,finished_at=NOW(),updated_at=NOW()
         WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid`,
-      [id, ...tenant, exitCode === 0 ? 'completed' : 'failed', output, exitCode === 0 ? null : `agent container exited ${ exitCode }`],
+      [id, ...tenant, exitCode === 0 && output !== null ? 'completed' : 'failed', output ?? '',
+        exitCode !== 0 ? `agent container exited ${ exitCode }` : output === null ? 'provider returned no terminal assistant result' : null, diagnostics],
     );
   } finally {
     await docker.remove(containerId).catch(() => {});
@@ -110,7 +118,7 @@ export async function startAgentRun(agent: any, prompt: string, identity: Reques
     await pool.query(`UPDATE server_agent_runs SET status='running',container_id=$4,started_at=NOW(),updated_at=NOW()
       WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid`, [id, ...tenant, containerId]);
     void monitor(id, containerId, tenant);
-    return (await pool.query('SELECT * FROM server_agent_runs WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid', [id, ...tenant])).rows[0];
+    return (await pool.query(`SELECT ${ publicRunColumns } FROM server_agent_runs WHERE id=$1 AND authority_id IS NOT DISTINCT FROM $2::uuid AND organization_id IS NOT DISTINCT FROM $3::uuid`, [id, ...tenant])).rows[0];
   } catch (error) {
     if (containerId) await docker.remove(containerId).catch(() => {});
     await pool.query(`UPDATE server_agent_runs SET status='failed',error=$4,finished_at=NOW(),updated_at=NOW()
