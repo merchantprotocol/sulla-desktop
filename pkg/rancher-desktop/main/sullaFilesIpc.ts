@@ -291,34 +291,20 @@ export function initSullaFilesIpc():void {
     return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, Math.max(1, Math.min(Number(limit), 20)));
   });
-  ipcMain.handle('files-ui:pick-reference', async(event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    const options = { title: 'Attach from Sulla Files', defaultPath: getSullaFilesWatcher().folder, properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] };
-    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    if (picked.canceled) return [];
-    const roots = (await getSullaFilesRootRegistry().list()).filter(root => root.activation === 'active' && root.collectionId);
-    const refs:FileReference[] = [];
-    for (const selected of picked.filePaths) {
-      const resolved = await fs.promises.realpath(selected);
-      const candidates = (await Promise.all(roots.map(async root => fs.promises.realpath(root.path).then(realPath => ({ root, realPath }), () => undefined))))
-        .filter((item):item is { root:typeof roots[number]; realPath:string } => Boolean(item));
-      const matched = candidates.filter(item => resolved.startsWith(`${ item.realPath }${ path.sep }`)).sort((left, right) => right.realPath.length - left.realPath.length)[0];
-      if (!matched) throw new Error('Choose a file inside an active tracked Files folder.');
-      if (!(await fs.promises.stat(resolved)).isFile()) throw new Error('Choose a regular file from Sulla Files.');
-      const relativePath = path.relative(matched.realPath, resolved).split(path.sep).join('/');
-      const found = await findReferenceByPath(relativePath, matched.root.collectionId);
-      if (!found) throw new Error(`${ path.basename(selected) } is still being indexed. Try again after sync finishes.`);
-      refs.push(found);
-    }
-    return refs;
-  });
   ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId:string; versionId?:string }) => {
     const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
     const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/preview${ query }`);
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
-  ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
+  ipcMain.handle('files-ui:capture-screenshot', async(_event, mode:ScreenshotMode = 'area') => {
+    const capture = await getSullaFilesCaptureService().screenshot(mode);
+    const primaryRoot = (await getSullaFilesRootRegistry().list()).find(root => root.id === 'default' && root.activation === 'active' && root.collectionId);
+    const file = primaryRoot ? await findReferenceByPath(capture.relativePath, primaryRoot.collectionId) : undefined;
+    if (!file?.versionId) throw new Error('The screenshot was saved to Files, but its durable version is not ready yet. Try again in a moment.');
+
+    return { reference: file };
+  });
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
   ipcMain.handle('files-ui:create-link', (_event, input:CreateShareInput) => getSullaFilesLinkService().create(input));
   ipcMain.handle('files-ui:list-links', () => getSullaFilesLinkService().list());
