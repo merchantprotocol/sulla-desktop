@@ -14,7 +14,7 @@ Projects owns its PostgreSQL database, schema migrations, tenant isolation, clai
 - `SULLA_PROJECTS_DATABASE_PASSWORD` — dedicated runtime-role password.
 - `SULLA_PROJECTS_LEGACY_DATABASE_URL` — optional one-time source for the fenced, verified legacy import.
 - `SULLA_PROJECTS_AUTO_ARCHIVE_HOURS` — archive threshold; `0` disables the service timer.
-- Server mode additionally requires `SULLA_PROJECTS_JWT_ISSUER`, `SULLA_PROJECTS_JWT_AUDIENCE`, and either `SULLA_PROJECTS_JWT_SECRET` or `SULLA_PROJECTS_JWT_PUBLIC_KEY`.
+- Server mode uses Accounts verification (see below), or `SULLA_PROJECTS_JWT_ISSUER`, `SULLA_PROJECTS_JWT_AUDIENCE`, and either `SULLA_PROJECTS_JWT_SECRET` or `SULLA_PROJECTS_JWT_PUBLIC_KEY` for existing JWT deployments.
 
 The local and human token files and runtime database password are provisioned by Desktop lifecycle code with mode `0600`. Tokens are never database credentials.
 
@@ -41,3 +41,30 @@ The script uses `/usr/bin/docker -H unix:///var/run/docker.sock`, builds a uniqu
 Before returning ownership to Desktop, stop all Projects writers, preserve a recoverable copy of the authoritative Projects database, and reconcile post-cutover changes into the legacy schema. Verify that reconciliation before removing the fence and enabling legacy callers. Never enable both writable authorities. Prefer rolling back the service image while retaining its authoritative database when the schema permits it.
 
 Desktop migration startup and service import share the cutover advisory lock. The persisted fence contract is reapplied after Desktop migrations, including when the service started before legacy tables existed. Retired automation tables remain readable history; workflow recovery uses workflow-owned scope metadata.
+
+## Server console
+
+The Projects container serves its own UI at `/ui/`. The primary console gateway
+maps `/services/projects/` to that directory and `/services/projects/api/` to
+`/v1/`. The UI provides the project directory, board/table, card editing, epics,
+assignments, comments and soft archiving, using the same tenant-scoped RPC API.
+Lane choices come from each project's effective lane definitions.
+
+The parent console and UI exchange `sulla.service.ready`, `sulla.service.session`
+and `sulla.service.lock` messages with `version: 1` and `service: "projects"`.
+Both the exact origin and parent window are checked. Session messages carry a
+memory-only `token` and ISO `expiresAt`; expired/locked sessions clear the UI.
+
+Set `SULLA_PROJECTS_MODE=server`, `SULLA_PROJECTS_ACCOUNTS_URL` to the private
+Accounts broker origin, and `SULLA_PROJECTS_ACCOUNTS_SERVICE_TOKEN_FILE` to a
+mounted private service credential. Register service ID `projects` for audience
+`sulla-projects` in Accounts. No shared JWT signing key is needed for this mode.
+Every API request resolves its UI session through Accounts, including current
+membership, expiry and revocation. Accounts owner/admin roles map to Projects
+admin, editor to editor, and other membership roles to viewer. Authentication
+fails closed if Accounts is unavailable. Existing JWT deployments remain supported
+when the Accounts configuration is absent; desktop pairing is unchanged.
+
+Build with `npm run build`; the focused authorization check is
+`node --test accountsAuth.test.mjs`. Integrated UI acceptance uses synthetic
+Accounts users and an isolated Projects database.

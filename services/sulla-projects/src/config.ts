@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 export interface ProjectsConfig {
   port: number;
   mode: 'desktop' | 'server';
   localToken?: string;
   humanToken?: string;
+  accountsUrl?: string;
+  accountsServiceToken?: string;
   jwtSecret?: string;
   jwtPublicKey?: string;
   jwtIssuer?: string;
@@ -36,15 +40,23 @@ export function loadConfig(): ProjectsConfig {
   const mode = process.env.SULLA_PROJECTS_MODE === 'server' ? 'server' : 'desktop';
   const localToken = process.env.SULLA_PROJECTS_LOCAL_TOKEN?.trim();
   const humanToken = process.env.SULLA_PROJECTS_HUMAN_TOKEN?.trim();
+  const accountsUrl = process.env.SULLA_PROJECTS_ACCOUNTS_URL?.trim();
+  const serviceTokenFile = process.env.SULLA_PROJECTS_ACCOUNTS_SERVICE_TOKEN_FILE?.trim();
+  const accountsServiceToken = serviceTokenFile ? readFileSync(serviceTokenFile, 'utf8').trim() : undefined;
+  if (Boolean(accountsUrl) !== Boolean(accountsServiceToken)) throw new Error('Accounts URL and service token file must be configured together');
+  if (accountsUrl) {
+    const url = new URL(accountsUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid Accounts URL');
+  }
   const jwtSecret = process.env.SULLA_PROJECTS_JWT_SECRET?.trim();
   const jwtPublicKey = process.env.SULLA_PROJECTS_JWT_PUBLIC_KEY?.replace(/\\n/g, '\n').trim();
   const jwtIssuer = process.env.SULLA_PROJECTS_JWT_ISSUER?.trim();
   if (mode === 'desktop' && !localToken) throw new Error('SULLA_PROJECTS_LOCAL_TOKEN is required in desktop mode');
-  if (mode === 'server' && (!jwtIssuer || (!jwtSecret && !jwtPublicKey))) {
-    throw new Error('Server mode requires SULLA_PROJECTS_JWT_ISSUER and a JWT verification key');
+  if (mode === 'server' && !accountsUrl && (!jwtIssuer || (!jwtSecret && !jwtPublicKey))) {
+    throw new Error('Server mode requires Accounts session verification or an issuer and JWT verification key');
   }
   const config: ProjectsConfig = {
-    port: boundedPort(process.env.SULLA_PROJECTS_PORT), mode, localToken, humanToken, jwtSecret, jwtPublicKey, jwtIssuer,
+    port: boundedPort(process.env.SULLA_PROJECTS_PORT), accountsUrl, accountsServiceToken, mode, localToken, humanToken, jwtSecret, jwtPublicKey, jwtIssuer,
     jwtAudience: process.env.SULLA_PROJECTS_JWT_AUDIENCE?.trim() || 'sulla-projects',
     userId: process.env.SULLA_PROJECTS_USER_ID?.trim() || 'desktop-user',
     tenantId: process.env.SULLA_PROJECTS_TENANT_ID?.trim() || 'desktop-user',
