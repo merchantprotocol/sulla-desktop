@@ -2573,6 +2573,13 @@ command_user="sulla-console:sulla-console"
 export SULLA_CONSOLE_HOST="0.0.0.0"
 export SULLA_CONSOLE_PORT="30121"
 export SULLA_CONSOLE_ROOT="${ consoleRoot }/public"
+export SULLA_CONSOLE_ACCOUNTS_URL="http://127.0.0.1:3020"
+export SULLA_CONSOLE_VAULT_URL="https://127.0.0.1:30135"
+export SULLA_CONSOLE_VAULT_CA_FILE="/etc/sulla-console/vault.crt"
+export SULLA_CONSOLE_FILES_URL="https://127.0.0.1:30124"
+export SULLA_CONSOLE_FILES_CA_FILE="/etc/sulla-console/files.crt"
+export SULLA_CONSOLE_PROJECTS_URL="http://127.0.0.1:30138"
+export SULLA_CONSOLE_WORKFLOWS_URL="http://127.0.0.1:30122"
 depend() { need net; after logger; }
 start_pre() {
   test -r "${ consoleRoot }/server.mjs" || return 1
@@ -3178,6 +3185,10 @@ start_pre() {
       PROVISION_VAULT_TLS, '--', VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    // The identity directory is 0700 and contains a private key. Publish only
+    // the public certificate for the unprivileged native console proxy.
+    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
+    await this.writeFile('/etc/sulla-console/vault.crt', certificate, 0o644);
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-certificate.pem'), certificate, { mode: 0o600 });
     await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
@@ -3326,6 +3337,8 @@ start_pre() {
       { capture: true, root: true }, 'sh', '-c', PROVISION_FILES_TLS, '--', FILES_TLS_DIRECTORY, String(uid), String(gid),
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
+    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
+    await this.writeFile('/etc/sulla-console/files.crt', certificate, 0o644);
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-certificate.pem'), certificate, { mode: 0o600 });
     await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });

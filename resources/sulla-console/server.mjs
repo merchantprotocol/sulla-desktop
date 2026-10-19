@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -11,12 +11,27 @@ const root = process.env.SULLA_CONSOLE_ROOT ?? join(dirname(fileURLToPath(import
 const types = new Map([['.css', 'text/css; charset=utf-8'], ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript; charset=utf-8'], ['.svg', 'image/svg+xml']]);
 const targets = {
   accounts: process.env.SULLA_CONSOLE_ACCOUNTS_URL ?? 'http://127.0.0.1:3020',
-  vault: process.env.SULLA_CONSOLE_VAULT_URL ?? 'http://127.0.0.1:8787',
-  files: process.env.SULLA_CONSOLE_FILES_URL ?? 'http://127.0.0.1:8792',
-  projects: process.env.SULLA_CONSOLE_PROJECTS_URL ?? 'http://127.0.0.1:8793',
+  vault: process.env.SULLA_CONSOLE_VAULT_URL ?? 'https://127.0.0.1:30135',
+  files: process.env.SULLA_CONSOLE_FILES_URL ?? 'https://127.0.0.1:30124',
+  projects: process.env.SULLA_CONSOLE_PROJECTS_URL ?? 'http://127.0.0.1:30138',
   agents: process.env.SULLA_CONSOLE_AGENTS_URL ?? 'http://127.0.0.1:8789',
-  workflows: process.env.SULLA_CONSOLE_WORKFLOWS_URL ?? 'http://127.0.0.1:8788',
+  workflows: process.env.SULLA_CONSOLE_WORKFLOWS_URL ?? 'http://127.0.0.1:30122',
 };
+const tlsCaFiles = {
+  vault: process.env.SULLA_CONSOLE_VAULT_CA_FILE,
+  files: process.env.SULLA_CONSOLE_FILES_CA_FILE,
+};
+
+function publicOrigin(request) {
+  // A reverse proxy must configure its externally visible origin. Client-supplied
+  // forwarding headers are untrusted and never determine the browser's origin.
+  const configured = process.env.SULLA_CONSOLE_PUBLIC_ORIGIN;
+  const authority = request.headers.host;
+  if (!configured && (typeof authority !== 'string' || !/^[\[\]A-Za-z0-9.:-]+$/.test(authority))) throw new Error('invalid host');
+  const origin = new URL(configured ?? `http://${authority}`);
+  if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('invalid public origin');
+  return origin;
+}
 
 function headers(response) {
   response.setHeader('Cache-Control', 'no-store');
@@ -26,12 +41,25 @@ function headers(response) {
   response.setHeader('X-Frame-Options', 'SAMEORIGIN');
 }
 
-function proxy(request, response, targetValue, pathname) {
-  const target = new URL(targetValue);
+function proxy(request, response, targetValue, pathname, service) {
+  let target, origin, ca;
+  try {
+    target = new URL(targetValue);
+    origin = publicOrigin(request);
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password || target.pathname !== '/' || target.search || target.hash) throw new Error('invalid upstream');
+    if (target.protocol === 'https:' && tlsCaFiles[service]) ca = readFileSync(tlsCaFiles[service]);
+  } catch {
+    response.writeHead(502, { 'Content-Type':'application/json; charset=utf-8' });
+    response.end('{"error":"service_unavailable"}');
+    return;
+  }
   const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  const headers = Object.fromEntries(Object.entries(request.headers).filter(([name]) =>
+    name !== 'host' && name !== 'forwarded' && !name.startsWith('x-forwarded-')));
   const upstream = send(target, {
     method:request.method, path:`${pathname}${new URL(request.url ?? '/', 'http://console.invalid').search}`,
-    headers:{ ...request.headers, host:target.host, 'x-forwarded-host':request.headers.host ?? '', 'x-forwarded-proto':'http' },
+    ca,
+    headers:{ ...headers, host:origin.host, 'x-forwarded-host':origin.host, 'x-forwarded-proto':origin.protocol.slice(0, -1) },
   }, incoming => {
     response.writeHead(incoming.statusCode ?? 502, incoming.headers);
     incoming.pipe(response);
@@ -63,11 +91,11 @@ createServer(async(request, response) => {
     return;
   }
   if (url.pathname.startsWith('/accounts-api/v1/web/')) {
-    proxy(request, response, targets.accounts, `/${url.pathname.slice('/accounts-api/'.length)}`);
+    proxy(request, response, targets.accounts, `/${url.pathname.slice('/accounts-api/'.length)}`, 'accounts');
     return;
   }
   if (url.pathname.startsWith('/auth/realms/sulla/') || url.pathname.startsWith('/auth/resources/')) {
-    proxy(request, response, process.env.SULLA_CONSOLE_IDENTITY_URL ?? targets.accounts, url.pathname);
+    proxy(request, response, process.env.SULLA_CONSOLE_IDENTITY_URL ?? targets.accounts, url.pathname, 'accounts');
     return;
   }
   const serviceMatch = url.pathname.match(/^\/services\/(accounts|vault|files|projects|agents|workflows)\/(api\/)?(.*)$/);
@@ -76,7 +104,7 @@ createServer(async(request, response) => {
     if ((service === 'accounts' && api) || (service === 'files' && api && /^(?:healthz$|v1\/(?:local|desktop|bootstrap|admin)(?:\/|$))/.test(rest))) {
       response.writeHead(404).end(); return;
     }
-    proxy(request, response, targets[service], api ? (service === 'files' ? `/${rest}` : `/v1/${rest}`) : `/ui/${rest}`);
+    proxy(request, response, targets[service], api ? (service === 'files' ? `/${rest}` : `/v1/${rest}`) : `/ui/${rest}`, service);
     return;
   }
   if (!url.pathname.startsWith('/console/')) {
