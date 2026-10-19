@@ -378,7 +378,14 @@ export function createApp(
           AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
         ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId]);
       response.json(rows.rows.filter(row => !isProtectedPath(row.path)));
-    } catch (error) { next(error) }
+    } catch (error:any) {
+      console.error('[SullaFiles] agent inventory query failed', {
+        name: error instanceof Error ? error.name : 'Error',
+        code: typeof error?.code === 'string' ? error.code : undefined,
+        message: error instanceof Error ? error.message.replace(/[\r\n\t]/g, ' ').slice(0, 500) : 'Unknown query failure',
+      });
+      next(error);
+    }
   });
   app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request); if (!actor.agentId && !actor.jobId) throw new HttpError(403, 'agent identity is required');

@@ -9,7 +9,7 @@ import { BrowserWindow, dialog, protocol, shell } from 'electron';
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { pickAndImportChatFiles } from './sullaFilesChatImport';
-import { getSullaFilesClient } from './sullaFilesClient';
+import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
 import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
@@ -317,12 +317,19 @@ export function initSullaFilesIpc():void {
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
   ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
-    const response = await filesClient.request('/v1/agent-files/query', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
-    });
-    if (!response.ok) throw new Error(`Chat Files inventory failed (${ response.status })`);
-    const files = await response.json() as any[];
-    return files.map(file => reference(file, { id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id }));
+    try {
+      const files = await filesClient.json<any[]>('/v1/agent-files/query', {
+        method: 'POST', body: JSON.stringify(input),
+      });
+
+      return files.map(file => reference(file, { id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id }));
+    } catch (error) {
+      const status = error instanceof FilesApiError ? error.status : 'request-failed';
+      const cause = error instanceof Error ? error.message : 'Unknown Files request failure';
+
+      console.warn(`[SullaFiles] Chat inventory is temporarily unavailable (status=${ status }): ${ cause }`);
+      return [];
+    }
   });
   ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
