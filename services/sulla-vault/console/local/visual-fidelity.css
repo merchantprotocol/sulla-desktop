@@ -21,10 +21,11 @@
 /* Match the approved 01 desktop and 02 editor proportions inside native chrome. */
 .head{gap:24px;padding:26px 28px 20px}
 .head .title{font-size:34px}
-.head .search{width:380px;height:40px;border-radius:12px;font-weight:400}
-.head .search input{min-width:0}
-.vault-switch{gap:10px;font-size:13px;white-space:nowrap}
-.vault-switch .tile{width:28px;height:28px;border-radius:14px;font-size:10px}
+.head .search{width:380px;height:38px;min-height:0;box-sizing:border-box;flex:none;border-radius:12px;font-weight:400}
+.head .search input{min-width:0;flex:1;height:20px;line-height:20px;-webkit-appearance:none;appearance:none}
+.head .search kbd{flex:none;height:20px;line-height:18px;box-sizing:border-box;padding:0 6px}
+.vault-switch{flex:none;gap:10px;font-size:13px;white-space:nowrap}
+.vault-switch .tile{flex:none;box-sizing:border-box;width:30px;min-width:30px;height:30px;min-height:30px;aspect-ratio:1/1;padding:0;border-radius:9px;font-size:11px;line-height:1}
 .head .btn{flex:none}
 
 .vault-body{grid-template-columns:240px minmax(0,1fr) 440px;gap:22px;padding:22px 28px 28px}
