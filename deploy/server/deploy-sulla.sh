@@ -32,22 +32,34 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_AGENT_IMAGE:?missing pinned agent runner image}"
 : "${SULLA_DOCKER_NETWORK:?missing workload Docker network}"
 : "${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES:?missing workflow runner scope allowlist}"
-: "${SULLA_DESKTOP_EXECUTOR_URL:?missing Tools Desktop executor URL}"
-: "${SULLA_DESKTOP_EXECUTOR_TOKEN:?missing Tools Desktop executor token}"
+: "${SULLA_PUBLIC_SCHEME:?missing public URL scheme}"
+[[ "$SULLA_PUBLIC_SCHEME" == http || "$SULLA_PUBLIC_SCHEME" == https ]] || fail "public URL scheme must be http or https"
+[[ -z ${SULLA_DESKTOP_EXECUTOR_URL:-} && -z ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} || -n ${SULLA_DESKTOP_EXECUTOR_URL:-} && -n ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} ]] || fail "Tools executor URL and token must be configured together"
+[[ -z ${SULLA_DESKTOP_EXECUTOR_URL:-} || "$SULLA_DESKTOP_EXECUTOR_URL" =~ ^https?://([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]|\[[0-9A-Fa-f:]+\])(:[0-9]+)?$ ]] || fail "Tools executor URL must be an http(s) origin"
+[[ -z ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} || ${#SULLA_DESKTOP_EXECUTOR_TOKEN} -ge 32 ]] || fail "Tools executor token must contain at least 32 characters"
 : "${SULLA_ACCOUNTS_SESSION_SECRET_FILE:?missing Accounts session secret file}"
 : "${SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE:?missing Accounts encryption key file}"
 : "${SULLA_ACCOUNTS_ADMIN_SECRET_FILE:?missing Accounts admin secret file}"
 : "${SULLA_ACCOUNTS_SERVICE_TOKENS_FILE:?missing Accounts service token file}"
+: "${SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE:?missing Accounts Accounts token file}"
 : "${SULLA_ACCOUNTS_VAULT_TOKEN_FILE:?missing Vault Accounts token file}"
 : "${SULLA_ACCOUNTS_FILES_TOKEN_FILE:?missing Files Accounts token file}"
 : "${SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE:?missing Projects Accounts token file}"
 : "${SULLA_ACCOUNTS_AGENTS_TOKEN_FILE:?missing Agents Accounts token file}"
 : "${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE:?missing Workflows Accounts token file}"
+: "${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE:?missing Agents/Workflows service token file}"
 : "${SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE:?missing Keycloak admin username file}"
 : "${SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE:?missing Keycloak admin password file}"
 : "${SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE:?missing Keycloak web client secret file}"
 : "${SULLA_FILES_MASTER_KEY:?missing persistent Files master; run install.sh or restore secure configuration}"
 [[ "$SULLA_FILES_MASTER_KEY" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]] || fail "invalid Files master encoding"
+[[ -r "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" ]] || fail "Agents/Workflows service token file is not readable"
+[[ $(wc -c <"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE") -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 bytes"
+workload_service_token="$(cat "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
+[[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
+for accounts_token_file in "$SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE" "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE" "$SULLA_ACCOUNTS_FILES_TOKEN_FILE" "$SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE" "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE" "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE"; do
+  [[ "$workload_service_token" != "$(cat "$accounts_token_file")" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
+done
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
 : "${SULLA_PROJECTS_IMAGE:?missing pinned Projects image}"
@@ -99,6 +111,7 @@ done
   --from-literal=accounts-projects-token="$(cat "$SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE")" \
   --from-literal=accounts-agents-token="$(cat "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE")" \
   --from-literal=accounts-workflows-token="$(cat "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE")" \
+  --from-literal=agents-workflows-service-token="$(cat "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")" \
   --from-literal=keycloak-admin-username="$(cat "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE")" \
   --from-literal=keycloak-admin-password="$(cat "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE")" \
   --from-literal=keycloak-web-client-secret="$(cat "$SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE")" \
@@ -109,8 +122,9 @@ done
   --from-literal=agent-runner-image="$SULLA_AGENT_IMAGE" \
   --from-literal=docker-network="$SULLA_DOCKER_NETWORK" \
   --from-literal=workflow-allowed-runner-scopes="$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" \
-  --from-literal=desktop-executor-url="$SULLA_DESKTOP_EXECUTOR_URL" \
-  --from-literal=desktop-executor-token="$SULLA_DESKTOP_EXECUTOR_TOKEN" \
+  --from-literal=desktop-executor-url="${SULLA_DESKTOP_EXECUTOR_URL:-}" \
+  --from-literal=desktop-executor-token="${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" \
+  --from-literal=public-scheme="$SULLA_PUBLIC_SCHEME" \
   --from-literal=workflows-runner-image="${SULLA_WORKFLOW_RUNNER_IMAGE:-ghcr.io/merchantprotocol/sulla-workflows:sha-${SULLA_SOURCE_SHA:0:12}}" \
   --dry-run=client -o yaml | \
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \

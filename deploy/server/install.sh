@@ -87,13 +87,18 @@ main() {
     [[ -n ${SULLA_ADMIN_EMAIL:-} && "$SULLA_ADMIN_EMAIL" == *@* ]] || fail "first admin email is invalid"
     [[ -n ${SULLA_ADMIN_NAME:-} ]] || fail "first admin name is required"
     [[ -n ${SULLA_ORGANIZATION:-} ]] || fail "organization name is required"
-    valid_http_origin "${SULLA_DESKTOP_EXECUTOR_URL:-}" || fail "Tools executor URL must be an http(s) origin with no path, query, or fragment"
-    [[ ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} =~ ^.{32} ]] || fail "Tools executor token must contain at least 32 characters"
+    [[ -z ${SULLA_DESKTOP_EXECUTOR_URL:-} && -z ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} || -n ${SULLA_DESKTOP_EXECUTOR_URL:-} && -n ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} ]] || fail "Tools executor URL and token must be configured together"
+    [[ -z ${SULLA_DESKTOP_EXECUTOR_URL:-} ]] || valid_http_origin "$SULLA_DESKTOP_EXECUTOR_URL" || fail "Tools executor URL must be an http(s) origin with no path, query, or fragment"
+    [[ -z ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} || ${SULLA_DESKTOP_EXECUTOR_TOKEN} =~ ^.{32} ]] || fail "Tools executor token must contain at least 32 characters"
     [[ -n ${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES:-} ]] || fail "workflow runner scopes must not be empty"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       valid_port "${SULLA_PORT:-}" || fail "published port must be between 1 and 65535"
       valid_ipv4 "${SULLA_BIND_ADDRESS:-}" || fail "bind address must be an IPv4 address"
       [[ -n ${SULLA_DATA_DIR:-} && "$SULLA_DATA_DIR" == /* ]] || fail "persistent data directory must be an absolute path"
+      [[ ${SULLA_CONSOLE_MODE:-} == standalone || ${SULLA_CONSOLE_MODE:-} == native-lima ]] || fail "console mode must be standalone or native-lima"
+      if [[ "$SULLA_CONSOLE_MODE" == native-lima ]]; then
+        [[ -x /etc/init.d/sulla-console ]] || fail "native-lima console mode requires Sulla Desktop's persistent unprivileged console service"
+      fi
       [[ -z ${SULLA_TLS_CERT:-} && -z ${SULLA_TLS_KEY:-} || -n ${SULLA_TLS_CERT:-} && -n ${SULLA_TLS_KEY:-} ]] || fail "TLS certificate and private key must be supplied together"
       [[ -z ${SULLA_TLS_CERT:-} || "$SULLA_PUBLIC_URL" == https://* ]] || fail "direct TLS requires an https public URL"
       [[ -z ${SULLA_TLS_CERT:-} || -r "$SULLA_TLS_CERT" && -r "$SULLA_TLS_KEY" ]] || fail "TLS certificate or key is not readable"
@@ -164,14 +169,15 @@ main() {
     ask SULLA_ORGANIZATION "Organization name" "My organization"
     ask SULLA_ADMIN_EMAIL "First admin email" "admin@example.com"
     ask SULLA_ADMIN_NAME "First admin name" Administrator
-    ask SULLA_DESKTOP_EXECUTOR_URL "Desktop executor URL for host-bound tools" ""
-    ask_secret SULLA_DESKTOP_EXECUTOR_TOKEN "Desktop executor credential"
+    ask SULLA_DESKTOP_EXECUTOR_URL "Desktop executor URL for host-bound tools (blank for local catalog only)" ""
+    [[ -z "$SULLA_DESKTOP_EXECUTOR_URL" ]] || ask_secret SULLA_DESKTOP_EXECUTOR_TOKEN "Desktop executor credential"
     ask SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES "Workflow runner tool allowlist" "meta/spawn_agent,agents/check_agent_jobs,notify/notify_user"
     case "$SULLA_RUNTIME" in
     compose)
       ask SULLA_PORT "Published port" 8787
       ask SULLA_BIND_ADDRESS "Bind address" 0.0.0.0
       ask SULLA_DATA_DIR "Persistent data directory" "$SULLA_DIR/data"
+      ask SULLA_CONSOLE_MODE "Console mode (standalone or native-lima)" standalone
       ask SULLA_TLS_CERT "TLS certificate path (blank for reverse-proxy TLS)" ""
       ask SULLA_TLS_KEY "TLS private key path (blank for reverse-proxy TLS)" ""
       [[ -z "$SULLA_TLS_CERT" && -z "$SULLA_TLS_KEY" || -n "$SULLA_TLS_CERT" && -n "$SULLA_TLS_KEY" ]] || fail "TLS certificate and private key must be supplied together"
@@ -216,10 +222,11 @@ main() {
   if [[ -z ${K3S_URL:-} ]]; then
     # Existing installations may predate the explicit remote-executor and
     # runner-scope contracts. Collect them once, then persist them below.
-    [[ -n ${SULLA_DESKTOP_EXECUTOR_URL:-} ]] || unset SULLA_DESKTOP_EXECUTOR_URL
     [[ -n ${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES:-} ]] || unset SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES
-    ask SULLA_DESKTOP_EXECUTOR_URL "Desktop executor URL for host-bound tools" ""
-    ask_secret SULLA_DESKTOP_EXECUTOR_TOKEN "Desktop executor credential"
+    if [[ -n ${SULLA_DESKTOP_EXECUTOR_URL:-} || -n ${SULLA_DESKTOP_EXECUTOR_TOKEN:-} ]]; then
+      ask SULLA_DESKTOP_EXECUTOR_URL "Desktop executor URL for host-bound tools (blank for local catalog only)" ""
+      [[ -z ${SULLA_DESKTOP_EXECUTOR_URL:-} ]] || ask_secret SULLA_DESKTOP_EXECUTOR_TOKEN "Desktop executor credential"
+    fi
     ask SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES "Workflow runner tool allowlist" "meta/spawn_agent,agents/check_agent_jobs,notify/notify_user"
     # A saved file is fully validated after missing image/network fields are
     # migrated below. Fresh input can be checked before downloading the kit.
@@ -280,15 +287,20 @@ main() {
     projects_database_password="$(openssl rand -hex 32)"; agent_api_token="$(openssl rand -hex 32)"
     authority_hex="$(openssl rand -hex 16)"
     authority_id="${authority_hex:0:8}-${authority_hex:8:4}-4${authority_hex:13:3}-8${authority_hex:17:3}-${authority_hex:20:12}"
-    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_PROJECTS_DATABASE_PASSWORD=%q\nSULLA_PROJECTS_JWT_AUDIENCE=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
-      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$projects_database_password" sulla-projects "$agent_api_token" "$SULLA_DESKTOP_EXECUTOR_URL" "$SULLA_DESKTOP_EXECUTOR_TOKEN" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/console/*" >"$env_tmp"
+    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_PROJECTS_DATABASE_PASSWORD=%q\nSULLA_PROJECTS_JWT_AUDIENCE=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
+      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$projects_database_password" sulla-projects "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/console/*" >"$env_tmp"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       tls_dir="$SULLA_DIR/tls"; mkdir -p "$tls_dir"
       [[ -z "$SULLA_TLS_CERT" ]] || cp "$SULLA_TLS_CERT" "$tls_dir/tls.crt"
       [[ -z "$SULLA_TLS_KEY" ]] || cp "$SULLA_TLS_KEY" "$tls_dir/tls.key"
       if [[ -n "$SULLA_TLS_CERT" ]]; then chown -R 1000:1000 "$tls_dir"; chmod 700 "$tls_dir"; chmod 600 "$tls_dir"/*; fi
       source_dir="$SULLA_DIR/sources/$SULLA_SOURCE_SHA"
-      printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" sulla-server_default "sulla-agent:${SULLA_SOURCE_SHA:0:12}" "sulla-workflows:${SULLA_SOURCE_SHA:0:12}" >>"$env_tmp"
+      if [[ "$SULLA_CONSOLE_MODE" == native-lima ]]; then
+        COMPOSE_PROFILES=; SULLA_CONSOLE_UPSTREAM=http://host.docker.internal:30121
+      else
+        COMPOSE_PROFILES=standalone-console; SULLA_CONSOLE_UPSTREAM=http://console:8786
+      fi
+      printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_CONSOLE_MODE=%q\nCOMPOSE_PROFILES=%q\nSULLA_CONSOLE_UPSTREAM=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$SULLA_CONSOLE_MODE" "$COMPOSE_PROFILES" "$SULLA_CONSOLE_UPSTREAM" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" sulla-server_default "sulla-agent:${SULLA_SOURCE_SHA:0:12}" "sulla-workflows:${SULLA_SOURCE_SHA:0:12}" >>"$env_tmp"
     else
       printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_PROJECTS_IMAGE=%q\nSULLA_ACCOUNTS_IMAGE=%q\nSULLA_AGENTS_IMAGE=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOWS_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\nSULLA_TOOLS_IMAGE=%q\nSULLA_CONSOLE_IMAGE=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_PROJECTS_IMAGE" "$SULLA_ACCOUNTS_IMAGE" "$SULLA_AGENTS_IMAGE" "$SULLA_AGENT_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_TOOLS_IMAGE" "$SULLA_CONSOLE_IMAGE" sulla-server_default "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
     fi
@@ -362,12 +374,35 @@ main() {
   if [[ -z ${SULLA_AGENT_API_TOKEN:-} ]]; then
     SULLA_AGENT_API_TOKEN="$(openssl rand -hex 32)"; printf 'SULLA_AGENT_API_TOKEN=%q\n' "$SULLA_AGENT_API_TOKEN" >>"$env_file"
   fi
-  if ! grep -q '^SULLA_DESKTOP_EXECUTOR_URL=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_URL=%q\n' "$SULLA_DESKTOP_EXECUTOR_URL" >>"$env_file"; fi
-  if ! grep -q '^SULLA_DESKTOP_EXECUTOR_TOKEN=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_TOKEN=%q\n' "$SULLA_DESKTOP_EXECUTOR_TOKEN" >>"$env_file"; fi
+  if [[ -z ${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE:-} ]]; then
+    SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE="$secrets_dir/agents-workflows.service-token"
+    printf 'SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE=%q\n' "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" >>"$env_file"
+  fi
+  [[ ! -e "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" || -f "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" && ! -L "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" ]] || fail "Agents/Workflows service token must be a regular file"
+  if [[ ! -s "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" ]]; then
+    write_secret "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE" "$(openssl rand -hex 32)"
+  fi
+  chmod 600 "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE"
+  workload_service_token="$(<"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
+  [[ ${#workload_service_token} -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 characters"
+  [[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
+  for service in accounts vault files projects agents workflows; do
+    [[ "$workload_service_token" != "${service_tokens[$service]}" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
+  done
+  if ! grep -q '^SULLA_DESKTOP_EXECUTOR_URL=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_URL=%q\n' "${SULLA_DESKTOP_EXECUTOR_URL:-}" >>"$env_file"; fi
+  if ! grep -q '^SULLA_DESKTOP_EXECUTOR_TOKEN=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_TOKEN=%q\n' "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" >>"$env_file"; fi
   if ! grep -q '^SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=' "$env_file"; then printf 'SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\n' "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" >>"$env_file"; fi
   if [[ -z ${SULLA_PROJECTS_DATABASE_PASSWORD:-} ]]; then SULLA_PROJECTS_DATABASE_PASSWORD="$(openssl rand -hex 32)"; printf 'SULLA_PROJECTS_DATABASE_PASSWORD=%q\n' "$SULLA_PROJECTS_DATABASE_PASSWORD" >>"$env_file"; fi
   if [[ -z ${SULLA_PROJECTS_JWT_AUDIENCE:-} ]]; then SULLA_PROJECTS_JWT_AUDIENCE=sulla-projects; printf 'SULLA_PROJECTS_JWT_AUDIENCE=%q\n' "$SULLA_PROJECTS_JWT_AUDIENCE" >>"$env_file"; fi
   if [[ ${SULLA_RUNTIME:-} == compose ]]; then
+    if [[ -z ${SULLA_CONSOLE_MODE:-} ]]; then SULLA_CONSOLE_MODE=standalone; printf 'SULLA_CONSOLE_MODE=%q\n' "$SULLA_CONSOLE_MODE" >>"$env_file"; fi
+    if [[ "$SULLA_CONSOLE_MODE" == native-lima ]]; then
+      expected_compose_profiles=; expected_console_upstream=http://host.docker.internal:30121
+    else
+      expected_compose_profiles=standalone-console; expected_console_upstream=http://console:8786
+    fi
+    if [[ ${COMPOSE_PROFILES:-} != "$expected_compose_profiles" ]]; then COMPOSE_PROFILES="$expected_compose_profiles"; printf 'COMPOSE_PROFILES=%q\n' "$COMPOSE_PROFILES" >>"$env_file"; fi
+    if [[ ${SULLA_CONSOLE_UPSTREAM:-} != "$expected_console_upstream" ]]; then SULLA_CONSOLE_UPSTREAM="$expected_console_upstream"; printf 'SULLA_CONSOLE_UPSTREAM=%q\n' "$SULLA_CONSOLE_UPSTREAM" >>"$env_file"; fi
     if [[ -z ${SULLA_DOCKER_NETWORK:-} ]]; then SULLA_DOCKER_NETWORK=sulla-server_default; printf 'SULLA_DOCKER_NETWORK=%q\n' "$SULLA_DOCKER_NETWORK" >>"$env_file"; fi
     if [[ -z ${SULLA_AGENT_IMAGE:-} ]]; then SULLA_AGENT_IMAGE="sulla-agent:${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_AGENT_IMAGE=%q\n' "$SULLA_AGENT_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_WORKFLOW_RUNNER_IMAGE:-} ]]; then SULLA_WORKFLOW_RUNNER_IMAGE="sulla-workflows:${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_WORKFLOW_RUNNER_IMAGE" >>"$env_file"; fi
@@ -383,6 +418,8 @@ main() {
     if [[ -z ${SULLA_CONSOLE_IMAGE:-} ]]; then SULLA_CONSOLE_IMAGE="ghcr.io/merchantprotocol/sulla-console:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_CONSOLE_IMAGE=%q\n' "$SULLA_CONSOLE_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_FILES_STORAGE_SIZE:-} ]]; then SULLA_FILES_STORAGE_SIZE=100Gi; printf 'SULLA_FILES_STORAGE_SIZE=%q\n' "$SULLA_FILES_STORAGE_SIZE" >>"$env_file"; fi
   fi
+  parse_public_url "$SULLA_PUBLIC_URL" || fail "public URL must be an http(s) origin only, with no credentials, path, query, or fragment"
+  if [[ ${SULLA_PUBLIC_SCHEME:-} != "$SULLA_URL_SCHEME" ]]; then SULLA_PUBLIC_SCHEME="$SULLA_URL_SCHEME"; printf 'SULLA_PUBLIC_SCHEME=%q\n' "$SULLA_PUBLIC_SCHEME" >>"$env_file"; fi
   # Export every newly generated or migrated value. Compose intentionally uses
   # no dotenv file, and deploy-sulla.sh sources this same canonical file.
   set -a; . "$env_file"; set +a
@@ -396,7 +433,9 @@ main() {
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
     compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
     docker build --pull -t "$SULLA_AGENT_IMAGE" -f "$SULLA_SOURCE_DIR/services/sulla-agent/Dockerfile" "$SULLA_SOURCE_DIR"
-    "${compose[@]}" build --pull console accounts vault files projects agents workflows tools
+    build_services=(accounts vault files projects agents workflows tools)
+    [[ "$SULLA_CONSOLE_MODE" != standalone ]] || build_services+=(console)
+    "${compose[@]}" build --pull "${build_services[@]}"
     if ! "${compose[@]}" up -d; then
       "${compose[@]}" ps >&2 || true
       "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
