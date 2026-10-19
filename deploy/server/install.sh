@@ -142,6 +142,27 @@ main() {
       -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
       "https://ghcr.io/v2/${repository}/manifests/${tag}" || fail "Kubernetes image is not published: $image"
   }
+  ensure_native_lima_console() {
+    [[ ${SULLA_CONSOLE_MODE:-} == native-lima ]] || return 0
+    command -v rc-service >/dev/null 2>&1 || fail "native-lima console mode requires OpenRC"
+    command -v timeout >/dev/null 2>&1 || fail "native-lima console verification requires timeout"
+    if ! rc-service sulla-console status >/dev/null 2>&1; then
+      log "Starting Sulla Desktop's bundled unprivileged console listener..."
+      rc-service sulla-console start >/dev/null || fail "could not start the native Lima console service"
+    fi
+    console_ready=false; deadline=$((SECONDS + 30))
+    while (( SECONDS < deadline )); do
+      if curl -fsS --max-time 2 http://127.0.0.1:30121/healthz >/dev/null 2>&1; then
+        console_ready=true
+        break
+      fi
+      sleep 1
+    done
+    [[ "$console_ready" == true ]] || fail "native Lima console did not become healthy on port 30121 within 30 seconds"
+    timeout 15 docker run --rm --network bridge --add-host host.docker.internal:host-gateway nginx:1.29-alpine \
+      wget -qO- -T 3 http://host.docker.internal:30121/healthz >/dev/null || \
+      fail "native Lima console is not reachable from the Docker gateway; its listener must bind beyond loopback"
+  }
   ask SULLA_DIR "Install directory" /opt/sulla/server
   [[ "$SULLA_DIR" == /* && "$SULLA_DIR" != *$'\n'* ]] || fail "install directory must be an absolute single-line path"
   saved_configuration=false
@@ -436,6 +457,7 @@ main() {
     build_services=(accounts vault files projects agents workflows tools)
     [[ "$SULLA_CONSOLE_MODE" != standalone ]] || build_services+=(console)
     "${compose[@]}" build --pull "${build_services[@]}"
+    ensure_native_lima_console
     if ! "${compose[@]}" up -d; then
       "${compose[@]}" ps >&2 || true
       "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
