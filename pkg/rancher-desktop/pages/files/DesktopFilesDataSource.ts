@@ -1,4 +1,4 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -18,10 +18,22 @@ interface RemoteCapabilities {
 
 interface OperationCapabilities {
   enabled:boolean;
+  reason?:string;
   folderReceipts?:boolean;
   nativeFolderReceipts?:boolean;
   folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
-  crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
+  crossCollectionOperations?:'all-authorized' | 'stored-authorized' | 'unavailable';
+}
+
+function operationCapabilities(value:OperationCapabilities):FilesOperationCapabilities {
+  return {
+    enabled:                   value.enabled === true,
+    ...(typeof value.reason === 'string' ? { reason:value.reason } : {}),
+    folderReceipts:            value.folderReceipts === true,
+    nativeFolderReceipts:      value.nativeFolderReceipts === true,
+    folderCollisionPolicies:   Array.isArray(value.folderCollisionPolicies) ? value.folderCollisionPolicies.filter((item):item is 'replace' | 'keep-both' | 'skip' => item === 'replace' || item === 'keep-both' || item === 'skip') : [],
+    crossCollectionOperations: value.crossCollectionOperations === 'all-authorized' || value.crossCollectionOperations === 'stored-authorized' ? value.crossCollectionOperations : 'unavailable',
+  };
 }
 
 function trashItem(value:FilesApiRecord):FilesTrashItem {
@@ -76,7 +88,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     folderReceipts:  false,
     nativeFolderReceipts:false,
     folderCollisionPolicies:[] as ('replace' | 'keep-both' | 'skip')[],
-    crossCollectionOperations:'unavailable' as 'unavailable' | 'stored-same-audience-files',
+    crossCollectionOperations:'unavailable' as 'unavailable' | 'all-authorized' | 'stored-authorized',
   };
 
   onlineOnlyReason = '';
@@ -150,13 +162,13 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     this.collectionId = collection.id;
-    const operationCapabilities = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId: collection.id }).catch(() => ({ enabled: false })) as OperationCapabilities;
+    const currentOperationCapabilities = await this.operationCapabilities(collection.id);
     if (capabilitiesGeneration === this.capabilitiesGeneration) Object.assign(this.capabilities, {
-      durableOperations:        operationCapabilities.enabled === true,
-      folderReceipts:           operationCapabilities.folderReceipts === true,
-      nativeFolderReceipts:     operationCapabilities.nativeFolderReceipts === true,
-      folderCollisionPolicies:  Array.isArray(operationCapabilities.folderCollisionPolicies) ? operationCapabilities.folderCollisionPolicies.filter((item:unknown) => item === 'replace' || item === 'keep-both' || item === 'skip') : [],
-      crossCollectionOperations:operationCapabilities.crossCollectionOperations === 'stored-same-audience-files' ? 'stored-same-audience-files' : 'unavailable',
+      durableOperations:        currentOperationCapabilities.enabled,
+      folderReceipts:           currentOperationCapabilities.folderReceipts,
+      nativeFolderReceipts:     currentOperationCapabilities.nativeFolderReceipts,
+      folderCollisionPolicies:  currentOperationCapabilities.folderCollisionPolicies,
+      crossCollectionOperations:currentOperationCapabilities.crossCollectionOperations,
     });
     const selectedRoot = roots.find(root => root.collectionId === collection.id);
     this.capabilities.nativeFilesystem = Boolean(selectedRoot?.activation === 'active');
@@ -248,6 +260,12 @@ export class DesktopFilesDataSource implements FilesDataSource {
   chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+  async operationCapabilities(collectionId:string):Promise<FilesOperationCapabilities> {
+    const value = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId }).catch(() => ({ enabled:false, crossCollectionOperations:'unavailable' })) as OperationCapabilities;
+
+    return operationCapabilities(value);
+  }
+  folderOperationState(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot> { return ipcRenderer.invoke('sulla-files:folder-operation-state', { collectionId, path }) }
 
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);
