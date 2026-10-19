@@ -43,7 +43,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
-  private currentVersions = new Map<string, string>();
   private collectionId = '';
   private rootId = '';
   private capabilitiesGeneration = 0;
@@ -130,11 +129,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    this.files = [...active, ...trash].map(file => {
-      const item = filesItem(file);
-      this.currentVersions.set(item.id, item.currentVersionId);
-      return item;
-    });
+    this.files = [...active, ...trash].map(file => filesItem(file));
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
@@ -161,10 +156,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return snapshot;
   }
 
-  async history(fileId:string):Promise<FilesVersion[]> {
+  async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {
     const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as FilesApiRecord[];
 
-    return versions.map(version => filesVersion(version, this.currentVersions.get(fileId)));
+    return versions.map(version => filesVersion(version, currentVersionId));
   }
 
   async preview(fileId:string, versionId?:string):Promise<FilesPreview> {

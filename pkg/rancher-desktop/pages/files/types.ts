@@ -273,7 +273,7 @@ export interface FilesDataSource {
   syntheticPreview?:boolean;
   load(): Promise<FilesSnapshot>;
   selectCollection?(collectionId:string):void;
-  history(fileId:string): Promise<FilesVersion[]>;
+  history(fileId:string, currentVersionId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
   detail(fileId:string):Promise<FilesDetail>;
   mediaUrl(fileId:string, versionId?:string):Promise<string>;

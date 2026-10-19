@@ -142,12 +142,15 @@ const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sul
 const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
-  const [metadata, history] = await Promise.allSettled([props.dataSource.detail(item.id), props.dataSource.history(item.id)]);
+  const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
+
   if (metadata.status === 'fulfilled') {
     detail.value = metadata.value;
     if (metadata.value.item) Object.assign(item, metadata.value.item);
   }
   else error.value = metadata.reason instanceof Error ? metadata.reason.message : String(metadata.reason);
+  const [history] = await Promise.allSettled([props.dataSource.history(item.id, item.currentVersionId)]);
+
   if (history.status === 'fulfilled') versions.value = history.value;
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
@@ -243,11 +246,11 @@ async function reviewDisposal(decision:'approve'|'reject'|'extend', extendedUnti
   if (await runLifecycle(() => props.dataSource.disposalReview!(item.id, decision, extension?.toISOString()))) disposalExtendedUntil.value = '';
 }
 async function refreshLifecycleState():Promise<void> {
-  const [metadata, history] = await Promise.all([props.dataSource.detail(item.id), props.dataSource.history(item.id)]);
+  const metadata = await props.dataSource.detail(item.id);
 
   detail.value = metadata;
-  versions.value = history;
   if (metadata.item) Object.assign(item, metadata.item);
+  versions.value = await props.dataSource.history(item.id, item.currentVersionId);
   Object.assign(lifecycleForm, {
     enabled:         item.versioning?.enabled ?? false,
     majorMinor:      item.versioning?.majorMinor ?? false,
