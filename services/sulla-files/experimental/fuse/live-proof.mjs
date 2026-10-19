@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -12,7 +12,6 @@ import express from 'express';
 import pg from 'pg';
 
 import { createApp } from '../../dist/app.js';
-import { issueCapabilityToken } from '../../dist/auth.js';
 import { migrate } from '../../dist/db.js';
 import { FilesKeyring } from '../../dist/keyring.js';
 import { LocalFilesManager } from '../../dist/localManager.js';
@@ -44,6 +43,15 @@ function reachableAddress() {
     if (address) return address.address;
   }
   return '127.0.0.1';
+}
+
+function issueProofToken(input, key) {
+  const encode = value => Buffer.from(value).toString('base64url');
+  const now = Math.floor(Date.now() / 1_000);
+  const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = encode(JSON.stringify({ ...input, v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 3_600, jti: randomUUID() }));
+  const signature = createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url');
+  return `${ header }.${ payload }.${ signature }`;
 }
 
 async function waitFor(predicate, message, attempts = 200) {
@@ -134,7 +142,7 @@ try {
   manager = new LocalFilesManager(db, config);
   await manager.initialize();
   const collectionId = (await manager.listRoots())[0].collectionId;
-  const token = issueCapabilityToken({ sub: config.userId, device_id: config.deviceId, scopes: ['files/*'] }, signingKey);
+  const token = issueProofToken({ sub: config.userId, device_id: config.deviceId, scopes: ['files/*'] }, signingKey);
   const filesApp = createApp(db, config, manager);
   const app = express();
 
@@ -142,7 +150,7 @@ try {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 58px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="reset">Reset source</button><button id="status">Status</button><span id="result">Ready</span></header><iframe id="files" src="/files-proof/"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const call=async path=>{const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin)});</script></body></html>`);
+    response.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Synthetic Files FUSE proof</title><style>body{margin:0;background:#111;color:#ddd;font:14px system-ui}header{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid #444}button{padding:7px 10px}#result{white-space:pre-wrap;color:#9dd;padding-left:8px}iframe{width:100%;height:calc(100vh - 58px);border:0}</style></head><body><header><strong>Synthetic Files + FUSE proof</strong><button id="edit">Ordinary FUSE edit</button><button id="external">External source edit</button><button id="reset">Reset source</button><button id="status">Status</button><span id="result">Ready</span></header><iframe id="files"></iframe><script type="module">const frame=document.querySelector('#files');const result=document.querySelector('#result');const session=()=>frame.contentWindow.postMessage({type:'sulla:files-session',token:${ JSON.stringify(token) },orgId:'synthetic-proof',email:'Synthetic proof'},location.origin);const call=async path=>{const response=await fetch('/proof-control/'+path,{method:'POST'});result.textContent=JSON.stringify(await response.json(),null,2)};document.querySelector('#edit').onclick=()=>call('fuse-edit');document.querySelector('#external').onclick=()=>call('external-edit');document.querySelector('#reset').onclick=()=>call('reset');document.querySelector('#status').onclick=()=>call('status');addEventListener('message',event=>{if(event.origin===location.origin&&event.source===frame.contentWindow&&event.data?.type==='sulla:files-ready')session()});frame.addEventListener('load',session,{once:true});frame.src='/files-proof/';</script></body></html>`);
   });
   app.post('/proof-control/fuse-edit', async(_request, response, next) => {
     try { await ordinaryFuseEdit(`ordinary FUSE edit ${ new Date().toISOString() }\n`); response.json(await snapshot(collectionId)) } catch (error) { next(error) }
