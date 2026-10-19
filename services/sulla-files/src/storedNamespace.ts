@@ -30,7 +30,7 @@ export async function assertStoredFilePath(
 ):Promise<void> {
   const parents = storedParentPaths(path);
   const file = await client.query(`SELECT path FROM files
-    WHERE collection_id=$1 AND (path=$2 OR path=ANY($3::text[]))
+    WHERE collection_id=$1 AND (path=$2 OR path=ANY($3::text[]) OR starts_with(path,$2||'/'))
       AND ($4::uuid IS NULL OR id<>$4::uuid)
     ORDER BY length(path),path LIMIT 1`, [collectionId, path, parents, sameFileId ?? null]);
   if (file.rowCount) throw new StoredNamespaceConflict(`A file already occupies ${ file.rows[0].path }, so ${ path } cannot be stored there.`);
