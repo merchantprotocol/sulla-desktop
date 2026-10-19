@@ -3,6 +3,7 @@
   const state = { session: null, organizationId: '', serviceToken: '' };
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
+  if (window.parent !== window) $('.return-row').hidden = true;
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
   const csrf = () => document.cookie.split(';').map(item => item.trim()).find(item => item.startsWith('sulla-console-csrf='))?.split('=').slice(1).join('=') ? decodeURIComponent(document.cookie.split(';').map(item => item.trim()).find(item => item.startsWith('sulla-console-csrf=')).split('=').slice(1).join('=')) : '';
   const notice = (message, error = false) => { const element = $('#notice'); element.textContent = message; element.className = `notice${error ? ' error' : ''}`; element.hidden = !message; };
