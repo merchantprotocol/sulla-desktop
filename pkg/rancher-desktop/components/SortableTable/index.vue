@@ -2009,19 +2009,19 @@ export default {
       display: none; // Handled dynamically
 
       .dropdown-button {
-        background-color: var(--primary);
+        background-color: var(--primary-btn-bg, var(--primary));
 
         &:hover {
-          background-color: var(--primary-hover-bg);
-          color: var(--primary-hover-text);
+          background-color: var(--primary-btn-hover-bg, var(--primary-hover-bg));
+          color: var(--primary-btn-text, var(--primary-hover-text));
         }
 
         > *, .icon-chevron-down {
-          color: var(--primary-text);
+          color: var(--primary-btn-text, var(--primary-text));
         }
 
         .button-divider {
-          border-color: var(--primary-text);
+          border-color: var(--primary-btn-text, var(--primary-text));
         }
 
         &.disabled {

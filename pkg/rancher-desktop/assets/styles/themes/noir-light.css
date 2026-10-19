@@ -5,6 +5,10 @@
 /* ------------------------------------------------------------------ */
 
 .theme-noir-light {
+  /* Primary button: white on #2c7391 = 5.3:1, hover #245f78 = 7.0:1 (WCAG AA) */
+  --primary-btn-bg: #2c7391;
+  --primary-btn-hover-bg: #245f78;
+  --primary-btn-text: #ffffff;
   /* Shared Noir component tokens */
   --nx-paper: #f4f7fb;
   --nx-surface: #ffffff;

@@ -44,6 +44,10 @@ $selected: rgba(#3D98D3, .5);
 
   --primary                    : #{$primary};
   --primary-text               : #{contrast-color($primary)};
+  // Button fill darkened so white text meets WCAG AA (>= 4.5:1): #fff on #2a79b0 = 4.7:1
+  --primary-btn-bg             : #2a79b0;
+  --primary-btn-hover-bg       : #206089;
+  --primary-btn-text           : #ffffff;
   --primary-hover-bg           : #{darken($primary, 10%)};
   --primary-hover-text         : #{saturate($lightest, 20%)};
   --primary-active-bg          : #{darken($primary, 25%)};
@@ -58,12 +62,12 @@ $selected: rgba(#3D98D3, .5);
   }
 
   .bg-primary {
-    background-color: var(--primary);
-    color: var(--primary-text);
+    background-color: var(--primary-btn-bg, var(--primary));
+    color: var(--primary-btn-text, var(--primary-text, #fff));
 
     &.btn:hover {
-      color: var(--primary-hover-text);
-      background: var(--primary-hover-bg);
+      color: var(--primary-btn-text, var(--primary-hover-text));
+      background: var(--primary-btn-hover-bg, var(--primary-hover-bg));
       transition: all 0.3s ease;
     }
 
