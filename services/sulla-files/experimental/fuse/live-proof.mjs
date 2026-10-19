@@ -188,8 +188,8 @@ async function snapshot(collectionId) {
 async function selectNativeSource() {
   if (!nativeMacProof) return { sourcePath: proofPath };
   if (platform() !== 'darwin') throw new Error('SULLA_FILES_MACOS_NATIVE_PROOF=1 must run natively on macOS');
-  const electron = await import('electron');
-  if (!electron.app?.whenReady || !electron.dialog?.showOpenDialog) throw new Error('Run the native proof with Electron, not plain Node');
+  const electron = globalThis[Symbol.for('sulla.files.nativeProof.electron')];
+  if (!electron?.app?.whenReady || !electron.dialog?.showOpenDialog) throw new Error('Run the native proof through macos-native-proof-bootstrap.mjs');
   await electron.app.whenReady();
   await electron.dialog.showMessageBox({
     type: 'info', title: 'Synthetic native Files proof',

@@ -9,7 +9,10 @@ wallet/vault data, existing Files data, or Sulla/PostgreSQL application data.
 ## Isolated harness
 
 The harness is `live-proof.mjs`; native mode does not launch Sulla Desktop or
-its production bootstrap. It creates a fresh `mkdtemp` root, a sub-kilobyte
+its production bootstrap. `macos-native-proof-bootstrap.mjs` synchronously
+redirects Electron user data, session data, caches, logs, and crash dumps into
+an owned disposable root before app readiness or any harness import. It then
+creates a fresh `mkdtemp` root, a sub-kilobyte
 synthetic file, an ephemeral PostgreSQL cluster bound to loopback, the real
 `LocalFilesManager`/HTTP API, the production `SullaFilesNativeBroker`, the real
 `SullaFilesSourceGateway`, and the real Python FUSE adapter in a disposable
@@ -25,11 +28,13 @@ process and does not change that constant.
 ### Host prerequisites
 
 - macOS host and a reviewed checkout of this exact PR head.
-- Repository dependencies already present at `node_modules`; do not install
-  dependencies as part of the acceptance run.
+- Native macOS dependencies already present at
+  `/Users/jonathonbyrdziak/Sites/sulla/sulla-desktop/node_modules`; do not
+  install dependencies or change the proof worktree's Linux `node_modules`
+  symlink as part of the acceptance run.
 - Docker Desktop running with Linux FUSE available to a privileged container.
 - PostgreSQL binaries `initdb`, `pg_ctl`, and `psql` on `PATH`.
-- Ports `48792` and `50000 + (proof PID % 10000)` free on loopback. Override the
+- Ports `48793` and `50000 + (proof PID % 10000)` free on loopback. Override the
   HTTP port with `SULLA_FILES_PROOF_PORT` if needed.
 - At least 1 GiB free disk and 1 GiB free RAM. The FUSE container is capped at
   1 CPU, 512 MiB RAM, and 128 processes; the source gateway additionally caps
@@ -46,15 +51,17 @@ docker build \
   services/sulla-files/experimental/fuse
 ```
 
-Run the dedicated Electron proof entry, not the Desktop application:
+Run the staging wrapper from the reviewed worktree, not the Desktop
+application. The wrapper archives exactly `HEAD` into an owned temporary
+directory, links the existing native dependencies only inside that staged
+copy, supplies Electron isolation switches at process launch, and loads the
+dedicated bootstrap. Its exit trap removes the staged source and Electron
+profile even when the Trace 7 child deliberately kills itself:
 
 ```sh
 cd /absolute/path/to/reviewed/sulla-desktop-worktree
-SULLA_FILES_MACOS_NATIVE_PROOF=1 \
 SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
-NODE_OPTIONS=--import=tsx \
-./node_modules/.bin/electron \
-  services/sulla-files/experimental/fuse/live-proof.mjs
+sh services/sulla-files/experimental/fuse/run-macos-native-proof.sh
 ```
 
 The chooser opens at the generated `round-trip.txt`. Select that exact file.
@@ -112,12 +119,9 @@ credentials, bookmarks, capabilities, database credentials, or host paths.
 
    ```sh
    cd /absolute/path/to/reviewed/sulla-desktop-worktree
-   SULLA_FILES_MACOS_NATIVE_PROOF=1 \
    SULLA_FILES_PROOF_TRACE7=prepare \
    SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
-   NODE_OPTIONS=--import=tsx \
-   ./node_modules/.bin/electron \
-     services/sulla-files/experimental/fuse/live-proof.mjs
+   sh services/sulla-files/experimental/fuse/run-macos-native-proof.sh
    ```
 
    Select the generated file, then use **Trace 7 interrupt**. The process must
@@ -129,13 +133,10 @@ credentials, bookmarks, capabilities, database credentials, or host paths.
 
    ```sh
    cd /absolute/path/to/reviewed/sulla-desktop-worktree
-   SULLA_FILES_MACOS_NATIVE_PROOF=1 \
    SULLA_FILES_PROOF_TRACE7=recover \
    SULLA_FILES_PROOF_TRACE7_KEY=<fixture-key-from-first-launch> \
    SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
-   NODE_OPTIONS=--import=tsx \
-   ./node_modules/.bin/electron \
-     services/sulla-files/experimental/fuse/live-proof.mjs
+   sh services/sulla-files/experimental/fuse/run-macos-native-proof.sh
    ```
 
    Reselect the same generated file. Recovery fails closed for a reused handle,
@@ -195,3 +196,6 @@ environment database credentials, and never opens Sulla application, wallet,
 or vault data. The retained PostgreSQL cluster, encrypted chunks, source, and
 marker stay within the same 1 GiB disk/RAM acceptance budget above and are
 removed by the successful recovery process.
+The staging wrapper's separate Electron profile is removed after each launch,
+including the intentional first-launch `SIGKILL`; it is never retained with
+the Trace 7 fixture.
