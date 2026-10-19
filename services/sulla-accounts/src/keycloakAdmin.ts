@@ -99,8 +99,11 @@ export async function updateHostedUserProfile(config: AccountsConfig, id: string
   const users = endpoints(config).users;
   const current = await keycloakRequest(config, `${users}/${encodeURIComponent(id)}`);
   const payload = object(await current.json());
+  const emailChanged = input.email !== undefined && input.email !== payload.email;
   await keycloakRequest(config, `${users}/${encodeURIComponent(id)}`, {
-    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload, ...input }),
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...payload, ...input, ...(emailChanged ? { emailVerified: false } : {}) }),
   });
   return getHostedUser(config, id);
 }
