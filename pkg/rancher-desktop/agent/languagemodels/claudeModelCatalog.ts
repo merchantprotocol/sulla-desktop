@@ -19,6 +19,7 @@
 // in case that changes; until it does, STATIC_FALLBACK is the list those
 // users actually see and must be maintained as such.
 
+import { usesContainerVaultAuthority } from '../../vault-broker';
 import Logging from '@pkg/utils/logging';
 
 const log = Logging.background;
@@ -131,6 +132,20 @@ async function fetchLiveModels(oauthToken: string, apiKey: string): Promise<Clau
   return null;
 }
 
+async function fetchBrokeredModels(): Promise<ClaudeCatalogModel[] | null> {
+  try {
+    const { listProviderModelsBrokered } = await import('../services/brokeredModelList');
+    const { body } = await listProviderModelsBrokered<{ data?: RawAnthropicModel[] }>('claude-code');
+    if (!body || !Array.isArray(body.data) || body.data.length === 0) return null;
+    const models = body.data
+      .filter(m => m && typeof m.id === 'string' && m.id)
+      .map(m => ({ id: m.id, name: m.display_name || m.id }));
+    return models.length ? models : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Return the live Claude model catalog: the "Auto" sentinel followed by
  * every model Anthropic reports for the signed-in claude-code account. Never
@@ -146,8 +161,15 @@ export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<
     return cache.models;
   }
 
-  const { oauthToken, apiKey } = await resolveClaudeCodeCreds();
-  const dynamic = await fetchLiveModels(oauthToken, apiKey);
+  let dynamic: ClaudeCatalogModel[] | null;
+  if (usesContainerVaultAuthority()) {
+    // Container vault: the app holds no Claude credential — list through the
+    // vault broker, which attaches the account's key/OAuth token itself.
+    dynamic = await fetchBrokeredModels();
+  } else {
+    const { oauthToken, apiKey } = await resolveClaudeCodeCreds();
+    dynamic = await fetchLiveModels(oauthToken, apiKey);
+  }
 
   const models = [AUTO_SENTINEL, ...(dynamic ?? STATIC_FALLBACK)];
   cache = { at: Date.now(), models };

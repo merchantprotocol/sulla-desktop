@@ -1,9 +1,27 @@
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
+import { listProviderModelsBrokered } from '../../services/brokeredModelList';
+
+interface AnthropicModelsBody { data?: { id: string; display_name?: string }[] }
+
+function parseAnthropicModels(body: AnthropicModelsBody | null): SelectOption[] {
+  if (!body || !Array.isArray(body.data)) return [];
+  return body.data
+    .filter(m => m && typeof m.id === 'string' && m.id)
+    .map(m => ({ value: m.id, label: m.display_name || m.id }));
+}
 
 export class AnthropicModels extends SelectBoxProvider {
   readonly id = 'anthropic_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    if (usesContainerVaultAuthority()) {
+      // Container vault: no key in the app — list through the vault broker.
+      const { body } = await listProviderModelsBrokered<AnthropicModelsBody>('anthropic', context.accountId);
+      const live = parseAnthropicModels(body);
+      return live.length > 0 ? live : this.getStaticModels();
+    }
+
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {

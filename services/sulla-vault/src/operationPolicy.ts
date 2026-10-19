@@ -176,6 +176,60 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { integration: 'custom', injections: authHeaders(['api_key']), pathPattern: /^\/(?:v1|v1beta)\/models$/ },
     ],
   },
+  // Desktop model pickers listing the catalog of the selected provider account.
+  // GET-only, exact host + path per credential lane; the response is the
+  // provider's model list, never the credential.
+  'provider.models': {
+    integrations: ['claude-code', 'anthropic', 'openai', 'grok'],
+    methods: ['GET'],
+    injections: [],
+    bindings: [
+      {
+        integration: 'claude-code',
+        hosts: ['api.anthropic.com'],
+        injections: [
+          { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' },
+          { field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        ],
+        injectionSets: [
+          [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+          [{ field: 'oauth_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        ],
+        pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'anthropic',
+        hosts: ['api.anthropic.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
+        injectionSets: [[{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }]],
+        pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'openai',
+        hosts: ['api.openai.com'],
+        injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        injectionSets: [[{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
+        pathPattern: /^\/v1\/models$/,
+      },
+      // Grok has two billing lanes that must never cross: a pasted API key
+      // only goes to the metered api.x.ai catalog, the Sign-in-with-Grok
+      // OAuth token only goes to the grok-cli subscription proxy.
+      {
+        integration: 'grok',
+        hosts: ['api.x.ai'],
+        injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        injectionSets: [[{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
+        pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'grok',
+        hosts: ['cli-chat-proxy.grok.com'],
+        injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        injectionSets: [[{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
+        pathPattern: /^\/v1\/models$/,
+      },
+    ],
+  },
   'provider.audio': {
     integrations: ['elevenlabs', 'grok'],
     methods: ['POST'],
@@ -282,8 +336,13 @@ export function validateOperation(
       throw new Error('method_denied');
     }
   }
-  const binding = policy.bindings?.find(candidate => candidate.integration === input.ref.integrationId);
-  if (policy.bindings && !binding) throw new Error('integration_denied');
+  // An integration may own several bindings (one per credential lane); the
+  // destination host selects the lane, so each lane's injections stay bound
+  // to its own hosts.
+  const candidates = policy.bindings?.filter(candidate => candidate.integration === input.ref.integrationId) ?? [];
+  if (policy.bindings && !candidates.length) throw new Error('integration_denied');
+  const binding = candidates.find(candidate => candidate.hosts?.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) ??
+    candidates[0];
   const allowedHosts = binding?.hosts ?? (policy.requireItemSites ? itemPolicy.sites : policy.hosts);
   if (!allowedHosts?.length || !allowedHosts.some(allowed => hostMatches(hostname.toLowerCase(), allowed))) {
     throw new Error('destination_denied');

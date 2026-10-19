@@ -1,9 +1,22 @@
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
+import { listProviderModelsBrokered } from '../../services/brokeredModelList';
+
+interface GrokModelsBody { data?: { id: string; name?: string; description?: string }[] }
+
+function parseGrokModels(body: GrokModelsBody | null): SelectOption[] {
+  if (!body || !Array.isArray(body.data)) return [];
+  return body.data
+    .filter(m => m && typeof m.id === 'string' && m.id)
+    .map(m => ({ value: m.id, label: m.name || m.id, description: m.description }));
+}
 
 export class GrokModels extends SelectBoxProvider {
   readonly id = 'grok_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    if (usesContainerVaultAuthority()) return this.getBrokeredOptions(context);
+
     const apiKey = context.formValues.api_key;
 
     // OAuth session (Sign in with Grok) → list the SUBSCRIPTION lane catalog
@@ -52,6 +65,24 @@ export class GrokModels extends SelectBoxProvider {
     }
 
     return this.getStaticModels(!!oauthToken);
+  }
+
+  /**
+   * Container vault: the app holds no Grok credential, so list the catalog
+   * through the vault broker on the account's own lane (OAuth → subscription
+   * proxy, API key → api.x.ai). Any failure keeps the lane's static list.
+   */
+  private async getBrokeredOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    const { grokCliHeaders } = await import('../../languagemodels/GrokService');
+    const { body, lane } = await listProviderModelsBrokered<GrokModelsBody>(
+      'grok',
+      context.accountId,
+      // The proxy 426s requests without grok-cli identification headers.
+      candidate => (candidate.oauth ? grokCliHeaders() : {}),
+    );
+    const oauthMode = lane?.oauth ?? false;
+    const live = parseGrokModels(body);
+    return live.length > 0 ? live : this.getStaticModels(oauthMode);
   }
 
   private getStaticModels(oauthMode: boolean): SelectOption[] {
