@@ -121,9 +121,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
       status.serverConfigured = selectedRoot.serverConfigured ?? status.serverConfigured;
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
-    const [active, trash] = await Promise.all([
+    const [active, trash, folders] = await Promise.all([
       ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+      ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id }) as Promise<string[]>,
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
         this.capabilitiesGeneration++;
@@ -137,7 +138,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       this.currentVersions.set(item.id, item.currentVersionId);
       return item;
     });
-    if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
+    if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
       collection: {
@@ -156,6 +157,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
       },
       availableCollections,
+      folders,
       files: this.files,
       status,
     };
@@ -198,6 +200,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+  deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
 
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);

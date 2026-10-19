@@ -11,7 +11,6 @@ import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { importChatFiles, pickAndImportChatFiles, type ChatFilesReference, type PartialChatFilesImport } from './sullaFilesChatImport';
 import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
-import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesRootRegistry } from './sullaFilesRootRegistry';
 import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
@@ -25,6 +24,7 @@ import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSour
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
+const MAX_DIRECT_UPLOAD_BYTES = 64 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const filesClient = getSullaFilesClient();
 
@@ -46,43 +46,50 @@ async function json(endpoint:string, init:RequestInit = {}, server = false):Prom
   return filesClient.json(endpoint, init, { server });
 }
 
-function safeTarget(root:string, name:string):string {
-  const target = path.resolve(root, path.basename(name));
-  if (!target.startsWith(`${ root }${ path.sep }`)) throw new Error('Upload path escapes the Sulla Files folder');
-
-  return target;
+function stableUploadIdentity(left:fs.BigIntStats, right:fs.BigIntStats):boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
-async function availableTarget(root:string, name:string):Promise<string> {
-  const original = safeTarget(root, name); const extension = path.extname(original); const stem = extension ? original.slice(0, -extension.length) : original;
-  for (let index = 0; ; index++) {
-    const candidate = index ? `${ stem } (${ index })${ extension }` : original;
-    try { await fs.promises.access(candidate) } catch { return candidate }
-  }
+function storedPath(destination:string, name:string):string {
+  const normalized = destination.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+  if (normalized.split('/').some(part => part === '.' || part === '..')) throw new Error('Upload destination is not a valid Files folder');
+  return [normalized, path.basename(name)].filter(Boolean).join('/');
 }
 
-async function uploadDestination(root:string, relativePath:string):Promise<string> {
-  if (path.isAbsolute(relativePath)) throw new Error('Upload destination must be inside the Sulla Files folder');
-  const target = path.resolve(root, relativePath || '.');
-  const [realRoot, realTarget] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(target)]);
-  if (realTarget !== realRoot && !realTarget.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Upload destination escapes the Sulla Files folder');
-  if (!(await fs.promises.lstat(target)).isDirectory()) throw new Error('Upload destination is not a folder');
-
-  return realTarget;
+async function readStableUpload(source:string):Promise<Buffer> {
+  const selected = await fs.promises.lstat(source, { bigint: true });
+  if (!selected.isFile() || selected.isSymbolicLink()) throw new Error('Only regular files can be uploaded');
+  if (selected.size > BigInt(MAX_DIRECT_UPLOAD_BYTES)) throw new Error('Files selected in Desktop must be 64 MiB or smaller');
+  const file = await fs.promises.open(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const before = await file.stat({ bigint: true });
+    if (!stableUploadIdentity(selected, before)) throw new Error('Selected file changed before it could be read');
+    const bytes = await file.readFile();
+    const [after, pathname] = await Promise.all([file.stat({ bigint: true }), fs.promises.lstat(source, { bigint: true })]);
+    if (!stableUploadIdentity(before, after) || !stableUploadIdentity(after, pathname) || bytes.byteLength !== Number(after.size)) {
+      throw new Error('Selected file changed while it was being read. Nothing was uploaded.');
+    }
+    return bytes;
+  } finally { await file.close() }
 }
 
 async function importPaths(paths:string[], destination = '', progress?:(value:{ current: number; total: number; name: string; percent: number; done: boolean }) => void, collectionId?:string):Promise<number> {
-  const watcher = getSullaFilesWatcher(); const targetRoot = await uploadDestination(await watcher.folderForCollection(collectionId), destination); let imported = 0;
+  if (!collectionId || !UUID.test(collectionId)) throw new Error('Choose a Files collection before uploading');
+  if (!Array.isArray(paths) || paths.length > 250) throw new Error('Choose no more than 250 files at once');
+  let imported = 0;
   for (const [index, source] of paths.entries()) {
-    const info = await fs.promises.stat(source);
-    if (!info.isFile()) continue;
     progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 12, done: false });
-    await fs.promises.copyFile(source, await availableTarget(targetRoot, source), fs.constants.COPYFILE_EXCL);
+    const bytes = await readStableUpload(source);
+    const target = storedPath(destination, source);
+    const response = await filesClient.request(`/v1/files/import?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(target) }&conflict=keep-both`, {
+      method:  'PUT',
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
+      body:    bytes,
+    });
+    if (!response.ok) throw new FilesApiError((await response.json().catch(() => ({})) as { error?:string }).error ?? `Files upload failed (${ response.status })`, response.status);
     imported++;
     progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 100, done: index + 1 === paths.length });
   }
-  if (imported) await watcher.notifyRescan();
-
   return imported;
 }
 
@@ -244,6 +251,7 @@ function initFilesMediaProtocol():void {
 export function initSullaFilesIpc():void {
   try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
+  ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
   ipcMain.handle('sulla-files:search', (_event, input:{ query: string; collectionId?: string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
@@ -374,12 +382,18 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
-  ipcMain.handle('files-ui:open-folder', (_event, collectionId?:string) => getSullaFilesWatcher().openFolder(collectionId));
+  ipcMain.handle('files-ui:open-folder', () => {
+    throw new Error('Files are stored securely in Sulla. Download a file or selected files to export copies to Finder.');
+  });
   ipcMain.handle('files-ui:create-folder', async(_event, input:string | { collectionId?: string; path: string }) => {
     const relativePath = typeof input === 'string' ? input : input.path;
     const collectionId = typeof input === 'string' ? undefined : input.collectionId;
-    await createDirectoryWithinRoot(await getSullaFilesWatcher().folderForCollection(collectionId), relativePath);
-    await getSullaFilesWatcher().notifyRescan();
+    if (!collectionId || !UUID.test(collectionId)) throw new Error('Choose a Files collection before creating a folder');
+    await json('/v1/folders', { method: 'POST', body: JSON.stringify({ collectionId, path: relativePath }) });
+  });
+  ipcMain.handle('files-ui:delete-folder', async(_event, input:{ collectionId:string; path:string }) => {
+    if (!UUID.test(input.collectionId)) throw new Error('Choose a Files collection before removing a folder');
+    await json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'DELETE' });
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId: string; versionId?: string }) => openReference(input));
   ipcMain.handle('files-ui:download-file', (event, input:{ fileId: string; versionId?: string; name: string }) => downloadReference(event, input));
@@ -411,14 +425,13 @@ export function initSullaFilesIpc():void {
     const options:Electron.OpenDialogOptions = {
       title:                   'Choose one synthetic file for the Files source experiment',
       properties:              ['openFile'],
-      securityScopedBookmarks: process.platform === 'darwin',
+      securityScopedBookmarks: process.platform === 'darwin' && process.mas,
     };
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return undefined;
     await getSullaFilesWatcher().prepareNativeSourceSession();
-    const release = process.platform === 'darwin' && picked.bookmarks?.[0]
-      ? app.startAccessingSecurityScopedResource(picked.bookmarks[0])
-      : undefined;
+    if (process.mas && !picked.bookmarks?.[0]) throw new Error('The Mac App Store build did not return the required security-scoped file grant');
+    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
     const gateway = getSullaFilesSourceGateway();
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
     try {
@@ -455,11 +468,12 @@ export function initSullaFilesIpc():void {
     const source = (await getSullaFilesWatcher().listNativeSources()).find(item => item.fileId === fileId);
     if (source?.state !== 'reselect-required') throw new Error('Native Files source does not require reselection');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    const options:Electron.OpenDialogOptions = { title: `Reselect ${ source.name }`, properties: ['openFile'], securityScopedBookmarks: process.platform === 'darwin' };
+    const options:Electron.OpenDialogOptions = { title: `Reselect ${ source.name }`, properties: ['openFile'], securityScopedBookmarks: process.platform === 'darwin' && process.mas };
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return undefined;
     await getSullaFilesWatcher().prepareNativeSourceSession();
-    const release = process.platform === 'darwin' && picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
+    if (process.mas && !picked.bookmarks?.[0]) throw new Error('The Mac App Store build did not return the required security-scoped file grant');
+    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
     const gateway = getSullaFilesSourceGateway();
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
     try {

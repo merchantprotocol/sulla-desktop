@@ -51,6 +51,7 @@ export interface FilesVersion {
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
   availableCollections?: { id:string; name:string }[];
+  folders?: string[];
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -203,7 +204,9 @@ export interface FilesDataSource {
   listNativeSources?():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>;
   recoverNativeSource?(fileId:string):Promise<boolean>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
+  uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
