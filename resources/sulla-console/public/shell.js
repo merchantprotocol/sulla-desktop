@@ -115,6 +115,18 @@ async function verifyAccount(){
   const fence=createFence();
   try{await loadAccountSession(fence)}catch(error){if(fence.current()&&!isAbort(error))showGate(error instanceof Error?error.message:'Your Accounts session ended.')}finally{fence.release()}
 }
+async function verifyExpiredAccount(){
+  const fence=createFence();
+  try{
+    await loadAccountSession(fence);
+    assertFence(fence);
+    setStatus('Session expired. Reopen the section.','error');
+  }catch(error){
+    if(!fence.current()||isAbort(error))return;
+    if(error?.authenticationRequired)showGate('Your Accounts session ended. Sign in again to continue.');
+    else setStatus('Service session expired. Accounts could not be verified.','error');
+  }finally{fence.release()}
+}
 async function mintSession(route,fence){
   await loadAccountSession(fence);
   assertFence(fence);
@@ -186,7 +198,7 @@ window.addEventListener('message',event=>{
   if(message.type==='sulla.service.expired'){
     forgetSession(active.route.service);wipeFrame('session-expired');
     history.replaceState({sullaConsoleDepth:0,area:null},'',urlForArea(null));
-    empty.hidden=false;setStatus('Session expired. Reopen the section.','error');return;
+    empty.hidden=false;setStatus('Verifying Accounts session…','idle');void verifyExpiredAccount();return;
   }
   if(message.type==='sulla.console.open'&&active.route.service==='accounts'&&message.target==='projects')navigate('projects');
 });
