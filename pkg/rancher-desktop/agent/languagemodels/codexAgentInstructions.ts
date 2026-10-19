@@ -1,10 +1,9 @@
 /**
  * Agent-specific instructions for Codex runs.
  *
- * Codex reads its system context from the shared ~/.codex/AGENTS.md, which is
- * always built for the default agent. A spawned agent (codex-sol-worker,
- * codex-luna-worker, …) would otherwise never see its own database prompt, so
- * it rides along in the <sulla_context> stable tier of the user message.
+ * A spawned agent (codex-sol-worker, codex-luna-worker, …) needs its database
+ * role prompt in addition to the per-spawn guest instruction file, so it rides
+ * along in the <sulla_context> stable tier of the user message.
  */
 
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
