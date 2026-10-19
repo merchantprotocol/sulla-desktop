@@ -11,11 +11,18 @@ export interface SullaFilesNativeRuntimeStatus {
 }
 
 /**
+ * The shared owner-principal mount is not safe for agent admission. Keep the
+ * production gate closed until Files can enforce a per-agent/job grant-scoped
+ * view instead of relying on container visibility as authorization.
+ */
+export const SULLA_FILES_NATIVE_SOURCE_READY = false;
+
+/**
  * One rollout gate owns the service routes, guest mount and renderer capability.
  * Readiness is still runtime state: this flag alone never enables the UI.
  */
 export function sullaFilesNativeSourceRolloutRequested():boolean {
-  return process.env.SULLA_FILES_NATIVE_SOURCE_ROLLOUT === '1';
+  return SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_NATIVE_SOURCE_ROLLOUT === '1';
 }
 
 /**

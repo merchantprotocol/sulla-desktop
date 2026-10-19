@@ -373,16 +373,26 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
   lifecycle.registerOnce('sulla-files-runtime', ['vault'],
     async() => {
+      const { startSullaFilesSourceGateway, stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
       const watcher = getSullaFilesWatcher();
-      await watcher.initialize();
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
-      console.log('[Background] Sulla Files runtime initialized');
+      startSullaFilesSourceGateway();
+      try {
+        await watcher.initialize();
+        const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+        if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
+        console.log('[Background] Sulla Files runtime initialized');
+      } catch (error) {
+        await watcher.shutdown().catch(() => undefined);
+        await stopSullaFilesSourceGateway();
+        throw error;
+      }
     },
     async() => {
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      const { stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
       await getSullaFilesWatcher().shutdown();
+      await stopSullaFilesSourceGateway();
     },
   );
 

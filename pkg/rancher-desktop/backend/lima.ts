@@ -3680,8 +3680,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
           SULLA_FILES_FUSE_COLLECTION_FILE: '/run/sulla-files-fuse/collection',
           SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla-files',
-          SULLA_FILES_FUSE_UID:              '1000',
-          SULLA_FILES_FUSE_GID:              '1000',
           SSL_CERT_FILE:                     '/run/sulla-files-ca/tls.crt',
         },
         volumes: [
@@ -3701,11 +3699,28 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         restart:      'no',
       };
       await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '/var/lib/sulla/files-fuse');
-      await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '-o', '1000', '-g', '1000', '/mnt/sulla-files');
-      await this.execCommand({ root: true }, 'mountpoint', '-q', '/mnt/sulla-files').catch(async() => {
+      await this.execCommand({ root: true }, 'install', '-d', '-m', '0755', '/mnt/sulla-files');
+      let anchor = await this.execCommand(
+        { root: true, capture: true, expectFailure: true }, 'findmnt', '--mountpoint', '/mnt/sulla-files',
+        '--noheadings', '--output', 'FSTYPE,SOURCE',
+      ).catch(() => '');
+      if (!anchor.trim()) {
         await this.execCommand({ root: true }, 'mount', '--bind', '/mnt/sulla-files', '/mnt/sulla-files');
-      });
-      await this.execCommand({ root: true }, 'mount', '--make-shared', '/mnt/sulla-files');
+        anchor = await this.execCommand(
+          { root: true, capture: true }, 'findmnt', '--mountpoint', '/mnt/sulla-files',
+          '--noheadings', '--output', 'FSTYPE,SOURCE',
+        );
+      }
+      const [anchorFileSystem, anchorSource] = anchor.trim().split(/\s+/, 2);
+      const adapterPresent = anchorFileSystem === 'fuse.sulla-files' && anchorSource === 'sulla-files';
+      if (!adapterPresent && (anchorFileSystem.startsWith('fuse.') ||
+          !(anchorSource === '/mnt/sulla-files' || anchorSource.endsWith('[/mnt/sulla-files]') || anchorSource.endsWith('[/sulla-files]')))) {
+        throw new Error(`Refusing to reuse unexpected Files propagation mount (${ anchorFileSystem } ${ anchorSource })`);
+      }
+      // A surviving adapter sits above the owned anchor. The mount manager
+      // drains it before the new generation and then validates the revealed
+      // anchor; never change propagation on the live FUSE mount itself.
+      if (!adapterPresent) await this.execCommand({ root: true }, 'mount', '--make-shared', '/mnt/sulla-files');
     }
 
     // Modify dynamic values like passwords
@@ -3728,15 +3743,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
 
-    // Resolve the user's functions directory for runtime containers (read-only bind mount).
-    // Lima mounts the host home directory into the VM at the same path, so the host path
-    // is valid for Docker bind mounts inside the VM.
-    const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
-    const sullaFunctionsDir = resolveSullaFunctionsDir();
-    const sullaRuntimeTempDir = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
+    // Function code and invocation material stay inside the guest. Host paths
+    // must never become Docker bind sources for agent-controlled runtimes.
+    const sullaFunctionsDir = '/mnt/data/sulla/runtime/functions/catalog';
+    const sullaRuntimeTempDir = '/mnt/data/sulla/runtime/functions/invocations';
 
-    await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
-    await fs.promises.mkdir(sullaRuntimeTempDir, { recursive: true });
+    await this.execCommand({}, 'install', '-d', '-m', '0700', sullaFunctionsDir, sullaRuntimeTempDir);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);

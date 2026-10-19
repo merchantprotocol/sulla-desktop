@@ -307,7 +307,7 @@ class SullaFilesWatcher {
     return body.principalId;
   }
 
-  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user', context: SullaFilesCapabilityContext = {}, scopes = ['files/*']):Promise<string> {
+  private async capabilityToken(userId = process.env.SULLA_FILES_USER_ID ?? 'desktop-user', context: SullaFilesCapabilityContext = {}, scopes = ['files/*'], collectionId?:string):Promise<string> {
     const key = sullaFilesCapabilityKey(await SullaSettingsModel.getServicePassword()); const now = Math.floor(Date.now() / 1_000); const encode = (value:string) => Buffer.from(value).toString('base64url'); const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
     const deviceId = await getDesktopDeviceId().catch(() => os.hostname());
     const payload = encode(JSON.stringify({
@@ -317,6 +317,7 @@ class SullaFilesWatcher {
       agent_id:  context.agentId,
       job_id:    context.jobId,
       thread_id: context.threadId,
+      ...(collectionId ? { collection_id: collectionId } : {}),
       v:         1,
       iss:       'sulla-files',
       aud:       'sulla-tools',
@@ -343,7 +344,7 @@ class SullaFilesWatcher {
     if (typeof collection.collectionId !== 'string') throw new Error('Files returned an invalid native collection');
     return {
       collectionId: collection.collectionId,
-      token: await this.capabilityToken(principalId, {}, ['files/fuse']),
+      token: await this.capabilityToken(principalId, {}, ['files/fuse'], collection.collectionId),
     };
   }
 

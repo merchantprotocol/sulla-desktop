@@ -134,6 +134,7 @@ export function createApp(
   }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, allowShared = false, allowExactFiles = false) {
     const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
@@ -145,6 +146,7 @@ export function createApp(
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right) {
     if (isProtectedPath(path)) throw protectedPathError();
     const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
     requireScratchRun(actor, access.collection);
@@ -155,6 +157,7 @@ export function createApp(
   async function fileRow(fileId:string):Promise<any> { const result = await db.query('SELECT * FROM files WHERE id=$1', [fileId]); if (!result.rows[0]) throw new HttpError(404, 'file not found'); await assertUnprotectedFile(db, result.rows[0]); return result.rows[0] }
   async function requireFile(request:RequestWithIdentity, fileId:string, right:Right):Promise<any> {
     const file = await fileRow(fileId); const actor = identity(request);
+    if (actor.collectionId && actor.collectionId !== file.collection_id) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, file.collection_id);
     requireScratchRun(actor, access.collection);

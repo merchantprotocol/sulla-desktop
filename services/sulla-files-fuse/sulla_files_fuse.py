@@ -107,8 +107,8 @@ class SullaFiles(pyfuse3.Operations):
         self.path_inode = {"": pyfuse3.ROOT_INODE}
         self.handles = {}
         self.next_handle = 1
-        self.uid = int(os.environ.get("SULLA_FILES_FUSE_UID", "1000"))
-        self.gid = int(os.environ.get("SULLA_FILES_FUSE_GID", "1000"))
+        self.uid = 0
+        self.gid = 0
 
     async def refresh(self):
         rows = await self.api.snapshot()
@@ -142,7 +142,10 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
         attrs = pyfuse3.EntryAttributes()
         attrs.st_ino = inode
-        attrs.st_mode = (stat.S_IFDIR | 0o500) if node["directory"] else (stat.S_IFREG | 0o600)
+        # Only explicitly admitted containers receive this mount.  The Files
+        # capability remains the authorization boundary; allow any numeric
+        # runtime UID to exercise that scoped view without guessing its ID.
+        attrs.st_mode = (stat.S_IFDIR | 0o555) if node["directory"] else (stat.S_IFREG | 0o666)
         attrs.st_nlink = 2 if node["directory"] else 1
         attrs.st_uid = self.uid
         attrs.st_gid = self.gid
@@ -312,7 +315,7 @@ async def main(options):
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     os.makedirs(options.mountpoint, exist_ok=True)
     operations = SullaFiles(FilesApi(options.url, token_file, options.collection))
-    pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "default_permissions"})
+    pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "default_permissions", "allow_other"})
     try:
         await pyfuse3.main()
     finally:
