@@ -76,17 +76,17 @@ export function useFilesExplorerInteractions(tabId:string) {
 
   function loadFolderPreferences(collectionId:string, path:string) {
     try {
-      const value = JSON.parse(localStorage.getItem(storageKey(collectionId, path)) || '{}') as { sort?:string; direction?:'asc' | 'desc'; columns?:Partial<ExplorerColumns> };
+      const value = JSON.parse(localStorage.getItem(storageKey(collectionId, path)) || '{}') as { sort?:string; direction?:'asc' | 'desc'; columns?:Partial<ExplorerColumns>; view?:'list' | 'grid' };
       const columns = { ...DEFAULT_COLUMNS, ...value.columns };
 
       for (const key of Object.keys(columns) as (keyof ExplorerColumns)[]) columns[key] = Math.max(72, Math.min(720, Number(columns[key]) || DEFAULT_COLUMNS[key]));
-      return { sort: value.sort || 'modified', direction: value.direction === 'asc' ? 'asc' as const : 'desc' as const, columns };
+      return { sort: ['name', 'modified', 'size', 'type', 'owner'].includes(value.sort ?? '') ? value.sort! : 'modified', direction: value.direction === 'asc' ? 'asc' as const : 'desc' as const, columns, view: value.view === 'grid' ? 'grid' as const : 'list' as const };
     } catch {
-      return { sort: 'modified', direction: 'desc' as const, columns: { ...DEFAULT_COLUMNS } };
+      return { sort: 'modified', direction: 'desc' as const, columns: { ...DEFAULT_COLUMNS }, view: 'list' as const };
     }
   }
 
-  function saveFolderPreferences(collectionId:string, path:string, value:{ sort:string; direction:'asc' | 'desc'; columns:ExplorerColumns }) {
+  function saveFolderPreferences(collectionId:string, path:string, value:{ sort:string; direction:'asc' | 'desc'; columns:ExplorerColumns; view:'list' | 'grid' }) {
     try { localStorage.setItem(storageKey(collectionId, path), JSON.stringify(value)); } catch { /* Browsing remains usable when storage is unavailable. */ }
   }
 

@@ -19,7 +19,7 @@
       </div>
       <label v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="root-picker">
         <span>Tracked folder</span>
-        <select :value="snapshot?.collection.id" @change="onCollectionChange">
+        <select :value="snapshot?.collection.id" :disabled="busy || loading" @change="onCollectionChange">
           <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
         </select>
       </label>
@@ -141,6 +141,7 @@
             v-if="dataSource.capabilities.nativeFilesystem"
             class="btn"
             type="button"
+            :disabled="busy || loading || section !== 'files'"
             @click="newFolder"
           >
             <span
@@ -173,7 +174,7 @@
               type="button"
               aria-label="Back"
               title="Back"
-              :disabled="!canGoBack"
+              :disabled="busy || loading || !canGoBack"
               @click="goBack"
             ><span v-html="icons.arrowLeft" /></button>
             <button
@@ -181,7 +182,7 @@
               type="button"
               aria-label="Forward"
               title="Forward"
-              :disabled="!canGoForward"
+              :disabled="busy || loading || !canGoForward"
               @click="goForward"
             ><span v-html="icons.arrowLeft" /></button>
           <button
@@ -190,6 +191,7 @@
             type="button"
             :aria-label="`Back to ${parentFolderLabel}`"
             :title="`Back to ${parentFolderLabel}`"
+            :disabled="busy || loading"
             :data-drop-path="parentPath"
             @dragover.prevent="onNavigationDragOver(parentPath, $event)"
             @drop.prevent="onNavigationDrop(parentPath, $event)"
@@ -625,7 +627,7 @@
           </div>
         </Teleport>
         <Teleport to="body">
-          <div v-if="backgroundMenu" ref="backgroundActionMenu" class="action-menu" role="menu" aria-label="Folder actions" :style="{ left: `${backgroundMenu.x}px`, top: `${backgroundMenu.y}px` }" @click.stop @contextmenu.prevent>
+          <div v-if="backgroundMenu" ref="backgroundActionMenu" class="action-menu" role="menu" aria-label="Folder actions" :style="{ left: `${backgroundMenu.x}px`, top: `${backgroundMenu.y}px` }" @keydown="onMenuKeydown" @click.stop @contextmenu.prevent>
             <b>{{ pageTitle }}</b>
             <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
             <button role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFolder(); closeBackgroundActions()">New folder</button>
@@ -673,7 +675,7 @@
       <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
     </div>
     <Teleport to="body">
-      <div v-if="quickLookEntry" class="quick-look" role="dialog" aria-modal="true" :aria-label="`Quick Look: ${quickLookEntry.name}`" @click.self="closeQuickLook">
+      <div v-if="quickLookEntry" ref="quickLookDialog" class="quick-look" role="dialog" aria-modal="true" :aria-label="`Quick Look: ${quickLookEntry.name}`" @click.self="closeQuickLook">
         <button class="quick-look-close" type="button" aria-label="Close Quick Look" @click="closeQuickLook" v-html="icons.close" />
         <button class="quick-look-nav previous" type="button" aria-label="Previous item" :disabled="quickLookIndex <= 0" @click="stepQuickLook(-1)">‹</button>
         <div class="quick-look-card">
@@ -793,7 +795,7 @@ const explorer = useFilesExplorerInteractions(props.tabId);
 const { backStack, forwardStack, clipboard } = explorer;
 const canGoBack = computed(() => backStack.value.length > 0); const canGoForward = computed(() => forwardStack.value.length > 0);
 const snapshot = ref<FilesSnapshot | null>(null); const loading = ref(true); const busy = ref(false); const error = ref('');
-const section = ref<Section>('files'); const currentPath = ref(''); const query = ref(''); const sort = ref('modified'); const sortDirection = ref<'asc' | 'desc'>('desc'); const columns = ref<ExplorerColumns>({ name: 360, owner: 190, modified: 160, size: 110 }); const view = ref<ViewMode>((localStorage.getItem('sulla:files-view') as ViewMode) || 'list');
+const section = ref<Section>('files'); const currentPath = ref(''); const query = ref(''); const sort = ref('modified'); const sortDirection = ref<'asc' | 'desc'>('desc'); const columns = ref<ExplorerColumns>({ name: 360, owner: 190, modified: 160, size: 110 }); const view = ref<ViewMode>('list');
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const searchCoverage = ref<FilesIndexCoverage | null>(null);
@@ -809,7 +811,12 @@ const editingKey = ref(''); const renameValue = ref(''); let renameCommitting = 
 const mainSurface = ref<HTMLElement | null>(null); const listSurface = ref<HTMLElement | null>(null); const gridSurface = ref<HTMLElement | null>(null);
 const browserSurface = ref<HTMLElement | null>(null);
 const marquee = ref<{ left:number; top:number; width:number; height:number; additive:boolean } | null>(null);
+let stopPointerGesture:(() => void) | undefined;
+let suppressGestureClick = false;
+let gestureClickTimer:ReturnType<typeof setTimeout> | undefined;
+let refreshGeneration = 0;
 const quickLookEntry = ref<DisplayEntry | null>(null); const quickLookUrl = ref(''); const quickLookLoading = ref(false); let quickLookGeneration = 0;
+const quickLookDialog = ref<HTMLElement | null>(null); let quickLookTrigger:HTMLElement | null = null;
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
@@ -966,44 +973,76 @@ const quickLookEntries = computed(() => visibleEntries.value.filter(entry => !en
 const quickLookIndex = computed(() => quickLookEntry.value ? quickLookEntries.value.findIndex(entry => entry.key === quickLookEntry.value?.key) : -1);
 const marqueeStyle = computed(() => marquee.value ? { left: `${ marquee.value.left }px`, top: `${ marquee.value.top }px`, width: `${ marquee.value.width }px`, height: `${ marquee.value.height }px` } : {});
 
-async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function refresh(silent = false, afterMutation = false) {
+  if (busy.value && !afterMutation) return;
+  const generation = ++refreshGeneration; const source = props.dataSource;
+  const isCurrent = () => mounted && generation === refreshGeneration && source === props.dataSource;
+  if (!silent) loading.value = true;
+  try {
+    const loaded = await source.load();
+    if (!isCurrent()) return;
+    const stars = await source.listStars(loaded.collection.id);
+    if (!isCurrent()) return;
+    snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
+    selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key)));
+  } catch (cause) { if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { if (isCurrent()) loading.value = false }
+}
+async function runMutation(operation:() => Promise<void>, reload = true) {
+  if (busy.value || loading.value || error.value || !snapshot.value) return false;
+  busy.value = true; refreshGeneration++; operationError.value = ''; stopPointerGesture?.();
+  try { await operation(); return true }
+  catch (cause) { if (mounted) operationError.value = cause instanceof Error ? cause.message : String(cause); return false }
+  finally { if (reload && mounted) await refresh(true, true); busy.value = false }
+}
 async function selectCollection(collectionId:string) {
-  if (busy.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
+  if (busy.value || loading.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
   clearInternalDrag(); cancelRename(); closeQuickLook(); clipboard.value = null;
-  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; selectedKeys.value = new Set();
+  stopPointerGesture?.(); closeActions(false); closeBackgroundActions(); query.value = ''; searchGeneration++;
+  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
   await refresh();
   explorer.clearForCollection(collectionId); loadFolderPreferences();
 }
 function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
-async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
-async function reindex(entry:FilesItem) { busy.value = true; operationError.value = ''; try { await props.dataSource.reindex(entry.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
+async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
+async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
+async function newFolder() {
+  if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.capabilities.nativeFilesystem) return;
+  const name = window.prompt('Name this folder')?.trim(); if (!name) return;
+  if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
+  const path = joinPath(currentPath.value, name); await runMutation(() => props.dataSource.createFolder(path));
+}
 function shareEntry(entry:DisplayEntry | null) {
-  if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
+  if (busy.value || !entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
   const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
   shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId, assetKind: entry.agent ? 'artifact' : capture ? 'capture' : 'file' };
 }
 function shareSelectedFile() { shareEntry(selectedFileForShare.value ?? null) }
 function shareCurrentFolder() {
-  if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
+  if (busy.value || !snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
   shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
-async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
+async function togglePause() { const paused = syncState.value !== 'paused'; await runMutation(async() => { await props.dataSource.setPaused(paused) }) }
 function currentLocation():ExplorerLocation { return { collectionId: snapshot.value?.collection.id ?? '', section: section.value, path: currentPath.value } }
 function applyLocation(location:ExplorerLocation) {
+  if (busy.value || loading.value) return;
+  stopPointerGesture?.(); cancelRename(); closeQuickLook();
   if (location.collectionId && location.collectionId !== snapshot.value?.collection.id && props.dataSource.selectCollection) props.dataSource.selectCollection(location.collectionId);
   closeActions(false); closeBackgroundActions(); selectionAnchor.value = null; section.value = location.section as Section; currentPath.value = location.path; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set(); loadFolderPreferences();
 }
-function navigate(location:ExplorerLocation, track = true) { const current = currentLocation(); if (track) explorer.visit(current, location); applyLocation(location) }
+function navigate(location:ExplorerLocation, track = true) { if (busy.value || loading.value) return; const current = currentLocation(); if (track) explorer.visit(current, location); applyLocation(location) }
 function selectSection(next:Section) { navigate({ ...currentLocation(), section: next, path: '' }) }
 function openRoot() { navigate({ ...currentLocation(), section: 'files', path: '' }) }
 function openPath(next:string) { navigate({ ...currentLocation(), section: 'files', path: next }) }
 function openParent() { openPath(parentPath.value) }
-function goBack() { const location = explorer.back(currentLocation()); if (location) applyLocation(location) }
-function goForward() { const location = explorer.forward(currentLocation()); if (location) applyLocation(location) }
+function goBack() { if (busy.value || loading.value) return; const location = explorer.back(currentLocation()); if (location) applyLocation(location) }
+function goForward() { if (busy.value || loading.value) return; const location = explorer.forward(currentLocation()); if (location) applyLocation(location) }
 function onMouseNavigation(event:MouseEvent) { if (event.button === 3) { event.preventDefault(); goBack() } else if (event.button === 4) { event.preventDefault(); goForward() } }
 function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  if (busy.value) return;
   closeActions(false);
+  closeBackgroundActions();
+  if (event instanceof MouseEvent) (event.currentTarget as HTMLElement | null)?.focus();
   if (event.shiftKey && selectionAnchor.value) {
     const entries = groups.value.flatMap(group => group.entries);
     const start = entries.findIndex(item => item.key === selectionAnchor.value); const end = entries.findIndex(item => item.key === entry.key);
@@ -1015,6 +1054,7 @@ function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
 function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   if (event.target !== event.currentTarget) return;
   event.stopPropagation();
+  if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   const entries = visibleEntries.value; const index = entries.findIndex(item => item.key === entry.key);
   if (isMac && event.metaKey && event.key === 'ArrowDown') { event.preventDefault(); activate(entry); return }
@@ -1035,18 +1075,27 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   else if (event.key === 'Escape') { event.preventDefault(); clearSelection() }
   else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); openActions(entry, event) }
 }
-async function showDetails(entry:DisplayEntry) { closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
+async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-async function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else if (section.value === 'trash') selectEntry(entry); else { try { await props.dataSource.openFile(entry.id, entry.currentVersionId) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } } }
+async function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else if (section.value === 'trash') selectEntry(entry); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
-function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
-async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
+function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
+async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
 function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
 function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return } if (!props.dataSource.capabilities.nativeFilesystem) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return } const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) {
+  dragging.value = false;
+  if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
+  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return }
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
+  const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
+  if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return }
+  const destination = currentPath.value; await runMutation(async() => { await props.dataSource.uploadPaths(paths, destination) });
+}
 function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
   if (section.value !== 'files' || busy.value || !event.dataTransfer) { event.preventDefault(); return }
   const selected = selectedEntries.value;
@@ -1096,9 +1145,10 @@ function syncText(entry:FilesItem) { return ({ synced: 'On this computer', synci
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
-async function toggleStar(id:string) { if (!snapshot.value) return; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); try { await props.dataSource.setStar(snapshot.value.collection.id, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } }
+async function toggleStar(id:string) { if (!snapshot.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
 function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
 async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  closeBackgroundActions();
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   menuTrigger = event.currentTarget as HTMLElement; const rect = menuTrigger.getBoundingClientRect();
   menuPosition.value = event instanceof MouseEvent && event.type === 'contextmenu' ? { x: event.clientX, y: event.clientY } : { x: rect.left, y: rect.bottom };
@@ -1109,8 +1159,10 @@ async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent)
 }
 function dismissActions(event:PointerEvent) { if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false); if (backgroundMenu.value && !backgroundActionMenu.value?.contains(event.target as Node)) closeBackgroundActions() }
 function onMenuKeydown(event:KeyboardEvent) {
-  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeActions(); return }
-  const buttons = [...(actionMenu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+  event.stopPropagation();
+  const menu = event.currentTarget as HTMLElement;
+  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); if (menu === actionMenu.value) closeActions(); else { closeBackgroundActions(); mainSurface.value?.focus() } return }
+  const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
   const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length; buttons[next].focus() }
 }
@@ -1123,30 +1175,57 @@ function setSort(key:string) { if (sort.value === key) sortDirection.value = sor
 function sortIndicator(key:string) { return sort.value === key ? (sortDirection.value === 'asc' ? '↑' : '↓') : '' }
 function columnStyle(key:keyof ExplorerColumns) { return { width: `${ columns.value[key] }px`, minWidth: `${ columns.value[key] }px` } }
 function preferenceContext() { return { collectionId: snapshot.value?.collection.id ?? 'pending', path: section.value === 'files' ? currentPath.value : `@${ section.value }` } }
-function loadFolderPreferences() { const context = preferenceContext(); const stored = explorer.loadFolderPreferences(context.collectionId, context.path); sort.value = stored.sort; sortDirection.value = stored.direction; columns.value = stored.columns }
-function saveFolderPreferences() { const context = preferenceContext(); explorer.saveFolderPreferences(context.collectionId, context.path, { sort: sort.value, direction: sortDirection.value, columns: columns.value }) }
-function startColumnResize(key:keyof ExplorerColumns, event:PointerEvent) { const startX = event.clientX; const startWidth = columns.value[key]; const move = (next:PointerEvent) => { columns.value = { ...columns.value, [key]: Math.max(72, Math.min(720, startWidth + next.clientX - startX)) } }; const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); saveFolderPreferences() }; window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop, { once: true }) }
+function loadFolderPreferences() { const context = preferenceContext(); const stored = explorer.loadFolderPreferences(context.collectionId, context.path); sort.value = stored.sort; sortDirection.value = stored.direction; columns.value = stored.columns; view.value = stored.view }
+function saveFolderPreferences() { if (!snapshot.value) return; const context = preferenceContext(); explorer.saveFolderPreferences(context.collectionId, context.path, { sort: sort.value, direction: sortDirection.value, columns: columns.value, view: view.value }) }
+function captureGestureClick(event:MouseEvent) {
+  if (!suppressGestureClick) return;
+  event.preventDefault(); event.stopImmediatePropagation(); suppressGestureClick = false;
+}
+function trackPointer(event:PointerEvent, move:(event:PointerEvent) => void, finish:(cancelled:boolean) => void, didDrag:() => boolean) {
+  const onMove = (next:PointerEvent) => { if (next.pointerId === event.pointerId) move(next) };
+  const stop = (cancelled = true) => {
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel); window.removeEventListener('blur', onBlur);
+    stopPointerGesture = undefined;
+    if (!cancelled && didDrag()) { suppressGestureClick = true; if (gestureClickTimer) clearTimeout(gestureClickTimer); gestureClickTimer = setTimeout(() => { suppressGestureClick = false }, 0) }
+    finish(cancelled);
+  };
+  const onUp = (next:PointerEvent) => { if (next.pointerId === event.pointerId) stop(false) };
+  const onCancel = (next:PointerEvent) => { if (next.pointerId === event.pointerId) stop() };
+  const onBlur = () => stop();
+  stopPointerGesture = () => stop();
+  window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel); window.addEventListener('blur', onBlur);
+}
+function startColumnResize(key:keyof ExplorerColumns, event:PointerEvent) {
+  if (event.button !== 0) return;
+  stopPointerGesture?.();
+  const startX = event.clientX; const startWidth = columns.value[key];
+  trackPointer(event, next => { columns.value = { ...columns.value, [key]: Math.max(72, Math.min(720, startWidth + next.clientX - startX)) } }, cancelled => { if (cancelled) columns.value = { ...columns.value, [key]: startWidth }; else saveFolderPreferences() }, () => true);
+}
 
 function startMarquee(event:PointerEvent) {
-  if (event.button !== 0 || (event.target as HTMLElement).closest('button,input,a,select,[data-entry-key]')) return;
+  if (event.button !== 0 || busy.value || (event.target as HTMLElement).closest('button,input,a,select,thead,[data-entry-key]')) return;
+  stopPointerGesture?.(); mainSurface.value?.focus();
   const originX = event.clientX; const originY = event.clientY; const additive = event.metaKey || event.ctrlKey; const existing = new Set(selectedKeys.value);
-  if (!additive) clearSelection();
+  let moved = false;
   const move = (next:PointerEvent) => {
+    if (!moved && Math.hypot(next.clientX - originX, next.clientY - originY) < 4) return;
+    moved = true;
     const left = Math.min(originX, next.clientX); const top = Math.min(originY, next.clientY); const right = Math.max(originX, next.clientX); const bottom = Math.max(originY, next.clientY);
     marquee.value = { left, top, width: right - left, height: bottom - top, additive };
     const hits = visibleEntries.value.filter(entry => { const node = browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(entry.key) }"]`); if (!node) return false; const rect = node.getBoundingClientRect(); return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom }).map(entry => entry.key);
     selectedKeys.value = new Set([...(additive ? existing : []), ...hits]);
   };
-  const stop = () => { marquee.value = null; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop) };
-  window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop, { once: true }); event.preventDefault();
+  trackPointer(event, move, cancelled => { marquee.value = null; if (cancelled) selectedKeys.value = existing; else if (!moved && !additive) clearSelection() }, () => moved || additive); event.preventDefault();
 }
 
 async function openQuickLook(entry = selectedEntries.value.find(item => !item.folder)) {
   if (!entry || entry.folder) return;
+  if (!quickLookEntry.value) quickLookTrigger = document.activeElement as HTMLElement | null;
   quickLookEntry.value = entry; quickLookUrl.value = ''; quickLookLoading.value = true; const generation = ++quickLookGeneration;
+  await nextTick(); if (generation !== quickLookGeneration) return; quickLookDialog.value?.querySelector<HTMLButtonElement>('button')?.focus();
   try { const url = await props.dataSource.mediaUrl(entry.id, entry.currentVersionId); if (generation === quickLookGeneration) quickLookUrl.value = url } catch { if (generation === quickLookGeneration) quickLookUrl.value = '' } finally { if (generation === quickLookGeneration) quickLookLoading.value = false }
 }
-function closeQuickLook() { quickLookGeneration++; quickLookEntry.value = null; quickLookUrl.value = ''; quickLookLoading.value = false }
+function closeQuickLook() { const wasOpen = Boolean(quickLookEntry.value); quickLookGeneration++; quickLookEntry.value = null; quickLookUrl.value = ''; quickLookLoading.value = false; if (wasOpen) quickLookTrigger?.focus(); quickLookTrigger = null }
 function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quickLookIndex.value + delta]; if (entry) openQuickLook(entry) }
 
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
@@ -1154,14 +1233,12 @@ function operationItems(entries:DisplayEntry[], destination:string) { return ent
 async function perform(action:'move' | 'copy', items:OperationItem[]) {
   if (busy.value || !snapshot.value || !items.length) return false;
   if (items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
-  busy.value = true; operationError.value = '';
-  try { await props.dataSource.operate(action, snapshot.value.collection.id, items); selectedKeys.value = new Set(); closeActions(false); await refresh(true); return true }
-  catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); await refresh(true); return false }
-  finally { busy.value = false }
+  const collectionId = snapshot.value.collection.id;
+  return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
 }
 function beginRename(entry = selectedEntries.value[0]) { if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
-function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
-function cancelRename() { editingKey.value = ''; renameValue.value = ''; renameCommitting = false }
+function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
+function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
 async function commitRename(entry:DisplayEntry) {
   if (renameCommitting || editingKey.value !== entry.key) return;
   const name = renameValue.value.trim();
@@ -1171,32 +1248,39 @@ async function commitRename(entry:DisplayEntry) {
   if (success) cancelRename(); else renameCommitting = false;
 }
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
-async function moveSelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
-function copyToClipboard(mode:'copy' | 'cut') { if (!snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
+async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
+function copyToClipboard(mode:'copy' | 'cut') { if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
 async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) }))); if (success && value.mode === 'cut') clipboard.value = null }
 function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
-async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
-async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (busy.value || !files.length) return; busy.value = true; operationError.value = ''; try { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set(); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
+async function trashSelected() {
+  if (busy.value || section.value === 'trash' || !props.dataSource.capabilities.trash) return;
+  const files = new Map<string, FilesItem>();
+  for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) }
+  if (!files.size) return;
+  await runMutation(async() => { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); closeActions(false) });
+}
+async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length || section.value !== 'trash') return; await runMutation(async() => { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set() }) }
 async function purgeEntries(entries:DisplayEntry[], all = false) {
-  if (!props.dataSource.purgeTrash) return;
+  if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrash) return;
+  const purge = props.dataSource.purgeTrash.bind(props.dataSource);
   const files = entries.filter(entry => !entry.folder); if (!files.length) return;
   const warning = all ? 'Permanently delete every eligible item? Retention, record locks, and unapproved disposal still block deletion.' : `Permanently delete ${ files.length } eligible item${ files.length === 1 ? '' : 's' }? Protected items will remain.`;
   if (!window.confirm(warning)) return;
-  busy.value = true; operationError.value = ''; let completed = 0; const failures:string[] = [];
-  try {
-    for (const file of files) { try { await props.dataSource.purgeTrash(file.id); completed++ } catch (cause) { failures.push(file.name + ': ' + (cause instanceof Error ? cause.message : String(cause))) } }
+  await runMutation(async() => {
+    let completed = 0; const failures:string[] = [];
+    for (const file of files) { try { await purge(file.id); completed++ } catch (cause) { failures.push(file.name + ': ' + (cause instanceof Error ? cause.message : String(cause))) } }
     if (failures.length) operationError.value = completed + ' deleted; ' + failures.length + ' retained. ' + failures.join(' · ');
-    selectedKeys.value = new Set(); await refresh(true);
-  } finally { busy.value = false }
+    selectedKeys.value = new Set();
+  });
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
 function emptyTrash() { return purgeEntries(trashFiles.value.map(toDisplay), true) }
 async function runTargetAction(action:'open' | 'native-open' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
-  const target = actionTarget.value; if (!target) return; closeActions();
+  const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
-  if (action === 'native-open') { await props.dataSource.openFile(target.id, target.currentVersionId); return }
-  if (action === 'reference') { try { await navigator.clipboard.writeText(target.id) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } return }
+  if (action === 'native-open') { await activate(target); return }
+  if (action === 'reference') { try { const params = new URLSearchParams({ version: target.currentVersionId, path: target.path, name: target.name }); await navigator.clipboard.writeText(`sulla-file://${ target.id }?${ params }`) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } return }
   if (action === 'details') { await showDetails(target); return }
   if (action === 'share') {
     if (target.folder && snapshot.value) shareTarget.value = { id: target.id, name: target.name, folder: true, path: target.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
@@ -1206,16 +1290,24 @@ async function runTargetAction(action:'open' | 'native-open' | 'reference' | 'de
   if (['rename', 'online-only', 'keep-local', 'restore', 'purge'].includes(action)) selectedKeys.value = new Set([target.key]);
   if (action === 'rename') renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy' || action === 'cut') copyToClipboard(action); else if (action === 'download') await downloadSelected();
   else if (action === 'restore') await restoreSelected(); else if (action === 'purge') await purgeSelected();
-  else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; busy.value = true; operationError.value = ''; try { await operation.call(props.dataSource, target.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+  else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; await runMutation(() => operation.call(props.dataSource, target.id)) }
   else await trashSelected();
 }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
-function closeMenuOnResize() { closeActions(false) }
+function closeMenuOnResize() { closeActions(false); closeBackgroundActions(); stopPointerGesture?.() }
 function onKeydown(event:KeyboardEvent) {
-  if (!quickLookEntry.value && !browserSurface.value?.contains(event.target as Node) && !actionMenu.value?.contains(event.target as Node) && !backgroundActionMenu.value?.contains(event.target as Node)) return;
+  if (!quickLookDialog.value?.contains(event.target as Node) && !browserSurface.value?.contains(event.target as Node) && !actionMenu.value?.contains(event.target as Node) && !backgroundActionMenu.value?.contains(event.target as Node)) return;
   const target = event.target as HTMLElement | null; const editable = target?.matches('input,textarea,select,[contenteditable="true"]'); const modifier = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
   if (editable) { if (event.key === 'Escape') (target as HTMLElement).blur(); return }
-  if (quickLookEntry.value) { if (event.key === 'Escape' || event.key === ' ') { event.preventDefault(); closeQuickLook() } else if (event.key === 'ArrowLeft') { event.preventDefault(); stepQuickLook(-1) } else if (event.key === 'ArrowRight') { event.preventDefault(); stepQuickLook(1) } return }
+  if (quickLookEntry.value) {
+    if (event.key === 'Tab') { const controls = [...(quickLookDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),video,audio,iframe') ?? [])]; const index = controls.indexOf(document.activeElement as HTMLElement); if (controls.length) { event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus() } }
+    else if (event.key === 'Escape' || (event.key === ' ' && !target?.closest('button,video,audio'))) { event.preventDefault(); closeQuickLook() }
+    else if (!target?.closest('video,audio') && event.key === 'ArrowLeft') { event.preventDefault(); stepQuickLook(-1) }
+    else if (!target?.closest('video,audio') && event.key === 'ArrowRight') { event.preventDefault(); stepQuickLook(1) }
+    return;
+  }
+  if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
+  if (selected.value || shareTarget.value || folderDetails.value || target?.closest('button,a,dialog')) return;
   if (event.key === 'Escape') { cancelRename(); closeActions(false); closeBackgroundActions(); clearSelection(); return }
   if (modifier && key === 'k') { event.preventDefault(); searchInput.value?.focus(); return }
   if (modifier && key === 'a' && !selected.value) { event.preventDefault(); selectedKeys.value = new Set(visibleEntries.value.map(entry => entry.key)); return }
@@ -1240,17 +1332,18 @@ function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
 
-watch(view, value => localStorage.setItem('sulla:files-view', value));
+watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let mounted = false;
-watch([query, section], ([value, requestedSection]) => {
+watch([query, section, busy], ([value, requestedSection, mutating]) => {
   const generation = ++searchGeneration;
   if (searchTimer) clearTimeout(searchTimer);
   searchResults.value = null;
   searchCoverage.value = null;
-  if (!value.trim() || requestedSection === 'trash') return;
-  const isCurrent = () => mounted && generation === searchGeneration && query.value === value && section.value === requestedSection;
+  if (mutating || !value.trim() || requestedSection === 'trash') return;
+  const collectionId = snapshot.value?.collection.id;
+  const isCurrent = () => mounted && !busy.value && collectionId === snapshot.value?.collection.id && generation === searchGeneration && query.value === value && section.value === requestedSection;
   searchTimer = setTimeout(async() => {
     try {
       const result = await props.dataSource.search(value.trim());
@@ -1260,12 +1353,14 @@ watch([query, section], ([value, requestedSection]) => {
     }
   }, 220);
 });
-function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
+function consumeNavigation() { if (!mounted || busy.value || loading.value || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
+watch(busy, value => { if (!value) consumeNavigation() });
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; searchGeneration++; quickLookGeneration++; cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
+onMounted(async() => { mounted = true; window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
