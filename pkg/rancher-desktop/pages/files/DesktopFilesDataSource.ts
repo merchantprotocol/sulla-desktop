@@ -1,5 +1,5 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesSnapshot, type FilesVersion, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
-import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -43,7 +43,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
-  private currentVersions = new Map<string, string>();
   private collectionId = '';
   private rootId = '';
   private capabilitiesGeneration = 0;
@@ -130,11 +129,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    this.files = [...active, ...trash].map(file => {
-      const item = filesItem(file);
-      this.currentVersions.set(item.id, item.currentVersionId);
-      return item;
-    });
+    this.files = [...active, ...trash].map(file => filesItem(file));
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
@@ -143,7 +138,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         name:            collection.name,
         home:            collection.home,
         orgId:           collection.org_id,
-        retentionPolicy: collection.retention_policy ?? { trashDays: 90 },
+        retentionPolicy: collection.retention_policy ?? {},
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
         desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),
@@ -161,10 +156,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return snapshot;
   }
 
-  async history(fileId:string):Promise<FilesVersion[]> {
-    const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as Omit<FilesVersion, 'current'>[];
+  async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {
+    const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as FilesApiRecord[];
 
-    return versions.map(version => ({ ...version, current: version.id === this.currentVersions.get(fileId) }));
+    return versions.map(version => filesVersion(version, currentVersionId));
   }
 
   async preview(fileId:string, versionId?:string):Promise<FilesPreview> {
@@ -173,7 +168,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
 
-  detail(fileId:string):Promise<FilesDetail> { return ipcRenderer.invoke('sulla-files:metadata', { fileId }) }
+  async detail(fileId:string):Promise<FilesDetail> {
+    const result = await ipcRenderer.invoke('sulla-files:metadata', { fileId }) as FilesApiRecord;
+
+    return filesDetail(result);
+  }
   mediaUrl(fileId:string, versionId?:string):Promise<string> { return ipcRenderer.invoke('files-ui:media-url', { fileId, versionId }) }
 
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
@@ -214,7 +213,16 @@ export class DesktopFilesDataSource implements FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:set-star', { collectionId, ...target, starred }) }
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void> { return ipcRenderer.invoke('sulla-files:operate', { action, collectionId, items }) }
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
+  updateLifecycle(fileId:string,settings:FilesVersioningSettings):Promise<void> { return ipcRenderer.invoke('sulla-files:lifecycle', { fileId, settings }) }
+  checkout(fileId:string,force=false):Promise<void> { return ipcRenderer.invoke('sulla-files:checkout', { fileId, force }) }
+  checkin(fileId:string,versionId:string,kind:'major'|'minor',comment:string,publish:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:checkin', { fileId, versionId, kind, comment, publish }) }
+  publishVersion(fileId:string,versionId:string,expectedDraftVersionId?:string|null,comment?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:publish', { fileId, versionId, expectedDraftVersionId, comment }) }
+  updateRetention(fileId:string,policy:FilesRetentionPolicy):Promise<void> { return ipcRenderer.invoke('sulla-files:retention', { fileId, policy }) }
+  recordLock(fileId:string,status:'ordinary'|'policy'):Promise<void> { return ipcRenderer.invoke('sulla-files:record-lock', { fileId, status }) }
+  unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
+  disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
+  purgeTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-purge', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
   keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
   makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }

@@ -2,12 +2,12 @@
   <main class="file-detail-main">
     <div class="detail-top">
       <div class="crumbs"><button type="button" @click="emit('close')">My Files</button><template v-for="crumb in pathCrumbs" :key="crumb"><span>›</span><span>{{ crumb }}</span></template></div>
-      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b></div>
+      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b><span v-if="item.publicationState" class="pill" :class="item.publicationState === 'published' ? 'ok' : 'draft'">{{ item.publicationState }}</span></div>
       <div class="top-actions">
         <button class="btn ghost ico" type="button" title="Back to files" @click="emit('close')"><span class="bi" v-html="icons.previous" /></button>
         <button class="btn" type="button" :disabled="busy" @click="download"><span class="bi" v-html="icons.download" /> Download</button>
         <button v-if="activeLink" class="btn" type="button" @click="copyLink"><span class="bi" v-html="icons.link" /> {{ copied ? 'Copied' : 'Copy link' }}</button>
-        <button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
+        <button v-if="item.deletedAt && dataSource.restoreTrash" class="btn" type="button" :disabled="busy" @click="restoreTrash">Restore from Trash</button><button v-if="canCheckout && !item.checkout" class="btn" type="button" :disabled="busy" @click="checkout">Check out</button><button v-if="canPublish && item.publicationState === 'draft'" class="btn" type="button" :disabled="busy" @click="publishCurrent">Publish current</button><button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
       </div>
     </div>
 
@@ -49,12 +49,46 @@
             <div class="tabs"><button v-for="tab in sideTabs" :key="tab" type="button" :class="{ on: sideTab === tab }" @click="sideTab = tab">{{ tab }}<span v-if="tab === 'Versions'" class="tag">{{ versions.length || item.versionCount }}</span></button></div>
             <div v-if="loading" class="pane state">Loading file details…</div>
             <div v-else-if="sideTab === 'Details'" class="pane">
-              <dl class="kv"><dt>Type</dt><dd>{{ item.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(item.size) }}</dd><dt v-if="detail?.recording?.duration_seconds">Length</dt><dd v-if="detail?.recording?.duration_seconds">{{ duration(detail.recording.duration_seconds) }}</dd><dt>Location</dt><dd>My Files › {{ pathCrumbs.join(' › ') }}</dd><dt>Owner</dt><dd>{{ owner }}</dd><dt>Modified</dt><dd>{{ formatDate(item.updatedAt) }}</dd><dt>Index</dt><dd><b>{{ item.indexStatus }}</b> · {{ item.indexReason }} <button v-if="['failed', 'unsupported'].includes(item.indexStatus)" class="link" type="button" :disabled="busy" @click="reindex">Re-index</button></dd><dt>Sync</dt><dd>{{ syncLabel }} <button v-if="item.syncState === 'online-only' && dataSource.capabilities.onlineOnly && dataSource.keepOnMac" class="link" type="button" :disabled="busy" @click="keepOnMac">Keep on this computer</button><button v-else-if="dataSource.capabilities.onlineOnly && dataSource.makeOnlineOnly" class="link" type="button" :disabled="busy" @click="makeOnlineOnly">Make online only</button></dd><dt>Public link</dt><dd><template v-if="activeLink"><span class="pill ok">On</span> {{ activeLink.viewCount }} views<template v-if="activeLink.expiresAt"> · expires {{ shortDate(activeLink.expiresAt) }}</template></template><span v-else>Off</span></dd></dl>
+              <section v-if="permissions.canManage && item.versioning" class="lifecycle-settings" aria-labelledby="lifecycle-settings-title">
+                <div class="section-heading"><h4 id="lifecycle-settings-title">Versioning settings</h4><span class="pill idle">Service controlled</span></div>
+                <form @submit.prevent="saveLifecycleSettings">
+                  <label class="check"><input v-model="lifecycleForm.enabled" type="checkbox"> Enable versioning</label>
+                  <label class="check"><input v-model="lifecycleForm.majorMinor" type="checkbox" :disabled="!lifecycleForm.enabled"> Major/minor versions</label>
+                  <label class="check"><input v-model="lifecycleForm.requireApproval" type="checkbox" :disabled="!lifecycleForm.enabled"> Require approval before publish</label>
+                  <label class="check"><input v-model="lifecycleForm.requireCheckout" type="checkbox" :disabled="!lifecycleForm.enabled"> Require checkout</label>
+                  <button class="btn sm" type="submit" :disabled="busy">Save settings</button>
+                </form>
+                <div v-if="permissions.canManage && item.record?.status === 'none'" class="irreversible-control">
+                  <label class="check"><input v-model="policyLockConfirmed" type="checkbox"> I understand a policy record lock is irreversible for this file.</label>
+                  <button class="btn sm danger" type="button" :disabled="busy || !policyLockConfirmed" @click="lockRecord('policy')">Apply policy lock</button>
+                </div>
+              </section>
+              <p v-if="item.retention?.reason" class="retention-reason">Retention lock: {{ item.retention.reason }}</p>
+              <section v-if="actionForm" class="lifecycle-form" aria-live="polite">
+                <div class="section-heading"><h4>{{ actionForm === 'retention' ? 'Retention policy' : actionForm === 'publish' ? 'Publish version' : 'Check in version' }}</h4><button class="link" type="button" @click="closeActionForm">Cancel</button></div>
+                <form @submit.prevent="submitActionForm">
+                  <template v-if="actionForm === 'retention'">
+                    <label>Mode<select v-model="retentionForm.mode"><option value="none">No retention policy</option><option value="date">Retain until date</option><option value="event">Retain until event</option></select></label>
+                    <label v-if="retentionForm.mode === 'date'">Retain until<input v-model="retentionForm.date" type="date" required><small v-if="retentionError" class="field-error">{{ retentionError }}</small></label>
+                    <template v-if="retentionForm.mode === 'event'"><label>Event name<input v-model="retentionForm.eventType" required maxlength="120"></label><label>Duration (days)<input v-model.number="retentionForm.durationDays" type="number" min="0" max="2147483647" step="1" required></label><label class="check"><input v-model="retentionForm.eventOccurred" type="checkbox"> Event has occurred</label><label v-if="retentionForm.eventOccurred">Occurred at<input v-model="retentionForm.eventOccurredAt" type="datetime-local" required></label></template>
+                  </template>
+                  <label v-else>Comment<input v-model="actionComment" :placeholder="actionForm === 'publish' ? 'Optional publication comment' : 'Describe this version'"></label>
+                  <p v-if="actionForm === 'publish'" class="note">This becomes the approved version. You can publish a newer version later.</p>
+                  <button class="btn sm primary" type="submit" :disabled="busy">{{ actionForm === 'retention' ? 'Save retention' : actionForm === 'publish' ? 'Publish version' : 'Check in version' }}</button>
+                </form>
+              </section>
+              <section v-if="canPurge" class="lifecycle-form purge-form" aria-labelledby="purge-title">
+                <div class="section-heading"><h4 id="purge-title">Permanent disposal</h4><span class="pill draft">Irreversible</span></div>
+                <p>This approved disposal is eligible for permanent deletion. Restore remains available until you confirm.</p>
+                <label class="check"><input v-model="purgeConfirmed" type="checkbox"> I understand this permanently deletes the trashed file and cannot be undone.</label>
+                <button class="btn sm danger" type="button" :disabled="busy || !purgeConfirmed" @click="purgeTrash">Permanently delete</button>
+              </section>
+              <dl class="kv"><dt>Type</dt><dd>{{ item.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(item.size) }}</dd><dt v-if="detail?.recording?.duration_seconds">Length</dt><dd v-if="detail?.recording?.duration_seconds">{{ duration(detail.recording.duration_seconds) }}</dd><dt>Location</dt><dd>My Files › {{ pathCrumbs.join(' › ') }}</dd><dt>Owner</dt><dd>{{ owner }}</dd><dt>Modified</dt><dd>{{ formatDate(item.updatedAt) }}</dd><dt v-if="item.publicationState">Publication</dt><dd v-if="item.publicationState"><span class="pill" :class="item.publicationState === 'published' ? 'ok' : 'draft'">{{ item.publicationState }}</span><span v-if="item.publishedVersionId" class="muted"> · {{ item.publishedVersionId === item.currentVersionId ? 'current version is published' : 'published version remains available' }}</span></dd><dt v-if="item.checkout">Checkout</dt><dd v-if="item.checkout">{{ item.checkout.userId }} · {{ formatDate(item.checkout.at) }}<button v-if="canCheckout" class="link" type="button" :disabled="busy" @click="releaseCheckout">Release</button></dd><dt v-if="item.retention">Retention</dt><dd v-if="item.retention"><span class="pill idle">{{ item.retention.mode }}</span><span v-if="item.retention.retainUntil"> · until {{ shortDate(item.retention.retainUntil) }}</span><button v-if="canManageLifecycle" class="link" type="button" :disabled="busy" @click="changeRetention">Change</button></dd><dt v-if="item.record">Record</dt><dd v-if="item.record"><span class="pill idle">{{ item.record.status }}</span><span v-if="item.record.lockedBy"> · locked by {{ item.record.lockedBy }}</span><button v-if="canManageLifecycle && item.record.status === 'none'" class="link" type="button" :disabled="busy" @click="lockRecord('ordinary')">Lock</button><button v-else-if="canManageLifecycle && item.record.status === 'ordinary'" class="link" type="button" :disabled="busy" @click="unlockRecord">Unlock</button></dd><dt v-if="item.disposal">Disposal</dt><dd v-if="item.disposal"><span class="pill" :class="item.disposal.status === 'pending' ? 'idle' : item.disposal.status === 'approved' ? 'ok' : 'draft'">{{ item.disposal.status }}</span><span v-if="item.disposal.extendedUntil"> · extended until {{ shortDate(item.disposal.extendedUntil) }}</span><template v-if="canManageLifecycle && item.disposal.status === 'pending'"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('reject')">Keep</button><button class="link" type="button" :disabled="busy" @click="reviewDisposal('approve')">Approve disposal</button><label class="inline-date">Extend until<input v-model="disposalExtendedUntil" type="date"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('extend', disposalExtendedUntil)">Extend</button></label></template></dd><dt>Index</dt><dd><b>{{ item.indexStatus }}</b> · {{ item.indexReason }} <button v-if="['failed', 'unsupported'].includes(item.indexStatus)" class="link" type="button" :disabled="busy" @click="reindex">Re-index</button></dd><dt>Sync</dt><dd>{{ syncLabel }} <button v-if="item.syncState === 'online-only' && dataSource.capabilities.onlineOnly && dataSource.keepOnMac" class="link" type="button" :disabled="busy" @click="keepOnMac">Keep on this computer</button><button v-else-if="dataSource.capabilities.onlineOnly && dataSource.makeOnlineOnly" class="link" type="button" :disabled="busy" @click="makeOnlineOnly">Make online only</button></dd><dt>Public link</dt><dd><template v-if="activeLink"><span class="pill ok">On</span> {{ activeLink.viewCount }} views<template v-if="activeLink.expiresAt"> · expires {{ shortDate(activeLink.expiresAt) }}</template></template><span v-else>Off</span></dd></dl>
               <div class="section"><h4>Made by</h4><div class="provenance"><span class="agent">S</span><div><b>{{ provenanceTitle }}</b><small>{{ provenanceDetail }}</small></div></div></div>
               <div v-if="detail?.links.length" class="section"><h4>Linked files</h4><div class="links"><button v-for="link in detail.links" :key="`${link.id}-${link.direction}`" type="button" @click="emit('open-linked', link.id)"><span class="file-glyph small" v-html="fileIcon(link.mime)" /><span>{{ link.path.split('/').at(-1) }}</span><small>{{ link.direction === 'incoming' ? 'links here' : link.kind.replaceAll('_', ' ') }}</small></button></div></div>
             </div>
             <div v-else-if="sideTab === 'Versions'" class="pane versions">
-              <div v-for="(version, index) in versions" :key="version.id" class="version"><span class="version-number" :class="{ current: version.current }">v{{ versions.length - index }}</span><div><b>{{ version.message || 'File updated' }}</b><small>{{ formatDate(version.created_at) }} · {{ version.created_by_id }} · {{ formatBytes(version.size) }}</small></div><span v-if="version.current" class="pill ok">Current</span><button v-else-if="!version.deleted" class="btn sm" type="button" :disabled="busy" @click="restore(version.id)">Restore</button></div>
+              <div class="version-actions"><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('minor')">New minor version</button><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('major')">New major version</button></div><div v-for="(version, index) in versions" :key="version.id" class="version"><span class="version-number" :class="{ current: version.current }">{{ version.versionNumber || `v${ versions.length - index }` }}</span><div><b>{{ version.message || 'File updated' }}</b><small>{{ formatDate(version.created_at) }} · {{ version.created_by_id }} · {{ formatBytes(version.size) }}</small></div><span v-if="version.current" class="pill ok">Current</span><span v-if="version.publicationStatus === 'published'" class="pill published">Published</span><button v-if="canPublish && version.publicationStatus !== 'published' && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="publish(version.id)">Publish</button><button v-else-if="!version.current && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="restore(version.id)">Restore</button></div>
               <p class="note">Restoring makes a new version. Nothing is overwritten.</p>
             </div>
             <div v-else-if="sideTab === 'Access'" class="pane">
@@ -75,35 +109,53 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 
-import type { FilesDataSource, FilesDetail, FilesItem, FilesSnapshot, FilesVersion, ShareActivity, ShareLink } from './types';
+import { filesItemHasActiveProtection } from './types';
+
+import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesVersion, ShareActivity, ShareLink } from './types';
 
 const props = defineProps<{ item:FilesItem; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
 const emit = defineEmits<{ close:[]; share:[]; restored:[]; 'open-linked':[fileId:string] }>();
+const item = reactive<FilesItem>({ ...props.item });
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
-const name = computed(() => props.item.path.split('/').at(-1) || props.item.path); const pathCrumbs = computed(() => props.item.path.split('/').slice(0, -1));
+const name = computed(() => item.path.split('/').at(-1) || item.path); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
 const transcript = computed(() => detail.value?.recording?.transcript || []); const chapters = computed(() => detail.value?.recording?.chapters || []);
-const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === props.item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => props.item.ownerDisplayName || props.collection.accountName || props.item.createdById || 'Unknown owner');
-const syncLabel = computed(() => props.item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
-const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(props.item.size) } · ${ props.item.mime }`);
-const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(props.item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(props.item.mime));
+const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => item.ownerDisplayName || props.collection.accountName || item.createdById || 'Unknown owner');
+const deniedPermissions = Object.freeze({ canEdit: false, canManage: false, canViewDraft: false, canPublish: false });
+const permissions = computed(() => detail.value?.capabilities ?? item.capabilities ?? deniedPermissions);
+const canPublish = computed(() => Boolean(props.dataSource.publishVersion && permissions.value.canPublish && item.publicationState));
+const canCheckout = computed(() => Boolean(props.dataSource.checkout && permissions.value.canEdit));
+const canCheckin = computed(() => Boolean(props.dataSource.checkin && permissions.value.canEdit && permissions.value.canViewDraft && item.versioning?.enabled));
+const canManageLifecycle = computed(() => permissions.value.canManage);
+const itemDisposalApproved = computed(() => item.disposal?.status === 'approved');
+const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
+const canPurge = computed(() => Boolean(item.deletedAt && props.dataSource.purgeTrash && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
+const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
+const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
+const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
-const provenanceTitle = computed(() => props.item.createdByType === 'agent-run' ? `Sulla · ${ props.item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || props.item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || props.item.createdById }.`);
+const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
 const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
-  const [metadata, history] = await Promise.allSettled([props.dataSource.detail(props.item.id), props.dataSource.history(props.item.id)]);
-  if (metadata.status === 'fulfilled') detail.value = metadata.value;
+  const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
+
+  if (metadata.status === 'fulfilled') {
+    detail.value = metadata.value;
+    if (metadata.value.item) Object.assign(item, metadata.value.item);
+  }
   else error.value = metadata.reason instanceof Error ? metadata.reason.message : String(metadata.reason);
+  const [history] = await Promise.allSettled([props.dataSource.history(item.id, item.currentVersionId)]);
+
   if (history.status === 'fulfilled') versions.value = history.value;
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
-    supportsMedia.value ? props.dataSource.mediaUrl(props.item.id, props.item.currentVersionId) : Promise.resolve(''),
+    supportsMedia.value ? props.dataSource.mediaUrl(item.id, item.currentVersionId) : Promise.resolve(''),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
@@ -111,12 +163,119 @@ onMounted(async() => {
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(props.item.id, name.value, props.item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function restore(id:string) { busy.value = true; try { await props.dataSource.restoreVersion(props.item.id, id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function reindex() { busy.value = true; try { await props.dataSource.reindex(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
+type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
+const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });
+const retentionForm = reactive({ mode: (item.retention?.mode === 'retain-until' ? 'date' : item.retention?.mode === 'event' ? 'event' : 'none') as 'none'|'date'|'event', date: item.retention?.retainUntil?.slice(0, 10) || '', eventType: item.retention?.eventType || '', durationDays: item.retention?.durationDays ?? 0, eventOccurred: Boolean(item.retention?.eventOccurredAt), eventOccurredAt: item.retention?.eventOccurredAt?.slice(0, 16) || '' });
+function openPublish(id:string) { actionForm.value = 'publish'; actionVersionId.value = id; actionComment.value = ''; sideTab.value = 'Details' }
+function openCheckin(kind:'major'|'minor') { actionForm.value = 'checkin'; actionKind.value = kind; actionVersionId.value = item.currentVersionId; actionComment.value = ''; sideTab.value = 'Details' }
+function closeActionForm() { actionForm.value = undefined; retentionError.value = '' }
+function parseDateOnly(value:string):Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) return undefined;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day, 23, 59, 59));
+
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? parsed : undefined;
+}
+function parseLocalDateTime(value:string):Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+
+  if (!match) return undefined;
+  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond = '0'] = match;
+  const expected = [rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond].map(Number);
+  const parsed = new Date(value);
+
+  if (!Number.isFinite(parsed.getTime())) return undefined;
+  const actual = [parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate(), parsed.getHours(), parsed.getMinutes(), parsed.getSeconds()];
+
+  return actual.every((part, index) => part === expected[index]) ? parsed : undefined;
+}
+async function submitActionForm() {
+  if (!actionForm.value) return;
+  error.value = '';
+  retentionError.value = '';
+  if (actionForm.value === 'publish') {
+    if (!props.dataSource.publishVersion || !actionVersionId.value) return;
+    if (await runLifecycle(() => props.dataSource.publishVersion!(item.id, actionVersionId.value, item.draftVersionId, actionComment.value.trim() || undefined))) closeActionForm();
+    return;
+  }
+  if (actionForm.value === 'checkin') {
+    if (!props.dataSource.checkin || !actionVersionId.value) return;
+    if (await runLifecycle(() => props.dataSource.checkin!(item.id, actionVersionId.value, actionKind.value, actionComment.value.trim(), false))) closeActionForm();
+    return;
+  }
+  if (!props.dataSource.updateRetention) return;
+  let policy:FilesRetentionPolicy;
+
+  if (retentionForm.mode === 'none') policy = { mode: 'none' };
+  else if (retentionForm.mode === 'date') {
+    const parsed = parseDateOnly(retentionForm.date);
+
+    if (!parsed) { retentionError.value = 'Enter a valid retention date.'; return }
+    policy = { mode: 'retain-until', retainUntil: parsed.toISOString() };
+  } else {
+    const durationDays = Number(retentionForm.durationDays);
+    const occurredAt = retentionForm.eventOccurred ? parseLocalDateTime(retentionForm.eventOccurredAt) : undefined;
+
+    if (!retentionForm.eventType.trim() || !Number.isSafeInteger(durationDays) || durationDays < 0 || durationDays > 2_147_483_647) { retentionError.value = 'Enter an event name and a non-negative whole-number duration.'; return }
+    if (retentionForm.eventOccurred && !occurredAt) { retentionError.value = 'Enter a valid event occurrence date and time.'; return }
+    policy = { mode: 'event', eventType: retentionForm.eventType.trim(), durationDays, eventOccurredAt: occurredAt?.toISOString() ?? null };
+  }
+  if (await runLifecycle(() => props.dataSource.updateRetention!(item.id, policy))) closeActionForm();
+}
+async function publish(id:string) { openPublish(id) }
+async function publishCurrent() { openPublish(item.currentVersionId) }
+async function checkin(kind:'major'|'minor') { openCheckin(kind) }
+async function restoreTrash() { if (!props.dataSource.restoreTrash) return; if (await runLifecycle(() => props.dataSource.restoreTrash!(item.id), false)) emit('restored') }
+async function purgeTrash() { if (!props.dataSource.purgeTrash || !canPurge.value || !purgeConfirmed.value) return; if (await runLifecycle(() => props.dataSource.purgeTrash!(item.id), false)) { purgeConfirmed.value = false; emit('restored') } }
+async function checkout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id)) }
+async function releaseCheckout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id, true)) }
+async function changeRetention() { if (!permissions.value.canManage) return; actionForm.value = 'retention'; retentionError.value = ''; error.value = ''; sideTab.value = 'Details' }
+async function saveLifecycleSettings() { if (!props.dataSource.updateLifecycle || !permissions.value.canManage) return; await runLifecycle(() => props.dataSource.updateLifecycle!(item.id, { ...lifecycleForm })) }
+async function lockRecord(status:'ordinary'|'policy') { if (!props.dataSource.recordLock || !permissions.value.canManage) return; if (await runLifecycle(() => props.dataSource.recordLock!(item.id, status))) policyLockConfirmed.value = false }
+async function unlockRecord() { if (!props.dataSource.unlockRecord || !permissions.value.canManage) return; await runLifecycle(() => props.dataSource.unlockRecord!(item.id)) }
+async function reviewDisposal(decision:'approve'|'reject'|'extend', extendedUntil?:string) {
+  if (!props.dataSource.disposalReview || !permissions.value.canManage) return;
+  error.value = '';
+  const extension = decision === 'extend' && extendedUntil ? parseDateOnly(extendedUntil) : undefined;
+
+  if (decision === 'extend' && (!extension || extension.getTime() <= Date.now())) { error.value = 'Enter a valid future extension date.'; return }
+  if (await runLifecycle(() => props.dataSource.disposalReview!(item.id, decision, extension?.toISOString()))) disposalExtendedUntil.value = '';
+}
+async function refreshLifecycleState():Promise<void> {
+  const metadata = await props.dataSource.detail(item.id);
+
+  detail.value = metadata;
+  if (metadata.item) Object.assign(item, metadata.item);
+  versions.value = await props.dataSource.history(item.id, item.currentVersionId);
+  Object.assign(lifecycleForm, {
+    enabled:         item.versioning?.enabled ?? false,
+    majorMinor:      item.versioning?.majorMinor ?? false,
+    requireApproval: item.versioning?.requireApproval ?? false,
+    requireCheckout: item.versioning?.requireCheckout ?? false,
+  });
+}
+async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<boolean> {
+  busy.value = true;
+  error.value = '';
+  try {
+    await action();
+    if (refresh) await refreshLifecycleState();
+    return true;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+async function reindex() { busy.value = true; try { await props.dataSource.reindex(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function revoke() { if (!activeLink.value || !props.dataSource.revokePublicLink) return; busy.value = true; try { await props.dataSource.revokePublicLink(activeLink.value.id); activeLink.value.revokedAt = new Date().toISOString() } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function keepOnMac() { if (!props.dataSource.keepOnMac) return; busy.value = true; try { await props.dataSource.keepOnMac(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; busy.value = true; try { await props.dataSource.makeOnlineOnly(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function keepOnMac() { if (!props.dataSource.keepOnMac) return; busy.value = true; try { await props.dataSource.keepOnMac(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; busy.value = true; try { await props.dataSource.makeOnlineOnly(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function copyLink() { if (!activeLink.value) return; try { await navigator.clipboard.writeText(activeLink.value.url); copied.value = true; setTimeout(() => { copied.value = false }, 1500) } catch { error.value = 'The link could not be copied.' } }
 function seek(seconds:number) { const media = video.value || audio.value; if (media) { media.currentTime = seconds; media.play().catch(() => undefined) } mediaTab.value = 'Preview' }
 function duration(seconds:number) { const value = Math.max(0, Math.round(Number(seconds) || 0)); return `${ Math.floor(value / 60) }:${ String(value % 60).padStart(2, '0') }` }
@@ -142,5 +301,7 @@ const icons = {
 
 <style scoped>
 .file-detail-main{min-width:0;min-height:0;overflow:auto;color:#1a2332;background:#f4f7fb;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;background-image:radial-gradient(900px 500px at 15% -10%,rgba(58,127,160,.10),transparent 60%),radial-gradient(700px 400px at 100% 0%,rgba(58,127,160,.06),transparent 55%)}button{font:inherit;color:inherit;cursor:pointer}.detail-top{display:flex;align-items:center;gap:14px;padding:12px 28px;border-bottom:1px solid rgba(26,35,50,.09);background:rgba(255,255,255,.4);backdrop-filter:blur(10px);position:sticky;top:0;z-index:5}.crumbs{display:flex;gap:6px;color:#8a94a3;font-size:12.5px;white-space:nowrap}.crumbs button{padding:0;border:0;background:none;color:#5b6778}.title{display:flex;align-items:center;gap:10px;min-width:0}.title b{overflow:hidden;font-size:13.5px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}.file-glyph{display:grid;width:26px;height:26px;place-items:center;border-radius:7px;background:rgba(217,64,58,.10);color:#c0392b;font-size:11px;font-weight:700}.file-glyph.small{width:24px;height:24px;background:rgba(58,127,160,.1);color:#2f6a86}.top-actions{display:flex;align-items:center;gap:8px;margin-left:auto}.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 11px;border:1px solid rgba(26,35,50,.14);border-radius:8px;background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}.btn:hover{border-color:rgba(58,127,160,.32);color:#2f6a86}.btn.primary{border-color:#3a7fa0;background:#3a7fa0;color:#fff}.btn.ghost{border-color:transparent;background:transparent}.btn.ico{width:30px;padding:6px}.btn.sm{padding:3px 8px;font-size:11.5px}.btn.danger{border-color:rgba(217,64,58,.35);color:#b1302b}.btn:disabled{cursor:not-allowed;opacity:.5}.detail-content{padding:20px 28px 60px}.detail-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px;align-items:start}.card{border:1px solid rgba(26,35,50,.09);border-radius:12px;background:rgba(255,255,255,.82);box-shadow:0 1px 2px rgba(26,35,50,.04),0 10px 30px -12px rgba(26,35,50,.12);backdrop-filter:blur(12px)}.preview-card{overflow:hidden}.player{position:relative;display:grid;aspect-ratio:16/9;place-items:center;overflow:hidden;background:#0f1721}.player video,.player img,.player iframe{width:100%;height:100%;border:0;object-fit:contain}.player audio{width:min(560px,80%)}.synthetic-frame{position:relative;width:100%;height:100%;background:linear-gradient(135deg,#1b2736,#243447)}.synthetic-frame .window{position:absolute;inset:12% 9%;overflow:hidden;border-radius:8px;background:#f4f7fb;box-shadow:0 20px 60px -20px #000}.synthetic-frame .window>i{display:inline-block;width:8px;height:8px;margin:8px 0 0 5px;border-radius:50%;background:#d0d8e0}.synthetic-frame .sidebar{position:absolute;top:22px;bottom:0;width:22%;background:#edf2f7;border-right:1px solid rgba(26,35,50,.08)}.synthetic-frame .lines{position:absolute;top:42px;right:12%;left:30%;height:55%;background:repeating-linear-gradient(#dbe3ea 0 8px,transparent 8px 20px)}.play{position:absolute;inset:calc(50% - 32px);display:grid;width:64px;height:64px;place-items:center;border-radius:50%;background:rgba(255,255,255,.92);font-size:24px}.preview-bar{background:rgba(255,255,255,.6);display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid rgba(26,35,50,.09)}.seg{display:flex;gap:2px;padding:2px;border:1px solid rgba(26,35,50,.14);border-radius:8px;background:#fff}.seg button{padding:4px 9px;border:0;border-radius:6px;background:transparent;color:#5b6778;font-size:12px}.seg button.on{background:rgba(58,127,160,.10);color:#2f6a86;font-weight:600}.meta{color:#8a94a3;font-size:12px}.pill{display:inline-flex;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}.preview-bar .pill{margin-left:auto}.pill.ok{background:rgba(31,157,85,.12);color:#167a42}.pill.idle{background:rgba(138,148,163,.16);color:#5b6778}.media-pane{min-height:150px;padding:14px 16px 16px}.media-pane h3{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px}.media-pane h3 small{margin-left:auto;color:#8a94a3;font-weight:400}.muted,.empty,.preview-note{color:#5b6778}.timeline{font-size:12.5px;line-height:1.55;display:grid;grid-template-columns:52px 1fr;gap:4px 12px}.timeline button{padding:2px 0;border:0;background:none;color:#2f6a86;font:11px ui-monospace,monospace;text-align:left}.timeline p{margin:0 0 6px}.chapters{display:grid;gap:6px}.chapters button{display:flex;justify-content:space-between;padding:9px 10px;border:1px solid rgba(26,35,50,.09);border-radius:8px;background:#fff;text-align:left}.chapters span{color:#8a94a3;font:11px ui-monospace,monospace}.side{position:sticky;top:68px}.tabs{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid rgba(26,35,50,.09);overflow:auto}.tabs button{padding:10px;border:0;border-bottom:2px solid transparent;background:transparent;color:#5b6778;font-size:12.5px;white-space:nowrap}.tabs button.on{border-bottom-color:#3a7fa0;color:#2f6a86;font-weight:600}.tag{margin-left:3px;padding:1px 5px;border-radius:5px;background:#eaf0f6;font-size:10px}.pane{padding:14px 16px 16px}.state{color:#5b6778}.kv{font-size:12.5px;display:grid;grid-template-columns:96px 1fr;gap:7px 10px;margin:0}.kv dt{color:#8a94a3}.kv dd{min-width:0;margin:0;overflow-wrap:anywhere}.link{padding:0;border:0;background:none;color:#2f6a86;font-weight:500}.section{margin-top:16px}.section h4{margin:0 0 8px;color:#8a94a3;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}.provenance{display:flex;gap:10px;padding:10px 12px;border:1px solid rgba(26,35,50,.09);border-radius:9px;background:rgba(26,35,50,.04)}.provenance b,.provenance small{display:block}.provenance small{margin-top:1px;color:#5b6778;font-size:11.5px}.agent,.avatar,.activity-icon{display:grid;width:28px;height:28px;flex:none;place-items:center;border-radius:50%;background:linear-gradient(135deg,#1a2332,#3a7fa0);color:#fff;font-size:9px;font-weight:700}.links{display:grid;gap:4px}.links button{display:flex;align-items:center;gap:9px;padding:6px 8px;border:0;border-radius:8px;background:none;text-align:left}.links button:hover{background:rgba(58,127,160,.06)}.links button>span:nth-child(2){min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.links small{color:#8a94a3}.version{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(26,35,50,.09)}.version>div{min-width:0;flex:1}.version b,.version small{display:block}.version b{font-weight:500}.version small{color:#8a94a3;font-size:11px}.version-number{padding:2px 6px;border-radius:5px;background:rgba(58,127,160,.10);color:#2f6a86;font:11px ui-monospace,monospace}.version-number.current{background:rgba(31,157,85,.12);color:#167a42}.note{color:#8a94a3;font-size:11.5px}.person{display:flex;align-items:center;gap:9px;padding:6px 0}.person>div{min-width:0;flex:1}.person b,.person small{display:block}.person small{color:#8a94a3;font-size:11px}.person>span:last-child{color:#5b6778;font-size:11.5px}.avatar.alt{background:linear-gradient(135deg,#b7a7e0,#6b4fbf)}.link-actions{display:flex;gap:6px;margin-top:10px}.link-actions .danger{margin-left:auto}.share-people{width:100%;margin-top:16px}.activity-row{display:flex;gap:10px;padding-bottom:14px}.activity-row b{font-weight:600}.activity-row small{display:block;color:#8a94a3;font-size:11px}.activity-icon{width:22px;height:22px}.error{margin-bottom:12px;padding:9px 11px;border-radius:8px;background:rgba(217,64,58,.11);color:#b1302b}@container(max-width:1180px){.detail-grid{grid-template-columns:minmax(0,1fr) 320px}.title b{max-width:280px}}@container(max-width:1120px){.detail-grid{grid-template-columns:1fr}.side{position:static}}@container(max-width:700px){.detail-top{padding:10px 14px;flex-wrap:wrap}.crumbs{display:none}.title{order:2;flex-basis:100%}.top-actions .btn:not(.primary):not(.ico){display:none}.detail-content{padding:12px 12px 40px}.preview-bar{flex-wrap:wrap}.preview-bar .meta{display:none}.kv{grid-template-columns:84px 1fr}}
-.file-glyph :deep(svg){width:15px;height:15px}.bi{display:grid;width:13px;height:13px;flex:none}.bi :deep(svg),.unavailable-icon :deep(svg){width:100%;height:100%}.play :deep(svg){width:28px;height:28px}.preview-unavailable{display:grid;justify-items:center;gap:8px;color:#8a94a3;text-align:center}.preview-unavailable b{color:#dbe3ea;font-size:13px}.preview-unavailable small{max-width:320px}.unavailable-icon{width:38px;height:38px}
+.file-glyph :deep(svg){width:15px;height:15px}.bi{display:grid;width:13px;height:13px;flex:none}.bi :deep(svg),.unavailable-icon :deep(svg){width:100%;height:100%}.play :deep(svg){width:28px;height:28px}.preview-unavailable{display:grid;justify-items:center;gap:8px;color:#8a94a3;text-align:center}.preview-unavailable b{color:#dbe3ea;font-size:13px}.preview-unavailable small{max-width:320px}.unavailable-icon{width:38px;height:38px}.pill.draft{background:rgba(217,64,58,.11);color:#b1302b}.pill.published{background:rgba(58,127,160,.12);color:#2f6a86}.version-actions{display:flex;gap:6px;margin-bottom:8px}.lifecycle-settings,.lifecycle-form{margin-bottom:16px;padding:12px;border:1px solid rgba(58,127,160,.18);border-radius:9px;background:rgba(58,127,160,.04)}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.section-heading h4{margin:0 0 8px}.lifecycle-settings form,.lifecycle-form form{display:grid;gap:8px}.check{display:flex;align-items:center;gap:7px}.lifecycle-form label{display:grid;gap:4px;color:#5b6778;font-size:12px}.lifecycle-form input,.lifecycle-form select{min-height:28px;padding:4px 7px;border:1px solid rgba(26,35,50,.16);border-radius:6px;background:#fff;color:inherit}.field-error{color:#b1302b}.irreversible-control{display:grid;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(217,64,58,.18)}.inline-date{display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:#5b6778;font-size:11px}.inline-date input{width:130px;padding:2px 4px;border:1px solid rgba(26,35,50,.16);border-radius:5px}
+.retention-reason{margin:-6px 0 16px;padding:8px 10px;border-radius:7px;background:rgba(217,64,58,.08);color:#8c302b;font-size:11.5px}
+.purge-form{border-color:rgba(217,64,58,.32);background:rgba(217,64,58,.05)}.purge-form p{margin:0 0 8px;color:#8c302b;font-size:11.5px}
 </style>

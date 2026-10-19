@@ -2,6 +2,52 @@ export type FilesSyncState = 'synced' | 'syncing' | 'paused' | 'error' | 'confli
 export type FilesIndexState = 'pending' | 'indexing' | 'indexed' | 'unsupported' | 'failed';
 export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; partial:number; unsupported:number; failed:number; complete:boolean }
 
+export type FilesPublicationStatus = 'draft' | 'published' | 'superseded';
+export type FilesPublicationState = 'draft' | 'published';
+export type FilesRetentionMode = 'none' | 'retain-until' | 'event';
+
+export interface FilesRetentionPolicy {
+  mode: FilesRetentionMode;
+  retainUntil?: string | null;
+  eventType?: string | null;
+  eventOccurredAt?: string | null;
+  durationDays?: number | null;
+  reason?: string | null;
+  active?: boolean;
+}
+
+export interface FilesItemCapabilities {
+  canEdit: boolean;
+  canManage: boolean;
+  canViewDraft: boolean;
+  canPublish: boolean;
+}
+
+export interface FilesVersioningSettings {
+  enabled: boolean;
+  majorMinor: boolean;
+  requireApproval: boolean;
+  requireCheckout: boolean;
+}
+
+export interface FilesCheckout {
+  userId: string;
+  deviceId?: string;
+  at: string;
+}
+
+export interface FilesRecordStatus {
+  status: 'none' | 'ordinary' | 'policy';
+  lockedAt?: string | null;
+  lockedBy?: string | null;
+}
+
+export interface FilesDisposalStatus {
+  status: 'none' | 'pending' | 'approved' | 'rejected';
+  reviewAt?: string | null;
+  extendedUntil?: string | null;
+}
+
 export function normalizeFilesIndexCoverage(coverage:Omit<FilesIndexCoverage, 'partial'> & { partial?:number }):FilesIndexCoverage {
   const knowsPartial = Number.isFinite(coverage.partial);
   const partial = knowsPartial ? Number(coverage.partial) : 0;
@@ -33,6 +79,38 @@ export interface FilesItem {
   indexReasonCode?: string;
   indexReason: string;
   indexedAt?: string;
+  draftVersionId?: string | null;
+  publishedVersionId?: string | null;
+  publicationState?: FilesPublicationState;
+  versioning?: FilesVersioningSettings;
+  checkout?: FilesCheckout | null;
+  retention?: FilesRetentionPolicy;
+  record?: FilesRecordStatus;
+  disposal?: FilesDisposalStatus;
+  capabilities?: FilesItemCapabilities;
+}
+
+export function filesItemHasActiveProtection(item:Pick<FilesItem, 'retention' | 'record' | 'disposal'>, now = Date.now()):boolean {
+  if (item.retention?.active !== undefined) return item.retention.active;
+  if (item.record?.status === 'ordinary' || item.record?.status === 'policy') return true;
+  const extension = Date.parse(item.disposal?.extendedUntil ?? '');
+
+  if (Number.isFinite(extension) && extension > now) return true;
+  if (item.retention?.mode === 'retain-until') {
+    const retainUntil = Date.parse(item.retention.retainUntil ?? '');
+
+    return Number.isFinite(retainUntil) && retainUntil > now;
+  }
+  if (item.retention?.mode === 'event') {
+    const durationDays = item.retention.durationDays;
+
+    if (!item.retention.eventOccurredAt || typeof durationDays !== 'number' || !Number.isSafeInteger(durationDays) || durationDays < 0) return true;
+    const occurredAt = Date.parse(item.retention.eventOccurredAt);
+
+    return !Number.isFinite(occurredAt) || occurredAt + durationDays * 86_400_000 > now;
+  }
+
+  return false;
 }
 
 export interface FilesVersion {
@@ -46,6 +124,9 @@ export interface FilesVersion {
   message?: string;
   device_id?: string;
   current: boolean;
+  versionNumber?: string;
+  versionKind?: 'major' | 'minor';
+  publicationStatus?: FilesPublicationStatus;
 }
 
 export interface FilesSnapshot {
@@ -75,6 +156,8 @@ export interface FilesPreview {
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
 export interface FilesDetail {
+  item?: FilesItem;
+  capabilities?: FilesItemCapabilities;
   provenance: { type:string; id:string };
   version: FilesVersion;
   recording?: { version_id:string; language?:string; transcript:RecordingSegment[]; chapters:RecordingChapter[]; duration_seconds?:number; generator?:string; generated_at?:string };
@@ -190,7 +273,7 @@ export interface FilesDataSource {
   syntheticPreview?:boolean;
   load(): Promise<FilesSnapshot>;
   selectCollection?(collectionId:string):void;
-  history(fileId:string): Promise<FilesVersion[]>;
+  history(fileId:string, currentVersionId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
   detail(fileId:string):Promise<FilesDetail>;
   mediaUrl(fileId:string, versionId?:string):Promise<string>;
@@ -210,7 +293,16 @@ export interface FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
+  updateLifecycle?(fileId:string, settings:FilesVersioningSettings): Promise<void>;
+  checkout?(fileId:string, force?:boolean): Promise<void>;
+  checkin?(fileId:string, versionId:string, kind:'major' | 'minor', comment:string, publish:boolean): Promise<void>;
+  publishVersion?(fileId:string, versionId:string, expectedDraftVersionId?:string | null, comment?:string): Promise<void>;
+  updateRetention?(fileId:string, policy:FilesRetentionPolicy): Promise<void>;
+  recordLock?(fileId:string, status:'ordinary' | 'policy'): Promise<void>;
+  unlockRecord?(fileId:string): Promise<void>;
+  disposalReview?(fileId:string, decision:'approve' | 'reject' | 'extend', extendedUntil?:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
+  purgeTrash?(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
   updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;
