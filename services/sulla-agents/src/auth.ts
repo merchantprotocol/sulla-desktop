@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { config } from './config.js';
+import { pool } from './db.js';
 
 import type { NextFunction, Request, Response } from 'express';
 
@@ -8,6 +9,7 @@ export interface RequestIdentity {
   issuer: string; subject: string; authorityId: string | null; organizationId: string | null; roles: string[];
 }
 export interface AuthenticatedRequest extends Request { identity?: RequestIdentity }
+export interface WorkflowServiceRequest extends Request { rawBody?: Buffer }
 
 function equalSecret(left: string, right: string): boolean {
   const a = Buffer.from(left); const b = Buffer.from(right);
@@ -51,6 +53,40 @@ export function authenticateRequest(request: AuthenticatedRequest, response: Res
     const status = Number(error?.status) === 403 ? 403 : 401;
     response.status(status).json({ error: status === 403 ? 'authorization_denied' : 'authentication_required' });
   });
+}
+
+export function authenticateWorkflowService(request: WorkflowServiceRequest, response: Response, next: NextFunction): void {
+  const timestamp = request.header('x-sulla-service-timestamp') ?? '';
+  const nonce = request.header('x-sulla-service-nonce') ?? '';
+  const signature = request.header('x-sulla-service-signature') ?? '';
+  const timestampMs = Number(timestamp);
+  const pathname = request.originalUrl.split('?')[0];
+  const rawBody = request.rawBody ?? Buffer.alloc(0);
+  const bodyDigest = crypto.createHash('sha256').update(rawBody).digest('hex');
+  const expected = crypto.createHmac('sha256', config.workflowsServiceToken)
+    .update(`${ request.method.toUpperCase() }\n${ pathname }\n${ timestamp }\n${ nonce }\n${ bodyDigest }`)
+    .digest('base64url');
+  if (config.mode !== 'server' || request.header('x-sulla-service-id') !== 'sulla-workflows' ||
+      !Number.isSafeInteger(timestampMs) || Math.abs(Date.now() - timestampMs) > 60_000 ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nonce) ||
+      !equalSecret(signature, expected)) {
+    response.status(401).json({ error: 'workflow_service_authentication_required' }); return;
+  }
+  pool.query(
+    `WITH expired AS (
+       DELETE FROM workflow_service_nonces WHERE expires_at <= NOW()
+     )
+     INSERT INTO workflow_service_nonces(nonce,expires_at)
+     VALUES ($1::uuid,NOW() + INTERVAL '2 minutes')
+     ON CONFLICT (nonce) DO NOTHING
+     RETURNING nonce`,
+    [nonce],
+  ).then(result => {
+    if (!result.rowCount) {
+      response.status(401).json({ error: 'workflow_service_authentication_required' }); return;
+    }
+    next();
+  }).catch(next);
 }
 
 export function requireEditor(request: AuthenticatedRequest, response: Response, next: NextFunction): void {

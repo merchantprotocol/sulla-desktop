@@ -17,7 +17,7 @@ RUN cd services/sulla-workflows && npm run build && npm prune --omit=dev
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache su-exec
+RUN apk add --no-cache util-linux && mkdir -p /run/sulla-workflows-bootstrap && chmod 0700 /run/sulla-workflows-bootstrap
 COPY --from=build /app/services/sulla-workflows/package.json ./services/sulla-workflows/package.json
 COPY --from=build /app/services/sulla-workflows/node_modules ./services/sulla-workflows/node_modules
 COPY --from=build /app/services/sulla-workflows/dist ./services/sulla-workflows/dist

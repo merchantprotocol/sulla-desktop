@@ -32,16 +32,25 @@ export async function migrate(): Promise<void> {
     output text NOT NULL DEFAULT '',
     error text,
     requested_by text NOT NULL, owner_issuer text, owner_subject text, authority_id uuid, organization_id uuid,
+    workflow_execution_id text, workflow_invocation_id uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
     started_at timestamptz,
     finished_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS workflow_service_nonces (
+    nonce uuid PRIMARY KEY,
+    expires_at timestamptz NOT NULL
   )`);
   await pool.query(`ALTER TABLE service_agent_definitions ADD COLUMN IF NOT EXISTS prompt_files jsonb NOT NULL DEFAULT '{}'::jsonb`);
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS owner_issuer text');
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS owner_subject text');
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS authority_id uuid');
   await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS organization_id uuid');
+  await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS workflow_execution_id text');
+  await pool.query('ALTER TABLE server_agent_runs ADD COLUMN IF NOT EXISTS workflow_invocation_id uuid');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_server_agent_runs_recent ON server_agent_runs(created_at DESC)');
   await pool.query('CREATE INDEX IF NOT EXISTS idx_server_agent_runs_tenant ON server_agent_runs(authority_id,organization_id,created_at DESC)');
+  await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_server_agent_runs_workflow_invocation ON server_agent_runs(workflow_invocation_id) WHERE workflow_invocation_id IS NOT NULL');
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_workflow_service_nonces_expiry ON workflow_service_nonces(expires_at)');
 }
