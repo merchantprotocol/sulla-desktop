@@ -24,7 +24,11 @@ The direct `curl | sudo bash` entry point remains available for source checkouts
 curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
 ```
 
-Compose builds the Vault, Files, and Projects images from the exact resolved source commit. Kubernetes defaults to CI-published `sha-<12 characters>` images for that commit and proves their manifests are available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring remains outside this server-console kit.
+Compose builds the six server services (Accounts/Keycloak, Vault, Files, Projects, Agents, Workflows, and Tools) plus the independent console from the exact resolved source commit. Kubernetes defaults to CI-published `sha-<12 characters>` images for that commit and proves their manifests are available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agents and Workflows receive private Accounts service credentials, isolated databases, Redis, the Docker runtime socket, and configured runner images.
+
+The gateway exposes only Accounts `/v1/web`, the Sulla Keycloak realm/resources, each service's `/ui` and public API prefix, and the console. Accounts private/admin/bootstrap paths remain internal. Files' public API is deliberately `/services/files/api/v1/...` and maps to the service's `/v1/...` without adding a second `v1`. The public Accounts/Keycloak origin must be the real external HTTPS origin in server deployments; do not configure a container-local `localhost` URL. The current service interfaces in this kit provide Accounts UI-session resolution to Vault, Agents, and Workflows. Files and Projects must not be described as Accounts UI-session authenticated until their corresponding service interfaces are deployed.
+
+Tools is provisioned with its capability store and a private executor credential, but the standalone kit does not invent a desktop controller or relay endpoint. Catalog-backed tools can start independently; execution targets that require a desktop executor remain unavailable until a real relay/controller endpoint is configured through the deployment environment.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 

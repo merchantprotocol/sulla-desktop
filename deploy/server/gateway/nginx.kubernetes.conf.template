@@ -28,12 +28,17 @@ http {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
-    location /accounts-api/ { proxy_pass http://sulla-accounts:3020/; }
+    location /accounts-api/v1/web/ { proxy_pass http://sulla-accounts:3020/v1/web/; }
+    location /accounts-api/ { return 404; }
+    location ^~ /auth/realms/sulla/ { proxy_pass http://sulla-accounts:8080; }
+    location ^~ /auth/resources/ { proxy_pass http://sulla-accounts:8080; }
+    location ^~ /auth/ { return 404; }
     location /services/accounts/ { proxy_pass http://sulla-accounts:3020/ui/; }
     location /services/vault/api/ { proxy_pass http://sulla-vault:8787/v1/; }
     location /services/vault/ { proxy_pass http://sulla-vault:8787/ui/; }
     location ~ ^/services/files/api/(?:healthz$|v1/(?:local|desktop|bootstrap|admin)(?:/|$)) { return 404; }
-    location /services/files/api/ { proxy_pass http://sulla-files:8792/; proxy_buffering off; proxy_request_buffering off; proxy_cache off; }
+    location /services/files/api/v1/ { proxy_pass http://sulla-files:8792/v1/; proxy_buffering off; proxy_request_buffering off; proxy_cache off; }
+    location /services/files/api/ { return 404; }
     location /services/files/ { proxy_pass http://sulla-files:8792/ui/; }
     location /services/projects/api/ { proxy_pass http://sulla-projects:8793/v1/; }
     location /services/projects/ { proxy_pass http://sulla-projects:8793/ui/; }
