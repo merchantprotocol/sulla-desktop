@@ -108,7 +108,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
-    if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
+    if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
     this.collectionId = collection.id;
     const selectedRoot = roots.find(root => root.collectionId === collection.id);
     this.rootId = selectedRoot?.id ?? '';
