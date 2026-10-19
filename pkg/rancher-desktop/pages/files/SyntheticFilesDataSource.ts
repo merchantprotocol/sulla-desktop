@@ -1,18 +1,62 @@
 import type {
-  FileAccessList, FilesDataSource, FilesDetail, FilesFolderState, FilesItem, FilesOperationItem,
+  FileAccessList, FilesCollisionDestination, FilesDataSource, FilesDetail, FilesFolderReplacementDestination,
+  FilesFolderState, FilesItem, FilesOperationItem,
   FilesOperationItemReceipt, FilesOperationReceipt, FilesOperationRequest, FilesOperationRetry,
   FilesOperationState, FilesPreview, FilesSnapshot, FilesTrashItem, FilesTrashPurgeResult,
   FilesTrashRestoreResult, FilesTrashTombstone, FilesVersion, FileShare, FolderShare,
   ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType,
 } from './types';
+import { isFilesFolderReplacementDestination, isFilesOperationState } from './types';
 
 /* eslint-disable @typescript-eslint/require-await -- the preview adapter intentionally implements the async production datasource contract in memory */
 
 const now = Date.now();
 const iso = (days = 0) => new Date(now + days * 86_400_000).toISOString();
 // Synthetic operation state is deliberately scoped to this browser session.
-const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v2';
+const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v3';
 const clone = <T>(value:T):T => JSON.parse(JSON.stringify(value)) as T;
+const canonical = (value:unknown):string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.keys(item).sort().map(key => [key, (item as Record<string, unknown>)[key]])) : item);
+const SHA256_CONSTANTS = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+const rotateRight = (value:number, bits:number) => value >>> bits | value << (32 - bits);
+const sha256 = (value:string) => {
+  const input = new TextEncoder().encode(value); const paddedLength = Math.ceil((input.length + 9) / 64) * 64; const bytes = new Uint8Array(paddedLength);
+
+  bytes.set(input); bytes[input.length] = 0x80;
+  new DataView(bytes.buffer).setUint32(paddedLength - 4, input.length * 8, false);
+  const hash = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  const words = new Uint32Array(64); const view = new DataView(bytes.buffer);
+
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    for (let index = 0; index < 16; index++) words[index] = view.getUint32(offset + index * 4, false);
+    for (let index = 16; index < 64; index++) {
+      const left = words[index - 15]; const right = words[index - 2];
+      const first = rotateRight(left, 7) ^ rotateRight(left, 18) ^ left >>> 3; const second = rotateRight(right, 17) ^ rotateRight(right, 19) ^ right >>> 10;
+
+      words[index] = (words[index - 16] + first + words[index - 7] + second) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = hash;
+
+    for (let index = 0; index < 64; index++) {
+      const choice = e & f ^ ~e & g; const majority = a & b ^ a & c ^ b & c;
+      const first = (h + (rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25)) + choice + SHA256_CONSTANTS[index] + words[index]) >>> 0;
+      const second = ((rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22)) + majority) >>> 0;
+
+      [a, b, c, d, e, f, g, h] = [(first + second) >>> 0, a, b, c, (d + first) >>> 0, e, f, g];
+    }
+    [a, b, c, d, e, f, g, h].forEach((word, index) => { hash[index] = (hash[index] + word) >>> 0 });
+  }
+  return [...hash].map(word => word.toString(16).padStart(8, '0')).join('');
+};
 
 interface SyntheticTrashState {
   listed:boolean;
@@ -48,6 +92,7 @@ interface SyntheticState {
   idempotency:Record<string, { fingerprint:string; operationId:string }>;
   folderReceipts:Record<string, SyntheticFolderReceiptPlan>;
   stars:Record<string, string[]>;
+  staleReplaceAdvanced:boolean;
 }
 
 /** Stateful synthetic fixtures for /files-preview. Never reads Files IPC or private files. */
@@ -58,7 +103,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     upload: false, versionHistory: true, restoreVersions: true, trash: true, orgSharing: true,
     publicLinks: true, onlineOnly: false, nativeFilesystem: false, durableOperations: true,
     folderReceipts: true, nativeFolderReceipts: false,
-    folderCollisionPolicies: ['keep-both', 'skip'] as ('keep-both' | 'skip')[],
+    folderCollisionPolicies: ['replace', 'keep-both', 'skip'] as ('replace' | 'keep-both' | 'skip')[],
     crossCollectionOperations: 'stored-same-audience-files' as const,
   };
   onlineOnlyReason = 'Synthetic preview';
@@ -89,6 +134,10 @@ export class SyntheticFilesDataSource implements FilesDataSource {
         this.file('synthetic-data', 'Projects/Beta/sample-data.json', 'application/json', 8_800, 'version-data', '4'),
         this.file('synthetic-readme', 'Readme.md', 'text/markdown', 2_100, 'version-readme', '5'),
         this.file('synthetic-collision', 'Projects/Beta/meeting-notes.md', 'text/markdown', 9_600, 'version-collision', '6'),
+        this.file('synthetic-replace-source-file', 'Projects/Alpha/Replace demo/incoming.md', 'text/markdown', 6_200, 'version-replace-source', '21'),
+        this.file('synthetic-replace-destination-file', 'Projects/Beta/Replace demo/preserved.md', 'text/markdown', 7_100, 'version-replace-destination', '24'),
+        this.file('synthetic-stale-source-file', 'Projects/Alpha/Stale subtree/incoming.txt', 'text/plain', 800, 'version-stale-source', '27'),
+        this.file('synthetic-stale-destination-file', 'Projects/Beta/Stale subtree/existing.txt', 'text/plain', 900, 'version-stale-destination', '30'),
         this.trashedFile('synthetic-trash-file', 'Archive/old-draft.md', 'text/markdown', 4_200, 'version-trash-file', '15', 'receipt-trash-file'),
         this.trashedFile('synthetic-trash-recovery', 'Archive/recovery-required.zip', 'application/zip', 48_000, 'version-trash-recovery', '16', 'receipt-trash-recovery', 'recovery-required'),
         this.trashedFile('synthetic-trash-child', 'Discarded project/notes.txt', 'text/plain', 1_900, 'version-trash-child', '18', 'receipt-trash-child', undefined, true, 'receipt-trash-folder'),
@@ -99,6 +148,12 @@ export class SyntheticFilesDataSource implements FilesDataSource {
         { folderId: 'synthetic-folder-alpha', path: 'Projects/Alpha', revision: '8' },
         { folderId: 'synthetic-folder-beta', path: 'Projects/Beta', revision: '9' },
         { folderId: 'synthetic-folder-empty', path: 'Projects/Empty folder', revision: '10' },
+        { folderId: 'synthetic-folder-replace-source', path: 'Projects/Alpha/Replace demo', revision: '21' },
+        { folderId: 'synthetic-folder-replace-source-nested', path: 'Projects/Alpha/Replace demo/Nested', revision: '22' },
+        { folderId: 'synthetic-folder-replace-destination', path: 'Projects/Beta/Replace demo', revision: '23' },
+        { folderId: 'synthetic-folder-replace-destination-empty', path: 'Projects/Beta/Replace demo/Preserved empty', revision: '25' },
+        { folderId: 'synthetic-folder-stale-source', path: 'Projects/Alpha/Stale subtree', revision: '26' },
+        { folderId: 'synthetic-folder-stale-destination', path: 'Projects/Beta/Stale subtree', revision: '29' },
         this.trashedFolder('synthetic-trash-folder', 'Discarded project', '17', 'receipt-trash-folder', true),
         this.trashedFolder('synthetic-trash-child-folder', 'Discarded project/Research', '20', 'receipt-trash-folder', false),
       ],
@@ -116,7 +171,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     };
 
     return {
-      revision: 20, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {},
+      revision: 30, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {},
       folderReceipts: {
         'receipt-trash-folder': {
           collectionId: primary.id, rootFolderId: 'synthetic-trash-folder', rootPath: 'Discarded project',
@@ -130,7 +185,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
           ],
         },
       },
-      stars: {},
+      stars: {}, staleReplaceAdvanced: false,
     };
   }
 
@@ -139,7 +194,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const raw = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(STORAGE_KEY);
       const value = raw ? JSON.parse(raw) as SyntheticState : null;
 
-      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts ? value : null;
+      return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts && typeof value.staleReplaceAdvanced === 'boolean' ? value : null;
     } catch { return null }
   }
   private persist() {
@@ -177,11 +232,35 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   private fileState(file:FilesItem, collectionId:string):FilesOperationState {
     return { collectionId, fileId: file.id, path: file.path, versionId: file.currentVersionId, revision: file.operationRevision ?? '0', deleted: Boolean(file.deletedAt) };
   }
-  private sameFileState(a?:FilesOperationState, b?:FilesOperationState) {
-    return Boolean(a && b && a.collectionId === b.collectionId && a.fileId === b.fileId && a.path === b.path && a.versionId === b.versionId && a.revision === b.revision && a.deleted === b.deleted);
+  private sameFileState(a?:FilesCollisionDestination, b?:FilesCollisionDestination) {
+    return isFilesOperationState(a) && isFilesOperationState(b) && a.collectionId === b.collectionId && a.fileId === b.fileId && a.path === b.path && a.versionId === b.versionId && a.revision === b.revision && a.deleted === b.deleted;
   }
   private sameFolderState(a?:FilesFolderState, b?:FilesFolderState) {
     return Boolean(a && b && a.folderId === b.folderId && a.path === b.path && a.revision === b.revision);
+  }
+  private sameFolderReplacementDestination(a?:FilesCollisionDestination, b?:FilesCollisionDestination) {
+    return isFilesFolderReplacementDestination(a) && isFilesFolderReplacementDestination(b) && this.sameFolderState(a, b) && a.subtreeSignature === b.subtreeSignature;
+  }
+  private folderReplacementDestination(collection:SyntheticCollection, path:string):FilesFolderReplacementDestination | undefined {
+    const root = this.activeFolderAt(collection, path);
+
+    if (!root) return undefined;
+    const files = collection.files.filter(file => !file.deletedAt && file.path.startsWith(path + '/')).sort((a, b) => a.path.localeCompare(b.path));
+    const folders = collection.folders.filter(folder => !folder.deletedAt && (folder.path === path || folder.path.startsWith(path + '/'))).sort((a, b) => a.path.localeCompare(b.path));
+    const fileIds = new Set(files.map(file => file.id));
+    const folderShares = this.folderShares.filter(share => share.collectionId === collection.id && (share.folderPath === path || share.folderPath.startsWith(path + '/'))).map(share => clone(share)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const fileShares = this.fileShares.filter(share => fileIds.has(share.fileId)).map(share => clone(share)).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    const subtreeSignature = sha256(canonical({
+      files: files.map(file => ({ id: file.id, path: file.path, versionId: file.currentVersionId, revision: file.operationRevision ?? '0', deleted: false })),
+      folders: folders.map(folder => ({ folderId: folder.folderId, path: folder.path, revision: folder.revision })),
+      folderShares,
+      publicLinks: [],
+      fileSharesSignature: sha256(canonical(fileShares)),
+      fileLinksSignature: sha256(canonical([])),
+      nativeSignature: sha256(canonical({ files: [], directories: [] })),
+    }));
+
+    return { folderId: root.folderId, path: root.path, revision: root.revision, subtreeSignature };
   }
   private activeFileAt(collection:SyntheticCollection, path:string, ignored = new Set<string>()) { return collection.files.find(file => !file.deletedAt && file.path === path && !ignored.has(file.id)) }
   private activeFolderAt(collection:SyntheticCollection, path:string, ignored = new Set<string>()) { return collection.folders.find(folder => !folder.deletedAt && folder.path === path && !ignored.has(folder.folderId)) }
@@ -286,7 +365,12 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const receipt = operation.receipt.items.find(item => item.itemId === id); const override = retry.items?.find(item => item.itemId === id);
 
       if (!receipt || !receipt.retryable || !['failed', 'cancelled'].includes(receipt.state)) throw new Error('Only retryable failed or cancelled synthetic items can be retried');
-      if (override?.collisionPolicy === 'replace' && (!receipt.error?.destination || !override.expectedDestination || !this.sameFileState(receipt.error.destination, override.expectedDestination))) throw new Error('Replace requires the exact displayed synthetic destination snapshot');
+      if (override?.collisionPolicy === 'replace') {
+        const displayed = receipt.error?.destination; const expected = override.expectedDestination;
+        const exact = this.sameFileState(displayed, expected) || this.sameFolderReplacementDestination(displayed, expected);
+
+        if (!exact) throw new Error('Replace requires the exact displayed synthetic destination snapshot');
+      }
       return { id, receipt, override };
     });
 
@@ -337,16 +421,16 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const override = operation.retryOverrides[item.itemId]; const policy = override?.collisionPolicy ?? item.collisionPolicy; const collection = this.collection(operation.request.collectionId);
 
       if (item.action === 'create-folder') this.executeCreateFolder(collection, item, receipt, receiptId, policy);
-      else if (item.kind === 'folder' || item.folderPath) this.executeFolder(collection, item, receipt, receiptId, policy);
+      else if (item.kind === 'folder' || item.folderPath) this.executeFolder(collection, item, receipt, receiptId, policy, override?.expectedDestination ?? item.expectedDestination);
       else this.executeFile(collection, item, receipt, receiptId, policy, override?.expectedDestination ?? item.expectedDestination);
       if (receipt.state === 'completed') operation.mutations[item.itemId] = this.captureMutation(before, this.state.collections);
     } catch (cause) {
-      const error = cause as { status?:number; code?:string; message?:string; destination?:FilesOperationState };
+      const error = cause as { status?:number; code?:string; message?:string; destination?:FilesCollisionDestination };
 
       Object.assign(receipt, { state: 'failed', receiptId: null, error: { status: error.status ?? 409, code: error.code ?? 'state-conflict', message: error.message ?? String(cause), ...(error.destination ? { destination: error.destination } : {}) }, retryable: true, undoSupported: false });
     }
   }
-  private resolveDestination(collection:SyntheticCollection, requested:string, policy:FilesOperationItem['collisionPolicy'], receipt:FilesOperationItemReceipt, ignoredFiles = new Set<string>(), ignoredFolders = new Set<string>(), expected?:FilesOperationState) {
+  private resolveDestination(collection:SyntheticCollection, requested:string, policy:FilesOperationItem['collisionPolicy'], receipt:FilesOperationItemReceipt, ignoredFiles = new Set<string>(), ignoredFolders = new Set<string>(), expected?:FilesCollisionDestination) {
     const file = this.activeFileAt(collection, requested, ignoredFiles); const folder = this.activeFolderAt(collection, requested, ignoredFolders);
 
     if (!file && !folder) return { path: requested };
@@ -358,7 +442,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (!file || !expected || !this.sameFileState(destination, expected)) throw { status: 409, code: 'destination-conflict', message: 'Replace requires the current authorized synthetic destination snapshot.', ...(destination ? { destination } : {}) };
     return { path: requested, displaced: file, displacedBefore: destination };
   }
-  private executeFile(source:SyntheticCollection, item:FilesOperationItem, receipt:FilesOperationItemReceipt, receiptId:string, policy?:FilesOperationItem['collisionPolicy'], expectedDestination?:FilesOperationState) {
+  private executeFile(source:SyntheticCollection, item:FilesOperationItem, receipt:FilesOperationItemReceipt, receiptId:string, policy?:FilesOperationItem['collisionPolicy'], expectedDestination?:FilesCollisionDestination) {
     const file = source.files.find(candidate => candidate.id === item.fileId && !candidate.deletedAt);
 
     if (!file) throw { code: 'state-conflict', message: 'Synthetic source file is no longer available.' };
@@ -377,7 +461,8 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic destination path is required.' };
     const targetCollection = this.collection(item.targetCollectionId ?? source.id);
     if (item.targetCollectionId && policy === 'replace') throw { status: 422, code: 'cross-collection-replace-unavailable', message: 'Synthetic cross-collection Replace is unavailable.' };
-    const target = this.resolveDestination(targetCollection, this.normalizePath(item.targetPath), policy, receipt, new Set<string>(item.action === 'move' ? [file.id] : []), new Set<string>(), expectedDestination);
+    const expectedFileDestination = isFilesOperationState(expectedDestination) ? expectedDestination : undefined;
+    const target = this.resolveDestination(targetCollection, this.normalizePath(item.targetPath), policy, receipt, new Set<string>(item.action === 'move' ? [file.id] : []), new Set<string>(), expectedFileDestination);
     if (!target) return;
     if (target.displaced) {
       const slash = target.path.lastIndexOf('/'); const parent = slash < 0 ? '' : target.path.slice(0, slash); const name = slash < 0 ? target.path : target.path.slice(slash + 1);
@@ -406,7 +491,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     collection.folders.push(folder);
     Object.assign(receipt, { receiptId, before: null, after: clone(folder), state: 'completed', error: null, undoSupported: true, retryable: false });
   }
-  private executeFolder(collection:SyntheticCollection, item:FilesOperationItem, receipt:FilesOperationItemReceipt, receiptId:string, policy?:FilesOperationItem['collisionPolicy']) {
+  private executeFolder(collection:SyntheticCollection, item:FilesOperationItem, receipt:FilesOperationItemReceipt, receiptId:string, policy?:FilesOperationItem['collisionPolicy'], expectedDestination?:FilesCollisionDestination) {
     const sourcePath = this.normalizePath(item.folderPath ?? ''); const folder = collection.folders.find(candidate => !candidate.deletedAt && candidate.path === sourcePath);
 
     if (!folder || item.expectedFolder && !this.sameFolderState(folder, item.expectedFolder)) throw { code: 'state-conflict', message: 'Synthetic folder or revision changed.' };
@@ -433,21 +518,60 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       receipt.after = null;
     } else {
       if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic folder destination is required.' };
-      if (policy === 'replace') throw { status: 422, code: 'folder-replace-unavailable', message: 'Synthetic folders support Keep Both or Skip, not Replace.' };
       const requestedTarget = this.normalizePath(item.targetPath);
 
-      if (requestedTarget === sourcePath || requestedTarget.startsWith(sourcePath + '/')) throw { status: 409, code: 'invalid-operation', message: 'A synthetic folder cannot be moved or copied into itself.' };
+      if (item.targetCollectionId && item.targetCollectionId !== collection.id) throw { status: 422, code: 'cross-collection-folder-unsupported', message: 'Synthetic cross-collection folder transfer is unavailable.' };
+      if (requestedTarget === sourcePath || requestedTarget.startsWith(sourcePath + '/') || sourcePath.startsWith(requestedTarget + '/')) throw { status: 409, code: 'invalid-operation', message: 'A synthetic folder destination cannot overlap its source.' };
       const ignoredFiles = new Set(files.map(file => file.id)); const ignoredFolders = new Set(folders.map(value => value.folderId));
-      const target = this.resolveDestination(collection, requestedTarget, policy, receipt, item.action === 'move' ? ignoredFiles : new Set<string>(), item.action === 'move' ? ignoredFolders : new Set<string>());
-      if (!target) return;
-      const mappedFiles = files.map(file => ({ file, path: target.path + file.path.slice(sourcePath.length) })); const mappedFolders = folders.map(value => ({ folder: value, path: target.path + value.path.slice(sourcePath.length) }));
+      const moveIgnoredFiles = item.action === 'move' ? ignoredFiles : new Set<string>(); const moveIgnoredFolders = item.action === 'move' ? ignoredFolders : new Set<string>();
+      const destinationFile = this.activeFileAt(collection, requestedTarget, moveIgnoredFiles); const destinationFolder = this.activeFolderAt(collection, requestedTarget, moveIgnoredFolders);
+      let targetPath = requestedTarget;
+
+      if (destinationFile || destinationFolder) {
+        if (policy === 'skip') { Object.assign(receipt, { state: 'skipped', error: null, retryable: false, undoSupported: false }); return }
+        if (policy === 'keep-both') targetPath = this.keepBothPath(collection, requestedTarget, moveIgnoredFiles, moveIgnoredFolders);
+        else {
+          const displayed = destinationFolder ? this.folderReplacementDestination(collection, requestedTarget) : undefined;
+
+          if (policy !== 'replace') {
+            // This fixture advances only a descendant revision after exposing the
+            // snapshot. The unchanged root revision makes the retry depend on the
+            // subtree signature, matching the service's stale-tree CAS contract.
+            if (destinationFolder?.folderId === 'synthetic-folder-stale-destination' && displayed && !this.state.staleReplaceAdvanced) {
+              const child = collection.files.find(file => file.id === 'synthetic-stale-destination-file');
+
+              this.state.staleReplaceAdvanced = true;
+              if (child) { child.operationRevision = this.nextRevision(); child.updatedAt = new Date().toISOString() }
+            }
+            throw { status: 409, code: 'destination-conflict', message: 'A synthetic folder already exists at ' + requestedTarget + '. Choose Replace, Keep Both or Skip.', ...(displayed ? { destination: displayed } : {}) };
+          }
+          if (!displayed || !this.sameFolderReplacementDestination(displayed, expectedDestination)) {
+            throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination subtree changed; refresh Files.', ...(displayed ? { destination: displayed } : {}) };
+          }
+          const destinationFiles = collection.files.filter(file => !file.deletedAt && file.path.startsWith(requestedTarget + '/'));
+          const destinationFolders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === requestedTarget || candidate.path.startsWith(requestedTarget + '/')));
+          const slash = requestedTarget.lastIndexOf('/'); const parent = slash < 0 ? '' : requestedTarget.slice(0, slash); const name = slash < 0 ? requestedTarget : requestedTarget.slice(slash + 1);
+          const recovery = [parent, '.replaced-' + receiptId + '-' + name].filter(Boolean).join('/');
+
+          if (this.activeFileAt(collection, recovery) || this.activeFolderAt(collection, recovery) || collection.files.some(file => !file.deletedAt && file.path.startsWith(recovery + '/')) || collection.folders.some(candidate => !candidate.deletedAt && candidate.path.startsWith(recovery + '/'))) {
+            throw { status: 409, code: 'state-conflict', message: 'Synthetic Replace recovery sibling is occupied.' };
+          }
+          receipt.displacedBefore = { folderId: destinationFolder!.folderId, path: destinationFolder!.path, revision: destinationFolder!.revision };
+          destinationFolders.forEach(candidate => { candidate.path = recovery + candidate.path.slice(requestedTarget.length); candidate.revision = this.nextRevision() });
+          destinationFiles.forEach(file => { file.path = recovery + file.path.slice(requestedTarget.length); file.operationRevision = this.nextRevision(); file.updatedAt = new Date().toISOString() });
+          const displacedRoot = destinationFolders.find(candidate => candidate.folderId === destinationFolder!.folderId)!;
+
+          receipt.displacedAfter = { folderId: displacedRoot.folderId, path: displacedRoot.path, revision: displacedRoot.revision };
+        }
+      }
+      const mappedFiles = files.map(file => ({ file, path: targetPath + file.path.slice(sourcePath.length) })); const mappedFolders = folders.map(value => ({ folder: value, path: targetPath + value.path.slice(sourcePath.length) }));
       const conflict = mappedFiles.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders)) ?? mappedFolders.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders));
 
       if (conflict) throw { code: 'destination-conflict', message: 'A synthetic descendant already exists at ' + conflict.path + '.' };
       if (item.action === 'copy') {
         mappedFolders.forEach(value => collection.folders.push({ folderId: this.nextId('synthetic-folder-copy'), path: value.path, revision: this.nextRevision() }));
         mappedFiles.forEach(value => collection.files.push({ ...clone(value.file), id: this.nextId('synthetic-copy'), path: value.path, currentVersionId: this.nextId('version-copy'), operationRevision: this.nextRevision(), updatedAt: new Date().toISOString() }));
-        const copied = collection.folders.find(value => value.path === target.path)!; receipt.after = clone(copied);
+        const copied = collection.folders.find(value => value.path === targetPath)!; receipt.after = clone(copied);
       } else {
         mappedFolders.forEach(value => { value.folder.path = value.path; value.folder.revision = this.nextRevision() });
         mappedFiles.forEach(value => { value.file.path = value.path; value.file.operationRevision = this.nextRevision(); value.file.updatedAt = new Date().toISOString() });
