@@ -526,6 +526,11 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const moveIgnoredFiles = item.action === 'move' ? ignoredFiles : new Set<string>(); const moveIgnoredFolders = item.action === 'move' ? ignoredFolders : new Set<string>();
       const destinationFile = this.activeFileAt(collection, requestedTarget, moveIgnoredFiles); const destinationFolder = this.activeFolderAt(collection, requestedTarget, moveIgnoredFolders);
       let targetPath = requestedTarget;
+      let displacedFiles:SyntheticFile[] = []; let displacedFolders:SyntheticFolder[] = []; let recovery:string | undefined;
+
+      if (policy === 'replace' && !destinationFile && !destinationFolder) {
+        throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination no longer exists; refresh Files.', ...(expectedDestination ? { destination: clone(expectedDestination) } : {}) };
+      }
 
       if (destinationFile || destinationFolder) {
         if (policy === 'skip') { Object.assign(receipt, { state: 'skipped', error: null, retryable: false, undoSupported: false }); return }
@@ -546,28 +551,32 @@ export class SyntheticFilesDataSource implements FilesDataSource {
             throw { status: 409, code: 'destination-conflict', message: 'A synthetic folder already exists at ' + requestedTarget + '. Choose Replace, Keep Both or Skip.', ...(displayed ? { destination: displayed } : {}) };
           }
           if (!displayed || !this.sameFolderReplacementDestination(displayed, expectedDestination)) {
-            throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination subtree changed; refresh Files.', ...(displayed ? { destination: displayed } : {}) };
+            throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination subtree changed; refresh Files.', ...(displayed ? { destination: displayed } : expectedDestination ? { destination: clone(expectedDestination) } : {}) };
           }
-          const destinationFiles = collection.files.filter(file => !file.deletedAt && file.path.startsWith(requestedTarget + '/'));
-          const destinationFolders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === requestedTarget || candidate.path.startsWith(requestedTarget + '/')));
+          displacedFiles = collection.files.filter(file => !file.deletedAt && file.path.startsWith(requestedTarget + '/'));
+          displacedFolders = collection.folders.filter(candidate => !candidate.deletedAt && (candidate.path === requestedTarget || candidate.path.startsWith(requestedTarget + '/')));
           const slash = requestedTarget.lastIndexOf('/'); const parent = slash < 0 ? '' : requestedTarget.slice(0, slash); const name = slash < 0 ? requestedTarget : requestedTarget.slice(slash + 1);
-          const recovery = [parent, '.replaced-' + receiptId + '-' + name].filter(Boolean).join('/');
+          recovery = [parent, '.replaced-' + receiptId + '-' + name].filter(Boolean).join('/');
 
           if (this.activeFileAt(collection, recovery) || this.activeFolderAt(collection, recovery) || collection.files.some(file => !file.deletedAt && file.path.startsWith(recovery + '/')) || collection.folders.some(candidate => !candidate.deletedAt && candidate.path.startsWith(recovery + '/'))) {
             throw { status: 409, code: 'state-conflict', message: 'Synthetic Replace recovery sibling is occupied.' };
           }
-          receipt.displacedBefore = { folderId: destinationFolder!.folderId, path: destinationFolder!.path, revision: destinationFolder!.revision };
-          destinationFolders.forEach(candidate => { candidate.path = recovery + candidate.path.slice(requestedTarget.length); candidate.revision = this.nextRevision() });
-          destinationFiles.forEach(file => { file.path = recovery + file.path.slice(requestedTarget.length); file.operationRevision = this.nextRevision(); file.updatedAt = new Date().toISOString() });
-          const displacedRoot = destinationFolders.find(candidate => candidate.folderId === destinationFolder!.folderId)!;
-
-          receipt.displacedAfter = { folderId: displacedRoot.folderId, path: displacedRoot.path, revision: displacedRoot.revision };
         }
       }
       const mappedFiles = files.map(file => ({ file, path: targetPath + file.path.slice(sourcePath.length) })); const mappedFolders = folders.map(value => ({ folder: value, path: targetPath + value.path.slice(sourcePath.length) }));
-      const conflict = mappedFiles.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders)) ?? mappedFolders.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders));
+      const preflightFiles = new Set([...ignoredFiles, ...displacedFiles.map(file => file.id)]); const preflightFolders = new Set([...ignoredFolders, ...displacedFolders.map(candidate => candidate.folderId)]);
+      const conflict = mappedFiles.find(value => this.activeFileAt(collection, value.path, preflightFiles) || this.activeFolderAt(collection, value.path, preflightFolders)) ?? mappedFolders.find(value => this.activeFileAt(collection, value.path, preflightFiles) || this.activeFolderAt(collection, value.path, preflightFolders));
 
       if (conflict) throw { code: 'destination-conflict', message: 'A synthetic descendant already exists at ' + conflict.path + '.' };
+      if (destinationFolder && recovery) {
+        const recoveryPath = recovery;
+
+        receipt.displacedBefore = { folderId: destinationFolder.folderId, path: destinationFolder.path, revision: destinationFolder.revision };
+        displacedFolders.forEach(candidate => { candidate.path = recoveryPath + candidate.path.slice(requestedTarget.length); candidate.revision = this.nextRevision() });
+        displacedFiles.forEach(file => { file.path = recoveryPath + file.path.slice(requestedTarget.length); file.operationRevision = this.nextRevision(); file.updatedAt = new Date().toISOString() });
+
+        receipt.displacedAfter = { folderId: destinationFolder.folderId, path: destinationFolder.path, revision: destinationFolder.revision };
+      }
       if (item.action === 'copy') {
         mappedFolders.forEach(value => collection.folders.push({ folderId: this.nextId('synthetic-folder-copy'), path: value.path, revision: this.nextRevision() }));
         mappedFiles.forEach(value => collection.files.push({ ...clone(value.file), id: this.nextId('synthetic-copy'), path: value.path, currentVersionId: this.nextId('version-copy'), operationRevision: this.nextRevision(), updatedAt: new Date().toISOString() }));
