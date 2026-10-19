@@ -169,8 +169,8 @@ try {
   await waitFor(async() => run('mountpoint', ['-q', mountRoot]).then(() => true, () => false), `FUSE mount did not become ready: ${ fuseError }`);
   console.log(JSON.stringify({
     ready: true,
-    url: `http://${ reachableAddress() }:${ port }/proof-control/`,
-    localhostUrl: `http://127.0.0.1:${ port }/proof-control/`,
+    url: `http://127.0.0.1:${ port }/proof-control/`,
+    vmUrl: `http://${ reachableAddress() }:${ port }/proof-control/`,
     fixture: basename(root),
     sourcePath: proofPath,
     mountPath: mountedPath,
