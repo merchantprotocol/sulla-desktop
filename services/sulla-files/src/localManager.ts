@@ -323,32 +323,66 @@ export class LocalFilesManager {
   }
 
   async finishNativePublication(operationId:string, proof?:NativePublicationCompletionProof, error?:string):Promise<void> {
-    const operation = (await this.db.query(`SELECT o.*,f.current_version_id FROM files_native_source_operations o
-      LEFT JOIN files f ON f.id=o.file_id WHERE o.operation_id=$1`, [operationId])).rows[0];
-    if (operation?.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
-    if (operation.state === 'completed' && proof?.nextSourceRevision === operation.next_source_revision) return;
-    if (operation.state === 'recovery-required' && !proof) return;
-    if (proof) {
-      const exact = proof.originalSourceRevision === operation.source_revision && proof.originalSourceHash === operation.source_hash &&
+    if (!proof) {
+      const result = await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
+      if (result.rowCount === 1) return;
+      const operation = (await this.db.query('SELECT direction,state FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (operation?.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+      if (operation.state === 'recovery-required') return;
+      throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+    }
+
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const identity = (await client.query('SELECT file_id,direction FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (identity?.direction !== 'publish' || !identity.file_id) throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+
+      // Match fuseWriteNative's file -> source lock order. The completion proof,
+      // current Files version, and current source identity are then one atomic
+      // decision; neither a new FUSE commit nor a reselection can slip between
+      // validation and activation.
+      const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+      const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+      const operation = (await client.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1 FOR UPDATE', [operationId])).rows[0];
+      if (operation.state === 'completed' && proof.nextSourceRevision === operation.next_source_revision) {
+        await client.query('COMMIT');
+        return;
+      }
+      const exactProof = proof.originalSourceRevision === operation.source_revision && proof.originalSourceHash === operation.source_hash &&
         proof.currentSourceHash === operation.desired_hash && proof.filesBaseVersionId === operation.files_base_version_id &&
         proof.currentFilesVersionId === operation.files_version_id;
-      if (!exact) throw Object.assign(new Error('Native publication acknowledgement does not match its durable source and Files identities'), { status: 409 });
-    }
-    if (proof && operation.current_version_id !== operation.files_version_id) {
-      await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
-        last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW() WHERE operation_id=$1`,
-      [operationId, proof.nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
-      throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
-    }
-    const result = proof
-      ? await this.db.query(`WITH completed AS (
-          UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
-          WHERE operation_id=$1 AND direction='publish' AND state IN('publishing','recovery-required') RETURNING source_handle,file_id,files_version_id,desired_hash
-        ) UPDATE files_native_sources n SET source_revision=$2,source_hash=c.desired_hash,state='active',recovery='{}',last_error=NULL,updated_at=NOW()
-          FROM completed c WHERE n.file_id=c.file_id RETURNING n.file_id`, [operationId, proof.nextSourceRevision])
-      : await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
-          WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
-    if (result.rowCount !== 1) throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+      if (!exactProof) throw Object.assign(new Error('Native publication acknowledgement does not match its durable source and Files identities'), { status: 409 });
+      if (file?.current_version_id !== operation.files_version_id) {
+        await client.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
+          last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW()
+          WHERE operation_id=$1 AND state IN('publishing','recovery-required')`,
+        [operationId, proof.nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
+        await client.query('COMMIT');
+        throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
+      }
+      const directlyBound = source?.state === 'active' && source.source_handle === operation.source_handle &&
+        source.source_revision === operation.source_revision && source.source_hash === operation.source_hash;
+      const recoveryBound = ['active', 'reselect-required'].includes(source?.state) && source.source_hash === operation.source_hash &&
+        source.source_revision === proof.nextSourceRevision && source.recovery?.publicationOperationId === operationId;
+      if (!directlyBound && !recoveryBound) {
+        throw Object.assign(new Error('Native publication acknowledgement no longer matches the selected source identity'), { status: 409 });
+      }
+      const activated = await client.query(`UPDATE files_native_sources SET source_revision=$2,source_hash=$3,state='active',recovery='{}',last_error=NULL,updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$4 AND source_revision=$5 AND source_hash=$6 RETURNING file_id`,
+      [identity.file_id, proof.nextSourceRevision, operation.desired_hash, source.source_handle, source.source_revision, source.source_hash]);
+      const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state IN('publishing','recovery-required') RETURNING operation_id`,
+      [operationId, proof.nextSourceRevision]);
+      if (activated.rowCount !== 1 || completed.rowCount !== 1) {
+        throw Object.assign(new Error('Native source publication changed while it was committing'), { status: 409 });
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally { client.release() }
   }
 
   async reselectInterruptedNativePublication(input:{ fileId:string; previousHandle:string; handle:string; sourceRevision:string; sourceHash:string }):Promise<boolean> {
@@ -356,24 +390,30 @@ export class LocalFilesManager {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+      const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
       const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [input.fileId])).rows[0];
       if (source?.state !== 'reselect-required' || source.source_handle !== input.previousHandle) {
         await client.query('ROLLBACK');
         return false;
       }
-      const operation = (await client.query(`SELECT o.*,f.current_version_id FROM files_native_source_operations o
-        JOIN files f ON f.id=o.file_id WHERE o.file_id=$1 AND o.direction='publish' AND o.state='recovery-required'
-        ORDER BY o.created_at DESC LIMIT 1 FOR UPDATE OF o`, [input.fileId])).rows[0];
-      if (!operation) {
+      const boundOperationId = typeof source.recovery?.publicationOperationId === 'string' ? source.recovery.publicationOperationId : null;
+      const operations = (await client.query(`SELECT * FROM files_native_source_operations
+        WHERE file_id=$1 AND direction='publish' AND state='recovery-required'
+          AND ($2::uuid IS NULL OR operation_id=$2::uuid) ORDER BY created_at DESC FOR UPDATE`, [input.fileId, boundOperationId])).rows;
+      const candidates = operations.filter(operation => operation.source_hash === source.source_hash && operation.desired_hash === input.sourceHash &&
+        operation.files_version_id === file?.current_version_id && (boundOperationId
+          ? source.source_revision === input.sourceRevision
+          : operation.source_revision === source.source_revision));
+      if (candidates.length !== 1) {
         await client.query('ROLLBACK');
         return false;
       }
-      const exact = operation.source_revision === source.source_revision && operation.source_hash === source.source_hash &&
-        operation.desired_hash === input.sourceHash && operation.files_version_id === operation.current_version_id;
-      if (!exact) throw Object.assign(new Error('Reselected source does not match the interrupted publication identities'), { status: 409 });
+      const operation = candidates[0];
       await client.query(`UPDATE files_native_sources SET source_handle=$2,source_revision=$3,recovery=jsonb_build_object(
-        'action','compare-source-to-files-version','previousHandle',$4::text),last_error='Interrupted native publication requires verified acknowledgement',updated_at=NOW()
-        WHERE file_id=$1`, [input.fileId, input.handle, input.sourceRevision, input.previousHandle]);
+        'action','compare-source-to-files-version','publicationOperationId',$4::text,'originalHandle',$5::text,'previousHandle',$6::text),
+        last_error='Interrupted native publication requires verified acknowledgement',updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$6 RETURNING file_id`,
+      [input.fileId, input.handle, input.sourceRevision, operation.operation_id, operation.source_handle, input.previousHandle]);
       await client.query('COMMIT');
       return true;
     } catch (error) {
@@ -397,8 +437,11 @@ export class LocalFilesManager {
   async nativePublicationActions():Promise<NativePublicationAction[]> {
     const rows = await this.db.query(`SELECT o.operation_id::text,n.source_handle,o.source_revision,o.source_hash,o.desired_hash,o.file_id::text,
       o.files_base_version_id::text,o.files_version_id::text,o.state FROM files_native_source_operations o
-      JOIN files_native_sources n ON n.file_id=o.file_id
-      WHERE o.direction='publish' AND o.state IN('publishing','recovery-required') ORDER BY o.created_at LIMIT 8`);
+      JOIN files_native_sources n ON n.file_id=o.file_id JOIN files f ON f.id=o.file_id
+      WHERE o.direction='publish' AND o.state IN('publishing','recovery-required') AND f.current_version_id=o.files_version_id
+        AND ((n.state='active' AND n.source_handle=o.source_handle AND n.source_revision=o.source_revision AND n.source_hash=o.source_hash)
+          OR (n.state IN('active','reselect-required') AND n.source_hash=o.source_hash AND n.recovery->>'publicationOperationId'=o.operation_id::text))
+      ORDER BY o.created_at LIMIT 8`);
     return rows.rows.map(row => ({
       operationId:    row.operation_id,
       handle:         row.source_handle,
@@ -422,7 +465,11 @@ export class LocalFilesManager {
   async revalidateNativeSessions(handles:string[]):Promise<void> {
     await this.db.query(`UPDATE files_native_sources SET state=CASE WHEN source_handle=ANY($1::text[]) THEN 'active' ELSE 'reselect-required' END,
       last_error=CASE WHEN source_handle=ANY($1::text[]) THEN NULL ELSE 'Native access must be reselected after the Electron session changed' END,
-      recovery=CASE WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
+      recovery=CASE WHEN recovery ? 'publicationOperationId' THEN recovery || jsonb_build_object(
+          'action',CASE WHEN source_handle=ANY($1::text[]) THEN 'compare-source-to-files-version' ELSE 'reselect-native-source' END,
+          'previousHandle',source_handle)
+        WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb
+        ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
       WHERE state<>'revoked'`, [handles]);
   }
 
