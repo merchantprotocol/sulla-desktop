@@ -14,6 +14,7 @@ function managerWithQueries(queries:string[]) {
 
   return new LocalFilesManager(db as any, {
     databaseUrl:          '',
+    port:                 0,
     chunkRoot:            '/tmp/sulla-files-root-test/chunks',
     dataRoot:             '/tmp/sulla-files-root-test/data',
     filesRoot:            '/tmp/sulla-files-root-test/default',

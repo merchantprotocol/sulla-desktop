@@ -228,7 +228,7 @@ export function createApp(
   }));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
-  app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.roots()) } catch (error) { next(error) } });
+  app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
   app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
     if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
     const exclusions = request.body.exclusions;
