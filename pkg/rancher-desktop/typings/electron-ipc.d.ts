@@ -522,7 +522,7 @@ export interface IpcMainInvokeEvents {
     reason?:string;
     folderReceipts?:boolean;
     nativeFolderReceipts?:boolean;
-    folderCollisionPolicies?:('keep-both' | 'skip')[];
+    folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
     crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
   };
   'sulla-files:operation-submit': (input: import('@pkg/pages/files/types').FilesOperationRequest) => import('@pkg/pages/files/types').FilesOperationReceipt;
