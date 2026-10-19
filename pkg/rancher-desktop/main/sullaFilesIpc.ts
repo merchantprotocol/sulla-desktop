@@ -451,6 +451,7 @@ function initFilesMediaProtocol():void {
 export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string; details?:boolean }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }${ input.details ? '&details=true' : '' }`));
   ipcMain.handle('sulla-files:operation-capabilities', (_event, input:{ collectionId:string }) => json(`/v1/database-file-operations/capabilities?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:folder-operation-state', (_event, input:{ collectionId:string; path:string }) => filesClient.folderOperationState(input.collectionId, input.path));
   ipcMain.handle('sulla-files:operation-submit', (_event, input:FilesOperationRequest) => json('/v1/database-file-operations', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:operation-status', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }`));
   ipcMain.handle('sulla-files:operation-cancel', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/cancel`, { method: 'POST', body: '{}' }));

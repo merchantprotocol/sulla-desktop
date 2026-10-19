@@ -23,6 +23,9 @@
           <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
         </select>
       </label>
+      <div v-if="dragTargets.length && dragSourceCapability !== 'unavailable' && (snapshot?.availableCollections?.length ?? 0) > 1" class="collection-drops" aria-label="Move selection to collection">
+        <button v-for="collection in otherCollections" :key="collection.id" class="btn sm" type="button" @dragover.prevent.stop="setCollectionDropEffect" @drop.prevent.stop="onCollectionDrop(collection.id, $event)">Move to {{ collection.name }}</button>
+      </div>
       <a
         v-for="entry in sections"
         :key="entry.id"
@@ -311,7 +314,7 @@
         <div v-if="operationError" class="operation-error" role="alert">
           {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
         </div>
-        <div v-if="clipboard && snapshot && clipboard.collectionId !== snapshot.collection.id" class="operation-panel" role="status">Clipboard kept from another collection. Cross-collection paste is unavailable; return to the source collection to paste.</div>
+        <div v-if="crossCollectionClipboardMessage" class="operation-panel" role="status">{{ crossCollectionClipboardMessage }}</div>
         <div v-if="operationNotice" class="operation-panel" role="status">{{ operationNotice }}</div>
         <div v-if="queueError" class="operation-error" role="alert">{{ queueError }} <button class="btn sm" :disabled="busy" @click="recoverOperation">Check operation</button></div>
         <div v-if="operationReceipt" class="operation-panel operation-queue" aria-label="File operations">
@@ -440,6 +443,7 @@
                   :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
                   :draggable="section === 'files' && !busy && editingKey !== entry.key"
                   :data-entry-key="entry.key"
+                  @pointerdown="prepareDragSnapshot(entry)"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
                   @contextmenu.prevent.stop="openActions(entry, $event)"
@@ -586,6 +590,7 @@
             :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
             :draggable="section === 'files' && !busy && editingKey !== entry.key"
             :data-entry-key="entry.key"
+            @pointerdown="prepareDragSnapshot(entry)"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
             @contextmenu.prevent.stop="openActions(entry, $event)"
@@ -779,7 +784,7 @@ import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperationState, type FilesCollisionDestination, type FilesCollisionPolicy, type FilesDataSource, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationItem, type FilesOperationItemReceipt, type FilesOperationReceipt, type FilesOperationRetry, type FilesSnapshot, type FilesTrashItem } from './types';
+import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperationState, type FilesCollisionDestination, type FilesCollisionPolicy, type FilesCrossCollectionCapability, type FilesDataSource, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationItem, type FilesOperationItemReceipt, type FilesOperationReceipt, type FilesOperationRetry, type FilesSnapshot, type FilesTrashItem } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
@@ -787,7 +792,10 @@ const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
-interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
+interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
+interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
+interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
+interface DragSnapshotRequest { sourceIdentity:string; generation:number; promise:Promise<void> }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
 const icons = {
@@ -828,10 +836,7 @@ const { error: queueError, pendingRequest } = operations;
 const operationHistory = computed(() => {
   const collectionId = snapshot.value?.collection.id;
 
-  return operations.receipts.value.filter((receipt, index) => receipt.collectionId === collectionId ||
-    receipt.items.some(item =>
-      (item.before && 'collectionId' in item.before && item.before.collectionId === collectionId) ||
-      (item.after && 'collectionId' in item.after && item.after.collectionId === collectionId)) ||
+  return operations.receipts.value.filter((receipt, index) => receiptTouchesCollection(receipt, collectionId) ||
     (operations.active.value && index === 0));
 });
 const operationReceipt = computed(() => operationHistory.value[0] ?? null);
@@ -844,7 +849,7 @@ const collisionItems = computed(() => {
   return receipt && selected ? (applyCollisionToAll.value ? receipt.items.filter(item => item.state === 'failed' && item.error?.code === 'destination-conflict') : [selected]) : [];
 });
 const canReplaceCollision = computed(() => collisionItems.value.length > 0 && collisionItems.value.every(canReplaceCollisionItem));
-const canUndo = computed(() => !busy.value && !loading.value && !operations.receipts.value.some(receipt => receipt.state === 'pending') && Boolean(props.dataSource.undoOperation && undoReceipt.value?.collectionId === snapshot.value?.collection.id));
+const canUndo = computed(() => !busy.value && !loading.value && !operations.receipts.value.some(receipt => receipt.state === 'pending') && Boolean(props.dataSource.undoOperation && undoReceipt.value && receiptTouchesCollection(undoReceipt.value, snapshot.value?.collection.id)));
 const { backStack, forwardStack, clipboard } = explorer;
 const canGoBack = computed(() => backStack.value.length > 0); const canGoForward = computed(() => forwardStack.value.length > 0);
 const snapshot = ref<FilesSnapshot | null>(null); const loading = ref(true); const busy = ref(false); const error = ref('');
@@ -855,6 +860,7 @@ const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
 const draggedKeys = ref(new Set<string>()); const dropTargetKey = ref('');
 const dragTargets = ref<ExplorerTarget[]>([]); const dragPointer = ref({ x: 0, y: 0 }); let hoverOpenTimer:ReturnType<typeof setTimeout> | undefined;
+const dragSnapshots = new Map<string, DragSnapshot>(); const dragSnapshotRequests = new Map<string, DragSnapshotRequest>(); const dragSnapshotGenerations = new Map<string, number>(); let dragPreparation:DragPreparation | undefined; let dragPreparationGeneration=0; let dragSourceCollectionId = ''; let dragSourceCapability:FilesCrossCollectionCapability = 'unavailable';
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
@@ -886,6 +892,7 @@ const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
 const storagePercent = computed(() => quotaBytes.value ? Math.min(100, Math.max(1, totalBytes.value / quotaBytes.value * 100)) : 0);
 const storageWhere = computed(() => snapshot.value?.status.serverConfigured ? 'on server' : 'on this Mac');
 const sharedFolders = computed(() => snapshot.value?.collection.sharedFolders ?? []);
+const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
 const retentionLabel = computed(() => snapshot.value?.collection.retentionPolicy?.mode === 'none' ? 'No automatic disposal' : snapshot.value?.collection.retentionPolicy?.mode ? `Retention: ${ snapshot.value.collection.retentionPolicy.mode }` : `Trash is recoverable for ${ retentionDays.value } days`);
@@ -1061,7 +1068,13 @@ const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
-   (props.dataSource.capabilities.crossCollectionOperations === 'stored-same-audience-files' && clipboard.value.targets.every(target => !target.folder)))));
+   (clipboard.value.sourceCapability !== 'unavailable' && props.dataSource.capabilities.crossCollectionOperations !== 'unavailable' &&
+    clipboard.value.targets.every(target => !target.folder || /^[0-9a-f]{64}$/.test(target.sourceSubtreeSignature ?? ''))))));
+const crossCollectionClipboardMessage = computed(() => {
+  if (!clipboard.value || !snapshot.value || clipboard.value.collectionId === snapshot.value.collection.id) return '';
+  if (canPaste.value) return `Ready to ${ clipboard.value.mode === 'cut' ? 'move' : 'copy' } ${ clipboard.value.targets.length } item${ clipboard.value.targets.length === 1 ? '' : 's' } from another collection.`;
+  return 'Clipboard kept from another collection, but the source or destination does not authorize this transfer.';
+});
 const canEmptyTrash = computed(() => Boolean(props.dataSource.purgeTrashItem));
 const quickLookEntries = computed(() => visibleEntries.value.filter(entry => !entry.folder));
 const quickLookIndex = computed(() => quickLookEntry.value ? quickLookEntries.value.findIndex(entry => entry.key === quickLookEntry.value?.key) : -1);
@@ -1093,13 +1106,30 @@ async function runMutation(operation:() => Promise<void>, reload = true) {
 }
 async function selectCollection(collectionId:string) {
   if (busy.value || loading.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
-  clearInternalDrag(); cancelRename(); closeQuickLook();
+  if (!dragTargets.value.length) clearInternalDrag();
+  cancelRename(); closeQuickLook();
   stopPointerGesture?.(); closeActions(false); closeBackgroundActions(); query.value = ''; searchGeneration++;
   props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
   await refresh();
   explorer.clearForCollection(collectionId); loadFolderPreferences();
 }
 function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
+function setCollectionDropEffect(event:DragEvent) { if (event.dataTransfer) event.dataTransfer.dropEffect='move' }
+async function onCollectionDrop(collectionId:string,event:DragEvent) {
+  if (busy.value || loading.value || !dragTargets.value.length || collectionId===snapshot.value?.collection.id) return;
+  if (dragSourceCapability==='unavailable' || dragTargets.value.some(target=>target.folder && !/^[0-9a-f]{64}$/.test(target.sourceSubtreeSignature ?? ''))) return;
+  const targets=[...dragTargets.value]; const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability;
+  event.stopPropagation();
+  await selectCollection(collectionId);
+  if (snapshot.value?.collection.id!==collectionId || section.value!=='files' || currentPath.value!=='') {
+    clearInternalDrag();
+    operationError.value='The destination collection did not finish loading, so nothing was moved.';
+    return;
+  }
+  const items=targets.map(target=>operationTarget(target,''));
+  clearInternalDrag();
+  await perform('move',items,sourceCollectionId,sourceCapability);
+}
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
 async function newFolder() {
@@ -1188,24 +1218,66 @@ function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.curr
 async function onDrop(event:DragEvent) {
   dragging.value = false;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
-  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); clearInternalDrag(); await perform('move', targets); return }
+  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
   if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
   const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
   if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return }
   const destination = currentPath.value; await runMutation(async() => { await props.dataSource.uploadPaths(paths, destination) });
 }
-function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
-  if (section.value !== 'files' || busy.value || !event.dataTransfer) { event.preventDefault(); return }
+function dragEntriesFor(entry:DisplayEntry) {
   const selected = selectedEntries.value;
   const requested = selectedKeys.value.has(entry.key) && selected.length ? selected : [entry];
   const selectedFolders = requested.filter(item => item.folder).map(item => item.path);
-  const entries = requested.filter(item => item.folder || !selectedFolders.some(folder => item.path.startsWith(`${ folder }/`)));
+
+  return requested.filter(item => item.folder || !selectedFolders.some(folder => item.path.startsWith(`${ folder }/`)));
+}
+function dragEntryIdentity(entry:DisplayEntry,collectionId:string) {
+  const folder=entry.folderState;
+  const descendants=entry.folder ? snapshot.value?.files.filter(file=>file.path===entry.path || file.path.startsWith(`${ entry.path }/`)).map(file=>JSON.stringify([file.id,file.path,file.currentVersionId,file.operationRevision,file.deletedAt])).sort() : undefined;
+  const folders=entry.folder ? snapshot.value?.folders?.filter(item=>(typeof item==='string'?item:item.path).startsWith(`${ entry.path }/`)).map(item=>JSON.stringify(item)).sort() : undefined;
+
+  return JSON.stringify(entry.folder ? [collectionId,entry.key,entry.path,folder?.collectionId,folder?.folderId,folder?.path,folder?.revision,descendants,folders] : [collectionId,entry.key,entry.path,entry.currentVersionId,entry.operationRevision]);
+}
+function dragSelectionSignature(entries:DisplayEntry[],collectionId:string) {
+  return entries.map(entry=>dragEntryIdentity(entry,collectionId)).sort().join('\n');
+}
+function preparedDragSnapshot(entry:DisplayEntry,preparation:DragPreparation) {
+  const record=dragSnapshots.get(dragSnapshotKey(preparation.collectionId,entry.path));
+
+  return record?.sourceIdentity===dragEntryIdentity(entry,preparation.collectionId) && record.preparationSignature===preparation.signature ? record.target : undefined;
+}
+function invalidateDragPreparation() {
+  dragPreparation=undefined; dragPreparationGeneration++; dragSnapshots.clear(); dragSnapshotRequests.clear(); dragSnapshotGenerations.clear();
+}
+function beginDragPreparation(entries:DisplayEntry[],collectionId:string,anchorKey:string) {
+  const signature=dragSelectionSignature(entries,collectionId);
+
+  if (dragPreparation?.collectionId===collectionId && dragPreparation.signature===signature) return dragPreparation;
+  invalidateDragPreparation();
+  dragPreparation={ collectionId,signature,generation:dragPreparationGeneration,anchorKey };
+  return dragPreparation;
+}
+function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (section.value !== 'files' || busy.value || loading.value || !event.dataTransfer) { event.preventDefault(); return }
+  const entries=dragEntriesFor(entry);
+  const collectionId=snapshot.value?.collection.id;
+  if (!collectionId) { event.preventDefault(); return }
+  const preparation=beginDragPreparation(entries,collectionId,entry.key);
+  const missingFolders=entries.filter(item=>item.folder && !preparedDragSnapshot(item,preparation));
+  if (missingFolders.length) {
+    missingFolders.forEach(item=>captureDragSnapshot(item,preparation).catch(()=>undefined));
+    operationNotice.value='Drag within this collection now. Drag again after the exact folder source snapshot is ready to move it to another collection.';
+  } else operationNotice.value='';
   draggedKeys.value = new Set(entries.map(item => item.key));
-  dragTargets.value = entries.map(toTarget);
+  // A running gesture keeps these exact targets; late readiness only serves the next gesture.
+  dragTargets.value = entries.map(item => item.folder && !missingFolders.length ? preparedDragSnapshot(item,preparation) ?? toTarget(item) : toTarget(item));
+  dragSourceCollectionId=collectionId;
+  dragSourceCapability=missingFolders.length ? 'unavailable' : props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   event.dataTransfer.effectAllowed = 'move';
   event.dataTransfer.setData('application/x-sulla-files', JSON.stringify(dragTargets.value));
+  if (!missingFolders.length) invalidateDragPreparation();
 }
 function canDropOnFolder(entry:DisplayEntry) { return entry.folder && draggedKeys.value.size > 0 && !busy.value }
 function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); dropTargetKey.value = entry.key; scheduleHoverOpen(entry) } }
@@ -1214,19 +1286,55 @@ function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTarget
 async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
   if (!canDropOnFolder(entry)) return;
   event.preventDefault(); event.stopPropagation();
-  const targets = dragTargets.value.map(target => operationTarget(target, entry.path));
+  const targets = dragTargets.value.map(target => operationTarget(target, entry.path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability;
   clearInternalDrag();
-  if (targets.length) await perform('move', targets);
+  if (targets.length) await perform('move', targets, sourceCollectionId, sourceCapability);
 }
-function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path, expectedFolder: entry.folderState } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
-function operationTarget(target:ExplorerTarget, destination:string):OperationItem { return { ...(target.folder ? { folderPath: target.folderPath, expectedFolder: target.expectedFolder } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(destination, target.name) } }
+function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path, expectedFolder: entry.folderState ? { ...entry.folderState } : undefined } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
+function operationTarget(target:ExplorerTarget, destination:string):OperationItem { return { ...(target.folder ? { folderPath: target.folderPath, expectedFolder: target.expectedFolder, sourceSubtreeSignature:target.sourceSubtreeSignature } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(destination, target.name) } }
+function dragSnapshotKey(collectionId:string,path:string) { return `${ collectionId }:${ path }` }
+async function captureTarget(entry:DisplayEntry,collectionId:string):Promise<ExplorerTarget> {
+  const target=toTarget(entry);
+  if (!entry.folder) return target;
+  if (!props.dataSource.folderOperationState) return target;
+  try {
+    const state=await props.dataSource.folderOperationState(collectionId,entry.path);
+    if (state.collectionId!==collectionId || state.path!==entry.path || !/^[0-9a-f]{64}$/.test(state.subtreeSignature) || Boolean(state.folderId)!==Boolean(state.revision)) return target;
+    return { ...target, expectedFolder:state.folderId && state.revision ? { collectionId,folderId:state.folderId,path:state.path,revision:state.revision } : undefined, sourceSubtreeSignature:state.subtreeSignature };
+  } catch { return target }
+}
+async function captureDragSnapshot(entry:DisplayEntry,preparation:DragPreparation) {
+  const collectionId=preparation.collectionId;
+  if (!entry.folder || preparedDragSnapshot(entry,preparation)) return;
+  const key=dragSnapshotKey(collectionId,entry.path); const sourceIdentity=dragEntryIdentity(entry,collectionId);
+  const pending=dragSnapshotRequests.get(key);
+  if (pending?.sourceIdentity===sourceIdentity && pending.generation===preparation.generation) { await pending.promise; return }
+  const generation=(dragSnapshotGenerations.get(key) ?? 0)+1;
+  dragSnapshotGenerations.set(key,generation);
+  const promise=(async() => {
+    const captured=await captureTarget(entry,collectionId);
+    if (entry.folderState && (captured.expectedFolder?.folderId!==entry.folderState.folderId || captured.expectedFolder?.revision!==entry.folderState.revision)) return;
+    const current=visibleEntries.value.find(item=>item.key===entry.key);
+    if (mounted && section.value==='files' && dragSnapshotGenerations.get(key)===generation && dragPreparation?.generation===preparation.generation && dragPreparation.signature===preparation.signature && snapshot.value?.collection.id===collectionId && current && dragEntryIdentity(current,collectionId)===sourceIdentity && dragSelectionSignature(dragEntriesFor(current),collectionId)===preparation.signature && captured.sourceSubtreeSignature) {
+      dragSnapshots.set(key,{ sourceIdentity,preparationSignature:preparation.signature,target:captured });
+    }
+  })();
+  dragSnapshotRequests.set(key,{ sourceIdentity,generation:preparation.generation,promise });
+  try { await promise } finally { if (dragSnapshotRequests.get(key)?.promise===promise) dragSnapshotRequests.delete(key) }
+}
+function prepareDragSnapshot(entry:DisplayEntry) {
+  const collectionId=snapshot.value?.collection.id;
+  if (section.value!=='files' || busy.value || loading.value || !collectionId) return;
+  const entries=dragEntriesFor(entry); const preparation=beginDragPreparation(entries,collectionId,entry.key);
+  entries.filter(item=>item.folder && !preparedDragSnapshot(item,preparation)).forEach(item=>captureDragSnapshot(item,preparation).catch(()=>undefined));
+}
 function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTimer = setTimeout(() => { if (dropTargetKey.value === entry.key && dragTargets.value.length) openPath(entry.path) }, 750) }
 function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
 function updateDragPointer(event:DragEvent) { dragPointer.value = { x: event.clientX, y: event.clientY } }
 function onSurfaceDragOver(event:DragEvent) { updateDragPointer(event); const surface = mainSurface.value; if (!surface) return; const rect = surface.getBoundingClientRect(); if (event.clientY < rect.top + 64) surface.scrollTop -= 18; else if (event.clientY > rect.bottom - 64) surface.scrollTop += 18 }
 function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
-async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); clearInternalDrag(); await perform('move', targets) }
-function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dropTargetKey.value = '' }
+async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability) }
+function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = '' }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -1330,29 +1438,50 @@ function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quic
 
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
 function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => operationTarget(toTarget(entry), destination)) }
-async function perform(action:'move' | 'copy', items:OperationItem[], sourceCollectionId?:string) {
+function operationRequests(action:'move'|'copy',items:OperationItem[],collectionId:string,destinationCollectionId:string):FilesOperationItem[] {
+  const crossCollection=collectionId!==destinationCollectionId;
+  return items.map(item => item.folderPath ? {
+    itemId:crypto.randomUUID(),kind:'folder',action,folderPath:item.folderPath,expectedFolder:item.expectedFolder,targetPath:item.targetPath,
+    ...(crossCollection?{targetCollectionId:destinationCollectionId,sourceSubtreeSignature:item.sourceSubtreeSignature}:{}),
+  } : {
+    itemId:crypto.randomUUID(),kind:'file',action,fileId:item.fileId,expectedVersionId:item.expectedVersionId,
+    expectedRevision:item.expectedRevision ?? (crossCollection?undefined:snapshot.value?.files.find(file=>file.id===item.fileId)?.operationRevision),targetPath:item.targetPath,
+    ...(crossCollection?{targetCollectionId:destinationCollectionId}:{}),
+  });
+}
+async function perform(action:'move' | 'copy', items:OperationItem[], sourceCollectionId?:string, capturedSourceCapability?:FilesCrossCollectionCapability) {
   if (busy.value || !snapshot.value || !items.length) return false;
-  if (items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
   const destinationCollectionId = snapshot.value.collection.id;
+  const destinationPath = currentPath.value;
+  const destinationSnapshot = snapshot.value;
   const collectionId = sourceCollectionId ?? destinationCollectionId;
   const crossCollection = collectionId !== destinationCollectionId;
-  if (crossCollection && items.some(item => item.folderPath)) { operationError.value = 'Folders can’t be moved or copied between collections yet.'; return false }
-  if (crossCollection && props.dataSource.capabilities.crossCollectionOperations !== 'stored-same-audience-files') { operationError.value = 'These collections don’t support a receipt-backed transfer.'; return false }
+  if (!crossCollection && items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
+  if (crossCollection) {
+    if (!capturedSourceCapability || capturedSourceCapability === 'unavailable' || props.dataSource.capabilities.crossCollectionOperations === 'unavailable' || !props.dataSource.operationCapabilities) { operationError.value = 'The source or destination does not authorize a receipt-backed transfer.'; return false }
+    if (items.some(item => item.folderPath && (!/^[0-9a-f]{64}$/.test(item.sourceSubtreeSignature ?? '') || (item.expectedFolder?.collectionId !== undefined && item.expectedFolder.collectionId !== collectionId)))) { operationError.value = 'Cross-collection folders require the source snapshot captured when the drag or clipboard selection began.'; return false }
+    busy.value=true; operationError.value=''; let submitted=false;
+    try {
+      const [sourceCapabilities,destinationCapabilities]=await Promise.all([props.dataSource.operationCapabilities(collectionId),props.dataSource.operationCapabilities(destinationCollectionId)]);
+      if (!mounted || snapshot.value!==destinationSnapshot || snapshot.value.collection.id!==destinationCollectionId || currentPath.value!==destinationPath) { operationError.value='The destination changed before the transfer was submitted, so nothing was moved.'; return false }
+      if (!sourceCapabilities.enabled || !destinationCapabilities.enabled || sourceCapabilities.crossCollectionOperations==='unavailable' || destinationCapabilities.crossCollectionOperations==='unavailable') { operationError.value = 'The source or destination does not authorize a receipt-backed transfer.'; return false }
+      if (items.some(item=>item.folderPath) && (!sourceCapabilities.folderReceipts || !destinationCapabilities.folderReceipts)) { operationError.value = 'The source or destination does not authorize receipt-backed folder transfers.'; return false }
+      if (!operations.supported()) { operationError.value='Cross-collection transfer requires durable operation receipts.'; return false }
+      const requests=operationRequests(action,items,collectionId,destinationCollectionId);
+      if (pendingRequest.value || operations.receipts.value.some(receipt=>receipt.state==='pending')) { operationError.value='Resolve the pending operation before starting another.'; return false }
+      if (requests.length>250) { operationError.value='Select at most 250 items for one operation.'; return false }
+      if (requests.some(item=>item.kind!=='folder' && (!item.expectedVersionId || !item.expectedRevision))) { operationError.value='The service did not supply a revision for this item. Refresh Files before trying again.'; return false }
+      operationNotice.value=''; submitted=true;
+      const receipt=await operations.submit({idempotencyKey:crypto.randomUUID(),collectionId,items:requests});
+      return Boolean(receipt && receipt.items.every(item=>item.state==='completed'));
+    } catch(cause) { operationError.value=cause instanceof Error?cause.message:String(cause); return false }
+    finally { if (submitted && mounted) await refresh(true,true); busy.value=false }
+  }
   const receiptSupported = operations.supported() && items.every(item => item.fileId || (item.folderPath && props.dataSource.capabilities.folderReceipts));
   if (receiptSupported) {
-    const requests:FilesOperationItem[] = items.map(item => item.folderPath ? {
-      itemId: crypto.randomUUID(), kind: 'folder', action, folderPath: item.folderPath, expectedFolder: item.expectedFolder,
-      targetPath: item.targetPath,
-    } : {
-      itemId: crypto.randomUUID(), kind: 'file', action, fileId: item.fileId,
-      expectedVersionId: item.expectedVersionId,
-      expectedRevision: item.expectedRevision ?? (crossCollection ? undefined : snapshot.value!.files.find(file => file.id === item.fileId)?.operationRevision),
-      targetPath: item.targetPath,
-      ...(crossCollection ? { targetCollectionId: destinationCollectionId } : {}),
-    });
+    const requests=operationRequests(action,items,collectionId,destinationCollectionId);
     return submitReceiptItems(requests, collectionId);
   }
-  if (crossCollection) { operationError.value = 'Cross-collection transfer requires durable operation receipts.'; return false }
   operationNotice.value = 'This operation reports completion only. Undo, collision choices, cancellation and retry are unavailable.';
   return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
 }
@@ -1373,8 +1502,13 @@ async function undoLastOperation() {
 }
 async function retryReceipt(itemId?:string) {
   const receipt = operationReceipt.value;
-  if (!receipt || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
+  if (!receipt || !props.dataSource.retryOperation || !receiptTouchesCollection(receipt,snapshot.value?.collection.id)) return;
   await runMutation(async() => { await operations.retry(receipt.operationId, itemId ? { items: [{ itemId }] } : undefined) });
+}
+function receiptTouchesCollection(receipt:FilesOperationReceipt,collectionId?:string):boolean {
+  if (!collectionId) return false;
+  if (receipt.collectionId===collectionId) return true;
+  return receipt.items.some(item=>[item.before,item.after,item.displacedBefore,item.displacedAfter,item.error?.destination].some(state=>state?.collectionId===collectionId));
 }
 function operationItemKind(item:FilesOperationItemReceipt):'file' | 'folder' | undefined {
   const state=item.before ?? item.after;
@@ -1389,10 +1523,11 @@ function replaceCollisionDestination(item:FilesOperationItemReceipt):FilesCollis
 
   if (isFilesOperationState(destination)) {
     if (sourceKind && sourceKind !== 'file') return;
-    return destination.deleted ? undefined : destination;
+    return destination.deleted || (destination.collectionId !== undefined && destination.collectionId !== snapshot.value?.collection.id) ? undefined : destination;
   }
   if (isFilesFolderReplacementDestination(destination)) {
     if (sourceKind && sourceKind !== 'folder') return;
+    if (destination.collectionId !== undefined && destination.collectionId !== snapshot.value?.collection.id) return;
     return props.dataSource.capabilities.folderCollisionPolicies?.includes('replace') === true ? destination : undefined;
   }
 }
@@ -1401,7 +1536,7 @@ function canReplaceCollisionItem(item:FilesOperationItemReceipt):boolean {
 }
 async function resolveCollision(policy:FilesCollisionPolicy) {
   const receipt = operationReceipt.value; const selected = collisionItem.value;
-  if (!receipt || !selected || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
+  if (!receipt || !selected || !props.dataSource.retryOperation || !receiptTouchesCollection(receipt,snapshot.value?.collection.id)) return;
   const items = collisionItems.value;
   const retryItems:NonNullable<FilesOperationRetry['items']>=[];
 
@@ -1419,7 +1554,7 @@ async function resolveCollision(policy:FilesCollisionPolicy) {
 }
 async function recoverOperation() {
   const request = pendingRequest.value; const receipt = operationReceipt.value;
-  if (request && request.collectionId !== snapshot.value?.collection.id) { operationError.value = 'Return to the source collection to recover its pending operation.'; return }
+  if (request && request.collectionId !== snapshot.value?.collection.id && !request.items.some(item => item.targetCollectionId === snapshot.value?.collection.id)) { operationError.value = 'Return to a collection involved in the pending operation to recover it.'; return }
   await runMutation(async() => { if (request) await operations.submit(request); else if (receipt) await operations.resume(receipt.operationId) });
 }
 async function showOperation(operationId:string) { await runMutation(async() => { await operations.resume(operationId) }) }
@@ -1436,8 +1571,15 @@ async function commitRename(entry:DisplayEntry) {
 }
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
 async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
-function copyToClipboard(mode:'copy' | 'cut') { if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
-async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => operationTarget(target, currentPath.value)), value.collectionId); if (success && value.mode === 'cut') clipboard.value = null }
+async function copyToClipboard(mode:'copy' | 'cut') {
+  if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return;
+  const collectionId=snapshot.value.collection.id; const entries=[...selectedEntries.value]; const sourceCapability=props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
+  busy.value=true; operationError.value='';
+  try { explorer.setClipboard(collectionId,sourceCapability,mode,await Promise.all(entries.map(entry=>captureTarget(entry,collectionId)))) }
+  catch(cause) { operationError.value=cause instanceof Error?cause.message:String(cause) }
+  finally { busy.value=false }
+}
+async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => operationTarget(target, currentPath.value)), value.collectionId,value.sourceCapability); if (success && value.mode === 'cut') clipboard.value = null }
 function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
 async function trashSelected() {
@@ -1606,6 +1748,14 @@ watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let mounted = false;
+watch([() => props.dataSource, () => snapshot.value?.collection.id, section, currentPath, query, busy], invalidateDragPreparation, { flush:'sync' });
+watch([selectedKeys, visibleEntries], () => {
+  const preparation=dragPreparation;
+  if (!preparation) return;
+  const anchor=visibleEntries.value.find(entry=>entry.key===preparation.anchorKey);
+  if (!anchor || dragSelectionSignature(dragEntriesFor(anchor),preparation.collectionId)!==preparation.signature) invalidateDragPreparation();
+}, { flush:'sync' });
+onBeforeUnmount(invalidateDragPreparation);
 watch([query, section, busy], ([value, requestedSection, mutating]) => {
   const generation = ++searchGeneration;
   if (searchTimer) clearTimeout(searchTimer);
@@ -1750,6 +1900,8 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 .brand span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .root-picker { display: grid; gap: 4px; margin: 0 8px 10px; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .root-picker select { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--card-solid); color: var(--text); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.collection-drops { display: grid; gap: 4px; margin: 0 8px 10px; }
+.collection-drops .btn { width: 100%; white-space: normal; }
 .nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--muted); font-weight: 500; }
 .nav a .sv { display: grid; width: 16px; height: 16px; flex: none; opacity: .8; }
 .nav a .sv :deep(svg) { width: 16px; height: 16px; }
@@ -2007,7 +2159,7 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 @container (max-width: 1180px) {
   .nav { width: 64px; padding: 14px 10px; }
   .nav a { justify-content: center; padding: 9px 0; position: relative; }
-  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .root-picker, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
+  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .root-picker, .collection-drops, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
   .nav a .cnt { position: absolute; margin: 0; transform: translate(14px, -10px); }
   .brand { justify-content: center; padding-bottom: 12px; }
   .content { padding: 16px 18px 50px; }
