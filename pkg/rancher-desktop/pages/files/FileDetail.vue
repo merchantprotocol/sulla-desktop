@@ -7,7 +7,7 @@
         <button class="btn ghost ico" type="button" title="Back to files" @click="emit('close')"><span class="bi" v-html="icons.previous" /></button>
         <button class="btn" type="button" :disabled="busy" @click="download"><span class="bi" v-html="icons.download" /> Download</button>
         <button v-if="activeLink" class="btn" type="button" @click="copyLink"><span class="bi" v-html="icons.link" /> {{ copied ? 'Copied' : 'Copy link' }}</button>
-        <button v-if="item.deletedAt && dataSource.restoreTrash" class="btn" type="button" :disabled="busy" @click="restoreTrash">Restore from Trash</button><button v-if="canCheckout && !item.checkout" class="btn" type="button" :disabled="busy" @click="checkout">Check out</button><button v-if="canPublish && item.publicationState === 'draft'" class="btn" type="button" :disabled="busy" @click="publishCurrent">Publish current</button><button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
+        <button v-if="trashItem" class="btn" type="button" :disabled="busy" @click="restoreTrash">Restore from Trash</button><button v-if="canCheckout && !item.checkout" class="btn" type="button" :disabled="busy" @click="checkout">Check out</button><button v-if="canPublish && item.publicationState === 'draft'" class="btn" type="button" :disabled="busy" @click="publishCurrent">Publish current</button><button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
       </div>
     </div>
 
@@ -79,9 +79,9 @@
               </section>
               <section v-if="canPurge" class="lifecycle-form purge-form" aria-labelledby="purge-title">
                 <div class="section-heading"><h4 id="purge-title">Permanent disposal</h4><span class="pill draft">Irreversible</span></div>
-                <p>This approved disposal is eligible for permanent deletion. Restore remains available until you confirm.</p>
-                <label class="check"><input v-model="purgeConfirmed" type="checkbox"> I understand this permanently deletes the trashed file and cannot be undone.</label>
-                <button class="btn sm danger" type="button" :disabled="busy || !purgeConfirmed" @click="purgeTrash">Permanently delete</button>
+                <p>This removes the file metadata and asks the service to dispose of its chunks and retained artifacts. The service will report if cleanup still requires recovery.</p>
+                <label class="check"><input v-model="purgeConfirmed" type="checkbox"> I understand this invalidates Trash restore for this file.</label>
+                <button class="btn sm danger" type="button" :disabled="busy || !purgeConfirmed" @click="purgeTrash">Request permanent deletion</button>
               </section>
               <dl class="kv"><dt>Type</dt><dd>{{ item.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(item.size) }}</dd><dt v-if="detail?.recording?.duration_seconds">Length</dt><dd v-if="detail?.recording?.duration_seconds">{{ duration(detail.recording.duration_seconds) }}</dd><dt>Location</dt><dd>My Files › {{ pathCrumbs.join(' › ') }}</dd><dt>Owner</dt><dd>{{ owner }}</dd><dt>Modified</dt><dd>{{ formatDate(item.updatedAt) }}</dd><dt v-if="item.publicationState">Publication</dt><dd v-if="item.publicationState"><span class="pill" :class="item.publicationState === 'published' ? 'ok' : 'draft'">{{ item.publicationState }}</span><span v-if="item.publishedVersionId" class="muted"> · {{ item.publishedVersionId === item.currentVersionId ? 'current version is published' : 'published version remains available' }}</span></dd><dt v-if="item.checkout">Checkout</dt><dd v-if="item.checkout">{{ item.checkout.userId }} · {{ formatDate(item.checkout.at) }}<button v-if="canCheckout" class="link" type="button" :disabled="busy" @click="releaseCheckout">Release</button></dd><dt v-if="item.retention">Retention</dt><dd v-if="item.retention"><span class="pill idle">{{ item.retention.mode }}</span><span v-if="item.retention.retainUntil"> · until {{ shortDate(item.retention.retainUntil) }}</span><button v-if="canManageLifecycle" class="link" type="button" :disabled="busy" @click="changeRetention">Change</button></dd><dt v-if="item.record">Record</dt><dd v-if="item.record"><span class="pill idle">{{ item.record.status }}</span><span v-if="item.record.lockedBy"> · locked by {{ item.record.lockedBy }}</span><button v-if="canManageLifecycle && item.record.status === 'none'" class="link" type="button" :disabled="busy" @click="lockRecord('ordinary')">Lock</button><button v-else-if="canManageLifecycle && item.record.status === 'ordinary'" class="link" type="button" :disabled="busy" @click="unlockRecord">Unlock</button></dd><dt v-if="item.disposal">Disposal</dt><dd v-if="item.disposal"><span class="pill" :class="item.disposal.status === 'pending' ? 'idle' : item.disposal.status === 'approved' ? 'ok' : 'draft'">{{ item.disposal.status }}</span><span v-if="item.disposal.extendedUntil"> · extended until {{ shortDate(item.disposal.extendedUntil) }}</span><template v-if="canManageLifecycle && item.disposal.status === 'pending'"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('reject')">Keep</button><button class="link" type="button" :disabled="busy" @click="reviewDisposal('approve')">Approve disposal</button><label class="inline-date">Extend until<input v-model="disposalExtendedUntil" type="date"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('extend', disposalExtendedUntil)">Extend</button></label></template></dd><dt>Index</dt><dd><b>{{ item.indexStatus }}</b> · {{ item.indexReason }} <button v-if="['failed', 'unsupported'].includes(item.indexStatus)" class="link" type="button" :disabled="busy" @click="reindex">Re-index</button></dd><dt>Sync</dt><dd>{{ syncLabel }} <button v-if="item.syncState === 'online-only' && dataSource.capabilities.onlineOnly && dataSource.keepOnMac" class="link" type="button" :disabled="busy" @click="keepOnMac">Keep on this computer</button><button v-else-if="dataSource.capabilities.onlineOnly && dataSource.makeOnlineOnly" class="link" type="button" :disabled="busy" @click="makeOnlineOnly">Make online only</button></dd><dt>Public link</dt><dd><template v-if="activeLink"><span class="pill ok">On</span> {{ activeLink.viewCount }} views<template v-if="activeLink.expiresAt"> · expires {{ shortDate(activeLink.expiresAt) }}</template></template><span v-else>Off</span></dd></dl>
               <div class="section"><h4>Made by</h4><div class="provenance"><span class="agent">S</span><div><b>{{ provenanceTitle }}</b><small>{{ provenanceDetail }}</small></div></div></div>
@@ -113,11 +113,12 @@ import { computed, onMounted, reactive, ref } from 'vue';
 
 import { filesItemHasActiveProtection } from './types';
 
-import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesVersion, ShareActivity, ShareLink } from './types';
+import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesTrashFile, FilesVersion, ShareActivity, ShareLink } from './types';
 
-const props = defineProps<{ item:FilesItem; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
-const emit = defineEmits<{ close:[]; share:[]; restored:[]; 'open-linked':[fileId:string] }>();
+const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
+const emit = defineEmits<{ close:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
+const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
@@ -133,7 +134,7 @@ const canCheckin = computed(() => Boolean(props.dataSource.checkin && permission
 const canManageLifecycle = computed(() => permissions.value.canManage);
 const itemDisposalApproved = computed(() => item.disposal?.status === 'approved');
 const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
-const canPurge = computed(() => Boolean(item.deletedAt && props.dataSource.purgeTrash && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
+const canPurge = computed(() => Boolean(trashItem.value && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
 const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
@@ -229,8 +230,38 @@ async function submitActionForm() {
 async function publish(id:string) { openPublish(id) }
 async function publishCurrent() { openPublish(item.currentVersionId) }
 async function checkin(kind:'major'|'minor') { openCheckin(kind) }
-async function restoreTrash() { if (!props.dataSource.restoreTrash) return; if (await runLifecycle(() => props.dataSource.restoreTrash!(item.id), false)) emit('restored') }
-async function purgeTrash() { if (!props.dataSource.purgeTrash || !canPurge.value || !purgeConfirmed.value) return; if (await runLifecycle(() => props.dataSource.purgeTrash!(item.id), false)) { purgeConfirmed.value = false; emit('restored') } }
+async function reloadTrashStateAfterConflict(cause:unknown):Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const [loaded] = await Promise.allSettled([props.dataSource.load(), refreshLifecycleState()]);
+
+  if (loaded.status === 'fulfilled') {
+    const authoritative = loaded.value.trash?.find((candidate):candidate is FilesTrashFile => candidate.kind === 'file' && candidate.id === item.id);
+
+    trashItem.value = authoritative;
+    if (authoritative) Object.assign(item, authoritative);
+  }
+  error.value = message;
+}
+async function restoreTrash() {
+  if (!trashItem.value || !props.dataSource.restoreTrashItem) return;
+  busy.value = true; error.value = '';
+  try { await props.dataSource.restoreTrashItem(trashItem.value); emit('restored') }
+  catch (cause) { await reloadTrashStateAfterConflict(cause) }
+  finally { busy.value = false }
+}
+async function purgeTrash() {
+  if (!props.dataSource.purgeTrashItem || !trashItem.value || !canPurge.value || !purgeConfirmed.value) return;
+  busy.value = true; error.value = '';
+  try {
+    const result = await props.dataSource.purgeTrashItem(trashItem.value);
+    if (result.status === 'recovery-required') {
+      emit('trash-outcome', result.reason || `Metadata was removed, but cleanup still requires recovery (chunks ${ result.chunks }; retained artifacts ${ result.retainedArtifacts }).`);
+      return;
+    }
+    purgeConfirmed.value = false; emit('restored');
+  } catch (cause) { await reloadTrashStateAfterConflict(cause) }
+  finally { busy.value = false }
+}
 async function checkout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id)) }
 async function releaseCheckout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id, true)) }
 async function changeRetention() { if (!permissions.value.canManage) return; actionForm.value = 'retention'; retentionError.value = ''; error.value = ''; sideTab.value = 'Details' }
@@ -267,6 +298,7 @@ async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<
     return true;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
+    await refreshLifecycleState().catch(() => undefined);
     return false;
   } finally {
     busy.value = false;

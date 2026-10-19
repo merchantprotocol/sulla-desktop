@@ -10,6 +10,9 @@ RUN apk add --no-cache build-base cmake wget \
  && wget -qO /out/models/ggml-tiny-q5_1.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin \
  && echo '2827a03e495b1ed3048ef28a6a4620537db4ee51  /out/models/ggml-tiny-q5_1.bin' | sha1sum -c -
 
+COPY services/sulla-files/scripts/rename-noreplace.c /tmp/rename-noreplace.c
+RUN cc -O2 -Wall -Wextra -Werror /tmp/rename-noreplace.c -o /out/bin/sulla-files-rename-noreplace
+
 FROM node:24-alpine AS build
 COPY services/sulla-files/scripts/build-potion-model.mjs /tmp/build-potion-model.mjs
 RUN node /tmp/build-potion-model.mjs /app/models/potion-retrieval-32M && rm /app/models/potion-retrieval-32M/model.safetensors
@@ -33,6 +36,7 @@ ENV NODE_ENV=production
 WORKDIR /app/services/sulla-files
 RUN apk add --no-cache antiword ffmpeg poppler-utils su-exec tesseract-ocr tesseract-ocr-data-eng unzip
 COPY --from=whisper /out/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=whisper /out/bin/sulla-files-rename-noreplace /usr/local/bin/sulla-files-rename-noreplace
 COPY --from=whisper /out/models/ggml-tiny-q5_1.bin /app/models/ggml-tiny-q5_1.bin
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
