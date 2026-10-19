@@ -2554,7 +2554,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const packagedRoot = path.join(paths.resources, 'sulla-console');
     const consoleRoot = '/opt/sulla-console';
     try {
-      await this.execCommand({ root: true }, 'sh', '-c', `mkdir -p ${ consoleRoot }/public && adduser -S -D -H -s /sbin/nologin sulla-console 2>/dev/null || true`);
+      await this.execCommand({ root: true }, 'sh', '-c', `mkdir -p ${ consoleRoot }/public; getent group sulla-console >/dev/null || addgroup -S sulla-console; id sulla-console >/dev/null 2>&1 || adduser -S -D -H -G sulla-console -s /sbin/nologin sulla-console`);
       for (const name of ['server.mjs', 'public/index.html', 'public/shell.js', 'public/shell.css']) {
         await this.copyFileIn(path.join(packagedRoot, name), `${ consoleRoot }/${ name }`);
       }
@@ -2578,6 +2578,7 @@ start_pre() {
   test -r "${ consoleRoot }/server.mjs" || return 1
   test -r "${ consoleRoot }/public/index.html" || return 1
   touch /var/log/sulla-console.log /var/log/sulla-console.error.log
+  chown sulla-console:sulla-console /var/log/sulla-console.log /var/log/sulla-console.error.log
 }
 `;
 

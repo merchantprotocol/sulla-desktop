@@ -55,7 +55,7 @@
   function render() {
     const project = state.project, query = $('search').value.toLowerCase().trim();
     $('title').textContent = project?.title || 'Projects'; $('eyebrow').textContent = project ? 'Project workspace' : 'Workspace';
-    $('add').disabled = !state.token; $('add').textContent = project ? 'Add card' : 'New project';
+    $('add').disabled = !state.token || state.busy; $('add').textContent = project ? 'Add card' : 'New project';
     $('edit-project').hidden = !project; $('add-epic').hidden = !project; $('manage-epics').hidden = !project; $('view').hidden = !project; $('epic-filter').hidden = !project;
     $('view').textContent = state.table ? 'Board view' : 'Table view'; $('search').placeholder = project ? 'Search cards' : 'Search projects';
     const content = $('content'); content.replaceChildren();
@@ -91,6 +91,7 @@
     label.append(control); $('fields').append(label); return control;
   }
   async function edit(kind, item = {}) {
+    if (kind === 'task' && !state.epics.length) { notice('Add an epic before creating a card.'); return edit('epic'); }
     state.editing = { kind, item }; $('save').hidden = false; $('form-error').textContent = ''; $('comments').replaceChildren(); $('fields').replaceChildren();
     $('editor-title').textContent = `${item.id ? 'Edit' : 'New'} ${kind === 'task' ? 'card' : kind}`;
     field('title', 'Title', item.title); field('description', 'Description', item.description);
@@ -99,7 +100,7 @@
       const statuses = state.lanes.map(lane => [lane.lane_key, lane.display_name]);
       if (item.status && !statuses.some(([key]) => key === item.status)) statuses.push([item.status, item.status]);
       if (statuses.length) field('status', 'Status', item.status || statuses[0][0], statuses);
-      field('epic_id', 'Epic', item.epic_id, [['', 'No epic'], ...state.epics.map(epic => [epic.id, epic.title])]);
+      field('epic_id', 'Epic', item.epic_id || state.epics[0]?.id, state.epics.map(epic => [epic.id, epic.title])).required = true;
       field('assignee', 'Assigned agent', item.assignee); if (item.id) field('comment', 'Add comment');
     } else if (kind === 'project') field('assigned_agent', 'Assigned agent', item.assigned_agent);
     $('archive').hidden = !item.id; $('save').disabled = false; $('archive').disabled = false; $('editor').showModal();
@@ -113,7 +114,7 @@
     }
   }
   $('edit-form').addEventListener('submit', async event => {
-    event.preventDefault(); if (state.busy) return; state.busy = true; $('save').disabled = true; $('form-error').textContent = '';
+    event.preventDefault(); if (state.busy) return; state.busy = true; $('add').disabled = true; $('save').disabled = true; $('form-error').textContent = '';
     const form = event.currentTarget;
     const { kind, item } = state.editing, values = Object.fromEntries(new FormData(form)); const comment = values.comment?.trim(); delete values.comment;
     if ('epic_id' in values) values.epic_id ||= null;
@@ -126,7 +127,7 @@
       if (comment) { await rpc('addComment', { task_id: item.id, body: comment }); form.elements.comment.value = ''; }
       $('editor').close(); await refresh();
     } catch (error) { $('form-error').textContent = error.message; notice(error.message); }
-    finally { state.busy = false; $('save').disabled = false; }
+    finally { state.busy = false; $('save').disabled = false; $('add').disabled = !state.token; }
   });
   $('archive').addEventListener('click', async () => {
     if (state.busy || !confirm('Archive this item? It will be hidden from the active workspace.')) return;
