@@ -17,6 +17,7 @@ interface Plan {
   leaves:Leaf[]; inverse?:Leaf[]; watched:any[];
   committed?:Committed; inverseCommitted?:Committed;
   treeBefore?:string; treeAfter?:string;
+  disposal?:{undoInvalidatedAt:string;invalidatedBy:string;reason:string;disposedPaths?:string[];artifactsDisposedAt?:string;lastError?:string};
 }
 interface Committed { fileIds:string[]; folderIds:string[]; files:any[]; folders:any[]; watched:any[] }
 export interface NativeJournalRoot { id:string; collectionId:string; mutations:FilesMutationCoordinator }
@@ -61,13 +62,14 @@ export class NativeOperationJournal {
       const itemId=receipt.request.itemId ?? receipt.id;
       const operationId=receipt.request.batchOperationId ?? receipt.id;
       const prefix=`.sulla-trash/.operations/${operationId}/${itemId}/${receipt.id}`;
-      const records=receipt.folder_plan?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [receipt];
+      const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+      const records=folderPlan?.children?.map((c:any)=>({ before_state:c.before,after_state:c.after,action:c.action })) ?? [receipt];
       const watched=(await client.query('SELECT * FROM watched_folder_state WHERE file_id=ANY($1::uuid[]) FOR UPDATE',
         [[...records.map((r:any)=>r.before_state?.fileId),receipt.displaced_before?.fileId].filter(Boolean)])).rows;
       const plan:Plan={ version:2,rootId:root.id,collectionId:receipt.collection_id,operationId,itemId,leaves:[],watched };
-      if (receipt.folder_plan) {
-        if (receipt.action!=='copy') plan.treeBefore=receipt.folder_plan.source;
-        if (receipt.action!=='trash') plan.treeAfter=receipt.folder_plan.target;
+      if (folderPlan) {
+        if (receipt.action!=='copy') plan.treeBefore=folderPlan.source;
+        if (receipt.action!=='trash') plan.treeAfter=folderPlan.target;
       } else if (receipt.action==='create-folder') plan.treeAfter=receipt.after_state.path;
       const fileLeaf=async(before:any,after:any,kind:Leaf['kind'],stage:string) => {
         const w=watched.find(w=>w.file_id===before.fileId);
@@ -80,7 +82,7 @@ export class NativeOperationJournal {
         } finally { await pin.close() }
       };
       if (receipt.displaced_before) await fileLeaf(receipt.displaced_before,receipt.displaced_after,'move',`${prefix}/displaced`);
-      const directories:any[]=receipt.folder_plan?.folders??[];
+      const directories:any[]=folderPlan?.folders??[];
       const desired=new Set<string>();
       const includeParents=(path:string,includeSelf=false)=>{
         const parts=path.split('/'); if (!includeSelf) parts.pop();
@@ -186,7 +188,8 @@ export class NativeOperationJournal {
     await this.db.query("UPDATE files_path_operations SET state='undo-planned',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
     await this.db.query("UPDATE files_path_operations SET state='undo-publishing' WHERE operation_id=$1",[receipt.id]);
     for (const leaf of plan.inverse) { await this.forward(root.mutations,leaf); await this.save(receipt.id,plan) }
-    const states=receipt.folder_plan?receipt.folder_plan.children.map((c:any)=>c.after):[receipt.after_state,receipt.displaced_after];
+    const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+    const states=folderPlan?folderPlan.children.map((c:any)=>c.after):[receipt.after_state,receipt.displaced_after];
     for (const state of states) if (state?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[state.fileId]);
     for (const w of plan.watched) {
       if (receipt.action==='copy' && w.file_id!==receipt.displaced_before?.fileId) continue;
@@ -198,10 +201,11 @@ export class NativeOperationJournal {
   }
 
   private async capture(client:Pick<pg.PoolClient,'query'>,receipt:any):Promise<Committed> {
-    const records=receipt.folder_plan?.children??[{before:receipt.before_state,after:receipt.after_state},
+    const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+    const records=folderPlan?.children??[{before:receipt.before_state,after:receipt.after_state},
       {before:receipt.displaced_before,after:receipt.displaced_after}];
     const fileIds=[...new Set<string>(records.flatMap((r:any)=>[r.before?.fileId,r.after?.fileId]).filter(Boolean))].sort();
-    const folderIds=[...new Set<string>((receipt.folder_plan?.folders??[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
+    const folderIds=[...new Set<string>((folderPlan?.folders??[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
     return this.captureIds(client,fileIds,folderIds);
   }
 
@@ -275,6 +279,42 @@ export class NativeOperationJournal {
       await this.db.query('UPDATE files_path_operations SET state=$2,last_error=NULL,updated_at=NOW() WHERE operation_id=$1',
         [row.operation_id,row.state==='undo-db-committed'?'undone':undo?'completed':row.state==='db-committed'?'completed':'rolled-back']);
     });
+  }
+
+  /** GC only the exact retained identities recorded by one invalidated receipt. */
+  async dispose(receiptId:string):Promise<{state:'none'|'complete'|'recovery-required';error?:string}> {
+    const row=(await this.db.query('SELECT * FROM files_path_operations WHERE operation_id=$1',[receiptId])).rows[0];
+    if (!row) return {state:'none'};
+    const plan:Plan=row.plan;
+    if (row.action!=='trash' || !plan?.disposal?.undoInvalidatedAt) throw failure();
+    if (!['completed','undone','rolled-back'].includes(row.state)) throw failure();
+    if (plan.disposal.artifactsDisposedAt) return {state:'complete'};
+    const root=await this.resolve(plan.collectionId);
+    if (!root || root.id!==plan.rootId) return {state:'recovery-required',error:'Native root is unavailable; retained artifacts were preserved'};
+    try {
+      await root.mutations.runExclusive([],async()=>{
+        const disposed=new Set(plan.disposal!.disposedPaths??[]);
+        for (const leaf of plan.leaves) {
+          if (disposed.has(leaf.stage)) continue;
+          if (leaf.kind==='rmdir') {
+            if (!leaf.directory) throw failure();
+            if (await root.mutations.exists(leaf.stage)) await root.mutations.disposeRetainedDirectory({...leaf.directory,path:leaf.stage});
+            else if (row.state==='undone') {
+              const restored=await root.mutations.directory(leaf.directory.path);
+              if (restored.dev!==leaf.directory.dev || restored.ino!==leaf.directory.ino) throw failure();
+            } else if (row.state!=='completed') throw failure();
+          } else if (leaf.hash && leaf.before) {
+            if (await root.mutations.exists(leaf.stage)) await root.mutations.disposeRetainedFile(leaf.stage,{dev:BigInt(leaf.before.dev),ino:BigInt(leaf.before.ino),size:leaf.before.size,mtimeMs:leaf.before.mtimeMs},p=>verify(p,leaf.hash!,leaf.before));
+          } else continue;
+          disposed.add(leaf.stage); plan.disposal!.disposedPaths=[...disposed]; plan.disposal!.lastError=undefined; await this.save(receiptId,plan);
+        }
+        plan.disposal!.artifactsDisposedAt=new Date().toISOString(); plan.disposal!.lastError=undefined; await this.save(receiptId,plan);
+      });
+      return {state:'complete'};
+    } catch(error:any) {
+      plan.disposal.lastError=String(error?.message??error).slice(0,1000); await this.save(receiptId,plan).catch(()=>undefined);
+      return {state:'recovery-required',error:'Retained artifacts were preserved because ownership verification or cleanup did not complete'};
+    }
   }
 
   private async rollback(m:FilesMutationCoordinator,leaf:Leaf):Promise<void> {

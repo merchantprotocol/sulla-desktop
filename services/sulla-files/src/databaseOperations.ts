@@ -35,6 +35,15 @@ export interface DatabaseOperationReceipt {
   displacedBefore?:DatabaseOperationState;
   displacedAfter?:DatabaseOperationState;
 }
+export interface TrashRestoreRequest {
+  expectedVersionId?:string;
+  expectedRevision?:string;
+  receiptId?:string;
+}
+export interface TrashRestoreResult {
+  status:'restored'; kind:'file'; id:string; path:string; revision:string;
+  currentTombstone:null; receiptId:string|null; versionId:string;
+}
 export interface DatabaseOperationAccess {
   custody?: {
     run<T>(operation:()=>Promise<T>):Promise<T>;
@@ -61,6 +70,13 @@ const receipt = (row:any):DatabaseOperationReceipt => ({
   createdAt: row.created_at.toISOString(), undoneAt: row.undone_at?.toISOString() ?? null,
   ...(row.displaced_before ? { displacedBefore: row.displaced_before, displacedAfter: row.displaced_after } : {}),
 });
+
+export async function configuredReceiptLifecycle(client:Pick<pg.PoolClient,'query'>,collectionId:string,deletedAt:Date):Promise<{expiresAt?:string}> {
+  const policy=(await client.query('SELECT retention_policy FROM collections WHERE id=$1',[collectionId])).rows[0]?.retention_policy;
+  const days=Number(policy?.trashDays);
+  if (!Number.isInteger(days) || days<0) return {};
+  return { expiresAt:new Date(deletedAt.valueOf()+days*86_400_000).toISOString() };
+}
 
 export function parseDatabaseOperation(value:any):DatabaseOperationRequest {
   if (!value || !['move', 'copy', 'rename', 'trash'].includes(value.action)) throw fail(422, 'Unsupported database operation');
@@ -276,7 +292,10 @@ export async function executeDatabaseOperation(db:pg.Pool, input:DatabaseOperati
       }
     }
     if (!skipped) await journal(client, actor, updated, input.action === 'trash' ? 'delete' : input.action === 'copy' ? 'put' : 'rename', row.id);
-    await client.query('UPDATE files_database_operation_receipts SET after_state=$2,state=$3 WHERE id=$1', [row.id,snapshot(updated),skipped ? 'skipped' : 'completed']);
+    const receiptPlan=input.action==='trash' && !skipped
+      ? { lifecycle:await configuredReceiptLifecycle(client,file.collection_id,new Date(updated.deleted_at)) }
+      : null;
+    await client.query('UPDATE files_database_operation_receipts SET after_state=$2,state=$3,folder_plan=COALESCE(folder_plan,$4) WHERE id=$1', [row.id,snapshot(updated),skipped ? 'skipped' : 'completed',receiptPlan]);
     const committed = (await client.query('UPDATE files_database_operation_receipts SET permission_signature=$2 WHERE id=$1 RETURNING *', [row.id,await permissionSignature(client,input.collectionId,row.id)])).rows[0];
     if (!skipped) await access.custody?.publish(client,committed,false);
     return receipt(committed);
@@ -293,6 +312,7 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
     if (guard) await guard(client);
     const row = (await client.query('SELECT * FROM files_database_operation_receipts WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3 FOR UPDATE', [operationId, actor.userId, scope(actor)])).rows[0];
     if (!row) throw fail(404, 'Database operation receipt not found; native undo is unsupported');
+    if (row.folder_plan?.lifecycle?.disposal?.undoInvalidatedAt) throw fail(409,'Undo was explicitly invalidated by permanent disposal');
     if (row.request.targetCollectionId && row.request.targetCollectionId!==row.collection_id) {
       await crossCollectionBoundary(client,row.collection_id,row.request.targetCollectionId,actor);
     }
@@ -394,23 +414,53 @@ export async function createDatabaseFolder(db:pg.Pool, input:{ idempotencyKey:st
   });
 }
 
-/** Legacy restore keeps its response shape; all decisions follow the file lock. */
-export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesIdentity, access:DatabaseOperationAccess, expectedVersionId?:string):Promise<{ ok:true; versionId:string }> {
+/** Restore one exact Trash tombstone. Receipt restore never invokes its batch. */
+export async function restoreTrashReceipt(client:pg.PoolClient,row:any,actor:FilesIdentity,access:DatabaseOperationAccess,publish=true):Promise<any> {
+  if (row.action!=='trash' || row.state!=='completed' || row.folder_plan?.source) throw fail(409,'The Trash receipt is not available for file restore');
+  if (row.folder_plan?.lifecycle?.disposal?.undoInvalidatedAt) throw fail(409,'The retained Trash receipt expired or was explicitly invalidated');
+  if (row.permission_signature && row.permission_signature!==await permissionSignature(client,row.collection_id,row.id)) throw fail(409,'Permissions or public links changed after Trash');
+  const file=await lockedFile(client,row.file_id,access);
+  const expected=row.after_state as DatabaseOperationState; const before=row.before_state as DatabaseOperationState;
+  if (JSON.stringify(snapshot(file))!==JSON.stringify({collectionId:expected.collectionId??row.collection_id,fileId:expected.fileId,path:expected.path,versionId:expected.versionId,revision:expected.revision,deleted:expected.deleted})) {
+    throw fail(409,'The Trash tombstone changed; refresh Files');
+  }
+  editable(file,actor);
+  await access.path(client,before.collectionId??row.collection_id,before.path);
+  const source=(await client.query(`SELECT v.id FROM file_versions v JOIN file_versions tombstone ON tombstone.id=$2 AND tombstone.file_id=v.file_id
+    WHERE v.id=$1 AND v.file_id=$3 AND v.deleted=FALSE AND tombstone.deleted=TRUE AND tombstone.parent_version_id=v.id FOR SHARE OF v,tombstone`,
+  [before.versionId,expected.versionId,file.id])).rows[0];
+  if (!source) throw fail(409,'The exact pre-Trash version is no longer available');
+  const updated=(await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,updated_at=NOW() WHERE id=$1 RETURNING *',[file.id,before.versionId])).rows[0];
+  await journal(client,actor,updated,'restore',row.id);
+  if (publish) await access.custody?.publish(client,row,true);
+  await client.query("UPDATE files_database_operation_receipts SET state='undone',undone_at=NOW() WHERE id=$1",[row.id]);
+  return updated;
+}
+
+export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesIdentity, access:DatabaseOperationAccess, request:TrashRestoreRequest={}):Promise<TrashRestoreResult> {
   if (!uuid.test(fileId)) throw fail(400, 'fileId must be a UUID');
-  if (expectedVersionId !== undefined && (typeof expectedVersionId !== 'string' || !uuid.test(expectedVersionId))) throw fail(400, 'expectedVersionId must be a UUID');
+  if (request.expectedVersionId !== undefined && (typeof request.expectedVersionId !== 'string' || !uuid.test(request.expectedVersionId))) throw fail(400, 'expectedVersionId must be a UUID');
+  if (request.expectedRevision !== undefined && (typeof request.expectedRevision !== 'string' || !/^\d+$/.test(request.expectedRevision))) throw fail(400,'expectedRevision must be a decimal string');
+  if (request.receiptId !== undefined && (typeof request.receiptId !== 'string' || !uuid.test(request.receiptId))) throw fail(400,'receiptId must be a UUID');
   const collection = (await db.query('SELECT collection_id FROM files WHERE id=$1',[fileId])).rows[0];
   if (collection) await access.prepare?.(collection.collection_id);
-  return transaction(db, async client => {
+  const execute=()=>transaction(db, async client => {
     const file = (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
     if (!file) throw fail(404, 'file not found');
     await access.file(client, fileId);
-    if ((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1 LIMIT 1',[file.collection_id])).rowCount) {
-      throw Object.assign(fail(422,'Native Trash Restore requires quarantine reconciliation; use the original batch Undo'),{code:'native-trash-restore-unsupported'});
-    }
-    if (!file.deleted_at || (expectedVersionId !== undefined && file.current_version_id !== expectedVersionId)) throw fail(409, 'The trashed file changed; refresh Files');
+    if (!file.deleted_at || (request.expectedVersionId !== undefined && file.current_version_id !== request.expectedVersionId) ||
+      (request.expectedRevision!==undefined && String(file.operation_revision)!==request.expectedRevision)) throw fail(409, 'The trashed file changed; refresh Files');
     editable(file, actor);
     const tombstone = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=TRUE FOR UPDATE', [file.current_version_id, file.id])).rows[0];
     if (!tombstone) throw fail(409, 'The current version is not a trash tombstone');
+    const native=Boolean((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1 LIMIT 1',[file.collection_id])).rowCount);
+    const receiptRow=request.receiptId?(await client.query(`SELECT * FROM files_database_operation_receipts WHERE id=$1 AND file_id=$2 AND action='trash' FOR UPDATE`,[request.receiptId,file.id])).rows[0]:null;
+    if (receiptRow) {
+      if (receiptRow.after_state?.versionId!==tombstone.id) throw fail(409,'The selected Trash receipt is not the current tombstone');
+      const updated=await restoreTrashReceipt(client,receiptRow,actor,access,true);
+      return {status:'restored' as const,kind:'file' as const,id:updated.id,path:updated.path,revision:String(updated.operation_revision),currentTombstone:null,receiptId:receiptRow.id,versionId:updated.current_version_id};
+    }
+    if (native) throw Object.assign(fail(409,'Native Trash Restore requires its exact retained receipt'),{code:'trash-receipt-required'});
     // Follow the locked tombstone lineage, never select an unrelated newer
     // draft/version by timestamp. UNION also terminates malformed cycles.
     const source = (await client.query(`WITH RECURSIVE lineage AS (
@@ -429,8 +479,9 @@ export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesI
     await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]);
     await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
       VALUES($1,$2,$3,$4,$5,'trash-restore',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, file.id, version.id, { tombstoneVersionId: tombstone.id, sourceVersionId: source.id }]);
-    return { ok: true as const, versionId: version.id };
+    return {status:'restored' as const,kind:'file' as const,id:updated.id,path:updated.path,revision:String(updated.operation_revision),currentTombstone:null,receiptId:null,versionId:version.id};
   });
+  return access.custody?access.custody.run(execute):execute();
 }
 
 export async function trashFileWithoutReceipt(db:pg.Pool, fileId:string, actor:FilesIdentity, access:DatabaseOperationAccess):Promise<void> {

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { FileHandle } from 'node:fs/promises';
@@ -320,6 +320,29 @@ export class FilesMutationCoordinator {
         if (!sameIdentity(pinned.fingerprint, receipt.fingerprint)) throw new Error('Private staged identity changed before cleanup');
       } finally { await pinned.close() }
       await this.unlinkPinned(staged);
+    });
+  }
+
+  /** Dispose one proven retained file. Unknown replacements are never unlinked. */
+  async disposeRetainedFile(path:string,expected:FileFingerprint,verify:Verify):Promise<void> {
+    await this.runExclusive([path],async()=>{
+      const pinned=await this.pinVerified(path,verify);
+      try { if (!sameFingerprint(pinned.fingerprint,expected)) throw new Error('Retained file identity changed; preserved') }
+      finally { await pinned.close() }
+      await this.unlinkPinned(path);
+    });
+  }
+
+  /** Dispose one proven empty retained directory without recursive deletion. */
+  async disposeRetainedDirectory(expected:DirectoryReceipt):Promise<void> {
+    await this.runExclusive([expected.path],async()=>{
+      const actual=await this.directory(expected.path);
+      if (actual.dev!==expected.dev || actual.ino!==expected.ino) throw new Error('Retained directory identity changed; preserved');
+      const parent=await this.pinParent(expected.path);
+      try {
+        if ((await readdir(parent.child)).length) throw new Error('Retained directory acquired unknown children; preserved');
+        await rmdir(parent.child); await parent.handle.sync();
+      } finally { await parent.handle.close() }
     });
   }
 
