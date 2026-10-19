@@ -1,7 +1,6 @@
 <template>
-  <div v-if="open" class="files-attach-menu" role="menu" aria-label="Attach from Files">
-    <button type="button" role="menuitem" @click="$emit('browse')"><span>◇</span><b>Attach from Files</b><kbd>⌘⇧F</kbd></button>
-    <button type="button" role="menuitem" :disabled="uploading" @click="$emit('upload')"><span>＋</span><b>{{ uploading ? 'Importing to Files…' : 'Upload from Mac' }}</b></button>
+  <div v-if="open" class="files-attach-menu" role="menu" aria-label="Attach files">
+    <button type="button" role="menuitem" :disabled="uploading" @click="$emit('upload')"><span>＋</span><b>{{ uploading ? 'Attaching…' : 'Attach files' }}</b><kbd>⌘⇧F</kbd></button>
     <button type="button" role="menuitem" @click="$emit('screenshot')"><span>▣</span><b>Take a screenshot</b></button>
     <button type="button" role="menuitem" @click="$emit('record')"><span>●</span><b>{{ recording ? 'Stop recording' : 'Record screen' }}</b></button>
     <div v-if="recent.length" class="label">Recent in Files</div>
@@ -19,7 +18,7 @@ export interface FilesReference {
 }
 defineProps<{ open:boolean; recent:FilesReference[]; recording:boolean; uploading?:boolean; uploadError?:string }>();
 defineEmits<{
-  (e:'browse'):void; (e:'upload'):void; (e:'screenshot'):void; (e:'record'):void; (e:'choose', file:FilesReference):void;
+  (e:'upload'):void; (e:'screenshot'):void; (e:'record'):void; (e:'choose', file:FilesReference):void;
 }>();
 </script>
 

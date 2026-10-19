@@ -489,9 +489,8 @@ export interface IpcMainInvokeEvents {
   'files-ui:residency-status': (input: { fileId: string }) => { desiredState: 'local' | 'online-only'; state: string; lastError: string | null };
   'files-ui:set-residency': (input: { fileId: string; desiredState: 'local' | 'online-only' }) => void;
   'files-ui:recent-references': (limit?: number) => SullaFileReference[];
-  'files-ui:pick-reference': () => SullaFileReference[];
   'files-ui:reference-content': (input: { fileId: string; versionId?: string }) => { mime: string; data: Uint8Array };
-  'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => import('@pkg/main/sullaFilesCapture').CaptureResult;
+  'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => { reference: SullaFileReference };
   'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
   'files-ui:create-link': (input: import('@pkg/main/sullaFilesLinkService').CreateShareInput) => import('@pkg/main/sullaFilesLinkService').ShareLink;
   'files-ui:list-links': () => import('@pkg/main/sullaFilesLinkService').ShareLink[];

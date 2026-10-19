@@ -93,5 +93,15 @@ gateway, creates a temporary Postgres cluster, stored-only Files runtime,
 synthetic exact-file source, broker loop, and FUSE mount. The printed
 `/proof-control/` URL embeds the short-lived capability only in its same-origin
 HTML response and provides controls for an ordinary FUSE file-descriptor edit,
-an external source edit, reset, and status. Stop it with `SIGINT` or `SIGTERM`;
-the runtime unmounts FUSE and removes its synthetic files and database.
+an external source edit, reset, and status. Status output contains hashes and
+Files ids/versions, not source contents or paths. Stop it with `SIGINT` or
+`SIGTERM`; the runtime unmounts FUSE and removes its synthetic files and
+database.
+
+On macOS, the same harness has a native mode that runs the source gateway in a
+dedicated Electron process, requires the chooser-issued security-scoped
+bookmark for its generated synthetic file, and runs the unchanged Linux FUSE
+adapter inside a disposable resource-capped Docker container. It does not
+launch Desktop or read application data. The exact prerequisites, build/run
+commands, evidence restrictions, and cleanup checks are in
+[`MACOS_NATIVE_PROOF.md`](./MACOS_NATIVE_PROOF.md).

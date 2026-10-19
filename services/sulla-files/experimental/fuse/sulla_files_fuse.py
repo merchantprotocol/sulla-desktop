@@ -274,8 +274,16 @@ class SullaFiles(pyfuse3.Operations):
 
 async def main(options):
     token = os.environ.get("SULLA_FILES_FUSE_TOKEN")
+    token_file = os.environ.get("SULLA_FILES_FUSE_TOKEN_FILE")
+    if token and token_file:
+        raise SystemExit("Set only one FUSE token source")
+    if token_file:
+        with open(token_file, "r", encoding="utf-8") as handle:
+            token = handle.read(4097).strip()
+        if len(token) > 4096:
+            raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is too large")
     if not token:
-        raise SystemExit("SULLA_FILES_FUSE_TOKEN is required")
+        raise SystemExit("SULLA_FILES_FUSE_TOKEN or SULLA_FILES_FUSE_TOKEN_FILE is required")
     os.makedirs(options.mountpoint, exist_ok=True)
     operations = SullaFiles(FilesApi(options.url, token, options.collection))
     pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "default_permissions"})

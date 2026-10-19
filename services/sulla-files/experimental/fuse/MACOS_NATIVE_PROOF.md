@@ -6,23 +6,67 @@ run must use a reviewed Desktop proof build and disposable synthetic data only.
 It must not inspect, copy, migrate, mount, or modify personal files, credentials,
 wallet/vault data, existing Files data, or Sulla/PostgreSQL application data.
 
-## Setup
+## Isolated harness
 
-1. Confirm the build contains no broad Home mount and keeps
-   `SULLA_FILES_NATIVE_SOURCE_READY=false` in committed source.
-2. For the reviewed proof build only, enable the native readiness constant and
-   start with `SULLA_FILES_FUSE_EXPERIMENT=1`. Do not remount or restart a live
-   installation; use the isolated proof instance.
-3. Create a new temporary directory containing one short text file with a known
-   synthetic value. Do not reuse any existing user file.
-4. In Files, choose **Add native file** and select exactly that file. Confirm the
-   Files service receives an opaque handle and display name, never its host path
-   or a source capability.
+The harness is `live-proof.mjs`; native mode does not launch Sulla Desktop or
+its production bootstrap. It creates a fresh `mkdtemp` root, a sub-kilobyte
+synthetic file, an ephemeral PostgreSQL cluster bound to loopback, the real
+`LocalFilesManager`/HTTP API, the real `SullaFilesSourceGateway`, and the real
+Python FUSE adapter in a disposable Docker container. The macOS chooser must
+return a security-scoped bookmark for the one file the harness created. Every
+other selection is rejected. It never reads a configured database URL, Sulla
+home, Desktop user-data directory, Files root, Vault, or wallet path.
+
+Committed source must still contain
+`SULLA_FILES_NATIVE_SOURCE_READY=false`. Native proof mode is a separate
+process and does not change that constant.
+
+### Host prerequisites
+
+- macOS host and a reviewed checkout of this exact PR head.
+- Repository dependencies already present at `node_modules`; do not install
+  dependencies as part of the acceptance run.
+- Docker Desktop running with Linux FUSE available to a privileged container.
+- PostgreSQL binaries `initdb`, `pg_ctl`, and `psql` on `PATH`.
+- Ports `48792` and `50000 + (proof PID % 10000)` free on loopback. Override the
+  HTTP port with `SULLA_FILES_PROOF_PORT` if needed.
+- At least 1 GiB free disk and 1 GiB free RAM. The FUSE container is capped at
+  1 CPU, 512 MiB RAM, and 128 processes; the source gateway additionally caps
+  each file at 64 MiB and four concurrent requests. The normal fixture is less
+  than 1 KiB. No GPU is used.
+
+Build only the disposable FUSE runner image:
+
+```sh
+cd /absolute/path/to/reviewed/sulla-desktop-worktree
+docker build \
+  --file services/sulla-files/experimental/fuse/Dockerfile.macos-proof \
+  --tag sulla-files-fuse-proof:local \
+  services/sulla-files/experimental/fuse
+```
+
+Run the dedicated Electron proof entry, not the Desktop application:
+
+```sh
+cd /absolute/path/to/reviewed/sulla-desktop-worktree
+SULLA_FILES_MACOS_NATIVE_PROOF=1 \
+SULLA_FILES_PROOF_FUSE_IMAGE=sulla-files-fuse-proof:local \
+NODE_OPTIONS=--import=tsx \
+./node_modules/.bin/electron \
+  services/sulla-files/experimental/fuse/live-proof.mjs
+```
+
+The chooser opens at the generated `round-trip.txt`. Select that exact file.
+The process prints one JSON object containing the loopback control URL, a
+redacted handle prefix, a random fixture label, and the isolation mode. It does
+not print the temporary host path, capability, token, file contents, database
+credentials, or bookmark.
 
 ## Required traces
 
-Record identifiers, revisions, hashes, and status codes only. Do not record file
-contents, credentials, bookmarks, capabilities, or host paths.
+Record identifiers, revisions, SHA-256 hashes, and status codes only. The
+control page returns hashes and Files ids/versions, never source bytes,
+credentials, bookmarks, capabilities, database credentials, or host paths.
 
 1. **Reachability:** refresh Files and the FUSE mount. The selected file must be
    visible from the durable native-source index despite the runtime having no
@@ -59,3 +103,29 @@ is captured from the same implementation used by Desktop, no direct host mount
 or FUSE-to-host path exists, and all temporary synthetic data is removed. Any
 unexpected acknowledgement, missing visible conflict, reused revoked handle,
 or source/Files hash mismatch fails the proof.
+
+## Cleanup and evidence isolation
+
+Press `Ctrl-C` once. The signal handler unmounts/stops the named proof
+container, stops the ephemeral PostgreSQL process, closes the gateway (which
+releases the security scope and revokes handles), and removes the entire
+temporary root. Then verify cleanup without inspecting any data:
+
+```sh
+docker ps --all --filter 'name=sulla-files-native-proof-' --format '{{.Names}}'
+pgrep -fl 'sulla-files-live-proof-' || true
+```
+
+Both commands must return no proof process/container. Remove the reusable image
+after review if it is no longer needed:
+
+```sh
+docker image rm sulla-files-fuse-proof:local
+```
+
+Evidence may contain only the PR SHA, harness image digest, fixture label,
+redacted handle prefix, operation/file/version ids, status/EIO results, and
+SHA-256 hashes. Do not capture the chooser, control-page tokens, process
+environment, Docker inspection output, temporary paths, file contents, or
+PostgreSQL logs. The readiness constant remains false after a successful run;
+enabling it requires a separate reviewed change.
