@@ -327,31 +327,15 @@ export async function seedGitWorktreeIntoGuest(source: string, jobKey: string): 
 }
 
 export function inspectGuestWorkspaceForCleanup(workspacePath: string): GuestWorkspaceCleanupDecision {
-  const resolved = existingGuestPath(workspacePath, [GUEST_AGENT_WORKSPACES_ROOT]);
-  try {
-    runGuestSync([
-      'sh', '-c',
-      [
-        'set -eu',
-        'git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1',
-        '[ -z "$(git -C "$1" status --porcelain=v1 --untracked-files=normal)" ]',
-        '[ -z "$(git -C "$1" stash list)" ]',
-        'branch=$(git -C "$1" symbolic-ref --quiet --short HEAD)',
-        '[ -n "$branch" ]',
-        'remote_url=$(git -C "$1" remote get-url origin)',
-        '[ -n "$remote_url" ]',
-        'case "$remote_url" in /*|file://*) exit 1;; esac',
-        'head=$(git -C "$1" rev-parse HEAD)',
-        'remote=$(git -C "$1" rev-parse "refs/remotes/origin/$branch")',
-        '[ "$head" = "$remote" ]',
-        '[ -z "$(git -C "$1" rev-list --all --not --remotes --max-count=1)" ]',
-      ].join('; '),
-      'sulla-workspace-cleanup', resolved,
-    ]);
-    return { remove: true, reason: 'workspace clean and every local ref commit is represented by an origin-tracking ref' };
-  } catch {
-    return { remove: false, reason: 'workspace retained because clean state and pushed commit parity were not both proven' };
-  }
+  existingGuestPath(workspacePath, [GUEST_AGENT_WORKSPACES_ROOT]);
+  // A guest-controlled origin-tracking ref is not proof of remote publication.
+  // Git status also omits ignored files that may contain irreplaceable output.
+  // Retain runtime work until its owner verifies publication and preservation
+  // independently; the caller returns this path in the cleanup receipt.
+  return {
+    remove: false,
+    reason: 'workspace retained pending independent publication and file-preservation verification',
+  };
 }
 
 export async function seedDirectoryIntoGuest(source: string, parent: string, prefix: string): Promise<string> {
