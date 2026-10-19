@@ -1506,9 +1506,7 @@ async function retryReceipt(itemId?:string) {
   await runMutation(async() => { await operations.retry(receipt.operationId, itemId ? { items: [{ itemId }] } : undefined) });
 }
 function receiptTouchesCollection(receipt:FilesOperationReceipt,collectionId?:string):boolean {
-  if (!collectionId) return false;
-  if (receipt.collectionId===collectionId) return true;
-  return receipt.items.some(item=>[item.before,item.after,item.displacedBefore,item.displacedAfter,item.error?.destination].some(state=>state?.collectionId===collectionId));
+  return operations.touchesCollection(receipt, collectionId);
 }
 function operationItemKind(item:FilesOperationItemReceipt):'file' | 'folder' | undefined {
   const state=item.before ?? item.after;

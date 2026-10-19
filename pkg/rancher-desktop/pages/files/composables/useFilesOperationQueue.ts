@@ -16,6 +16,39 @@ export function useFilesOperationQueue(source:FilesDataSource, tabId:string) {
   const undoable = computed(() => receipts.value.find(receipt => receipt.undoSupported && receipt.state !== 'pending'));
   const storageKey = (collectionId:string) => `sulla:files:receipts:${ encodeURIComponent(tabId) }:${ encodeURIComponent(collectionId) }`;
   const pendingStorageKey = `sulla:files:pending-operation:${ encodeURIComponent(tabId) }`;
+  // UI recovery metadata only. Every receipt and mutation is still authorized by the service.
+  const associationStorageKey = `sulla:files:operation-collections:${ encodeURIComponent(tabId) }`;
+  const associations = ref<Record<string, { source:string; targets:string[] }>>({});
+  const validCollection = (value:unknown):value is string => typeof value === 'string' && value.length > 0 && value.length <= 256;
+  try {
+    const saved:unknown = JSON.parse(sessionStorage.getItem(associationStorageKey) || '{}');
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      for (const [id, raw] of Object.entries(saved).slice(0, 30)) {
+        if (!/^[0-9a-f-]{36}$/i.test(id) || !raw || typeof raw !== 'object') continue;
+        const value = raw as { source?:unknown; targets?:unknown };
+        if (validCollection(value.source) && Array.isArray(value.targets) && value.targets.length <= 250 && value.targets.every(validCollection)) {
+          associations.value[id] = { source:value.source, targets:[...new Set(value.targets)] };
+        }
+      }
+    }
+  } catch { /* Invalid recovery hints never authorize an operation. */ }
+  function touchesCollection(receipt:FilesOperationReceipt, collectionId?:string):boolean {
+    if (!collectionId) return false;
+    const association = associations.value[receipt.operationId];
+    return receipt.collectionId === collectionId ||
+      (association?.source === receipt.collectionId && association.targets.includes(collectionId)) ||
+      receipt.items.some(item => [item.before, item.after, item.displacedBefore, item.displacedAfter, item.error?.destination].some(state => state?.collectionId === collectionId));
+  }
+  function associate(request:FilesOperationRequest, receipt:FilesOperationReceipt) {
+    if (request.collectionId !== receipt.collectionId) throw new Error('The operation receipt does not match its submitted collection.');
+    const targets = [...new Set(request.items.map(item => item.targetCollectionId).filter(validCollection))];
+    associations.value = Object.fromEntries([
+      [receipt.operationId, { source:request.collectionId, targets }],
+      ...Object.entries(associations.value).filter(([id]) => id !== receipt.operationId),
+    ].slice(0, 30));
+    try { sessionStorage.setItem(associationStorageKey, JSON.stringify(associations.value)) }
+    catch { error.value = 'The operation was accepted, but destination history could not be saved for reload.' }
+  }
   const restored = new Set<string>();
   const restoring = new Set<string>();
   let pendingSerialized = '';
@@ -31,9 +64,13 @@ export function useFilesOperationQueue(source:FilesDataSource, tabId:string) {
     }
     receipts.value = [receipt, ...receipts.value.filter(item => item.operationId !== receipt.operationId)].slice(0, 30);
     try {
-      const stored:unknown = JSON.parse(sessionStorage.getItem(storageKey(receipt.collectionId)) || '[]');
-      const ids = Array.isArray(stored) ? stored.filter(id => typeof id === 'string') : [];
-      sessionStorage.setItem(storageKey(receipt.collectionId), JSON.stringify([receipt.operationId, ...ids.filter(id => id !== receipt.operationId)].slice(0, 30)));
+      const association = associations.value[receipt.operationId];
+      const collections = new Set([receipt.collectionId, ...(association?.source === receipt.collectionId ? association.targets : [])]);
+      for (const collectionId of collections) {
+        const stored:unknown = JSON.parse(sessionStorage.getItem(storageKey(collectionId)) || '[]');
+        const ids = Array.isArray(stored) ? stored.filter(id => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id)) : [];
+        sessionStorage.setItem(storageKey(collectionId), JSON.stringify([receipt.operationId, ...ids.filter(id => id !== receipt.operationId)].slice(0, 30)));
+      }
     } catch { /* Receipts remain available in memory. */ }
     return receipt;
   }
@@ -94,7 +131,7 @@ export function useFilesOperationQueue(source:FilesDataSource, tabId:string) {
         try {
           const receipt = await source.getOperation!(id);
           if (disposed || active.value || generation !== restoreGeneration) { complete = false; return }
-          if (receipt.collectionId === collectionId) remember(receipt);
+          if (touchesCollection(receipt, collectionId)) remember(receipt);
         } catch { complete = false }
       }
     } catch { complete = false }
@@ -128,6 +165,7 @@ export function useFilesOperationQueue(source:FilesDataSource, tabId:string) {
     if (!saved) return null;
     return run(async() => {
       const receipt = await source.submitOperation!(saved);
+      associate(saved, receipt);
       remember(receipt);
       clearPending(saved, receipt);
       return receipt;
@@ -142,5 +180,5 @@ export function useFilesOperationQueue(source:FilesDataSource, tabId:string) {
   const undo = (id:string) => source.undoOperation ? run(() => source.undoOperation!(id)) : Promise.resolve(null);
   const resume = (id:string) => source.getOperation ? run(() => source.getOperation!(id)) : Promise.resolve(null);
   onBeforeUnmount(() => { disposed = true; if (timer) clearTimeout(timer); wake?.() });
-  return { receipts, current, undoable, pendingRequest, error, active, supported, submit, cancel, retry, undo, resume, restore };
+  return { receipts, current, undoable, pendingRequest, error, active, supported, submit, cancel, retry, undo, resume, restore, touchesCollection };
 }
