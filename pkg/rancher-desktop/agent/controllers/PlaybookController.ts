@@ -1525,29 +1525,19 @@ export class PlaybookController<TState = any> {
           let runtime = '';
 
           try {
-            const yaml = await import('yaml');
             const { getSecretsCapabilityService } = await import(
               '@pkg/agent/services/SecretsCapabilityService');
             const { getIntegrationService } = await import(
               '@pkg/agent/services/IntegrationService');
 
-            let yamlPath = '';
-            const { FunctionDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+            const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+            const { materializeStoredFunctionInGuest } = await import('../tools/function/guestFunctionMaterialization');
             const storedFunction = await FunctionDefinitionModel.findBySlug(step.functionRef);
             if (!storedFunction) throw new Error(`Function not found in Postgres: ${ step.functionRef }`);
-              const tempRoot = pathUtil.join(osUtil.homedir(), '.cache', 'sulla-runtime', 'functions');
-              fsSync.mkdirSync(tempRoot, { recursive: true });
-              materializedFunctionDir = fsSync.mkdtempSync(pathUtil.join(tempRoot, `${ step.functionRef }-`));
-              materializeStoredFiles(materializedFunctionDir, storedFunction.files);
-              yamlPath = pathUtil.join(materializedFunctionDir, 'function.yaml');
-              if (!fsSync.existsSync(yamlPath)) fsSync.writeFileSync(yamlPath, yaml.stringify(storedFunction.manifest), 'utf8');
-              materializedRuntimePath = `/var/db-functions/${ pathUtil.basename(materializedFunctionDir) }`;
-
-            if (!fsSync.existsSync(yamlPath)) {
-              throw new Error(`Stored function could not be materialized: ${ step.functionRef }`);
-            }
-
-            const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};
+            const materialized = await materializeStoredFunctionInGuest(storedFunction);
+            materializedFunctionDir = materialized.guestDir;
+            materializedRuntimePath = materialized.runtimePath;
+            const manifest: any = storedFunction.manifest || {};
             runtime = manifest?.spec?.runtime || '';
             const baseUrl = RUNTIME_URLS[runtime];
             functionRuntimeBaseUrl = baseUrl;
@@ -1836,7 +1826,11 @@ export class PlaybookController<TState = any> {
               } catch { /* runtime restart also clears loaded state */ }
             }
             if (materializedFunctionDir) {
-              try { fsSync.rmSync(materializedFunctionDir, { recursive: true, force: true }) } catch { /* next cache sweep can remove it */ }
+              try {
+                const { removeGuestFunctionMaterialization } = await import('../tools/function/guestFunctionMaterialization');
+
+                await removeGuestFunctionMaterialization(materializedFunctionDir);
+              } catch { /* next guest cache sweep can remove it */ }
               materializedFunctionDir = null;
             }
           }

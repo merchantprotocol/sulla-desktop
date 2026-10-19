@@ -131,7 +131,7 @@ export async function runCommand(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const runtime = currentAgentContainerRuntime();
 
-  if (runtime) {
+  if (runtime && !options.runInLimaShell) {
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');

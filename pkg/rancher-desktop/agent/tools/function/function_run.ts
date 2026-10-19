@@ -1,11 +1,6 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-
-import yaml from 'yaml';
-
 import { BaseTool, ToolResponse } from '../base';
 import { DEPS_FILES, RUNTIME_URLS } from './constants';
+import { materializeStoredFunctionInGuest, removeGuestFunctionMaterialization } from './guestFunctionMaterialization';
 
 async function runtimePost(url: string, body: unknown): Promise<any> {
   const res = await fetch(url, {
@@ -110,10 +105,12 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
   const record: RunRecord = { slug, version, inputs, success: false, startedAt: new Date() };
   let materializedDir: string | null = null;
   let runtimeContainerPath: string | null = null;
+  let storedFiles: Record<string, unknown> = {};
+  let manifest: any;
 
-  const cleanupMaterialized = () => {
+  const cleanupMaterialized = async() => {
     if (!materializedDir) return;
-    try { fs.rmSync(materializedDir, { recursive: true, force: true }) } catch (err) {
+    try { await removeGuestFunctionMaterialization(materializedDir) } catch (err) {
       console.warn(`[function_run] Failed to remove temporary DB function ${ materializedDir }:`, err);
     }
     materializedDir = null;
@@ -126,48 +123,34 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
     record.success = false;
     record.durationMs = Date.now() - record.startedAt.getTime();
     await writeRunHistory(record);
-    cleanupMaterialized();
+    await cleanupMaterialized();
     return { successBoolean: false, responseString: `${ lines.join('\n') }\n\n❌ ${ msg }` };
   };
 
   // ── 1. Locate function ──
-  let fnDir = '';
   let yamlPath = '';
 
   // Database definitions win. Materialize only for this invocation into a
   // shared temp mount understood by the isolated runtime containers.
   try {
-    const { FunctionDefinitionModel, materializeStoredFiles } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+    const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
     const stored = await FunctionDefinitionModel.findBySlug(slug);
     if (!stored) return failAndRecord('locate', `Function "${ slug }" was not found in Postgres. Run \`function_list\` to see available functions.`);
-    const tempRoot = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
-    fs.mkdirSync(tempRoot, { recursive: true });
-    materializedDir = fs.mkdtempSync(path.join(tempRoot, `${ slug }-`));
-    materializeStoredFiles(materializedDir, stored.files);
-    yamlPath = path.join(materializedDir, 'function.yaml');
-    if (!fs.existsSync(yamlPath)) fs.writeFileSync(yamlPath, yaml.stringify(stored.manifest), 'utf8');
-    fnDir = materializedDir;
-    runtimeContainerPath = `/var/db-functions/${ path.basename(materializedDir) }`;
+    manifest = stored.manifest || {};
+    storedFiles = stored.files || {};
+    const materialized = await materializeStoredFunctionInGuest(stored);
+    materializedDir = materialized.guestDir;
+    yamlPath = `${ materializedDir }/function.yaml`;
+    runtimeContainerPath = materialized.runtimePath;
   } catch (err) {
-    cleanupMaterialized();
+    await cleanupMaterialized();
     return failAndRecord('locate', `Database lookup failed for function "${ slug }": ${ err instanceof Error ? err.message : String(err) }`);
   }
 
   lines.push(`Function: ${ slug }`);
   lines.push(`Manifest: ${ yamlPath }`);
 
-  if (!fs.existsSync(yamlPath)) {
-    return failAndRecord('locate', `Stored function "${ slug }" could not be materialized. Run \`function_list\` to see available functions.`);
-  }
-
   // ── 2. Parse manifest ──
-  let manifest: any;
-  try {
-    manifest = yaml.parse(fs.readFileSync(yamlPath, 'utf-8')) || {};
-  } catch (err) {
-    return failAndRecord('parse', `Failed to parse function.yaml: ${ (err as Error).message }`);
-  }
-
   const spec = manifest.spec ?? {};
   const runtime: string = spec.runtime || '';
   const entrypoint: string = spec.entrypoint || '';
@@ -202,8 +185,8 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
   // ── 3. Install dependencies ──
   const depsFile = DEPS_FILES[runtime];
   if (depsFile) {
-    const depsPath = path.join(fnDir, depsFile);
-    if (fs.existsSync(depsPath)) {
+    const hasDependencies = Object.prototype.hasOwnProperty.call(storedFiles, depsFile);
+    if (hasDependencies) {
       lines.push(`Step 1 — Installing dependencies from ${ depsFile }...`);
       try {
         const installResult = await runtimePost(`${ runtimeUrl }/install`, { name: slug, version, ...(runtimeContainerPath ? { path: runtimeContainerPath } : {}) });
@@ -223,7 +206,7 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
   }
 
   // ── 4. Load ──
-  const loadStep = depsFile && fs.existsSync(path.join(fnDir, depsFile)) ? 2 : 1;
+  const loadStep = depsFile && Object.prototype.hasOwnProperty.call(storedFiles, depsFile) ? 2 : 1;
   lines.push(`Step ${ loadStep } — Loading function into runtime...`);
   let loadResult: any;
   try {
@@ -299,7 +282,7 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
       console.warn(`[function_run] Runtime unload failed for temporary function ${ slug }:`, err);
     }
   }
-  cleanupMaterialized();
+  await cleanupMaterialized();
 
   return { successBoolean: true, responseString: lines.join('\n'), outputs };
 }

@@ -641,6 +641,18 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // external volumes, and Darwin's broad temporary roots are Files-owned.
     const locations = ['/tmp/rancher-desktop'];
     const extraDirs = [paths.cache, paths.logs, paths.resources];
+    const legacySullaDataDir = path.join(paths.appHome, 'data');
+
+    // Persistence inventory at the mount boundary:
+    // - Compose Postgres and Files blobs remain Docker named volumes.
+    // - Kubernetes Postgres/Redis/runtime caches remain guest hostPath data.
+    // - This is the only app-owned host bind that may contain a PostgreSQL
+    //   cluster from the retired host migration. Keep that narrow path visible
+    //   read-only and fail managed-service startup below until a quiesced,
+    //   backed-up migration can explicitly reconcile it with the named volume.
+    if (this.legacyHostPostgresRequiresMigration()) {
+      locations.push(legacySullaDataDir);
+    }
     for (const extraDir of extraDirs) {
       const found = locations.some((loc) => {
         loc = path.normalize(loc);
@@ -654,7 +666,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     for (const location of locations) {
-      const mount: LimaMount = { location, writable: location !== paths.resources };
+      const mount: LimaMount = {
+        location,
+        writable: location !== paths.resources && location !== legacySullaDataDir,
+      };
 
       if (this.cfg?.virtualMachine.mount.type === MountType.NINEP) {
         const nineP = this.cfg.experimental.virtualMachine.mount['9p'];
@@ -670,6 +685,18 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     return mounts;
+  }
+
+  private legacyHostPostgresRequiresMigration(): boolean {
+    const legacyPostgresDir = path.join(paths.appHome, 'data', 'sulla-postgres');
+
+    try {
+      return fs.readdirSync(legacyPostgresDir).length > 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      // An unreadable legacy directory is not proof that it is empty.
+      return true;
+    }
   }
 
   /**
@@ -2627,6 +2654,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.lima('start', '--tty=false', '0');
         console.log(`[startup-perf] limactl start: ${ Date.now() - t }ms`);
 
+        // A disconnect while the VM was stopped leaves a durable host marker;
+        // reconcile it before any managed service or interactive CLI can reuse
+        // stale guest credentials.
+        const { reconcileCodexAuthRevocationInVm } = await import('@pkg/agent/util/codexAuthFile');
+
+        await reconcileCodexAuthRevocationInVm();
+
         // Dump in-VM boot timing log to app console
         try {
           const bootPerf = await this.execCommand({ capture: true, root: true }, 'cat', '/var/log/boot-perf.log');
@@ -3004,6 +3038,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   private async reconcileSullaDockerEnvironment(generation: number): Promise<void> {
     const dockerEnvTotal = Date.now();
     let t = Date.now();
+
+    if (this.legacyHostPostgresRequiresMigration()) {
+      throw new Error(
+        'Sulla found legacy host-backed PostgreSQL state. Startup is blocked before Compose reconciliation so the existing named volume cannot be replaced or appear empty. The legacy source remains mounted read-only until a backed-up, quiesced migration explicitly reconciles it.',
+      );
+    }
 
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
@@ -3657,9 +3697,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       });
     }
 
-    // Resolve the persistent data directory for bind mounts (cross-platform via paths.appHome)
-    const sullaDataDir = '/mnt/data/sulla';
-
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
 
@@ -3668,7 +3705,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     await this.execCommand({ root: true }, 'mkdir', '-p', sullaFunctionsDir, sullaRuntimeTempDir);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
-    composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
