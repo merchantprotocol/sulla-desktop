@@ -503,6 +503,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:link-activity': (id?: string) => { id: string; action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt: string; detail?: string }[];
   'files-ui:open-folder':   () => void;
   'files-ui:open-file':     (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:reveal-file':   (input: { fileId: string; versionId?: string }) => import('@pkg/pages/files/types').FilesRevealResult;
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
