@@ -1,6 +1,7 @@
 import { createHash,randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import type { FilesMutationCoordinator, FileFingerprint, DirectoryReceipt, PinnedRegularFile } from './safeFilesystem.js';
+import { FilesMutationCoordinator } from './safeFilesystem.js';
+import type { FileFingerprint, DirectoryReceipt, PinnedRegularFile } from './safeFilesystem.js';
 import { isProtectedPath,protectedPathError } from './protectedFiles.js';
 import { assertOperationNotCancelled } from './operationCancellation.js';
 
@@ -15,6 +16,7 @@ interface Plan {
   version:2; rootId:string; collectionId:string; operationId:string; itemId:string;
   leaves:Leaf[]; inverse?:Leaf[]; watched:any[];
   committed?:Committed; inverseCommitted?:Committed;
+  treeBefore?:string; treeAfter?:string;
 }
 interface Committed { fileIds:string[]; folderIds:string[]; files:any[]; folders:any[]; watched:any[] }
 export interface NativeJournalRoot { id:string; collectionId:string; mutations:FilesMutationCoordinator }
@@ -33,7 +35,8 @@ async function verify(pinned:PinnedRegularFile,hash:string,expected?:Fingerprint
 
 /** Uses only files_path_operations; LocalFilesManager owns scheduling/recovery. */
 export class NativeOperationJournal {
-  constructor(private readonly db:pg.Pool,private readonly resolve:(collectionId:string)=>Promise<NativeJournalRoot|null>) {}
+  constructor(private readonly db:pg.Pool,private readonly resolve:(collectionId:string)=>Promise<NativeJournalRoot|null>,
+    private readonly verifyVersion:(fileId:string,versionId:string,hash:string)=>Promise<void>) {}
 
   async occupied(collectionId:string,path:string):Promise<boolean> {
     const root=await this.resolve(collectionId);
@@ -53,6 +56,7 @@ export class NativeOperationJournal {
     if (!root) return;
     const m=root.mutations;
     await m.runExclusive([],async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       if (undo) return this.inverse(client,receipt,root);
       const itemId=receipt.request.itemId ?? receipt.id;
       const operationId=receipt.request.batchOperationId ?? receipt.id;
@@ -61,9 +65,14 @@ export class NativeOperationJournal {
       const watched=(await client.query('SELECT * FROM watched_folder_state WHERE file_id=ANY($1::uuid[]) FOR UPDATE',
         [[...records.map((r:any)=>r.before_state?.fileId),receipt.displaced_before?.fileId].filter(Boolean)])).rows;
       const plan:Plan={ version:2,rootId:root.id,collectionId:receipt.collection_id,operationId,itemId,leaves:[],watched };
+      if (receipt.folder_plan) {
+        if (receipt.action!=='copy') plan.treeBefore=receipt.folder_plan.source;
+        if (receipt.action!=='trash') plan.treeAfter=receipt.folder_plan.target;
+      } else if (receipt.action==='create-folder') plan.treeAfter=receipt.after_state.path;
       const fileLeaf=async(before:any,after:any,kind:Leaf['kind'],stage:string) => {
         const w=watched.find(w=>w.file_id===before.fileId);
         if (!w || w.root_id!==root.id || w.path!==before.path) throw failure();
+        await this.verifyVersion(before.fileId,before.versionId,w.content_hash);
         const pin=await m.pinVerified(before.path,p=>verify(p,w.content_hash));
         try {
           if (pin.fingerprint.size!==Number(w.size) || pin.fingerprint.mtimeMs!==Number(w.mtime_ms)) throw failure();
@@ -96,6 +105,12 @@ export class NativeOperationJournal {
       await this.db.query("UPDATE files_path_operations SET state='publishing' WHERE operation_id=$1",[receipt.id]);
       for (const leaf of plan.leaves) {
         assertOperationNotCancelled(operationId);
+        if (leaf.kind==='mkdir') {
+          const staged=await m.stageDirectory(leaf.stage);
+          leaf.directory={...staged,path:leaf.target!};
+          // Persist inode ownership BEFORE the directory becomes public.
+          await this.save(receipt.id,plan);
+        }
         await this.forward(m,leaf);
         await this.save(receipt.id,plan);
       }
@@ -123,7 +138,7 @@ export class NativeOperationJournal {
   }
 
   private async forward(m:FilesMutationCoordinator,leaf:Leaf):Promise<void> {
-    if (leaf.kind==='mkdir') { leaf.directory=await m.createDirectory(leaf.target!); return }
+    if (leaf.kind==='mkdir') { leaf.directory=await m.restoreEmptyDirectory(leaf.directory!,leaf.stage); return }
     if (leaf.kind==='rmdir') { await m.evictEmptyDirectory(leaf.directory!,leaf.stage); return }
     if (leaf.kind==='restore-dir') { leaf.directory=await m.restoreEmptyDirectory(leaf.retainedDirectory!,leaf.stage); return }
     const check=(p:PinnedRegularFile)=>verify(p,leaf.hash!,leaf.before);
@@ -212,6 +227,8 @@ export class NativeOperationJournal {
       } else if (leaf.kind==='rmdir') {
         const retained=await root.mutations.directory(leaf.stage);
         if (retained.dev!==leaf.directory!.dev || retained.ino!==leaf.directory!.ino || await root.mutations.exists(leaf.directory!.path)) throw failure();
+        const tree=await root.mutations.inspectTree(leaf.stage);
+        if (tree.files.length || tree.directories.length!==1) throw failure();
       } else {
         const pin=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.kind==='copy'?leaf.published:leaf.before)); await pin.close();
         if (leaf.kind!=='trash') {
@@ -220,11 +237,21 @@ export class NativeOperationJournal {
         if ((leaf.kind==='move' || leaf.kind==='trash') && !finalTargets.has(leaf.source) && await root.mutations.exists(leaf.source!)) throw failure();
       }
     }
+    const treePath=undo?plan.treeBefore:plan.treeAfter;
+    const absentPath=undo?plan.treeAfter:plan.treeBefore;
+    if (absentPath && absentPath!==treePath && await root.mutations.exists(absentPath)) throw failure();
+    if (treePath) {
+      const tree=await root.mutations.inspectTree(treePath,path=>!isProtectedPath(path));
+      const inTree=(entry:any)=>!entry.deleted && (entry.path===treePath || entry.path.startsWith(treePath+'/'));
+      const files=expected.files.filter(inTree).map(f=>f.path).sort();
+      const dirs=expected.folders.filter(inTree).map(f=>f.path).sort();
+      if (canonical(tree.files.sort())!==canonical(files) || canonical(tree.directories.sort())!==canonical(dirs)) throw failure();
+    }
     // Old inverse artifacts stay part of the custody proof after undo too.
     if (undo) for (const leaf of plan.leaves) {
       if (leaf.hash) { const pin=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.published??leaf.before)); await pin.close() }
       if (leaf.kind==='rmdir') {
-        const kept=await root.mutations.directory(leaf.stage);
+        const kept=await root.mutations.directory(leaf.directory!.path);
         if (kept.dev!==leaf.directory!.dev || kept.ino!==leaf.directory!.ino) throw failure();
       }
     }
@@ -254,7 +281,7 @@ export class NativeOperationJournal {
     if (leaf.kind==='mkdir') {
       if (!await m.exists(leaf.target!)) return;
       if (!leaf.directory) throw failure();
-      const retained=leaf.stage+'-rollback';
+      const retained=leaf.stage;
       if (await m.exists(retained)) throw failure();
       await m.evictEmptyDirectory(leaf.directory,retained); return;
     }
@@ -267,12 +294,12 @@ export class NativeOperationJournal {
       return;
     }
     if (leaf.kind==='restore-dir') {
-      if (await m.exists(leaf.directory!.path)) await m.evictEmptyDirectory(leaf.directory!,`${leaf.stage}-rollback`);
+      if (await m.exists(leaf.directory!.path)) await m.evictEmptyDirectory(leaf.directory!,leaf.stage);
       return;
     }
     const staged=await m.exists(leaf.stage);
     if (!staged) {
-      if (leaf.kind==='copy') return;
+      if (leaf.kind==='copy') { if (await m.exists(leaf.target!)) throw failure(); return }
       if (!leaf.source) throw failure();
       const pin=await m.pinVerified(leaf.source,p=>verify(p,leaf.hash!,leaf.before)); await pin.close(); return;
     }

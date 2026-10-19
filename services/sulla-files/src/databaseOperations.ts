@@ -41,6 +41,7 @@ export interface DatabaseOperationAccess {
     publish(client:pg.PoolClient,receipt:any,undo:boolean):Promise<void>;
     occupied(collectionId:string,path:string):Promise<boolean>;
     folders(collectionId:string,path:string,files:string[]):Promise<string[]>;
+    available():Promise<boolean>;
   };
   prepare?(collectionId:string):Promise<void>;
   file(client:pg.PoolClient, fileId:string):Promise<any>;
@@ -403,6 +404,9 @@ export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesI
     const file = (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
     if (!file) throw fail(404, 'file not found');
     await access.file(client, fileId);
+    if ((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1 LIMIT 1',[file.collection_id])).rowCount) {
+      throw Object.assign(fail(422,'Native Trash Restore requires quarantine reconciliation; use the original batch Undo'),{code:'native-trash-restore-unsupported'});
+    }
     if (!file.deleted_at || (expectedVersionId !== undefined && file.current_version_id !== expectedVersionId)) throw fail(409, 'The trashed file changed; refresh Files');
     editable(file, actor);
     const tombstone = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=TRUE FOR UPDATE', [file.current_version_id, file.id])).rows[0];

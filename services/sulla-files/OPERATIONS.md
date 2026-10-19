@@ -60,16 +60,64 @@ undo-publishing phases in the same journal. Its metadata/receipt changes and
 undo-db-committed phase are atomic; verified recovery marks undone. Directories
 are created top-down, files published next, and emptied source directories
 quarantined bottom-up. Empty-directory removal retains the exact inode and never
-recursively deletes. Restoration creates a no-clobber empty directory; unknown
-children or a substituted identity block inversion. Deterministic rollback
+recursively deletes. Restoration atomically renames the retained inode back with
+no replacement; retries recognize that same inode. New directories are staged
+privately and their identity saved before publication. Unknown children or a
+substituted identity block inversion. Deterministic rollback
 artifact suffixes remain reachable from the plan.
 
 Cancellation signals publication between leaves and rolls back the current item
 before the durable cancelled flag is committed. If rollback cannot prove safety,
-the item reports `recovery-required`; committed items remain committed. Uncertain
-mkdir/restore crash windows deliberately require preserved-artifact reconciliation
-rather than claiming an unowned directory. Recovery artifacts have no automatic
+the item reports `recovery-required`; committed items remain committed. Private
+stages left before their identity is saved are preserved, never guessed as owned.
+Recovery artifacts have no automatic
 purge/retention job in this change.
+
+### Deployment dependency and legacy callers
+
+Native mutations require Linux and executable
+`/usr/local/bin/sulla-files-rename-noreplace`, built from
+`scripts/rename-noreplace.c` by the service Dockerfile. The helper receives pinned
+parent descriptors, uses renameat2(RENAME_NOREPLACE), and fsyncs both parents.
+This source change requires rebuilding the service image; no helper compilation,
+build, migration or runtime validation was performed by this worker.
+Missing helper disables native batch capabilities (`native-helper-unavailable`)
+and rejects native submissions with HTTP503. Legacy path move/copy and residency
+evict/hydrate preflight before journal/residency writes. Coordinator publication,
+staging and rollback preflight before filesystem changes. Existing link-based
+eviction recovery and verified finalization do not require the helper; recovery
+that needs rename preserves its journal/artifacts and reports failure until the
+helper is restored. Helper disappearance or unsupported renameat2 after preflight
+still requires recovery; availability is not a runtime durability certification.
+
+### Full14 continuation — not implemented by this slice
+
+- Native Trash Restore: `POST /v1/trash/:id/restore` in `app.ts` calls
+  `databaseOperations.restoreTrashedFile`, which is metadata-only for stored
+  files. Native roots now explicitly reject with HTTP422
+  `native-trash-restore-unsupported`; batch Undo is not a substitute for Trash
+  Restore. Implement authorized tombstone-to-journal lookup, inverse plan and
+  atomic restored version/watched-row receipt before enabling native Restore.
+- `GET /v1/trash` returns files only; explicit empty-folder tombstones are absent.
+  Add typed folder tombstones and folder Restore with subtree authorization/CAS.
+- `documentLifecycle.ts` DELETE `/v1/trash/:id/purge` and retention/disposal logic
+  do not consult native retained artifacts or receipt undo eligibility. Native
+  artifacts are not automatically deleted by this PR, but metadata purge can
+  invalidate Undo. Before enabling integrated disposal, define receipt expiry,
+  active-journal holds, ownership-verified artifact GC and synchronized purge;
+  audit `LocalFilesManager` remote purge application as well.
+- Folder Replace: extend `folderOperationBatches.ts` to snapshot/authorize both
+  complete trees, displace the target tree to a visible recovery sibling, then
+  publish incoming leaves in one journal. Preserve both identities/grants/history,
+  encode both trees in the inverse and reject unknown children at every boundary.
+- Native/mixed cross-collection and folder transfers: extend leaf plans with
+  source and destination root/collection identity, lock both roots deterministically,
+  stage verified bytes on the destination filesystem (never cross-device rename),
+  retain source artifacts for moves, and atomically commit both metadata/watched
+  sets. Reconcile and undo both roots from the SAME path journal. Stored folders
+  need subtree audience/grant checks and explicit empty-folder metadata transfer.
+  These remain HTTP422; the advertised cross-collection support is stored files
+  with the narrow same-audience contract above, not arbitrary Explorer transfers.
 
 ## Main-only original reveal
 

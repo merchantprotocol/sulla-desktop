@@ -9,7 +9,7 @@ import { applyDatabaseFileOperations, type FileOperationItem } from './fileOpera
 import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
-import { OriginalRevealAttestations } from './originalReveal.js';
+import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
@@ -181,6 +181,12 @@ export function createApp(
       actor.userId !== config.userId) throw new HttpError(403,'Native main identity required');
     return actor;
   };
+  const reauthorizeOriginal = async(request:RequestWithIdentity,target:OriginalRevealTarget):Promise<void> => {
+    const fresh=await requireFile(request,target.fileId,'view');
+    await visibleVersion(request,fresh,target.versionId);
+    if (fresh.deleted_at || fresh.collection_id!==target.collectionId || fresh.path!==target.relativePath ||
+      fresh.current_version_id!==target.versionId || String(fresh.operation_revision)!==target.revision) throw Object.assign(new HttpError(409,'Original changed'),{code:'original-changed'});
+  };
   app.post('/v1/original-reveal/attest',async(request:RequestWithIdentity,response,next) => { try {
     const actor = requireOriginalMain(request);
     const file = await requireFile(request,String(request.body.fileId ?? ''),'view');
@@ -189,6 +195,7 @@ export function createApp(
     if (file.deleted_at || versionId !== file.current_version_id) return response.json({ status:'unavailable',code:'no-current-original' });
     const target = await manager!.originalRevealTarget(file);
     if (!target) return response.json({ status:'unavailable',code:'no-current-original' });
+    await reauthorizeOriginal(request,target);
     response.json({ status:'attested',...originalReveals.issue(actor,target),target });
   } catch (error) { next(error) } });
   app.post('/v1/original-reveal/redeem',async(request:RequestWithIdentity,response,next) => { try {
@@ -199,6 +206,7 @@ export function createApp(
     if (file.deleted_at) throw Object.assign(new HttpError(409,'Original changed'),{ code:'original-changed' });
     const current = await manager!.originalRevealTarget(file);
     if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw Object.assign(new HttpError(409,'Original changed'),{ code:'original-changed' });
+    await reauthorizeOriginal(request,current);
     response.setHeader('Cache-Control','no-store');
     response.json({ status:'redeemed',target:current });
   } catch (error) { next(error) } });
@@ -985,7 +993,7 @@ export function createApp(
   app.use('/v1/original-reveal', (error:any,_request:any,response:any,_next:any) => {
     const status=typeof error.status==='number'?error.status:409;
     response.setHeader('Cache-Control','no-store');
-    response.status(status).json({ error:status>=500?'Original reveal failed':error.message,
+    response.status(status).json({ error:!error.status?'Original changed or is unavailable':status>=500?'Original reveal failed':error.message,
       code:error.code ?? (status===403?'original-forbidden':status===401?'unauthorized':status===404?'original-not-found':'original-changed') });
   });
   app.use('/v1/database-file-operations', (error:any, _request:any, response:any, _next:any) => {

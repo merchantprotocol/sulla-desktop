@@ -10,6 +10,7 @@ import { copyLockedFile } from './fileOperations.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { NativeOperationJournal } from './nativeOperationJournal.js';
+import { streamFileContent } from './fileStream.js';
 import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
 
@@ -158,7 +159,15 @@ export class LocalFilesManager {
     const root=this.roots.find(root=>root.id===row.id);
     if (!root || !row.enabled || ['detached','offline'].includes(row.state) || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) throw new Error('Tracked root is unavailable');
     return { id:root.id,collectionId,mutations:this.rootMutations.get(root.id)! };
-  }) }
+  },(fileId,versionId,hash)=>this.verifyNativeVersion(fileId,versionId,hash)) }
+
+  private async verifyNativeVersion(fileId:string,versionId:string,hash:string):Promise<void> {
+    const content=await streamFileContent(this.db,this.config,this.store,fileId,versionId,undefined,new AbortController().signal);
+    if (!content) throw Object.assign(new Error('Original version content is unavailable'),{status:409,code:'original-changed'});
+    const digest=createHash('sha256');
+    for await (const chunk of content.body) digest.update(chunk);
+    if (digest.digest('hex')!==hash) throw Object.assign(new Error('Original differs from the current Files version'),{status:409,code:'original-changed'});
+  }
 
   operationCustody():NonNullable<DatabaseOperationAccess['custody']> {
     const locked=<T>(operation:()=>Promise<T>):Promise<T> => {
@@ -183,6 +192,7 @@ export class LocalFilesManager {
       publish:(client,receipt,undo) => this.nativeJournal.publish(client,receipt,undo),
       occupied:(collectionId,path)=>this.nativeJournal.occupied(collectionId,path),
       folders:(collectionId,path,files)=>this.nativeJournal.folders(collectionId,path,files),
+      available:()=>FilesMutationCoordinator.atomicRenameAvailable(),
     };
   }
 
@@ -198,9 +208,17 @@ export class LocalFilesManager {
       if (isProtectedPath(file.path) || file.path.split('/').some((part:string) => part === '.sulla-trash' || part === '.sulla-operation-recovery')) throw Object.assign(new Error('Protected original path'), { status:403,code:'original-forbidden' });
       const mutations = this.rootMutations.get(root.id)!;
       return mutations.runExclusive([file.path],async() => {
+        await this.verifyNativeVersion(file.id,file.current_version_id,row.content_hash);
         const pinned = await mutations.pinVerified(file.path,pinned => this.verifyOperationPinned(pinned,row.content_hash));
         try {
           if (pinned.fingerprint.size !== Number(row.size) || pinned.fingerprint.mtimeMs !== Number(row.mtime_ms)) throw Object.assign(new Error('Original changed since indexing'), { status:409,code:'original-changed' });
+          const fresh=(await this.db.query(`SELECT 1 FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id AND w.path=f.path
+            JOIN file_roots r ON r.id=w.root_id AND r.collection_id=w.collection_id
+            WHERE f.id=$1 AND f.current_version_id=$2 AND f.operation_revision=$3 AND f.path=$4 AND f.deleted_at IS NULL
+              AND w.content_hash=$5 AND w.size=$6 AND w.mtime_ms=$7 AND r.id=$8 AND r.mount_path=$9 AND r.enabled=TRUE
+              AND r.state NOT IN('detached','offline','error') AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`,
+          [file.id,file.current_version_id,file.operation_revision,file.path,row.content_hash,row.size,row.mtime_ms,root.id,root.path])).rowCount;
+          if (!fresh) throw Object.assign(new Error('Original changed during verification'),{status:409,code:'original-changed'});
           return { rootId:root.id,collectionId:file.collection_id,relativePath:file.path,fileId:file.id,
             versionId:file.current_version_id,revision:String(file.operation_revision),hash:row.content_hash,
             size:pinned.fingerprint.size,mtimeMs:pinned.fingerprint.mtimeMs };
@@ -340,6 +358,7 @@ export class LocalFilesManager {
   }
 
   private async applyPathOperationsNow(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity, root:FileRootConfig, mutations:FilesMutationCoordinator):Promise<void> {
+    await FilesMutationCoordinator.requireAtomicRename();
     if (!this.config.filesRoot) throw Object.assign(new Error('The watched Files folder is unavailable'), { status: 409 });
     const collectionId = this.rootCollections.get(root.id)!;
     const sources = items.map(item => item.sourcePath);

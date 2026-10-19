@@ -10,12 +10,28 @@ export type DatabaseCollisionPolicy = 'replace'|'keep-both'|'skip';
 export type DatabaseBatchState = 'pending'|'completed'|'partial'|'failed'|'cancelled'|'undone';
 export type DatabaseItemState = 'pending'|'completed'|'skipped'|'failed'|'cancelled'|'undone';
 export interface DatabaseFolderState { folderId:string; path:string; revision:string }
-export interface DatabaseBatchItem extends Omit<DatabaseOperationRequest,'idempotencyKey'|'collectionId'|'action'|'fileId'|'expectedVersionId'|'expectedRevision'> {
+interface DatabaseBatchItemBase extends Omit<DatabaseOperationRequest,'idempotencyKey'|'collectionId'|'action'|'fileId'|'expectedVersionId'|'expectedRevision'> {
   itemId:string;
   action:'move'|'copy'|'rename'|'trash'|'create-folder';
   fileId?:string; expectedVersionId?:string; expectedRevision?:string;
   kind?:'file'|'folder'; folderPath?:string; expectedFolder?:DatabaseFolderState; targetCollectionId?:string;
 }
+export interface DatabaseFileBatchItem extends DatabaseBatchItemBase {
+  kind?:'file'; action:'move'|'copy'|'rename'|'trash';
+  fileId:string; expectedVersionId:string; expectedRevision:string;
+  folderPath?:never; expectedFolder?:never;
+}
+export interface DatabaseFolderBatchItem extends DatabaseBatchItemBase {
+  kind:'folder'; action:'move'|'copy'|'rename'|'trash'; folderPath:string;
+  fileId?:never; expectedVersionId?:never; expectedRevision?:never;
+  collisionPolicy?:'keep-both'|'skip';
+}
+export interface DatabaseCreateFolderBatchItem extends DatabaseBatchItemBase {
+  kind?:'file'; action:'create-folder'; targetPath:string;
+  fileId?:never; expectedVersionId?:never; expectedRevision?:never; folderPath?:never; expectedFolder?:never;
+  collisionPolicy?:'keep-both'|'skip';
+}
+export type DatabaseBatchItem=DatabaseFileBatchItem|DatabaseFolderBatchItem|DatabaseCreateFolderBatchItem;
 export interface DatabaseBatchRequest { idempotencyKey:string; collectionId:string; items:DatabaseBatchItem[] }
 export interface DatabaseRetryRequest { items?:{ itemId:string; collisionPolicy?:DatabaseCollisionPolicy; expectedDestination?:DatabaseOperationState }[] }
 export interface DatabaseItemError { status:number; code:string; message:string; destination?:DatabaseOperationState }
@@ -42,7 +58,7 @@ function validateItem(item:any, collectionId:string):DatabaseBatchItem {
     if (item.action!=='trash' && !pathValid(item.targetPath)) throw fail(400,'Folder targetPath must be canonical');
     if (item.action==='trash' && (item.targetPath!==undefined || item.collisionPolicy!==undefined || item.targetCollectionId!==undefined)) throw fail(400,'Trash has no destination');
     if (item.collisionPolicy!==undefined && !['keep-both','skip'].includes(item.collisionPolicy)) throw fail(400,'Folder collisions support Keep Both or Skip');
-    if (item.expectedFolder && (!uuid.test(item.expectedFolder.folderId) || item.expectedFolder.path!==item.folderPath || !/^[0-9]+$/.test(item.expectedFolder.revision))) throw fail(400,'Invalid expectedFolder snapshot');
+    if (item.expectedFolder && (!uuid.test(item.expectedFolder.folderId) || item.expectedFolder.path!==item.folderPath || typeof item.expectedFolder.revision!=='string' || !/^[0-9]+$/.test(item.expectedFolder.revision))) throw fail(400,'Invalid expectedFolder snapshot');
     return { itemId:item.itemId.toLowerCase(),kind:'folder',action:item.action,folderPath:item.folderPath,
       ...(item.expectedFolder?{expectedFolder:item.expectedFolder}:{}),...(item.targetPath?{targetPath:item.targetPath}:{}),
       ...(item.collisionPolicy?{collisionPolicy:item.collisionPolicy}:{}),...(item.targetCollectionId?{targetCollectionId:item.targetCollectionId.toLowerCase()}:{}) };
@@ -119,9 +135,9 @@ export async function databaseOperationCapabilities(db:pg.Pool, collectionId:str
   return transaction(db, async client => {
     // The caller authorizes collection visibility before invoking discovery.
     const native = (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [collectionId])).rowCount;
-    const enabled=!native || Boolean(access.custody);
-    return { enabled,...(!enabled?{reason:'native-custody-required'}:{}),folderReceipts:enabled,
-      nativeFolderReceipts:Boolean(native && access.custody),folderCollisionPolicies:['keep-both','skip'],
+    const enabled=!native || Boolean(access.custody && await access.custody.available());
+    return { enabled,...(!enabled?{reason:access.custody?'native-helper-unavailable':'native-custody-required'}:{}),folderReceipts:enabled,
+      nativeFolderReceipts:Boolean(native && enabled),folderCollisionPolicies:['keep-both','skip'],
       crossCollectionOperations:native?'unavailable':'stored-same-audience-files' };
   });
 }
@@ -138,6 +154,7 @@ export async function submitDatabaseBatch(db:pg.Pool, input:DatabaseBatchRequest
     }
     await authorize(client, { request: input, collection_id: input.collectionId }, access);
     if (!access.custody && (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [input.collectionId])).rowCount) throw fail(422, 'Native operations require the custody coordinator', 'native-custody-required');
+    if (access.custody && (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1',[input.collectionId])).rowCount && !await access.custody.available()) throw fail(503,'Atomic native mutation helper is unavailable','native-helper-unavailable');
     const keys = Object.fromEntries(input.items.map(item => [item.itemId, randomUUID()]));
     const row = (await client.query(`INSERT INTO files_database_operation_batches(actor_user_id,actor_scope,idempotency_key,collection_id,request,item_keys)
       VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [actor.userId, scope(actor), input.idempotencyKey, input.collectionId, input, keys])).rows[0];
@@ -222,8 +239,7 @@ export async function controlDatabaseBatch(db:pg.Pool, id:string, action:'cancel
     } else row.cancelled = true; // Undo first stops forward execution.
     const updated = (await client.query('UPDATE files_database_operation_batches SET cancelled=$2,errors=$3,overrides=$4,updated_at=NOW() WHERE id=$1 RETURNING *', [id, row.cancelled, row.errors, row.overrides])).rows[0];
     return view(client, updated, actor);
-  });
-  clearOperationCancellation(id);
+  }).finally(()=>clearOperationCancellation(id));
   if (action === 'undo') {
     for (const item of [...result.items].reverse().filter(i => i.undoSupported)) {
       try {

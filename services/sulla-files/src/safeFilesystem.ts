@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { FileHandle } from 'node:fs/promises';
@@ -39,6 +40,12 @@ type Verify = (pinned:PinnedRegularFile)=>Promise<void>;
  * operations cannot be proven independent after a concurrent rename.
  */
 export class FilesMutationCoordinator {
+  static async atomicRenameAvailable():Promise<boolean> {
+    return process.platform==='linux' && await access('/usr/local/bin/sulla-files-rename-noreplace',constants.X_OK).then(()=>true,()=>false);
+  }
+  static async requireAtomicRename():Promise<void> {
+    if (!await this.atomicRenameAvailable()) throw Object.assign(new Error('Native mutation helper is unavailable'), { status:503,code:'native-helper-unavailable' });
+  }
   private tail:               Promise<void> = Promise.resolve();
   private readonly scope = new AsyncLocalStorage<boolean>();
   private rootReady?: Promise<string>;
@@ -68,6 +75,7 @@ export class FilesMutationCoordinator {
 
   evictVerified(input:{ source: string; quarantine: string; verify: Verify }):Promise<EvictionReceipt> {
     return this.runExclusive([input.source, input.quarantine], async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const source = await this.pinVerified(input.source, input.verify);
       try {
         await this.ensurePrivateParent(input.quarantine);
@@ -87,6 +95,7 @@ export class FilesMutationCoordinator {
 
   publishVerified(input:{ staged: string; target: string; verify: Verify }):Promise<PublicationReceipt> {
     return this.runExclusive([input.staged, input.target], async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const staged = await this.pinVerified(input.staged, input.verify);
       try {
         await this.ensureParent(input.target);
@@ -162,6 +171,7 @@ export class FilesMutationCoordinator {
 
   async rollbackPublication(receipt:PublicationReceipt, verify:Verify):Promise<void> {
     await this.runExclusive([receipt.staged, receipt.target], async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const target = await this.pin(receipt.target);
       const rollback = receipt.rollback ?? `.sulla-trash/.residency/${ randomUUID() }.rollback`;
       try {
@@ -190,6 +200,7 @@ export class FilesMutationCoordinator {
   }
 
   async openPrivateExclusive(path:string):Promise<FileHandle> {
+    await FilesMutationCoordinator.requireAtomicRename();
     await this.ensurePrivateParent(path);
     const parent = await this.pinParent(path);
     try {
@@ -238,10 +249,17 @@ export class FilesMutationCoordinator {
   /** Exact mkdir: callers plan every parent separately, including empty dirs. */
   async createDirectory(path:string):Promise<DirectoryReceipt> {
     return this.runExclusive([path],async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const parent = await this.pinParent(path);
       try { await mkdir(parent.child,{ mode:0o700 }); await parent.handle.sync() } finally { await parent.handle.close() }
       return this.directory(path);
     });
+  }
+
+  async stageDirectory(path:string):Promise<DirectoryReceipt> {
+    await FilesMutationCoordinator.requireAtomicRename();
+    await this.ensurePrivateParent(path);
+    return this.createDirectory(path);
   }
 
   async removeEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<void> {
@@ -252,6 +270,7 @@ export class FilesMutationCoordinator {
 
   async evictEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<void> {
     return this.runExclusive([expected.path],async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const actual = await this.directory(expected.path);
       if (actual.dev !== expected.dev || actual.ino !== expected.ino) throw new Error('Directory identity changed; inverse refused');
       const parent = await this.pinParent(expected.path);
@@ -269,11 +288,19 @@ export class FilesMutationCoordinator {
   }
 
   async restoreEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<DirectoryReceipt> {
+    if (await this.exists(expected.path)) {
+      const current=await this.directory(expected.path);
+      if (current.dev===expected.dev && current.ino===expected.ino && !await this.exists(retained)) return current;
+      throw new Error('Directory restore destination is occupied');
+    }
     const moved=await this.directory(retained);
     if (moved.dev!==expected.dev || moved.ino!==expected.ino) throw new Error('Retained directory identity changed');
     const stage=await this.pinParent(retained);
     try { if ((await readdir(stage.child)).length) throw new Error('Retained directory acquired children') } finally { await stage.handle.close() }
-    return this.createDirectory(expected.path);
+    await this.renameNoReplace(retained,expected.path);
+    const restored=await this.directory(expected.path);
+    if (restored.dev!==expected.dev || restored.ino!==expected.ino) throw new Error('Restored directory identity changed; preserved');
+    return restored;
   }
 
   /** Both old and incoming bytes remain retained for a guarded inverse. */
@@ -391,8 +418,24 @@ export class FilesMutationCoordinator {
   }
 
   private async renamePinned(source:string, target:string):Promise<void> {
-    const from = await this.pinParent(source); const to = await this.pinParent(target);
-    try { await rename(from.child, to.child); await to.handle.sync(); await from.handle.sync() } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
+    await this.renameNoReplace(source,target);
+  }
+
+  /** Linux renameat2 is required: fs.rename can overwrite an unknown empty dir. */
+  private async renameNoReplace(source:string,target:string):Promise<void> {
+    await FilesMutationCoordinator.requireAtomicRename();
+    const from=await this.pinParent(source); const to=await this.pinParent(target);
+    try {
+      await new Promise<void>((resolve,reject)=>{
+        const child=spawn('/usr/local/bin/sulla-files-rename-noreplace',[basename(this.absolute(source)),basename(this.absolute(target))],
+          {stdio:['ignore','ignore','pipe',from.handle.fd,to.handle.fd],env:{}});
+        let errno='';
+        child.stderr?.on('data',data=>{if (errno.length<32) errno+=String(data).slice(0,32)});
+        child.once('error',()=>reject(new Error('Atomic no-clobber directory helper is unavailable')));
+        child.once('close',code=>code===0?resolve():reject(new Error('Atomic no-clobber rename failed (errno '+errno.trim()+')')));
+      });
+      await to.handle.sync(); await from.handle.sync();
+    } finally { await Promise.all([from.handle.close(),to.handle.close()]) }
   }
 
   private async unlinkPinned(path:string):Promise<void> {
