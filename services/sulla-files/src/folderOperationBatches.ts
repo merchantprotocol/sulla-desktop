@@ -1,13 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import type { FilesIdentity } from './auth.js';
-import { configuredReceiptLifecycle,executeDatabaseOperation,restoreTrashReceipt,undoDatabaseOperation,transaction,permissionBoundary,permissionSignature,type DatabaseOperationAccess } from './databaseOperations.js';
+import { configuredReceiptLifecycle,executeDatabaseOperation,folderGrantMigration,restoreTrashReceipt,undoDatabaseOperation,transaction,permissionBoundary,permissionSignature,type DatabaseOperationAccess } from './databaseOperations.js';
 import { assertOperationNotCancelled } from './operationCancellation.js';
 import type { DatabaseBatchItem,DatabaseFolderState } from './databaseOperationBatches.js';
 
 const fail=(message:string,code='state-conflict')=>Object.assign(new Error(message),{ status:409,code });
 const scope=(a:FilesIdentity)=>JSON.stringify([a.kind,a.deviceId,a.agentId??'',a.jobId??'',a.threadId??'']);
 const state=(f:any):DatabaseFolderState=>({ folderId:f.id,path:f.path,revision:String(f.operation_revision) });
+const canonical=(value:any):string=>JSON.stringify(value,(_key,item)=>item && typeof item==='object' && !Array.isArray(item)
+  ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 const metadataAccess=(access:DatabaseOperationAccess):DatabaseOperationAccess => ({ ...access,
   ...(access.custody?{ custody:{ ...access.custody,publish:async()=>undefined } }:{}) });
 
@@ -33,25 +35,99 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
     for (const file of files) await access.file(client,file.id);
     for (const folder of folders) await access.path(client,input.collectionId,folder.path);
     let target=input.targetPath;
+    const receiptId=randomUUID();
+    let displaced:any=null;
     const occupied=async(path:string)=>Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/') OR starts_with($2,path||'/'))
       UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[input.collectionId,path])).rowCount) || Boolean(await access.custody?.occupied(input.collectionId,path));
+    const destinationTree=async(path:string) => {
+      const destinationFiles=(await client.query("SELECT * FROM files WHERE collection_id=$1 AND starts_with(path,$2||'/') ORDER BY path FOR UPDATE",[input.collectionId,path])).rows;
+      const destinationFolders=(await client.query("SELECT * FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY length(path),path FOR UPDATE",[input.collectionId,path])).rows;
+      const native=access.custody
+        ? await access.custody.folderSnapshot(input.collectionId,path,destinationFiles.map(file=>file.path))
+        : {directories:[],nativeSignature:createHash('sha256').update(canonical({files:[],directories:[]})).digest('hex')};
+      const folderShares=(await client.query("SELECT * FROM folder_shares WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) ORDER BY id FOR UPDATE",[input.collectionId,path])).rows;
+      const publicLinks=(await client.query("SELECT * FROM file_share_links WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) ORDER BY id FOR UPDATE",[input.collectionId,path])).rows;
+      const fileIds=destinationFiles.map(file=>file.id);
+      const fileSharesSignature=(await client.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.id),'[]'::jsonb)::text) signature FROM file_shares item WHERE item.file_id=ANY($1::uuid[])",[fileIds])).rows[0].signature;
+      const fileLinksSignature=(await client.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.id),'[]'::jsonb)::text) signature FROM file_share_links item WHERE item.file_id=ANY($1::uuid[])",[fileIds])).rows[0].signature;
+      const root=destinationFolders.find(folder=>folder.path===path);
+      const subtreeSignature=createHash('sha256').update(canonical({files:destinationFiles.map(file=>({id:file.id,path:file.path,versionId:file.current_version_id,revision:String(file.operation_revision),deleted:Boolean(file.deleted_at)})),
+        folders:destinationFolders.map(state),folderShares,publicLinks,fileSharesSignature,fileLinksSignature,nativeSignature:native.nativeSignature})).digest('hex');
+      return {destinationFiles,destinationFolders,destinationNativeFolders:native.directories,folderShares,publicLinks,fileIds,fileSharesSignature,fileLinksSignature,root,
+        snapshot:root?{...state(root),subtreeSignature}:undefined};
+    };
     let skipped=false;
     if (input.action!=='trash') {
       if (!target || target===source || target.startsWith(source+'/') || source.startsWith(target+'/')) throw fail('Folder destination overlaps its source');
       await access.path(client,input.collectionId,target);
-      await permissionBoundary(client,input.collectionId,source,target);
-      if (await occupied(target)) {
+      const targetOccupied=await occupied(target);
+      if (targetOccupied) {
         if (input.collisionPolicy==='skip') skipped=true;
         else if (input.collisionPolicy==='keep-both') {
           let n=2; while (await occupied(target) && n<=1000) { target=input.targetPath+' ('+n+')'; n++ }
           if (await occupied(target)) throw fail('No available Keep Both destination');
-        } else throw fail('Folder destination is occupied; choose Keep Both or Skip','destination-conflict');
+        } else if (input.collisionPolicy==='replace') {
+          const tree=await destinationTree(target);
+          const {destinationFiles,destinationFolders,destinationNativeFolders,folderShares,publicLinks}=tree;
+          const destinationRoot=tree.root;
+          const expected=(input as any).expectedDestination;
+          if (!destinationRoot || !expected || destinationRoot.id!==expected.folderId || destinationRoot.path!==expected.path || String(destinationRoot.operation_revision)!==expected.revision || tree.snapshot?.subtreeSignature!==expected.subtreeSignature) {
+            throw Object.assign(fail('The Replace destination changed; refresh Files','destination-conflict'),{...(tree.snapshot?{destination:tree.snapshot}:{})});
+          }
+          if (destinationFiles.some(f=>f.deleted_at) || destinationFolders.some(f=>f.deleted_at)) throw fail('Replace destination contains trashed entries; restore or relocate them first');
+          for (const file of destinationFiles) await access.file(client,file.id);
+          for (const folder of destinationFolders) await access.path(client,input.collectionId,folder.path);
+          const slash=target.lastIndexOf('/');
+          const recovery=target.slice(0,slash+1)+'.replaced-'+receiptId+'-'+target.slice(slash+1);
+          if (await occupied(recovery)) throw fail('Replace recovery sibling is occupied');
+          await access.path(client,input.collectionId,recovery);
+          // The complete destination grant subtree moves with its identities to
+          // this same-parent recovery sibling; inherited outer grants do not change.
+          const destinationPaths=new Set<string>([target,...destinationFolders.map(f=>f.path),...destinationNativeFolders]);
+          for (const file of destinationFiles) {
+            let path=file.path.slice(0,file.path.lastIndexOf('/'));
+            while (path===target || path.startsWith(target+'/')) { destinationPaths.add(path); path=path.slice(0,path.lastIndexOf('/')); if (!path.includes('/') && path!==target) break }
+          }
+          const destinationOrdered=[...destinationPaths].sort((a,b)=>a.split('/').length-b.split('/').length || a.localeCompare(b));
+          const destinationFileIds=tree.fileIds;
+          const {fileSharesSignature,fileLinksSignature}=tree;
+          const displacedChildren:any[]=[];
+          for (const file of destinationFiles) {
+            const child=await executeDatabaseOperation(db,{idempotencyKey:randomUUID(),collectionId:input.collectionId,action:'rename',fileId:file.id,
+              expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:recovery+file.path.slice(target.length),[folderGrantMigration]:true},
+            actor,metadataAccess(access),undefined,client);
+            displacedChildren.push(child);
+          }
+          const displacedFolders:any[]=[];
+          for (const path of destinationOrdered) {
+            let folder=destinationFolders.find(f=>f.path===path);
+            if (!folder) folder=(await client.query('INSERT INTO file_folders(collection_id,path,created_by_id) VALUES($1,$2,$3) RETURNING *',[input.collectionId,path,actor.userId])).rows[0];
+            const before=state(folder);
+            const after=(await client.query('UPDATE file_folders SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[folder.id,recovery+path.slice(target.length)])).rows[0];
+            displacedFolders.push({before,after:state(after),deleted:false});
+          }
+          const grants={
+            folderShares:folderShares.map(grant=>({id:grant.id,beforePath:grant.folder_path,afterPath:recovery+grant.folder_path.slice(target.length)})),
+            publicLinks:publicLinks.map(link=>({id:link.id,beforePath:link.folder_path,afterPath:recovery+link.folder_path.slice(target.length)})),
+            fileIds:destinationFileIds,fileSharesSignature,fileLinksSignature,
+          };
+          for (const grant of grants.folderShares) await client.query('UPDATE folder_shares SET folder_path=$2,updated_at=NOW() WHERE id=$1',[grant.id,grant.afterPath]);
+          for (const link of grants.publicLinks) await client.query('UPDATE file_share_links SET folder_path=$2,updated_at=NOW() WHERE id=$1',[link.id,link.afterPath]);
+          for (const child of displacedChildren) await client.query('UPDATE files_database_operation_receipts SET permission_signature=$2 WHERE id=$1',[child.operationId,await permissionSignature(client,input.collectionId,child.operationId)]);
+          displaced={source:target,target:recovery,folders:displacedFolders,children:displacedChildren,grants};
+        } else {
+          const tree=await destinationTree(target);
+          throw Object.assign(fail('Folder destination is occupied; choose Replace, Keep Both or Skip','destination-conflict'),{...(tree.snapshot?{destination:tree.snapshot}:{})});
+        }
+      } else if (input.collisionPolicy==='replace') throw fail('The Replace destination no longer exists; refresh Files','destination-conflict');
+      if (!skipped) {
+        await access.path(client,input.collectionId,target);
+        await permissionBoundary(client,input.collectionId,source,target);
       }
-      await access.path(client,input.collectionId,target);
-      await permissionBoundary(client,input.collectionId,source,target);
     }
-    const row=(await client.query(`INSERT INTO files_database_operation_receipts(actor_user_id,actor_scope,idempotency_key,request,collection_id,action,state,before_state,after_state)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$8::jsonb) RETURNING *`,[actor.userId,scope(actor),input.idempotencyKey,input,input.collectionId,input.action,skipped?'skipped':'completed',JSON.stringify(explicit?state(explicit):null)])).rows[0];
+    const row=(await client.query(`INSERT INTO files_database_operation_receipts(id,actor_user_id,actor_scope,idempotency_key,request,collection_id,action,state,before_state,after_state,displaced_before,displaced_after)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$9::jsonb,$10::jsonb,$11::jsonb) RETURNING *`,[receiptId,actor.userId,scope(actor),input.idempotencyKey,input,input.collectionId,input.action,skipped?'skipped':'completed',JSON.stringify(explicit?state(explicit):null),
+      JSON.stringify(displaced?.folders.find((f:any)=>f.before.path===displaced.source)?.before??null),JSON.stringify(displaced?.folders.find((f:any)=>f.before.path===displaced.source)?.after??null)])).rows[0];
     if (skipped) return;
     // Include implicit ancestors, so native and stored empty directories have
     // one stable ordered plan rather than fake placeholder file identities.
@@ -81,7 +157,7 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
         ...(input.action==='trash'?{}:{targetPath:target+file.path.slice(source.length)})},actor,metadataAccess(access),undefined,client);
       children.push(child);
     }
-    const plan={ source,target,folders:folderChanges,children,
+    const plan={ source,target,folders:folderChanges,children,...(displaced?{displaced}:{}),
       ...(input.action==='trash'?{lifecycle:await configuredReceiptLifecycle(client,input.collectionId,new Date())}:{}) };
     const updated=(await client.query('UPDATE files_database_operation_receipts SET after_state=$2,folder_plan=$3 WHERE id=$1 RETURNING *',
       [row.id,folderChanges.find(f=>f.before.path===source)?.after,plan])).rows[0];
@@ -244,14 +320,33 @@ export async function undoFolderBatchItem(db:pg.Pool,id:string,actor:FilesIdenti
     if (row.state!=='completed') throw fail('Folder operation cannot be undone');
     if (row.permission_signature!==await permissionSignature(client,row.collection_id,row.id)) throw fail('Folder permissions changed');
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['stored-namespace:'+row.collection_id]);
+    const validateTree=async(subtree:string,children:any[],folders:any[],label:string) => {
+      const actualFiles=(await client.query("SELECT * FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY id FOR UPDATE",[row.collection_id,subtree])).rows;
+      const expectedFiles=new Map(children.map((child:any)=>[child.after.fileId,child.after]));
+      if (actualFiles.length!==expectedFiles.size || actualFiles.some(file=>{const expected:any=expectedFiles.get(file.id);return !expected || file.path!==expected.path || file.current_version_id!==expected.versionId || String(file.operation_revision)!==expected.revision || Boolean(file.deleted_at)!==expected.deleted})) throw fail(label+' subtree membership, identity or lifecycle changed');
+      const actualFolders=(await client.query("SELECT * FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY id FOR UPDATE",[row.collection_id,subtree])).rows;
+      if (actualFolders.length!==folders.length || folders.some((folder:any)=>!actualFolders.some(actual=>actual.id===folder.after.folderId && actual.path===folder.after.path && String(actual.operation_revision)===folder.after.revision && Boolean(actual.deleted_at)===Boolean(folder.deleted)))) throw fail(label+' folder identity, revision or membership changed');
+      for (const file of actualFiles) await access.file(client,file.id);
+      for (const folder of actualFolders) await access.path(client,row.collection_id,folder.path);
+    };
     const subtree=plan.target??plan.source;
-    const actualFiles=(await client.query("SELECT id FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) FOR UPDATE",[row.collection_id,subtree])).rows;
-    const expectedFiles=new Set(plan.children.map((c:any)=>c.after.fileId));
-    if (actualFiles.length!==expectedFiles.size || actualFiles.some(f=>!expectedFiles.has(f.id))) throw fail('Folder acquired unknown children');
-    const actualFolders=(await client.query("SELECT * FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) FOR UPDATE",[row.collection_id,subtree])).rows;
-    if (actualFolders.length!==plan.folders.length || plan.folders.some((f:any)=>!actualFolders.some(a=>a.id===f.after.folderId && a.path===f.after.path && String(a.operation_revision)===f.after.revision))) throw fail('Folder identity, revision or children changed');
+    await validateTree(subtree,plan.children,plan.folders,'Folder');
     if ((await client.query(`SELECT 1 FROM folder_shares WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))
       UNION ALL SELECT 1 FROM file_share_links WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) LIMIT 1`,[row.collection_id,subtree])).rowCount) throw fail('Folder acquired grants');
+    if (plan.displaced) {
+      await access.path(client,row.collection_id,plan.displaced.target);
+      await validateTree(plan.displaced.target,plan.displaced.children,plan.displaced.folders,'Displaced folder');
+      const actualFolderShares=(await client.query("SELECT id,folder_path FROM folder_shares WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) ORDER BY id FOR UPDATE",[row.collection_id,plan.displaced.target])).rows;
+      const actualPublicLinks=(await client.query("SELECT id,folder_path FROM file_share_links WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) ORDER BY id FOR UPDATE",[row.collection_id,plan.displaced.target])).rows;
+      const expectedFolderShares=plan.displaced.grants?.folderShares??[];
+      const expectedPublicLinks=plan.displaced.grants?.publicLinks??[];
+      if (actualFolderShares.length!==expectedFolderShares.length || expectedFolderShares.some((grant:any)=>!actualFolderShares.some((actual:any)=>actual.id===grant.id && actual.folder_path===grant.afterPath)) ||
+        actualPublicLinks.length!==expectedPublicLinks.length || expectedPublicLinks.some((link:any)=>!actualPublicLinks.some((actual:any)=>actual.id===link.id && actual.folder_path===link.afterPath))) throw fail('Displaced folder grants changed');
+      const fileIds=plan.displaced.grants?.fileIds??[];
+      const fileSharesSignature=(await client.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.id),'[]'::jsonb)::text) signature FROM file_shares item WHERE item.file_id=ANY($1::uuid[])",[fileIds])).rows[0].signature;
+      const fileLinksSignature=(await client.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.id),'[]'::jsonb)::text) signature FROM file_share_links item WHERE item.file_id=ANY($1::uuid[])",[fileIds])).rows[0].signature;
+      if (fileSharesSignature!==plan.displaced.grants?.fileSharesSignature || fileLinksSignature!==plan.displaced.grants?.fileLinksSignature) throw fail('Displaced folder file grants or links changed');
+    }
     // File inverses restore metadata first; the one native journal publishes
     // the complete folder inverse before this transaction can commit.
     for (const child of [...plan.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client);
@@ -260,6 +355,16 @@ export async function undoFolderBatchItem(db:pg.Pool,id:string,actor:FilesIdenti
       await access.path(client,row.collection_id,folder.before.path);
       if (row.action==='copy') await client.query('DELETE FROM file_folders WHERE id=$1',[folder.after.folderId]);
       else await client.query('UPDATE file_folders SET path=$2,deleted_at=NULL,updated_at=NOW() WHERE id=$1',[folder.after.folderId,folder.before.path]);
+    }
+    if (plan.displaced) {
+      for (const child of [...plan.displaced.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client,{folderGrantMigration:true});
+      for (const folder of [...plan.displaced.folders].reverse()) {
+        await access.path(client,row.collection_id,folder.after.path);
+        await access.path(client,row.collection_id,folder.before.path);
+        await client.query('UPDATE file_folders SET path=$2,deleted_at=NULL,updated_at=NOW() WHERE id=$1',[folder.after.folderId,folder.before.path]);
+      }
+      for (const grant of plan.displaced.grants?.folderShares??[]) await client.query('UPDATE folder_shares SET folder_path=$2,updated_at=NOW() WHERE id=$1 AND folder_path=$3',[grant.id,grant.beforePath,grant.afterPath]);
+      for (const link of plan.displaced.grants?.publicLinks??[]) await client.query('UPDATE file_share_links SET folder_path=$2,updated_at=NOW() WHERE id=$1 AND folder_path=$3',[link.id,link.beforePath,link.afterPath]);
     }
     await access.custody?.publish(client,row,true);
     await client.query("UPDATE files_database_operation_receipts SET state='undone',undone_at=NOW() WHERE id=$1",[id]);
