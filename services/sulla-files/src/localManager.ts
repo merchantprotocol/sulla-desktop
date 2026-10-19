@@ -33,6 +33,7 @@ export interface FileRootStatus {
   pendingFiles: number; serverConfigured: boolean; lastError?: string; lastScanAt?: string; lastSyncAt?: string;
 }
 interface PathOperationPlanEntry {
+  rootId: string;
   fileId: string;
   sourcePath: string;
   targetPath: string;
@@ -40,6 +41,7 @@ interface PathOperationPlanEntry {
   contentHash: string;
   kind: 'move' | 'copy';
 }
+interface DiskScan { paths: string[]; complete: boolean; errors: string[] }
 interface PathOperationRow {
   operation_id: string;
   state: 'planned' | 'publishing' | 'db-committed';
@@ -66,6 +68,12 @@ function matchIgnore(path:string, patterns:string[]):boolean {
     if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1));
     const expression = new RegExp(`^${ pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*') }$`);
     return expression.test(path) || parts.some(part => expression.test(part));
+  });
+}
+function isSensitiveTrackedPath(relativePath:string):boolean {
+  return relativePath.replaceAll('\\', '/').split('/').some(part => {
+    const value = part.toLowerCase();
+    return value.includes('wallet') || value === 'vault' || value === 'vaults';
   });
 }
 function conflictPath(path:string, device:string):string {
@@ -124,11 +132,14 @@ export class LocalFilesManager {
   private progressStartedAt = 0;
   readonly mutations: FilesMutationCoordinator;
   private readonly rootCollections = new Map<string, string>();
+  private readonly rootMutations = new Map<string, FilesMutationCoordinator>();
   private readonly roots:FileRootConfig[];
   constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator) {
     this.store = new Store(config.chunkRoot); this.paused = config.paused;
-    this.roots = config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []);
+    this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
+      .filter(root => !isSensitiveTrackedPath(root.path));
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
+    for (const root of this.roots) this.rootMutations.set(root.id, root.primary ? this.mutations : new FilesMutationCoordinator(root.path));
   }
 
   async initialize(beforeScan?:()=>Promise<void>):Promise<void> {
@@ -225,7 +236,7 @@ export class LocalFilesManager {
   }
 
   async watchedPathCoverage(collectionId:string, items:{ sourcePath:string; folder:boolean; fileSnapshots:{ id:string }[] }[]):Promise<number> {
-    if (!this.collectionId || collectionId !== this.collectionId) return 0;
+    if (![...this.rootCollections.values()].includes(collectionId)) return 0;
     let covered = 0;
     for (const item of items) {
       const result = await this.db.query(`SELECT file_id::text FROM watched_folder_state WHERE collection_id=$1 AND (path=$2 OR ($3 AND starts_with(path,$2||'/')))`, [collectionId, item.sourcePath, item.folder]);
@@ -236,12 +247,18 @@ export class LocalFilesManager {
   }
 
   async applyPathOperations(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity):Promise<void> {
+    const fileId = items[0]?.fileSnapshots[0]?.id;
+    const collectionId = fileId ? (await this.db.query('SELECT collection_id FROM files WHERE id=$1', [fileId])).rows[0]?.collection_id : undefined;
+    const root = this.roots.find(item => this.rootCollections.get(item.id) === collectionId);
+    if (!root) throw Object.assign(new Error('The watched Files root is unavailable'), { status: 409 });
     const paths = items.flatMap(item => [item.sourcePath, item.targetPath]);
-    return this.serial(() => this.mutations.runExclusive(paths, () => this.applyPathOperationsNow(action, items, actor)));
+    const mutations = this.rootMutations.get(root.id)!;
+    return this.serial(() => mutations.runExclusive(paths, () => this.applyPathOperationsNow(action, items, actor, root, mutations)));
   }
 
-  private async applyPathOperationsNow(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity):Promise<void> {
+  private async applyPathOperationsNow(action:'move' | 'copy', items:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[], actor:FilesIdentity, root:FileRootConfig, mutations:FilesMutationCoordinator):Promise<void> {
     if (!this.config.filesRoot) throw Object.assign(new Error('The watched Files folder is unavailable'), { status: 409 });
+    const collectionId = this.rootCollections.get(root.id)!;
     const sources = items.map(item => item.sourcePath);
     if (sources.some((source, index) => sources.some((candidate, other) => index !== other && source.startsWith(`${ candidate }/`)))) throw Object.assign(new Error('Choose either a folder or an item inside it, not both'), { status: 400 });
     const destinations = items.flatMap(item => item.fileSnapshots.map(file => `${ item.targetPath }${ file.path.slice(item.sourcePath.length) }`));
@@ -260,11 +277,11 @@ export class LocalFilesManager {
           FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
           WHERE f.collection_id=$1 AND f.id=ANY($2::uuid[]) AND f.deleted_at IS NULL
             AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-          ORDER BY w.path FOR UPDATE OF f,w`, [this.collectionId, [...snapshots.keys()]]);
+          ORDER BY w.path FOR UPDATE OF f,w`, [collectionId, [...snapshots.keys()]]);
         if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.watched_path || snapshot.currentVersionId !== row.current_version_id })) throw Object.assign(new Error('A selected file changed or became protected while this operation was starting. Refresh Files and try again.'), { status: 409 });
         for (const row of rows.rows) {
           const nextPath = `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`;
-          const collision = await client.query('SELECT 1 FROM files WHERE collection_id=$1 AND path=$2 AND id<>$3 AND deleted_at IS NULL', [this.collectionId, nextPath, row.id]);
+          const collision = await client.query('SELECT 1 FROM files WHERE collection_id=$1 AND path=$2 AND id<>$3 AND deleted_at IS NULL', [collectionId, nextPath, row.id]);
           if (collision.rowCount) throw Object.assign(new Error(`An item already exists at ${ nextPath }`), { status: 409 });
         }
         lockedRows.push(rows.rows);
@@ -273,6 +290,7 @@ export class LocalFilesManager {
       for (const [index, item] of items.entries()) {
         for (const row of lockedRows[index]) {
           plan.push({
+            rootId:      root.id,
             fileId:      row.id,
             sourcePath:  row.watched_path,
             targetPath:  `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`,
@@ -302,14 +320,14 @@ export class LocalFilesManager {
           };
           const operation = plan[planIndex++];
           if (action === 'copy') {
-            completed.push({ publication: await this.mutations.copyVerified({ source: sourcePath, target: targetPath, staged: operation.stagePath, verify }) });
+            completed.push({ publication: await mutations.copyVerified({ source: sourcePath, target: targetPath, staged: operation.stagePath, verify }) });
           } else {
-            const eviction = await this.mutations.evictVerified({ source: sourcePath, quarantine: operation.stagePath, verify });
+            const eviction = await mutations.evictVerified({ source: sourcePath, quarantine: operation.stagePath, verify });
             try {
-              const publication = await this.mutations.publishVerified({ staged: eviction.quarantine, target: targetPath, verify });
+              const publication = await mutations.publishVerified({ staged: eviction.quarantine, target: targetPath, verify });
               completed.push({ publication, eviction });
             } catch (error) {
-              try { await this.mutations.recoverEviction(eviction, verify) } catch (recoveryError) {
+              try { await mutations.recoverEviction(eviction, verify) } catch (recoveryError) {
                 throw Object.assign(new Error(`${ error instanceof Error ? error.message : String(error) }. The source was preserved for recovery at ${ eviction.quarantine }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`), { status: (error as any)?.status ?? 500 });
               }
               throw error;
@@ -334,20 +352,20 @@ export class LocalFilesManager {
           const receipt = completed[receiptIndex++].publication;
           if (action === 'move') {
             await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1', [row.id, nextPath]);
-            await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [this.collectionId, row.id, nextPath]);
-            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [this.collectionId, row.id, row.current_version_id]);
-            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId: this.collectionId, from: row.path, to: nextPath })]);
+            await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [collectionId, row.id, nextPath]);
+            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [collectionId, row.id, row.current_version_id]);
+            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId, from: row.path, to: nextPath })]);
           } else {
             const copied = await copyLockedFile(client, row, nextPath, actor);
             await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
-              VALUES($1,$2,$3,$4,$5,$6,'default')`, [this.collectionId, nextPath, copied.id, row.content_hash, receipt.fingerprint.size, Math.trunc(receipt.fingerprint.mtimeMs)]);
-            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'copy',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, copied.id, copied.current_version_id, JSON.stringify({ collectionId: this.collectionId, from: row.watched_path, to: nextPath })]);
+              VALUES($1,$2,$3,$4,$5,$6,$7)`, [collectionId, nextPath, copied.id, row.content_hash, receipt.fingerprint.size, Math.trunc(receipt.fingerprint.mtimeMs), root.id]);
+            await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'copy',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, copied.id, copied.current_version_id, JSON.stringify({ collectionId, from: row.watched_path, to: nextPath })]);
           }
         }
         if (action === 'move' && item.folder) {
-          const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [this.collectionId, item.sourcePath]);
-          for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, this.collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
-          for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [this.collectionId, item.sourcePath, item.targetPath]);
+          const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [collectionId, item.sourcePath]);
+          for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
+          for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [collectionId, item.sourcePath, item.targetPath]);
         }
       }
       await client.query("UPDATE files_path_operations SET state='db-committed',updated_at=NOW() WHERE operation_id=$1", [operationId]);
@@ -365,11 +383,11 @@ export class LocalFilesManager {
       for (const item of completed.reverse()) {
         const planned = durablePlan.find(entry => entry.targetPath === item.publication.target);
         const verify = async(pinned:PinnedRegularFile) => planned ? this.verifyOperationPinned(pinned, planned.contentHash) : pinned.assertUnchanged();
-        try { await this.mutations.rollbackPublication(item.publication, verify) } catch (recoveryError) { preservationErrors.push(`${ item.publication.target }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`); continue }
+        try { await mutations.rollbackPublication(item.publication, verify) } catch (recoveryError) { preservationErrors.push(`${ item.publication.target }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`); continue }
         if (item.eviction) {
-          try { await this.mutations.recoverEviction(item.eviction, verify) } catch (recoveryError) { preservationErrors.push(`${ item.eviction.source }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
+          try { await mutations.recoverEviction(item.eviction, verify) } catch (recoveryError) { preservationErrors.push(`${ item.eviction.source }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
         } else {
-          try { await this.mutations.finalizePublication(item.publication) } catch (recoveryError) { preservationErrors.push(`${ item.publication.staged }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
+          try { await mutations.finalizePublication(item.publication) } catch (recoveryError) { preservationErrors.push(`${ item.publication.staged }: ${ recoveryError instanceof Error ? recoveryError.message : String(recoveryError) }`) }
         }
       }
       if (intentCreated) {
@@ -382,7 +400,7 @@ export class LocalFilesManager {
       throw Object.assign(new Error(`${ reason }${ preservationErrors.length ? ` Recovery artifacts were preserved: ${ preservationErrors.join('; ') }` : '' }`), { status: (error as any)?.status ?? 500 });
     } finally { if (!clientReleased) client.release(); }
     const cleanupErrors:string[] = [];
-    for (const item of completed) await this.mutations.finalizePublication(item.publication).catch(error => cleanupErrors.push(`${ item.publication.staged }: ${ error instanceof Error ? error.message : String(error) }`));
+    for (const item of completed) await mutations.finalizePublication(item.publication).catch(error => cleanupErrors.push(`${ item.publication.staged }: ${ error instanceof Error ? error.message : String(error) }`));
     await this.db.query(
       `UPDATE files_path_operations SET state=$2,last_error=$3,updated_at=NOW() WHERE operation_id=$1`,
       [operationId, cleanupErrors.length ? 'db-committed' : 'completed', cleanupErrors.length ? cleanupErrors.join('; ').slice(0, 2000) : null],
@@ -418,56 +436,60 @@ export class LocalFilesManager {
   }
 
   private async finishCommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
+    const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
+    if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default'))) throw new Error('Path operation root is unavailable or inconsistent');
     for (const entry of plan) {
       const receipt = this.operationReceipt(entry, receipts);
       if (!receipt?.fingerprint) throw new Error(`Committed publication receipt is missing: ${ entry.targetPath }`);
       const fingerprint = deserializeFingerprint(receipt.fingerprint);
-      if (!await this.mutations.exists(entry.targetPath)) throw new Error(`Committed target is missing: ${ entry.targetPath }`);
-      const target = await this.mutations.pin(entry.targetPath);
+      if (!await mutations.exists(entry.targetPath)) throw new Error(`Committed target is missing: ${ entry.targetPath }`);
+      const target = await mutations.pin(entry.targetPath);
       try {
         if (!sameFingerprint(target.fingerprint, fingerprint)) throw new Error(`Committed target identity changed: ${ entry.targetPath }`);
         await this.verifyOperationPinned(target, entry.contentHash);
       } finally { await target.close() }
-      if (await this.mutations.exists(entry.stagePath)) {
-        const staged = await this.mutations.pin(entry.stagePath);
+      if (await mutations.exists(entry.stagePath)) {
+        const staged = await mutations.pin(entry.stagePath);
         try {
           if (!sameFingerprint(staged.fingerprint, fingerprint)) throw new Error(`Committed stage identity changed: ${ entry.stagePath }`);
           await this.verifyOperationPinned(staged, entry.contentHash);
         } finally { await staged.close() }
-        await this.mutations.finalizePublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint });
+        await mutations.finalizePublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint });
       }
     }
   }
 
   private async rollbackUncommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
+    const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
+    if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default'))) throw new Error('Path operation root is unavailable or inconsistent');
     for (const entry of [...plan].reverse()) {
       const durableReceipt = this.operationReceipt(entry, receipts);
-      const stageExists = await this.mutations.exists(entry.stagePath);
-      if (await this.mutations.exists(entry.targetPath) && (durableReceipt?.fingerprint || stageExists)) {
+      const stageExists = await mutations.exists(entry.stagePath);
+      if (await mutations.exists(entry.targetPath) && (durableReceipt?.fingerprint || stageExists)) {
         let fingerprint = durableReceipt?.fingerprint ? deserializeFingerprint(durableReceipt.fingerprint) : undefined;
         if (!fingerprint) {
-          const [stage, target] = await Promise.all([this.mutations.pin(entry.stagePath), this.mutations.pin(entry.targetPath)]);
+          const [stage, target] = await Promise.all([mutations.pin(entry.stagePath), mutations.pin(entry.targetPath)]);
           try {
             if (!sameIdentity(stage.fingerprint, target.fingerprint)) throw new Error(`Uncommitted target is not owned by its recovery stage: ${ entry.targetPath }`);
             await Promise.all([this.verifyOperationPinned(stage, entry.contentHash), this.verifyOperationPinned(target, entry.contentHash)]);
             fingerprint = target.fingerprint;
           } finally { await Promise.all([stage.close(), target.close()]) }
         }
-        await this.mutations.rollbackPublication(
+        await mutations.rollbackPublication(
           { staged: entry.stagePath, target: entry.targetPath, fingerprint },
           pinned => this.verifyOperationPinned(pinned, entry.contentHash),
         );
       }
-      if (entry.kind === 'move' && await this.mutations.exists(entry.stagePath)) {
-        const staged = await this.mutations.pin(entry.stagePath);
+      if (entry.kind === 'move' && await mutations.exists(entry.stagePath)) {
+        const staged = await mutations.pin(entry.stagePath);
         const receipt:EvictionReceipt = { source: entry.sourcePath, quarantine: entry.stagePath, fingerprint: staged.fingerprint };
         await staged.close();
-        await this.mutations.recoverEviction(receipt, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
-      } else if (entry.kind === 'copy' && await this.mutations.exists(entry.stagePath)) {
-        const staged = await this.mutations.pin(entry.stagePath);
+        await mutations.recoverEviction(receipt, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
+      } else if (entry.kind === 'copy' && await mutations.exists(entry.stagePath)) {
+        const staged = await mutations.pin(entry.stagePath);
         const receipt:PublicationReceipt = { staged: entry.stagePath, target: entry.targetPath, fingerprint: staged.fingerprint };
         await staged.close();
-        await this.mutations.finalizePublication(receipt);
+        await mutations.finalizePublication(receipt);
       }
     }
   }
@@ -520,9 +542,20 @@ export class LocalFilesManager {
     return this.roots.find(root => this.rootCollections.get(root.id) === collectionId) ?? this.roots.find(root => root.primary)!;
   }
 
-  private async diskFiles(configuredRoot:FileRootConfig, current = configuredRoot.path, prefix = '', patterns?:string[]):Promise<string[]> {
-    const ignores = patterns ?? await this.ignores(configuredRoot); const output:string[] = [];
-    for (const entry of await readdir(current, { withFileTypes: true })) { const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name; if (isProtectedPath(rel) || (configuredRoot.primary && isLegacyInternalPath(rel, this.config.legacyPreflight)) || matchIgnore(rel, ignores)) continue; if (entry.isDirectory()) output.push(...await this.diskFiles(configuredRoot, join(current, entry.name), rel, ignores)); else if (entry.isFile() && rel !== '.sullaignore') output.push(rel); }
+  private async diskFiles(configuredRoot:FileRootConfig, current = configuredRoot.path, prefix = '', patterns?:string[]):Promise<DiskScan> {
+    const ignores = patterns ?? await this.ignores(configuredRoot); const output:DiskScan = { paths: [], complete: true, errors: [] };
+    let entries;
+    try { entries = await readdir(current, { withFileTypes: true }) } catch (error:any) {
+      return { paths: [], complete: false, errors: [`Could not read ${ prefix || 'the tracked folder' }: ${ error?.code ?? 'filesystem error' }`] };
+    }
+    for (const entry of entries) {
+      const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name;
+      if (isProtectedPath(rel) || isSensitiveTrackedPath(rel) || (configuredRoot.primary && isLegacyInternalPath(rel, this.config.legacyPreflight)) || matchIgnore(rel, ignores)) continue;
+      if (entry.isDirectory()) {
+        const nested = await this.diskFiles(configuredRoot, join(current, entry.name), rel, ignores);
+        output.paths.push(...nested.paths); output.complete &&= nested.complete; output.errors.push(...nested.errors);
+      } else if (entry.isFile() && rel !== '.sullaignore') output.paths.push(rel);
+    }
     return output;
   }
 
@@ -542,24 +575,37 @@ export class LocalFilesManager {
   private async scanRoot(root:FileRootConfig):Promise<void> {
     const collectionId = this.rootCollections.get(root.id)!;
     await this.db.query("UPDATE file_roots SET state='scanning',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
-    const disk = await this.diskFiles(root); const diskSet = new Set(disk); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1 LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$2 AND COALESCE(r.state,'local')<>'online-only'`, [this.config.userId, root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
-    const missingRows = states.filter(row => !diskSet.has(row.path));
-    if (states.length > 0 && (disk.length === 0 || (missingRows.length >= 100 && missingRows.length / states.length >= 0.8))) {
+    const patterns = await this.ignores(root); const scanned = await this.diskFiles(root, root.path, '', patterns); const diskSet = new Set(scanned.paths); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1 LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$2 AND COALESCE(r.state,'local')<>'online-only'`, [this.config.userId, root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
+    const reconciledStates = states.filter(row => !isProtectedPath(row.path) && !isSensitiveTrackedPath(row.path) && !matchIgnore(row.path, patterns));
+    const missingRows = reconciledStates.filter(row => !diskSet.has(row.path));
+    if (scanned.complete && reconciledStates.length > 0 && (scanned.paths.length === 0 || (missingRows.length >= 100 && missingRows.length / reconciledStates.length >= 0.8))) {
       throw new Error('Folder availability changed unexpectedly; deletion reconciliation was suspended to protect indexed files');
     }
     const missing = new Map(missingRows.map(row => [row.content_hash, row]));
     const diskInfo = new Map<string, { size:number; mtimeMs:number }>();
-    for (const filePath of disk) { const info = await stat(this.safe(filePath, root)); diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) }
+    for (const filePath of scanned.paths) {
+      try { const info = await stat(this.safe(filePath, root)); if (info.isFile()) diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) } catch (error:any) { scanned.complete = false; scanned.errors.push(`Could not inspect ${ filePath }: ${ error?.code ?? 'filesystem error' }`) }
+    }
+    const disk = [...diskInfo.keys()];
     const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath)!; return current?.role !== 'view' && (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)) });
     this.pendingFiles = changedPaths.length + missing.size; this.totalBytes = changedPaths.reduce((sum, filePath) => sum + diskInfo.get(filePath)!.size, 0); this.pendingBytes = this.totalBytes; this.processedBytes = 0; this.progressStartedAt = Date.now();
     await this.db.query("UPDATE files_runtime_state SET state='syncing',pending_files=$1,updated_at=NOW() WHERE id=TRUE", [this.pendingFiles]);
     await this.db.query("UPDATE file_roots SET state='scanning',pending_files=$2,updated_at=NOW() WHERE id=$1", [root.id, this.pendingFiles]);
     let changed = 0;
-    for (const filePath of disk) { const info = diskInfo.get(filePath)!; const old = states.find(row => row.path === filePath); if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue; if (old?.role === 'view') continue; const result = await this.ingest(root, collectionId, filePath, info.mtimeMs, old, missing); this.processedBytes += info.size; this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes); this.pendingFiles = Math.max(0, this.pendingFiles - 1); if (result) changed++; }
+    for (const filePath of disk) {
+      const info = diskInfo.get(filePath)!; const old = states.find(row => row.path === filePath);
+      if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue;
+      if (old?.role === 'view') continue;
+      try { if (await this.ingest(root, collectionId, filePath, info.mtimeMs, old, missing)) changed++ } catch (error:any) { scanned.errors.push(`Could not import ${ filePath }: ${ error?.code ?? error?.message ?? 'filesystem error' }`) }
+      this.processedBytes += info.size; this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes); this.pendingFiles = Math.max(0, this.pendingFiles - 1);
+    }
     const currentStates = (await this.db.query<WatchedRow>('SELECT * FROM watched_folder_state WHERE root_id=$1', [root.id])).rows;
-    for (const row of states) if (!diskSet.has(row.path) && row.role !== 'view' && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
+    if (scanned.complete) for (const row of reconciledStates) if (!diskSet.has(row.path) && row.role !== 'view' && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
     this.pendingFiles = 0; this.pendingBytes = 0; this.processedBytes = this.totalBytes; this.lastScanAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
-    await this.db.query("UPDATE file_roots SET state='idle',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=$1", [root.id]);
+    const scanError = scanned.errors.length ? scanned.errors.slice(0, 5).join('; ').slice(0, 2000) : null;
+    await this.db.query("UPDATE file_roots SET state=$2,pending_files=0,last_error=$3,last_scan_at=NOW(),updated_at=NOW() WHERE id=$1", [root.id, scanError
+      ? 'error'
+      : 'idle', scanError]);
     if (changed) console.log(`[SullaFiles] recorded ${ changed } watched folder change(s) for root ${ root.id }`);
   }
 

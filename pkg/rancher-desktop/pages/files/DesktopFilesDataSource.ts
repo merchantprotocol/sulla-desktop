@@ -35,8 +35,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private files: FilesItem[] = [];
   private currentVersions = new Map<string, string>();
   private collectionId = '';
+  private rootId = '';
   private capabilitiesGeneration = 0;
   private capabilitiesListeners = new Set<() => void>();
+
+  selectCollection(collectionId:string):void { this.collectionId = collectionId }
 
   private resetRemoteCapabilities():void {
     Object.assign(this.capabilities, {
@@ -51,12 +54,16 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilitiesListeners.forEach(listener => listener());
   }
 
-  private refreshCapabilities(accessRole:string, generation:number):void {
-    void (ipcRenderer.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
+  private refreshCapabilities(accessRole:string, generation:number, primaryRoot:boolean):void {
+    (ipcRenderer.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
       .then((capabilities) => {
         if (generation !== this.capabilitiesGeneration) return;
         Object.assign(this.capabilities, capabilities, {
           orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(accessRole),
+          onlineOnly: capabilities.onlineOnly && primaryRoot,
+          keepOnComputer: capabilities.keepOnComputer && primaryRoot,
+          authenticatedRemote: capabilities.authenticatedRemote && primaryRoot,
+          verifiedRecovery: capabilities.verifiedRecovery && primaryRoot,
         });
         this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
         this.capabilitiesListeners.forEach(listener => listener());
@@ -83,10 +90,25 @@ export class DesktopFilesDataSource implements FilesDataSource {
       ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
     ]);
-    const collection = collections.find(item => item.name === 'Files') ?? collections.find(item => item.kind === 'knowledge');
+    const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
+    const availableCollections = roots.filter(root => root.activation === 'active' && root.collectionId)
+      .map(root => ({ id: root.collectionId!, name: root.name }));
+    const collection = collections.find(item => item.id === this.collectionId) ??
+      collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
+      collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Open ~/sulla/files to initialize it.');
     this.collectionId = collection.id;
-    this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration);
+    const selectedRoot = roots.find(root => root.collectionId === collection.id);
+    this.rootId = selectedRoot?.id ?? '';
+    if (selectedRoot) {
+      status.state = ({ idle: 'synced', scanning: 'syncing', syncing: 'syncing', paused: 'paused', offline: 'error', error: 'error', detached: 'error' } as Record<string, string>)[selectedRoot.state ?? ''] ?? status.state;
+      status.pendingFiles = selectedRoot.pendingFiles ?? status.pendingFiles;
+      status.lastError = selectedRoot.lastError;
+      status.lastScanAt = selectedRoot.lastScanAt;
+      status.lastSyncAt = selectedRoot.lastSyncAt;
+      status.serverConfigured = selectedRoot.serverConfigured ?? status.serverConfigured;
+    }
+    this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
     const [active, trash] = await Promise.all([
       ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
@@ -121,6 +143,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         ownerUserId:     collection.owner_user_id,
         sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
       },
+      availableCollections,
       files: this.files,
       status,
     };
@@ -147,14 +170,20 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt));
   }
 
-  setPaused(paused:boolean):Promise<FilesSnapshot['status']> { return ipcRenderer.invoke('files-ui:set-paused', paused) }
-  chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', destination) }
-  uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination }) }
-  createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', path) }
+  async setPaused(paused:boolean):Promise<FilesSnapshot['status']> {
+    if (!this.rootId) throw new Error('This Files collection is not backed by a tracked folder.');
+    await ipcRenderer.invoke('files-preferences:update-root', { id: this.rootId, paused });
+    return (await this.load()).status;
+  }
+
+  chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
+  uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
+  createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);
     return () => this.capabilitiesListeners.delete(listener);
   }
+
   onUploadProgress(listener:(progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => void):() => void {
     const wrapped = (_event:IpcRendererEvent, progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => listener(progress);
 
@@ -162,7 +191,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return () => ipcRenderer.removeListener('files-ui:upload-progress', wrapped);
   }
 
-  openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder') }
+  openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder', this.collectionId) }
   openFile(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', { fileId, versionId }) }
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean> { return ipcRenderer.invoke('files-ui:download-file', { fileId, versionId, name }) }
   downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> { return ipcRenderer.invoke('files-ui:download-files', items) }

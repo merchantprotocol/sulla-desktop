@@ -326,7 +326,15 @@ class SullaFilesWatcher {
     return (await response.json() as RecentSullaFile[])[0];
   }
 
-  async openFolder():Promise<void> { const error = await shell.openPath(this.folder); if (error) throw new Error(error); }
+  async folderForCollection(collectionId?:string):Promise<string> {
+    if (!collectionId) return this.folder;
+    const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
+    const root = await getSullaFilesRootRegistry().rootForCollection(collectionId);
+    if (!root) throw new Error('That Files collection has no active local folder.');
+    return root.path;
+  }
+
+  async openFolder(collectionId?:string):Promise<void> { const error = await shell.openPath(await this.folderForCollection(collectionId)); if (error) throw new Error(error); }
 }
 
 let instance:SullaFilesWatcher | undefined;

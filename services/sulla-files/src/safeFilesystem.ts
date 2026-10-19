@@ -40,11 +40,15 @@ type Verify = (pinned:PinnedRegularFile)=>Promise<void>;
 export class FilesMutationCoordinator {
   private tail:               Promise<void> = Promise.resolve();
   private readonly scope = new AsyncLocalStorage<boolean>();
-  private readonly rootReady: Promise<string>;
+  private rootReady?: Promise<string>;
 
   constructor(private readonly root:string) {
     this.root = resolve(root);
-    this.rootReady = realpath(this.root);
+  }
+
+  private ready():Promise<string> {
+    this.rootReady ??= realpath(this.root);
+    return this.rootReady;
   }
 
   runExclusive<T>(_relativePaths:string[], operation:()=>Promise<T>):Promise<T> {
@@ -204,7 +208,7 @@ export class FilesMutationCoordinator {
       const stats = await handle.stat({ bigint: true });
       if (!stats.isFile()) throw new Error('Files mutation target must be a regular file');
       const actual = await realpath(`/proc/self/fd/${ handle.fd }`).catch(() => '');
-      const root = await this.rootReady;
+      const root = await this.ready();
       if (!actual || (actual !== root && !actual.startsWith(`${ root }${ sep }`))) throw new Error('Pinned file escaped the Files root');
       return new PinnedRegularFile(this.clean(path), fingerprint(stats), handle);
     } catch (error) { await handle.close(); throw error }
@@ -236,7 +240,7 @@ export class FilesMutationCoordinator {
 
   private async ensureParent(path:string):Promise<void> {
     const parent = dirname(this.absolute(path));
-    const root = await this.rootReady;
+    const root = await this.ready();
     const rel = relative(root, parent);
     if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('Files mutation parent escapes root');
     let current = await open(root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -260,7 +264,7 @@ export class FilesMutationCoordinator {
 
   private async assertParentInsideRoot(path:string):Promise<void> {
     const parent = dirname(this.absolute(path));
-    const root = await this.rootReady;
+    const root = await this.ready();
     const actual = await realpath(parent);
     if (actual !== parent || (actual !== root && !actual.startsWith(`${ root }${ sep }`))) throw new Error('Files mutation parent is not a stable directory under root');
   }
@@ -268,7 +272,7 @@ export class FilesMutationCoordinator {
   private async pinParent(path:string):Promise<{ handle: FileHandle; child: string }> {
     const absolute = this.absolute(path);
     const parentPath = dirname(absolute);
-    const root = await this.rootReady;
+    const root = await this.ready();
     const handle = await open(parentPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
       const actual = await realpath(`/proc/self/fd/${ handle.fd }`);

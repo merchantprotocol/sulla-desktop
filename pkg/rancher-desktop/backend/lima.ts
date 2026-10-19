@@ -3595,8 +3595,23 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const filesUserRoot = resolveSullaFilesUserRoot();
     const storedFileRoots = await SullaSettingsModel.get('sullaFilesRoots', []);
     const storedDefaultFileRoot = (Array.isArray(storedFileRoots) ? storedFileRoots : []).find((root:any) => root?.id === 'default');
+    const protectedFileRootPaths = [
+      paths.appHome, paths.altAppHome, paths.sullaConfig,
+      path.join(os.homedir(), 'sulla', 'data'),
+      path.join(os.homedir(), 'sulla', 'crypto-wallet'),
+      path.join(os.homedir(), 'sulla', 'wallets'),
+      path.join(os.homedir(), 'Sites', 'crypto-wallet'),
+      path.join(os.homedir(), 'Library', 'Application Support', 'Sulla Wallet'),
+    ].filter(Boolean).map(value => path.resolve(value));
+    const containsPath = (parent:string, child:string) => { const relative = path.relative(parent, child); return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`)) };
+    const safeTrackedRoot = (value:unknown) => {
+      if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
+      const resolved = path.resolve(value);
+      if (resolved.split(path.sep).some(part => part.toLowerCase().includes('wallet') || ['vault', 'vaults'].includes(part.toLowerCase()))) return false;
+      return !protectedFileRootPaths.some(protectedPath => containsPath(resolved, protectedPath) || containsPath(protectedPath, resolved));
+    };
     const secondaryFileRoots = (Array.isArray(storedFileRoots) ? storedFileRoots : [])
-      .filter((root:any) => root?.id !== 'default' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(root?.id) && path.isAbsolute(root?.path ?? ''))
+      .filter((root:any) => root?.id !== 'default' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(root?.id) && safeTrackedRoot(root?.path))
       .map((root:any) => ({
         id:         String(root.id),
         name:       String(root.name || path.basename(root.path)),

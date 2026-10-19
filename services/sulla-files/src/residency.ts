@@ -244,7 +244,8 @@ export class FileResidencyManager {
               m.total_size,m.chunk_ids
          FROM files f JOIN file_versions v ON v.id=f.current_version_id AND v.file_id=f.id
          JOIN manifests m ON m.hash=v.manifest_hash
-        WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT v.deleted`,
+        WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT v.deleted
+          AND f.collection_id=(SELECT collection_id FROM file_roots WHERE id='default' AND enabled=TRUE)`,
       [fileId],
     )).rows[0] as VersionRow | undefined;
     if (!row) throw new Error('Current file version is unavailable');

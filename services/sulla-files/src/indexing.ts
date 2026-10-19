@@ -63,7 +63,7 @@ export class IndexingQueue {
       RETURNING file_id,version_id,attempts`);
     const job = claimed.rows[0]; if (!job) return false;
     try {
-      const file = (await this.db.query('SELECT id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
+      const file = (await this.db.query('SELECT id,collection_id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
       if (!file || file.deleted_at || file.current_version_id !== job.version_id) {
         await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
         return true;

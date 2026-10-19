@@ -67,8 +67,8 @@ async function uploadDestination(root:string, relativePath:string):Promise<strin
   return realTarget;
 }
 
-async function importPaths(paths:string[], destination = '', progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):Promise<number> {
-  const watcher = getSullaFilesWatcher(); const targetRoot = await uploadDestination(watcher.folder, destination); let imported = 0;
+async function importPaths(paths:string[], destination = '', progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void, collectionId?:string):Promise<number> {
+  const watcher = getSullaFilesWatcher(); const targetRoot = await uploadDestination(await watcher.folderForCollection(collectionId), destination); let imported = 0;
   for (const [index, source] of paths.entries()) {
     const info = await fs.promises.stat(source);
     if (!info.isFile()) continue;
@@ -295,17 +295,17 @@ export function initSullaFilesIpc():void {
     const options = { title: 'Attach from Sulla Files', defaultPath: getSullaFilesWatcher().folder, properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[] };
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled) return [];
-    const root = getSullaFilesWatcher().folder;
-    const collections = await json('/v1/collections') as any[];
-    const watchedCollection = collections.find(collection => collection.name === 'Files');
-    if (!watchedCollection) throw new Error('The local Files collection is unavailable.');
+    const roots = (await getSullaFilesRootRegistry().list()).filter(root => root.activation === 'active' && root.collectionId);
     const refs:FileReference[] = [];
     for (const selected of picked.filePaths) {
-      const [realRoot, resolved] = await Promise.all([fs.promises.realpath(root), fs.promises.realpath(selected)]);
-      if (!resolved.startsWith(`${ realRoot }${ path.sep }`)) throw new Error('Choose a file inside ~/sulla/files');
+      const resolved = await fs.promises.realpath(selected);
+      const candidates = (await Promise.all(roots.map(async root => fs.promises.realpath(root.path).then(realPath => ({ root, realPath }), () => undefined))))
+        .filter((item):item is { root:typeof roots[number]; realPath:string } => Boolean(item));
+      const matched = candidates.filter(item => resolved.startsWith(`${ item.realPath }${ path.sep }`)).sort((left, right) => right.realPath.length - left.realPath.length)[0];
+      if (!matched) throw new Error('Choose a file inside an active tracked Files folder.');
       if (!(await fs.promises.stat(resolved)).isFile()) throw new Error('Choose a regular file from Sulla Files.');
-      const relativePath = path.relative(realRoot, resolved).split(path.sep).join('/');
-      const found = await findReferenceByPath(relativePath, watchedCollection.id);
+      const relativePath = path.relative(matched.realPath, resolved).split(path.sep).join('/');
+      const found = await findReferenceByPath(relativePath, matched.root.collectionId);
       if (!found) throw new Error(`${ path.basename(selected) } is still being indexed. Try again after sync finishes.`);
       refs.push(found);
     }
@@ -343,9 +343,11 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
-  ipcMain.handle('files-ui:open-folder', () => getSullaFilesWatcher().openFolder());
-  ipcMain.handle('files-ui:create-folder', async(_event, relativePath:string) => {
-    await createDirectoryWithinRoot(getSullaFilesWatcher().folder, relativePath);
+  ipcMain.handle('files-ui:open-folder', (_event, collectionId?:string) => getSullaFilesWatcher().openFolder(collectionId));
+  ipcMain.handle('files-ui:create-folder', async(_event, input:string | { collectionId?:string; path:string }) => {
+    const relativePath = typeof input === 'string' ? input : input.path;
+    const collectionId = typeof input === 'string' ? undefined : input.collectionId;
+    await createDirectoryWithinRoot(await getSullaFilesWatcher().folderForCollection(collectionId), relativePath);
     await getSullaFilesWatcher().notifyRescan();
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
@@ -357,18 +359,20 @@ export function initSullaFilesIpc():void {
     await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
     return mediaCapability(input);
   });
-  ipcMain.handle('files-ui:pick-upload', async(event, destination = '') => {
+  ipcMain.handle('files-ui:pick-upload', async(event, input:string | { collectionId?:string; destination?:string } = '') => {
+    const destination = typeof input === 'string' ? input : input.destination ?? '';
+    const collectionId = typeof input === 'string' ? undefined : input.collectionId;
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const picked = owner
       ? await dialog.showOpenDialog(owner, { title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] })
       : await dialog.showOpenDialog({ title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] });
     if (picked.canceled) return 0;
 
-    return importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress));
+    return importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress), collectionId);
   });
   ipcMain.handle('files-ui:pick-upload-references', async(event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     return pickAndImportChatFiles(owner);
   });
-  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress)));
+  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string; collectionId?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
 }

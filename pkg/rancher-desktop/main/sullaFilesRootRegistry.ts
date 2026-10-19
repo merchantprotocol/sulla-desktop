@@ -38,6 +38,13 @@ function contains(parent:string, child:string):boolean {
   return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`));
 }
 
+function isSensitiveTrackedPath(value:string):boolean {
+  return path.resolve(value).split(path.sep).some(part => {
+    const normalized = part.toLowerCase();
+    return normalized.includes('wallet') || normalized === 'vault' || normalized === 'vaults';
+  });
+}
+
 async function canonical(directory:string):Promise<string> {
   const resolved = await fs.promises.realpath(directory);
   const info = await fs.promises.stat(resolved);
@@ -109,12 +116,20 @@ export class SullaFilesRootRegistry {
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return undefined;
     const selected = await canonical(picked.filePaths[0]);
+    if (isSensitiveTrackedPath(selected)) throw new Error('Wallet and Vault folders are protected and cannot be tracked by Files.');
     const roots = await this.stored();
     for (const existing of roots) {
       const existingPath = await canonical(existing.path).catch(() => path.resolve(existing.path));
       if (contains(existingPath, selected) || contains(selected, existingPath)) throw new Error('Tracked folders cannot contain one another. Choose a separate folder.');
     }
-    const protectedRoots = [path.join(os.homedir(), 'sulla', 'data'), path.join(os.homedir(), 'Library', 'Application Support', 'rancher-desktop')];
+    const protectedRoots = [
+      path.join(os.homedir(), 'sulla', 'data'),
+      path.join(os.homedir(), 'sulla', 'crypto-wallet'),
+      path.join(os.homedir(), 'sulla', 'wallets'),
+      path.join(os.homedir(), 'Sites', 'crypto-wallet'),
+      path.join(os.homedir(), 'Library', 'Application Support', 'rancher-desktop'),
+      path.join(os.homedir(), 'Library', 'Application Support', 'Sulla Wallet'),
+    ];
     if (protectedRoots.some(root => contains(root, selected) || contains(selected, root))) throw new Error('That folder overlaps Sulla private storage and cannot be tracked.');
     const root:StoredSullaFilesRoot = {
       id:         `root-${ crypto.createHash('sha256').update(process.platform === 'darwin' ? selected.toLocaleLowerCase() : selected).digest('hex').slice(0, 24) }`,
@@ -153,6 +168,10 @@ export class SullaFilesRootRegistry {
     await getSullaFilesWatcher().detachRoot(id).catch(() => undefined);
     await this.persist(roots.filter(root => root.id !== id));
     this.bookmarkStops.get(id)?.(); this.bookmarkStops.delete(id);
+  }
+
+  async rootForCollection(collectionId:string):Promise<SullaFilesRootView | undefined> {
+    return (await this.list()).find(root => root.collectionId === collectionId && root.activation === 'active');
   }
 }
 

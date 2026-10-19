@@ -1,15 +1,31 @@
-import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 import { decryptChunk } from './crypto.js';
+import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { Store } from './store.js';
 
 import type { Config } from './config.js';
 import type pg from 'pg';
 
-export function desktopIndexSource(filesRoot:string, db?:pg.Pool) { return async(file:any) => { if (isProtectedPath(file.path)) throw protectedPathError(); if (db) await assertUnprotectedFile(db, file); return { path: join(filesRoot, file.path) }; } }
+function inside(root:string, relativePath:string):string {
+  const target = resolve(root, relativePath);
+  if (target !== root && !target.startsWith(`${ root }${ sep }`)) throw new Error('Index source path escapes its Files root');
+  return target;
+}
+
+export function desktopIndexSource(filesRoot:string, db?:pg.Pool) {
+  return async(file:any) => {
+    if (isProtectedPath(file.path)) throw protectedPathError();
+    if (db) await assertUnprotectedFile(db, file);
+    const root = db
+      ? (await db.query('SELECT mount_path FROM file_roots WHERE collection_id=$1 AND enabled=TRUE', [file.collection_id])).rows[0]?.mount_path
+      : filesRoot;
+    if (!root) throw new Error('Index source collection has no active Files root');
+    return { path: inside(resolve(root), file.path) };
+  };
+}
 
 export function storedIndexSource(db:pg.Pool, config:Config) {
   const store = new Store(config.chunkRoot); const tempRoot = join(config.dataRoot, 'index-tmp');
