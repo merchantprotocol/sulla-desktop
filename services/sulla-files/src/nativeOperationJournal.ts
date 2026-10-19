@@ -289,15 +289,36 @@ export class NativeOperationJournal {
     if (canonical(expected)!==canonical(actual)) throw failure();
     const leaves=undo?plan.inverse!:plan.leaves;
     const finalTargets=new Set(leaves.filter(l=>['move','copy','restore','mkdir'].includes(l.kind)).map(l=>l.target));
+    const directoryPath=(leaf:Leaf):string|undefined => leaf.kind==='mkdir' ? leaf.target
+      : ['rmdir','restore-dir'].includes(leaf.kind) ? leaf.directory?.path : undefined;
+    const finalDirectoryOperations=new Map<string,Leaf>();
+    for (const leaf of leaves) {
+      const path=directoryPath(leaf);
+      if (path) finalDirectoryOperations.set(path,leaf);
+    }
     for (const leaf of leaves) {
       if (leaf.kind==='mkdir' || leaf.kind==='restore-dir') {
-        const actual=await root.mutations.directory(leaf.directory!.path);
-        if (actual.dev!==leaf.directory!.dev || actual.ino!==leaf.directory!.ino) throw failure();
+        const path=directoryPath(leaf)!;
+        const finalOperation=finalDirectoryOperations.get(path);
+        if (finalOperation===leaf) {
+          const actual=await root.mutations.directory(path);
+          if (actual.dev!==leaf.directory!.dev || actual.ino!==leaf.directory!.ino) throw failure();
+        } else if (finalOperation?.kind!=='rmdir' || finalOperation.directory?.dev!==leaf.directory!.dev || finalOperation.directory?.ino!==leaf.directory!.ino) {
+          throw failure();
+        }
       } else if (leaf.kind==='rmdir') {
         const retained=await root.mutations.directory(leaf.stage);
-        if (retained.dev!==leaf.directory!.dev || retained.ino!==leaf.directory!.ino || await root.mutations.exists(leaf.directory!.path)) throw failure();
+        if (retained.dev!==leaf.directory!.dev || retained.ino!==leaf.directory!.ino) throw failure();
         const tree=await root.mutations.inspectTree(leaf.stage);
         if (tree.files.length || tree.directories.length!==1) throw failure();
+        const replacement=finalDirectoryOperations.get(leaf.directory!.path);
+        if (replacement===leaf) {
+          if (await root.mutations.exists(leaf.directory!.path)) throw failure();
+        } else {
+          if (!replacement || !['mkdir','restore-dir'].includes(replacement.kind) || !replacement.directory) throw failure();
+          const published=await root.mutations.directory(leaf.directory!.path);
+          if (published.dev!==replacement.directory.dev || published.ino!==replacement.directory.ino) throw failure();
+        }
       } else {
         const pin=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.kind==='copy'?leaf.published:leaf.before)); await pin.close();
         if (leaf.kind!=='trash') {
