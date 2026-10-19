@@ -1,7 +1,8 @@
 import type {
   FileAccessList, FilesDataSource, FilesDetail, FilesFolderState, FilesItem, FilesOperationItem,
   FilesOperationItemReceipt, FilesOperationReceipt, FilesOperationRequest, FilesOperationRetry,
-  FilesOperationState, FilesPreview, FilesSnapshot, FilesVersion, FileShare, FolderShare,
+  FilesOperationState, FilesPreview, FilesSnapshot, FilesTrashItem, FilesTrashPurgeResult,
+  FilesTrashRestoreResult, FilesTrashTombstone, FilesVersion, FileShare, FolderShare,
   ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType,
 } from './types';
 
@@ -10,11 +11,18 @@ import type {
 const now = Date.now();
 const iso = (days = 0) => new Date(now + days * 86_400_000).toISOString();
 // Synthetic operation state is deliberately scoped to this browser session.
-const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v1';
+const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v2';
 const clone = <T>(value:T):T => JSON.parse(JSON.stringify(value)) as T;
 
-interface SyntheticFolder extends FilesFolderState { deletedAt?:string }
-interface SyntheticCollection { id:string; name:string; home:string; files:FilesItem[]; folders:SyntheticFolder[] }
+interface SyntheticTrashState {
+  listed:boolean;
+  revision:string;
+  tombstone:FilesTrashTombstone;
+  purgeOutcome?:'recovery-required';
+}
+interface SyntheticFile extends FilesItem { syntheticTrash?:SyntheticTrashState }
+interface SyntheticFolder extends FilesFolderState { deletedAt?:string; syntheticTrash?:SyntheticTrashState }
+interface SyntheticCollection { id:string; name:string; home:string; files:SyntheticFile[]; folders:SyntheticFolder[] }
 interface SyntheticMutation { before:SyntheticCollection[]; after:SyntheticCollection[]; fileIds:string[]; folderIds:string[] }
 interface SyntheticOperation {
   request:FilesOperationRequest;
@@ -72,12 +80,18 @@ export class SyntheticFilesDataSource implements FilesDataSource {
         this.file('synthetic-data', 'Projects/Beta/sample-data.json', 'application/json', 8_800, 'version-data', '4'),
         this.file('synthetic-readme', 'Readme.md', 'text/markdown', 2_100, 'version-readme', '5'),
         this.file('synthetic-collision', 'Projects/Beta/meeting-notes.md', 'text/markdown', 9_600, 'version-collision', '6'),
+        this.trashedFile('synthetic-trash-file', 'Archive/old-draft.md', 'text/markdown', 4_200, 'version-trash-file', '15', 'receipt-trash-file'),
+        this.trashedFile('synthetic-trash-recovery', 'Archive/recovery-required.zip', 'application/zip', 48_000, 'version-trash-recovery', '16', 'receipt-trash-recovery', 'recovery-required'),
+        this.trashedFile('synthetic-trash-child', 'Discarded project/notes.txt', 'text/plain', 1_900, 'version-trash-child', '18', 'receipt-trash-folder', undefined, false),
+        this.trashedFile('synthetic-trash-nested-child', 'Discarded project/Research/results.json', 'application/json', 7_700, 'version-trash-nested-child', '19', 'receipt-trash-folder', undefined, false),
       ],
       folders: [
         { folderId: 'synthetic-folder-projects', path: 'Projects', revision: '7' },
         { folderId: 'synthetic-folder-alpha', path: 'Projects/Alpha', revision: '8' },
         { folderId: 'synthetic-folder-beta', path: 'Projects/Beta', revision: '9' },
         { folderId: 'synthetic-folder-empty', path: 'Projects/Empty folder', revision: '10' },
+        this.trashedFolder('synthetic-trash-folder', 'Discarded project', '17', 'receipt-trash-folder', true),
+        this.trashedFolder('synthetic-trash-child-folder', 'Discarded project/Research', '20', 'receipt-trash-folder', false),
       ],
     };
     const stored:SyntheticCollection = {
@@ -92,7 +106,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       ],
     };
 
-    return { revision: 14, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {}, stars: {} };
+    return { revision: 20, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored], operations: {}, idempotency: {}, stars: {} };
   }
 
   private restoreState():SyntheticState | null {
@@ -107,8 +121,18 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(STORAGE_KEY, JSON.stringify(this.state)) }
     catch { /* In-memory behavior remains available if session storage is unavailable. */ }
   }
-  private file(id:string, path:string, mime:string, size:number, currentVersionId:string, operationRevision:string):FilesItem {
+  private file(id:string, path:string, mime:string, size:number, currentVersionId:string, operationRevision:string):SyntheticFile {
     return { id, path, mime, size, updatedAt: iso(), currentVersionId, operationRevision, versionCount: 1, createdByType: 'user', createdById: 'synthetic-user', ownerDisplayName: 'Preview user', syncState: 'synced', indexStatus: 'indexed', indexReasonCode: 'synthetic_fixture', indexReason: 'Synthetic preview fixture.', indexedAt: iso() };
+  }
+  private trashedFile(id:string, path:string, mime:string, size:number, currentVersionId:string, revision:string, receiptId:string, purgeOutcome?:'recovery-required', listed = true):SyntheticFile {
+    const deletedAt = iso(-2); const tombstone:FilesTrashTombstone = { kind: 'version', id: currentVersionId, receiptId, operationId: receiptId, undo: { state: purgeOutcome ?? 'available', expiresAt: iso(28) } };
+
+    return { ...this.file(id, path, mime, size, currentVersionId, revision), deletedAt, updatedAt: deletedAt, disposal: { status: 'approved' }, syntheticTrash: { listed, revision, tombstone, ...(purgeOutcome ? { purgeOutcome } : {}) } };
+  }
+  private trashedFolder(folderId:string, path:string, revision:string, receiptId:string, listed:boolean):SyntheticFolder {
+    const deletedAt = iso(-2); const tombstone:FilesTrashTombstone = { kind: 'receipt', id: receiptId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(28) } };
+
+    return { folderId, path, revision, deletedAt, syntheticTrash: { listed, revision, tombstone } };
   }
   private collection(id:string) {
     const result = this.state.collections.find(item => item.id === id);
@@ -154,7 +178,19 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       collection: { id: collection.id, name: collection.name, home: collection.home, orgId: 'synthetic-org', retentionPolicy: {}, storageQuota: 10_000_000_000, keptBytes: active.reduce((sum, file) => sum + file.size, 0), desktopCount: 0, memberCount: 2, accountName: 'Preview user', accountRole: 'owner', ownerUserId: 'synthetic-user' },
       availableCollections: this.state.collections.map(item => ({ id: item.id, name: item.name })),
       folders: collection.folders.filter(folder => !folder.deletedAt).map(folder => ({ folderId: folder.folderId, path: folder.path, revision: folder.revision })),
-      files: collection.files.map(file => ({ ...file })),
+      files: collection.files.map(({ syntheticTrash: _syntheticTrash, ...file }) => ({ ...file })),
+      trash: [
+        ...collection.files.filter(file => file.deletedAt && file.syntheticTrash?.listed).map(file => {
+          const { syntheticTrash, ...item } = file;
+
+          return { ...item, kind: 'file' as const, revision: syntheticTrash!.revision, currentTombstone: clone(syntheticTrash!.tombstone) as Extract<FilesTrashTombstone, { kind:'version' }> };
+        }),
+        ...collection.folders.filter(folder => folder.deletedAt && folder.syntheticTrash?.listed).map(folder => ({
+          kind: 'folder' as const, id: folder.folderId, path: folder.path, revision: folder.syntheticTrash!.revision,
+          deletedAt: folder.deletedAt!, currentTombstone: clone(folder.syntheticTrash!.tombstone) as Extract<FilesTrashTombstone, { kind:'receipt' }>,
+          capabilities: { canEdit: true, canManage: true, canViewDraft: true, canPublish: true },
+        })),
+      ],
       status: { state: this.paused ? 'paused' : 'synced', pendingFiles: 0, lastSyncAt: iso(), serverConfigured: true, location: 'server', serverLabel: 'Synthetic stored preview', indexing: { total: active.length, pending: 0, indexing: 0, indexed, partial: 0, unsupported: 0, failed: 0, complete: indexed === active.length } },
     };
   }
@@ -306,6 +342,10 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     receipt.before = clone(before); receipt.receiptId = receiptId;
     if (item.action === 'trash') {
       file.deletedAt = new Date().toISOString(); file.updatedAt = file.deletedAt; file.operationRevision = this.nextRevision();
+      file.syntheticTrash = {
+        listed: true, revision: file.operationRevision,
+        tombstone: { kind: 'version', id: file.currentVersionId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } },
+      };
       Object.assign(receipt, { after: this.fileState(file, source.id), state: 'completed', undoSupported: true, retryable: false });
       return;
     }
@@ -350,8 +390,15 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (item.action === 'trash') {
       const deletedAt = new Date().toISOString();
 
-      files.forEach(file => { file.deletedAt = deletedAt; file.operationRevision = this.nextRevision(); file.updatedAt = deletedAt });
-      folders.forEach(candidate => { candidate.deletedAt = deletedAt; candidate.revision = this.nextRevision() }); receipt.after = null;
+      files.forEach(file => {
+        file.deletedAt = deletedAt; file.operationRevision = this.nextRevision(); file.updatedAt = deletedAt;
+        file.syntheticTrash = { listed: false, revision: file.operationRevision, tombstone: { kind: 'version', id: file.currentVersionId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } };
+      });
+      folders.forEach(candidate => {
+        candidate.deletedAt = deletedAt; candidate.revision = this.nextRevision();
+        candidate.syntheticTrash = { listed: candidate.folderId === folder.folderId, revision: candidate.revision, tombstone: { kind: 'receipt', id: receiptId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } };
+      });
+      receipt.after = null;
     } else {
       if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic folder destination is required.' };
       if (policy === 'replace') throw { status: 422, code: 'folder-replace-unavailable', message: 'Synthetic folders support Keep Both or Skip, not Replace.' };
@@ -444,8 +491,66 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   }
 
   async restoreVersion() {}
-  async restoreTrash(fileId:string) { const file = this.currentCollection().files.find(item => item.id === fileId); if (!file?.deletedAt) throw new Error('Synthetic file is not in Trash'); file.deletedAt = undefined; file.updatedAt = new Date().toISOString(); file.operationRevision = this.nextRevision(); this.persist() }
-  async trashFile(fileId:string) { const file = this.currentCollection().files.find(item => item.id === fileId && !item.deletedAt); if (!file) throw new Error('Synthetic file is no longer available'); file.deletedAt = new Date().toISOString(); file.operationRevision = this.nextRevision(); this.persist() }
+  private trashConflict(message:string):never { throw Object.assign(new Error(message), { status: 409, code: 'trash-state-conflict' }) }
+  private exactTrashState(actual:SyntheticTrashState | undefined, item:FilesTrashItem, currentRevision:string) {
+    return Boolean(actual?.listed && actual.revision === item.revision && currentRevision === item.revision && JSON.stringify(actual.tombstone) === JSON.stringify(item.currentTombstone));
+  }
+  private receiptMembers(collection:SyntheticCollection, receiptId:string) {
+    const files = collection.files.filter(file => file.syntheticTrash?.tombstone.receiptId === receiptId);
+    const folders = collection.folders.filter(folder => folder.syntheticTrash?.tombstone.receiptId === receiptId);
+    const exact = [...files].every(file => file.deletedAt && file.operationRevision === file.syntheticTrash?.revision) && folders.every(folder => folder.deletedAt && folder.revision === folder.syntheticTrash?.revision);
+
+    return { files, folders, exact };
+  }
+  async restoreTrashItem(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
+    const collection = this.currentCollection();
+
+    if (item.kind === 'file') {
+      const file = collection.files.find(candidate => candidate.id === item.id);
+
+      if (!file?.deletedAt || !this.exactTrashState(file.syntheticTrash, item, file.operationRevision ?? '0')) this.trashConflict('Synthetic restore was blocked because the file revision or current tombstone changed.');
+      if (this.activeFileAt(collection, file.path, new Set([file.id])) || this.activeFolderAt(collection, file.path)) this.trashConflict('Synthetic restore was blocked because the original path is occupied.');
+      const receiptId = file.syntheticTrash!.tombstone.receiptId ?? null;
+
+      file.deletedAt = undefined; file.syntheticTrash = undefined; file.updatedAt = new Date().toISOString(); file.operationRevision = this.nextRevision(); this.persist();
+      return { status: 'restored', kind: 'file', id: file.id, path: file.path, revision: file.operationRevision, currentTombstone: null, receiptId, versionId: file.currentVersionId };
+    }
+    const folder = collection.folders.find(candidate => candidate.folderId === item.id); const receiptId = folder?.syntheticTrash?.tombstone.receiptId;
+
+    if (!folder?.deletedAt || !receiptId || !this.exactTrashState(folder.syntheticTrash, item, folder.revision)) this.trashConflict('Synthetic restore was blocked because the folder revision or current receipt changed.');
+    const members = this.receiptMembers(collection, receiptId);
+    if (!members.exact) this.trashConflict('Synthetic restore was blocked because a child revision changed after the folder entered Trash.');
+    if (members.files.some(file => this.activeFileAt(collection, file.path, new Set([file.id])) || this.activeFolderAt(collection, file.path)) || members.folders.some(candidate => this.activeFileAt(collection, candidate.path) || this.activeFolderAt(collection, candidate.path, new Set([candidate.folderId])))) this.trashConflict('Synthetic restore was blocked because the original folder namespace is occupied.');
+    members.files.forEach(file => { file.deletedAt = undefined; file.syntheticTrash = undefined; file.updatedAt = new Date().toISOString(); file.operationRevision = this.nextRevision() });
+    members.folders.forEach(candidate => { candidate.deletedAt = undefined; candidate.syntheticTrash = undefined; candidate.revision = this.nextRevision() });
+    this.persist();
+    return { status: 'restored', kind: 'folder', id: folder.folderId, path: folder.path, revision: folder.revision, currentTombstone: null, receiptId };
+  }
+  async purgeTrashItem(item:FilesTrashItem):Promise<FilesTrashPurgeResult> {
+    const collection = this.currentCollection();
+
+    if (item.kind === 'file') {
+      const file = collection.files.find(candidate => candidate.id === item.id);
+
+      if (!file?.deletedAt || !this.exactTrashState(file.syntheticTrash, item, file.operationRevision ?? '0')) this.trashConflict('Synthetic purge was blocked because the file revision or current tombstone changed.');
+      const receiptId = file.syntheticTrash!.tombstone.receiptId ?? null; const recoveryRequired = file.syntheticTrash!.purgeOutcome === 'recovery-required';
+
+      collection.files = collection.files.filter(candidate => candidate.id !== file.id); this.persist();
+      if (recoveryRequired) return { status: 'recovery-required', metadataPurged: true, chunks: 'pending', retainedArtifacts: 'preserved', undo: 'invalidated', receiptId, reason: 'Synthetic metadata was removed, but the fixture intentionally preserves retained artifacts for recovery.' };
+      return { status: 'purged', metadataPurged: true, chunks: 'complete', retainedArtifacts: 'complete', undo: receiptId ? 'invalidated' : 'unavailable', receiptId };
+    }
+    const folder = collection.folders.find(candidate => candidate.folderId === item.id); const receiptId = folder?.syntheticTrash?.tombstone.receiptId;
+
+    if (!folder?.deletedAt || !receiptId || !this.exactTrashState(folder.syntheticTrash, item, folder.revision)) this.trashConflict('Synthetic purge was blocked because the folder revision or current receipt changed.');
+    const members = this.receiptMembers(collection, receiptId);
+    if (!members.exact) this.trashConflict('Synthetic purge was blocked because a child revision changed after the folder entered Trash.');
+    const fileIds = new Set(members.files.map(file => file.id)); const folderIds = new Set(members.folders.map(candidate => candidate.folderId));
+
+    collection.files = collection.files.filter(file => !fileIds.has(file.id)); collection.folders = collection.folders.filter(candidate => !folderIds.has(candidate.folderId)); this.persist();
+    return { status: 'purged', kind: 'folder', id: folder.folderId, path: folder.path, revision: folder.revision, currentTombstone: null, metadataPurged: true, chunks: 'complete', retainedArtifacts: 'complete', undo: 'invalidated', receiptId };
+  }
+  async restoreTrash(fileId:string) { const item = (await this.load()).trash?.find(candidate => candidate.kind === 'file' && candidate.id === fileId); if (!item) throw new Error('Synthetic file is not in Trash'); await this.restoreTrashItem(item) }
+  async trashFile(fileId:string) { const file = this.currentCollection().files.find(item => item.id === fileId && !item.deletedAt); if (!file) throw new Error('Synthetic file is no longer available'); const receiptId = crypto.randomUUID(); file.deletedAt = new Date().toISOString(); file.updatedAt = file.deletedAt; file.operationRevision = this.nextRevision(); file.syntheticTrash = { listed: true, revision: file.operationRevision, tombstone: { kind: 'version', id: file.currentVersionId, receiptId, operationId: receiptId, undo: { state: 'available', expiresAt: iso(30) } } }; this.persist() }
   async purgeTrash(fileId:string) { const collection = this.currentCollection(); const file = collection.files.find(item => item.id === fileId && item.deletedAt); if (!file) throw new Error('Synthetic file is not in Trash'); collection.files = collection.files.filter(item => item.id !== fileId); this.persist() }
   async createPublicLink(fileId:string, options:ShareLinkOptions) { const share:ShareLink = { id: 'share-' + fileId, url: 'https://share.sulla.cloud/v/Synthetic', name: '03-share.html · Share dialog', password: Boolean(options.password), expiresAt: options.expiresAt ?? undefined, viewCount: 0, keepAvailable: options.keepAvailable, keepUntil: options.keepUntil ?? undefined, displaySharerName: options.displaySharerName, servedFrom: options.keepAvailable ? 'cloud' : 'desktop', assetKind: options.assetKind ?? 'artifact', mode: options.mode, source: 'Sulla-made › mockups', targetId: fileId, targetType: 'file', collectionId: this.state.selectedCollectionId, createdAt: iso() }; this.shares.unshift(share); return share }
   async updatePublicLink(id:string, options:Partial<ShareLinkOptions>) { const share = this.shares.find(item => item.id === id); if (!share) throw new Error('Synthetic link not found'); Object.assign(share, options, { password: options.password === undefined ? share.password : Boolean(options.password), servedFrom: options.keepAvailable ? 'cloud' : share.servedFrom }); return share }
