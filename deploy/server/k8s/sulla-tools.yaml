@@ -15,9 +15,9 @@ spec:
             - {name: PORT, value: "3000"}
             - {name: SULLA_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: tools-database-url}}}
             - {name: SULLA_REDIS_URL, value: redis://redis:6379}
-            - {name: SULLA_CAPABILITY_SIGNING_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: files-capability-signing-key}}}
-            - {name: SULLA_DESKTOP_EXECUTOR_URL, value: http://host.docker.internal:3000}
-            - {name: SULLA_DESKTOP_EXECUTOR_TOKEN, valueFrom: {secretKeyRef: {name: sulla-server, key: agent-api-token}}}
+            - {name: SULLA_API_TOKEN, valueFrom: {secretKeyRef: {name: sulla-server, key: agent-api-token}}}
+            - {name: SULLA_DESKTOP_EXECUTOR_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: desktop-executor-url}}}
+            - {name: SULLA_DESKTOP_EXECUTOR_TOKEN, valueFrom: {secretKeyRef: {name: sulla-server, key: desktop-executor-token}}}
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 5}
 ---
 apiVersion: v1

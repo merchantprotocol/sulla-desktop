@@ -44,7 +44,7 @@ services:
       SULLA_VAULT_TLS_CERTIFICATE_PATH: ""
       SULLA_VAULT_TLS_PRIVATE_KEY_PATH: ""
       SULLA_VAULT_ACCOUNTS_URL: http://accounts:3020
-      SULLA_VAULT_ACCOUNTS_SERVICE_ID: sulla-vault
+      SULLA_VAULT_ACCOUNTS_SERVICE_ID: vault
       SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-vault-token
       SULLA_VAULT_ACCOUNTS_AUDIENCE: sulla-vault
       SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES: member
@@ -69,10 +69,14 @@ services:
       SULLA_FILES_MODE: server
       SULLA_FILES_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files
       SULLA_FILES_VAULT_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla
-      SULLA_FILES_CAPABILITY_SIGNING_KEY: ${SULLA_FILES_CAPABILITY_SIGNING_KEY}
+      SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
       SULLA_FILES_MASTER_KEY: ${SULLA_FILES_MASTER_KEY:?Files master is required}
-      SULLA_FILES_JWT_SECRET: ${SULLA_VAULT_JWT_SECRET}
+      SULLA_FILES_ACCOUNTS_URL: http://accounts:3020
+      SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-files-token
+      SULLA_FILES_ACCOUNTS_AUDIENCE: sulla-files
       SULLA_FILES_BACKUP_TARGET: /backup
+    secrets:
+      - accounts-files-token
     volumes:
       - ${SULLA_DATA_DIR}/files:/var/lib/sulla-files
       - ${SULLA_DATA_DIR}/files-backup:/backup
@@ -114,11 +118,9 @@ services:
       SULLA_PROJECTS_MIGRATION_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_projects
       SULLA_PROJECTS_DATABASE_URL: postgresql://sulla_projects_service:${SULLA_PROJECTS_DATABASE_PASSWORD}@postgres:5432/sulla_projects
       SULLA_PROJECTS_DATABASE_PASSWORD: ${SULLA_PROJECTS_DATABASE_PASSWORD}
-      SULLA_PROJECTS_JWT_SECRET: ${SULLA_PROJECTS_JWT_SECRET}
-      SULLA_PROJECTS_JWT_ISSUER: ${SULLA_PROJECTS_JWT_ISSUER}
       SULLA_PROJECTS_JWT_AUDIENCE: ${SULLA_PROJECTS_JWT_AUDIENCE}
       SULLA_PROJECTS_ACCOUNTS_URL: http://accounts:3020
-      SULLA_PROJECTS_ACCOUNTS_SERVICE_ID: sulla-projects
+      SULLA_PROJECTS_ACCOUNTS_SERVICE_ID: projects
       SULLA_PROJECTS_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-projects-token
       SULLA_PROJECTS_ACCOUNTS_AUDIENCE: sulla-projects
       SULLA_PROJECTS_ACCOUNTS_REQUIRED_ROLES: member
@@ -156,7 +158,7 @@ services:
       SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID: sulla-web
       SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS: ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS}
       SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
-      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/postgres-username
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
@@ -205,9 +207,9 @@ services:
       PORT: "3000"
       SULLA_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_tools
       SULLA_REDIS_URL: redis://redis:6379
-      SULLA_CAPABILITY_SIGNING_KEY: ${SULLA_FILES_CAPABILITY_SIGNING_KEY}
-      SULLA_DESKTOP_EXECUTOR_URL: ${SULLA_DESKTOP_EXECUTOR_URL:-http://host.docker.internal:3000}
-      SULLA_DESKTOP_EXECUTOR_TOKEN: ${SULLA_DESKTOP_EXECUTOR_TOKEN:-${SULLA_AGENT_API_TOKEN}}
+      SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
+      SULLA_DESKTOP_EXECUTOR_URL: ${SULLA_DESKTOP_EXECUTOR_URL:?Tools executor URL is required}
+      SULLA_DESKTOP_EXECUTOR_TOKEN: ${SULLA_DESKTOP_EXECUTOR_TOKEN:?Tools executor token is required}
     extra_hosts: ["host.docker.internal:host-gateway"]
     healthcheck:
       test: ["CMD", wget, -qO-, http://127.0.0.1:3000/healthz]
@@ -230,10 +232,11 @@ services:
       SULLA_AGENT_SERVICE_PORT: "8789"
       SULLA_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_agents
       SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
+      SULLA_AGENT_IMAGE: ${SULLA_AGENT_IMAGE:?Agent runner image is required}
       SULLA_TOOL_API_URL: http://tools:3000
-      SULLA_DOCKER_NETWORK: sulla_default
+      SULLA_DOCKER_NETWORK: ${SULLA_DOCKER_NETWORK}
       SULLA_ACCOUNTS_URL: http://accounts:3020
-      SULLA_ACCOUNTS_SERVICE_ID: sulla-agents
+      SULLA_ACCOUNTS_SERVICE_ID: agents
       SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-agents-token
       SULLA_AGENT_AUDIENCE: sulla-agents
     secrets:
@@ -265,14 +268,15 @@ services:
       SULLA_REDIS_URL: redis://redis:6379
       SULLA_MANAGER_URL: http://workflows:8788
       SULLA_TOOL_API_URL: http://tools:3000
+      SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
       SULLA_WORKFLOW_IMAGE: ${SULLA_WORKFLOW_RUNNER_IMAGE:-sulla-workflows:${SULLA_IMAGE_TAG}}
-      SULLA_DOCKER_NETWORK: sulla_default
+      SULLA_DOCKER_NETWORK: ${SULLA_DOCKER_NETWORK}
       SULLA_WORKFLOW_LAUNCHER: docker
       SULLA_ACCOUNTS_URL: http://accounts:3020
-      SULLA_ACCOUNTS_SERVICE_ID: sulla-workflows
+      SULLA_ACCOUNTS_SERVICE_ID: workflows
       SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-workflows-token
       SULLA_WORKFLOW_AUDIENCE: sulla-workflows
-      SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES: ${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES:-sulla-tools}
+      SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES: ${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES}
     secrets:
       - accounts-workflows-token
     volumes:
@@ -350,4 +354,4 @@ secrets:
 
 networks:
   default:
-    name: sulla_default
+    name: ${SULLA_DOCKER_NETWORK}
