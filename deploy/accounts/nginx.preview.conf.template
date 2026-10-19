@@ -34,6 +34,9 @@ http {
     location ^~ /auth/ { return 404; }
     location = /.well-known/sulla-authority { proxy_pass http://authority_a_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location ~ ^/v1/(?:authority/membership/resolve|sessions/refresh|profile|connections(?:/[0-9a-fA-F-]+(?:/authorize)?)?|oidc/callback)$ { proxy_pass http://authority_a_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /v1/web/ { proxy_pass http://authority_a_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location = /ui { return 308 /ui/; }
+    location ^~ /ui/ { proxy_pass http://authority_a_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location / { return 404; }
   }
 
@@ -49,6 +52,9 @@ http {
     location ^~ /auth/ { return 404; }
     location = /.well-known/sulla-authority { proxy_pass http://authority_b_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location ~ ^/v1/(?:authority/membership/resolve|sessions/refresh|profile|connections(?:/[0-9a-fA-F-]+(?:/authorize)?)?|oidc/callback)$ { proxy_pass http://authority_b_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location ^~ /v1/web/ { proxy_pass http://authority_b_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
+    location = /ui { return 308 /ui/; }
+    location ^~ /ui/ { proxy_pass http://authority_b_accounts; proxy_set_header Host $http_host; proxy_set_header X-Forwarded-Host $http_host; proxy_set_header X-Forwarded-Port $forwarded_port; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-For $remote_addr; }
     location / { return 404; }
   }
 }
