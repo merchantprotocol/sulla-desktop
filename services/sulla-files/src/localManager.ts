@@ -834,8 +834,8 @@ export class LocalFilesManager {
     const client = await this.db.connect(); await client.query('BEGIN');
     try {
       await client.query("SET LOCAL sulla.trusted_replication='on'");
-      const prior = (await client.query('SELECT path,record_lock_type,lifecycle_generation FROM files WHERE id=$1 FOR UPDATE', [entry.file.id])).rows[0];
-      if (prior?.record_lock_type !== 'none' && Number(entry.file.lifecycle_generation ?? 0) <= Number(prior.lifecycle_generation)) { await client.query('ROLLBACK'); return }
+      const prior = (await client.query('SELECT path,current_version_id,record_lock_type,lifecycle_generation FROM files WHERE id=$1 FOR UPDATE', [entry.file.id])).rows[0];
+      if (prior?.current_version_id && prior.record_lock_type !== 'none' && Number(entry.file.lifecycle_generation ?? 0) <= Number(prior.lifecycle_generation)) { await client.query('ROLLBACK'); return }
       if (prior?.path && prior.path !== entry.file.path) {
         try { await mkdir(dirname(this.safe(entry.file.path, root)), { recursive: true }); await rename(this.safe(prior.path, root), this.safe(entry.file.path, root)) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
       }
