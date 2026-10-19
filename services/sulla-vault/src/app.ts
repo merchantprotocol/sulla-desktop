@@ -26,6 +26,7 @@ import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } f
 import { bootstrapFirstOwner } from './serverBootstrap.js';
 
 import type { VaultConfig } from './config.js';
+import { isTransientDbError, warnDatabaseUnavailable } from './db.js';
 import type { Database, Queryable } from './db.js';
 
 const CONSOLE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sulla Vault Console</title><style>
@@ -236,7 +237,15 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   app.use(express.json({ limit: config.mode === 'desktop' ? '36mb' : '1mb' }));
 
   app.get('/healthz', async(_request, response) => {
-    await db.query('SELECT 1');
+    try {
+      await db.query('SELECT 1');
+    } catch (error) {
+      // Report unhealthy while Postgres is down; keep the process (and logs) calm.
+      if (!isTransientDbError(error)) throw error;
+      warnDatabaseUnavailable(error);
+      response.status(503).json({ ok: false, error: 'database_unavailable' });
+      return;
+    }
     response.json({ ok: true, mode: config.mode });
   });
 
@@ -1747,6 +1756,12 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     if (typeof error === 'object' && error && 'code' in error && error.code === '23505') {
       response.status(409).json({ error: 'already_exists' });
+      return;
+    }
+    if (isTransientDbError(error)) {
+      warnDatabaseUnavailable(error);
+      response.setHeader('Retry-After', '5');
+      response.status(503).json({ error: 'database_unavailable' });
       return;
     }
     console.error(error);
