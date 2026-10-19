@@ -263,7 +263,7 @@ export function createApp(
     const collection = await collectionRow(collectionId);
     if (collection.compatibility_state !== 'native') throw new HttpError(409, 'native source ingestion requires a native Files collection');
     const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
-    const result = await nativeSourceManager().ingestNativeSource({ ...metadata, fileId, baseVersionId },
+    const result = await nativeSourceManager().ingestNativeSource({ ...metadata, fileId, baseVersionId, collectionId, path },
       (client, versionId) => insertVersion(client, {
         collectionId, fileId, versionId, path,
         mime: request.header('content-type') ?? 'application/octet-stream', bytes, actor,
@@ -282,10 +282,43 @@ export function createApp(
     response.status(201).json({ operationId: metadata.operationId });
   } catch (error) { next(error) } });
   app.post('/v1/local/native-sources/publications/:id/finish', async(request, response, next) => { try {
+    if (typeof request.body.conflictFileId === 'string') {
+      const conflict = request.body;
+      if (![conflict.conflictFileId, conflict.currentFilesVersionId].every((value:unknown) => typeof value === 'string' && UUID.test(value)) ||
+          ![conflict.currentSourceRevision, conflict.currentSourceHash].every((value:unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value))) throw new HttpError(400, 'native conflict recovery proof is invalid');
+      await nativeSourceManager().finishNativePublicationConflict(request.params.id, conflict);
+      return response.status(204).end();
+    }
     const nextRevision = typeof request.body.nextSourceRevision === 'string' ? request.body.nextSourceRevision.toLowerCase() : undefined;
     if (nextRevision !== undefined && !/^[a-f0-9]{64}$/.test(nextRevision)) throw new HttpError(400, 'next source revision is invalid');
     await nativeSourceManager().finishNativePublication(request.params.id, nextRevision, typeof request.body.error === 'string' ? request.body.error : undefined);
     response.status(204).end();
+  } catch (error) { next(error) } });
+  app.get('/v1/local/native-sources/actions', async(_request, response, next) => { try {
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.json(await nativeSourceManager().nativePublicationActions());
+  } catch (error) { next(error) } });
+  app.get('/v1/local/native-sources', async(_request, response, next) => { try {
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.json(await nativeSourceManager().listNativeSources());
+  } catch (error) { next(error) } });
+  app.post('/v1/local/native-sources/revalidate', async(request, response, next) => { try {
+    const handles = request.body.handles;
+    if (!Array.isArray(handles) || handles.length > 256 || handles.some((handle:unknown) => typeof handle !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(handle))) throw new HttpError(400, 'native source handles are invalid');
+    await nativeSourceManager().revalidateNativeSessions(handles);
+    response.status(204).end();
+  } catch (error) { next(error) } });
+  app.get('/v1/local/native-sources/actions/:id/content', async(request, response, next) => { try {
+    const action = (await nativeSourceManager().nativePublicationActions()).find(item => item.operationId === request.params.id);
+    if (!action) throw new HttpError(404, 'native publication action is unavailable');
+    const bytes = await nativeSourceManager().readStoredVersion(action.fileId, action.versionId);
+    if (createHash('sha256').update(bytes).digest('hex') !== action.desiredHash) throw new HttpError(409, 'native publication Files version does not match its durable action');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('Content-Length', String(bytes.byteLength));
+    response.setHeader('X-Sulla-Source-Handle', action.handle);
+    response.setHeader('X-Sulla-Source-Revision', action.sourceRevision);
+    response.setHeader('X-Sulla-Source-Hash', action.desiredHash);
+    response.type('application/octet-stream').send(bytes);
   } catch (error) { next(error) } });
   app.get('/v1/fuse/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
@@ -308,11 +341,27 @@ export function createApp(
     response.type(content.file.mime).send(content.bytes);
   } catch (error) { next(error) } });
   app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
-    await requireFile(request, request.params.id, 'edit');
+    const file = await requireFile(request, request.params.id, 'edit');
     const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
     const sourceHash = request.header('x-sulla-source-hash');
     if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
-    const result = await requireFuseExperiment().fuseWrite(request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer), identity(request));
+    const manager = requireFuseExperiment();
+    const current = await manager.fuseRow(request.params.id);
+    const bytes = Buffer.from(request.body as Buffer);
+    const result = current.native
+      ? await manager.fuseWriteNative(request.params.id, match, sourceHash.toLowerCase(), bytes, identity(request),
+        (client, versionId, baseline) => insertVersion(client, {
+          collectionId: baseline.collectionId, fileId: baseline.id, versionId, path: file.path, mime: file.mime, bytes,
+          actor: identity(request), createdByType: 'user', createdById: identity(request).userId,
+          message: 'Updated through the Files mount and published through Electron', baseVersionId: baseline.versionId,
+        }),
+        (client, versionId, baseline) => insertVersion(client, {
+          collectionId: baseline.collectionId, versionId,
+          path: `${ baseline.path } (conflicted copy Files ${ versionId.slice(0, 8) })`, mime: file.mime, bytes,
+          actor: identity(request), createdByType: 'user', createdById: identity(request).userId,
+          message: `Conflict copy of ${ baseline.path } after a stale Files mount write`,
+        }))
+      : await manager.fuseWrite(request.params.id, match, sourceHash.toLowerCase(), bytes, identity(request));
     await audit(request, 'fuse-write', { id: result.id, current_version_id: result.versionId, collection_id: result.collectionId, path: result.path });
     response.setHeader('ETag', `"${ result.versionId }"`);
     response.setHeader('X-Sulla-Source-Hash', result.sourceHash);

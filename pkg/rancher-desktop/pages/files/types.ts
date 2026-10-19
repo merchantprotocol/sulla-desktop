@@ -188,6 +188,7 @@ export interface ShareActivity {
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
+  nativeSourceReady?:boolean;
   load(): Promise<FilesSnapshot>;
   selectCollection?(collectionId:string):void;
   history(fileId:string): Promise<FilesVersion[]>;
@@ -198,6 +199,9 @@ export interface FilesDataSource {
   reindex(fileId:string):Promise<void>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
   chooseUpload(destination?:string): Promise<number>;
+  chooseNativeSource?():Promise<boolean>;
+  listNativeSources?():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>;
+  recoverNativeSource?(fileId:string):Promise<boolean>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;

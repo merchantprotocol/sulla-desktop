@@ -90,7 +90,7 @@ describe('SullaFilesSourceGateway', () => {
     await fs.promises.writeFile(source, 'replacement identity\n');
     const replaced = await request(`${ gateway.loopbackUrl }/v1/sources/${ handle }`, { headers });
     expect(replaced.status).toBe(409);
-    gateway.lock();
+    await gateway.lock();
     const locked = await request(`${ gateway.loopbackUrl }/v1/sources/${ handle }`, { headers });
     expect(locked.status).toBe(403);
   });

@@ -641,18 +641,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // external volumes, and Darwin's broad temporary roots are Files-owned.
     const locations = ['/tmp/rancher-desktop'];
     const extraDirs = [paths.cache, paths.logs, paths.resources];
-    const legacySullaDataDir = path.join(paths.appHome, 'data');
-
-    // Persistence inventory at the mount boundary:
-    // - Compose Postgres and Files blobs remain Docker named volumes.
-    // - Kubernetes Postgres/Redis/runtime caches remain guest hostPath data.
-    // - This is the only app-owned host bind that may contain a PostgreSQL
-    //   cluster from the retired host migration. Keep that narrow path visible
-    //   read-only and fail managed-service startup below until a quiesced,
-    //   backed-up migration can explicitly reconcile it with the named volume.
-    if (this.legacyHostPostgresRequiresMigration()) {
-      locations.push(legacySullaDataDir);
-    }
     for (const extraDir of extraDirs) {
       const found = locations.some((loc) => {
         loc = path.normalize(loc);
@@ -666,10 +654,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     for (const location of locations) {
-      const mount: LimaMount = {
-        location,
-        writable: location !== paths.resources && location !== legacySullaDataDir,
-      };
+      const mount: LimaMount = { location, writable: location !== paths.resources };
 
       if (this.cfg?.virtualMachine.mount.type === MountType.NINEP) {
         const nineP = this.cfg.experimental.virtualMachine.mount['9p'];
@@ -685,18 +670,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     return mounts;
-  }
-
-  private legacyHostPostgresRequiresMigration(): boolean {
-    const legacyPostgresDir = path.join(paths.appHome, 'data', 'sulla-postgres');
-
-    try {
-      return fs.readdirSync(legacyPostgresDir).length > 0;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-      // An unreadable legacy directory is not proof that it is empty.
-      return true;
-    }
   }
 
   /**
@@ -3039,12 +3012,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const dockerEnvTotal = Date.now();
     let t = Date.now();
 
-    if (this.legacyHostPostgresRequiresMigration()) {
-      throw new Error(
-        'Sulla found legacy host-backed PostgreSQL state. Startup is blocked before Compose reconciliation so the existing named volume cannot be replaced or appear empty. The legacy source remains mounted read-only until a backed-up, quiesced migration explicitly reconciles it.',
-      );
-    }
-
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
@@ -3053,6 +3020,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
+    });
+
+    // One-time migration: copy data from old VM paths to new host-mounted paths
+    await this.progressTracker.action('Migrating Sulla data to host storage', 40, async() => {
+      await this.migrateSullaDataToHost();
+      this.assertManagedServicesGeneration(generation);
     });
 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
@@ -3697,17 +3670,63 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       });
     }
 
+    // Resolve the persistent data directory for bind mounts (cross-platform via paths.appHome)
+    const sullaDataDir = path.join(paths.appHome, 'data');
+
+    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
 
-    const sullaFunctionsDir = '/mnt/data/sulla/functions';
-    const sullaRuntimeTempDir = '/mnt/data/sulla/runtime/functions';
-    await this.execCommand({ root: true }, 'mkdir', '-p', sullaFunctionsDir, sullaRuntimeTempDir);
+    // Ensure data directory is writable by container user (postgres=UID 70)
+    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
+
+    // Resolve the user's functions directory for runtime containers (read-only bind mount).
+    // Lima mounts the host home directory into the VM at the same path, so the host path
+    // is valid for Docker bind mounts inside the VM.
+    const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
+    const sullaFunctionsDir = resolveSullaFunctionsDir();
+    const sullaRuntimeTempDir = path.join(os.homedir(), '.cache', 'sulla-runtime', 'functions');
+
+    await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
+    await fs.promises.mkdir(sullaRuntimeTempDir, { recursive: true });
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
+    composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
+  }
+
+  /**
+   * One-time migration: copies data from old VM-internal paths (/var/lib/sulla/*)
+   * to the new host-mounted paths under paths.appHome/data/. Skips if the
+   * destination already contains data or the source doesn't exist.
+   */
+  private async migrateSullaDataToHost(): Promise<void> {
+    const sullaDataDir = path.join(paths.appHome, 'data');
+    const migrations = [
+      { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
+    ];
+
+    for (const { src, dest } of migrations) {
+      try {
+        // Check if destination already has data (PG_VERSION for postgres, or any file for redis)
+        const destFiles = await fs.promises.readdir(dest);
+
+        if (destFiles.length > 0) {
+          console.log(`[Sulla] Migration skip: ${ dest } already has data`);
+          continue;
+        }
+
+        // Check if old VM path exists and has data, then copy
+        await this.execCommand({ root: true }, 'test', '-d', src);
+        console.log(`[Sulla] Migrating ${ src } -> ${ dest }`);
+        await this.execCommand({ root: true }, 'cp', '-a', `${ src }/.`, `${ dest }/`);
+        console.log(`[Sulla] Migration complete: ${ src } -> ${ dest }`);
+      } catch {
+        console.log(`[Sulla] Migration skip: ${ src } does not exist or copy failed`);
+      }
+    }
   }
 
   /**

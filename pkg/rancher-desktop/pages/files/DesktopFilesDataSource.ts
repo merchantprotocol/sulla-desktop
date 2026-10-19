@@ -2,6 +2,7 @@ import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource,
 import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
 
 import type { IpcRendererEvent } from 'electron';
 
@@ -26,6 +27,7 @@ function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
+  readonly nativeSourceReady = SULLA_FILES_NATIVE_SOURCE_READY;
   readonly capabilities = {
     upload:          true,
     versionHistory:  true,
@@ -191,6 +193,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
+  async chooseNativeSource():Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:pick-native-source')) }
+  listNativeSources():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> { return ipcRenderer.invoke('files-experiment:list-native-sources') }
+  async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
 

@@ -67,6 +67,8 @@ export interface NativeSourceOperationInput {
   fileId?: string;
   baseVersionId?: string;
   desiredHash: string;
+  collectionId?: string;
+  path?: string;
 }
 
 export interface NativeSourceIngestResult {
@@ -75,6 +77,15 @@ export interface NativeSourceIngestResult {
   path: string;
   mime: string;
   size: number;
+}
+
+export interface NativePublicationAction {
+  operationId: string;
+  handle: string;
+  sourceRevision: string;
+  desiredHash: string;
+  fileId: string;
+  versionId: string;
 }
 
 function mime(path:string):string {
@@ -263,6 +274,14 @@ export class LocalFilesManager {
           if (file?.current_version_id !== (input.baseVersionId ?? null)) throw Object.assign(new Error('Files base version changed before native source ingestion'), { status: 409 });
         }
         const result = await ingest(client, operation.files_version_id);
+        if (!input.collectionId || !input.path) throw Object.assign(new Error('Native source collection and display path are required'), { status: 400 });
+        await client.query(`INSERT INTO files_native_sources
+          (source_handle,collection_id,file_id,display_name,source_revision,source_hash,state,recovery,last_error)
+          VALUES($1,$2,$3,$4,$5,$6,'active','{}',NULL)
+          ON CONFLICT(file_id) DO UPDATE SET source_handle=EXCLUDED.source_handle,collection_id=EXCLUDED.collection_id,
+            display_name=EXCLUDED.display_name,source_revision=EXCLUDED.source_revision,source_hash=EXCLUDED.source_hash,
+            state='active',recovery='{}',last_error=NULL,updated_at=NOW()`,
+        [input.handle, input.collectionId, result.id, input.path, input.sourceRevision, input.desiredHash]);
         const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',file_id=$2,files_version_id=$3,last_error=NULL,updated_at=NOW()
           WHERE operation_id=$1 AND state='planned'`, [input.operationId, result.id, result.current_version_id]);
         if (completed.rowCount !== 1) throw Object.assign(new Error('Native source ingestion operation changed while it was committing'), { status: 409 });
@@ -293,21 +312,117 @@ export class LocalFilesManager {
   async finishNativePublication(operationId:string, nextSourceRevision?:string, error?:string):Promise<void> {
     const operation = (await this.db.query(`SELECT o.*,f.current_version_id FROM files_native_source_operations o
       LEFT JOIN files f ON f.id=o.file_id WHERE o.operation_id=$1`, [operationId])).rows[0];
-    if (!operation || operation.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+    if (operation?.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
     if (operation.state === 'completed' && nextSourceRevision === operation.next_source_revision) return;
     if (operation.state === 'recovery-required' && !nextSourceRevision) return;
-    if (nextSourceRevision && operation.current_version_id !== operation.files_base_version_id) {
+    if (nextSourceRevision && operation.current_version_id !== operation.files_version_id) {
       await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
         last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW() WHERE operation_id=$1`,
       [operationId, nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
       throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
     }
     const result = nextSourceRevision
-      ? await this.db.query(`UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
-          WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, nextSourceRevision])
+      ? await this.db.query(`WITH completed AS (
+          UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
+          WHERE operation_id=$1 AND direction='publish' AND state IN('publishing','recovery-required') RETURNING source_handle,file_id,files_version_id,desired_hash
+        ) UPDATE files_native_sources n SET source_revision=$2,source_hash=c.desired_hash,state='active',recovery='{}',last_error=NULL,updated_at=NOW()
+          FROM completed c WHERE n.source_handle=c.source_handle AND n.file_id=c.file_id RETURNING n.file_id`, [operationId, nextSourceRevision])
       : await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
           WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
     if (result.rowCount !== 1) throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+  }
+
+  async finishNativePublicationConflict(operationId:string, input:{ conflictFileId:string; currentSourceRevision:string; currentSourceHash:string; currentFilesVersionId:string }):Promise<void> {
+    const verified = await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
+      recovery=jsonb_build_object('action','visible-conflict','conflictFileId',$2::text),updated_at=NOW()
+      FROM files_native_sources n,files f,files_native_sources c
+      WHERE o.operation_id=$1 AND o.direction='publish' AND o.state IN('publishing','recovery-required')
+        AND n.source_handle=o.source_handle AND n.file_id=o.file_id AND n.source_revision=$3 AND n.source_hash=$4
+        AND f.id=o.file_id AND f.current_version_id=$5
+        AND c.file_id=$2 AND c.source_hash=o.desired_hash
+      RETURNING o.operation_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
+    if (verified.rowCount !== 1) throw Object.assign(new Error('Native conflict recovery did not match both source and Files outcomes'), { status: 409 });
+  }
+
+  async nativePublicationActions():Promise<NativePublicationAction[]> {
+    const rows = await this.db.query(`SELECT operation_id::text,source_handle,source_revision,desired_hash,file_id::text,files_version_id::text
+      FROM files_native_source_operations WHERE direction='publish' AND state IN('publishing','recovery-required') ORDER BY created_at LIMIT 8`);
+    return rows.rows.map(row => ({ operationId: row.operation_id, handle: row.source_handle, sourceRevision: row.source_revision,
+      desiredHash: row.desired_hash, fileId: row.file_id, versionId: row.files_version_id }));
+  }
+
+  async listNativeSources():Promise<{ fileId:string; versionId:string; path:string; handle:string; name:string; sourceRevision:string; sourceHash:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> {
+    const rows = await this.db.query(`SELECT n.file_id::text,f.current_version_id::text AS version_id,f.path,n.source_handle,n.display_name,n.source_revision,n.source_hash,n.state,n.last_error,n.recovery
+      FROM files_native_sources n JOIN files f ON f.id=n.file_id ORDER BY n.created_at`);
+    return rows.rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, path: row.path, handle: row.source_handle, name: row.display_name,
+      sourceRevision: row.source_revision, sourceHash: row.source_hash, state: row.state, lastError: row.last_error ?? undefined, recovery: row.recovery ?? {} }));
+  }
+
+  async revalidateNativeSessions(handles:string[]):Promise<void> {
+    await this.db.query(`UPDATE files_native_sources SET state=CASE WHEN source_handle=ANY($1::text[]) THEN 'active' ELSE 'reselect-required' END,
+      last_error=CASE WHEN source_handle=ANY($1::text[]) THEN NULL ELSE 'Native access must be reselected after the Electron session changed' END,
+      recovery=CASE WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
+      WHERE state<>'revoked'`, [handles]);
+  }
+
+  async fuseWriteNative(
+    fileId:string,
+    expectedVersionId:string,
+    expectedSourceHash:string,
+    bytes:Buffer,
+    actor:FilesIdentity,
+    ingest:(client:pg.PoolClient, versionId:string, current:FuseTrackedFile)=>Promise<NativeSourceIngestResult>,
+    preserveConflict:(client:pg.PoolClient, versionId:string, current:FuseTrackedFile)=>Promise<NativeSourceIngestResult>,
+  ):Promise<FuseTrackedFile> {
+    const desiredHash = createHash('sha256').update(bytes).digest('hex');
+    const operationId = randomUUID();
+    let staleConflict:NativeSourceIngestResult | undefined;
+    await this.serial(async() => {
+      const current = await this.fuseRow(fileId);
+      if (!current.native || !current.sourceHandle || !current.sourceRevision) throw Object.assign(new Error('Native source is unavailable'), { status: 404 });
+      const versionId = randomUUID();
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ current.sourceHandle }`]);
+        const locked = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+        const source = (await client.query('SELECT source_revision,source_hash,state FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [fileId])).rows[0];
+        if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash ||
+            locked?.current_version_id !== expectedVersionId || source?.source_hash !== expectedSourceHash || source?.state !== 'active') {
+          staleConflict = await preserveConflict(client, versionId, current);
+          await client.query('INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash) VALUES($1,$2,$3)', [staleConflict.id, fileId, desiredHash]);
+          await client.query('COMMIT');
+          return;
+        }
+        const result = desiredHash === current.sourceHash
+          ? { current_version_id: current.versionId }
+          : await ingest(client, versionId, current);
+        await client.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,file_id,files_base_version_id,files_version_id,desired_hash,recovery)
+          VALUES($1,$2,'publish','publishing',$3,$4,$5,$6,$7,$8)`,
+        [operationId, current.sourceHandle, current.sourceRevision, fileId, expectedVersionId, result.current_version_id, desiredHash,
+          JSON.stringify({ action: 'publish-files-version-through-electron', actor: actor.deviceId || 'files' })]);
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    });
+    if (staleConflict) {
+      throw Object.assign(new Error('Native source or Files base version changed; the FUSE bytes were preserved as a visible conflict'), {
+        status: 409, recovery: { action: 'visible-conflict', conflictFileId: staleConflict.id },
+      });
+    }
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const operation = (await this.db.query('SELECT state,last_error,recovery FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+      if (operation?.state === 'completed') {
+        if (operation.recovery?.action === 'visible-conflict') throw Object.assign(new Error('Native source changed; both versions are visible in Files'), { status: 409, recovery: operation.recovery });
+        return this.fuseRow(fileId);
+      }
+      if (operation?.state === 'recovery-required') throw Object.assign(new Error(operation.last_error ?? 'Native publication requires recovery'), { status: 409, recovery: operation.recovery });
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error='Electron publication did not complete before the Files durability deadline',updated_at=NOW()
+      WHERE operation_id=$1 AND state='publishing'`, [operationId]);
+    throw Object.assign(new Error('Native publication did not complete before the durability deadline'), { status: 503 });
   }
 
   private async reconcileNativeSourceOperations():Promise<void> {
@@ -334,18 +449,23 @@ export class LocalFilesManager {
     }));
   }
 
-  /** Experimental VM adapter contract. Synthetic tracked roots only. */
+  /** Experimental Files mount view over watched roots and indexed native sources. */
   async fuseSnapshot(collectionId:string, scope?:{ paths:string[]; fileIds:string[] }):Promise<FuseTrackedFile[]> {
-    const root = this.rootForCollection(collectionId);
-    await this.serial(() => this.scanRoot(root));
-    const params:any[] = [collectionId, root.id];
+    const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+    if (root) await this.serial(() => this.scanRoot(root));
+    const params:any[] = [collectionId, root?.id ?? null];
     const scopeFilter = scope
       ? ` AND (f.id::text=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($4::text[]) granted(path) WHERE f.path=granted.path OR starts_with(f.path, granted.path||'/')))`
       : '';
     if (scope) params.push(scope.fileIds, scope.paths);
     const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
-      w.content_hash,w.mtime_ms FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
-      WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND w.root_id=$2
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms
+      FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND (n.file_id IS NOT NULL OR c.file_id IS NOT NULL OR ($2::text IS NOT NULL AND w.root_id=$2))
         AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)${ scopeFilter } ORDER BY f.path`, params);
     return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
       id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
@@ -355,6 +475,7 @@ export class LocalFilesManager {
 
   async fuseRead(fileId:string):Promise<{ file:FuseTrackedFile; bytes:Buffer }> {
     const row = await this.fuseRow(fileId);
+    if (row.native || row.storedNativeConflict) return { file: row, bytes: await this.readStoredVersion(fileId, row.versionId) };
     const root = this.rootForCollection(row.collectionId);
     const pinned = await this.rootMutations.get(root.id)!.pinVerified(row.path, file => this.verifyHash(file, row.sourceHash));
     try {
@@ -367,6 +488,8 @@ export class LocalFilesManager {
 
   async fuseWrite(fileId:string, expectedVersionId:string, expectedSourceHash:string, bytes:Buffer, actor:FilesIdentity):Promise<FuseTrackedFile & { conflictPath?:string }> {
     const initial = await this.fuseRow(fileId);
+    if (initial.native) throw Object.assign(new Error('Native source writes require the Electron publication transaction'), { status: 409, code: 'NATIVE_PUBLICATION_REQUIRED' });
+    if (initial.storedNativeConflict) throw Object.assign(new Error('Files-only native conflict entries are read-only in the experimental mount'), { status: 409 });
     const root = this.rootForCollection(initial.collectionId);
     const mutations = this.rootMutations.get(root.id)!;
     const operationId = randomUUID();
@@ -440,15 +563,34 @@ export class LocalFilesManager {
     }));
   }
 
-  private async fuseRow(fileId:string):Promise<FuseTrackedFile> {
+  async fuseRow(fileId:string):Promise<FuseTrackedFile & { native?:boolean; storedNativeConflict?:boolean; sourceRevision?:string; sourceHandle?:string }> {
     const result = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
-      w.content_hash,w.mtime_ms,w.root_id FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms,
+      w.root_id,n.source_handle,n.source_revision,c.file_id AS native_conflict_file_id FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
       WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [fileId]);
     const row = result.rows[0];
     if (!row || isProtectedPath(row.path)) throw Object.assign(new Error('Tracked file is unavailable'), { status: 404 });
+    if (row.source_handle) return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), native: true, sourceRevision: row.source_revision, sourceHandle: row.source_handle };
+    if (row.native_conflict_file_id) return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), storedNativeConflict: true };
     const root = this.rootForCollection(row.collection_id);
     if (row.root_id !== root.id) throw Object.assign(new Error('Tracked file is not watched by its configured Files root'), { status: 409 });
     return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms) };
+  }
+
+  async readStoredVersion(fileId:string, versionId:string):Promise<Buffer> {
+    const row = (await this.db.query(`SELECT v.chunk_collection_id,v.size,m.chunk_ids FROM file_versions v
+      JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.file_id=$2`, [versionId, fileId])).rows[0];
+    if (!row || Number(row.size) > 64 * 1024 * 1024) throw Object.assign(new Error('Files version is unavailable or exceeds the native source bound'), { status: 413 });
+    const keys = await this.config.keyring!.keys(row.chunk_collection_id);
+    const chunks:Buffer[] = [];
+    for (const id of row.chunk_ids as string[]) chunks.push(Buffer.from(await decryptChunk(await this.store.get(row.chunk_collection_id, id), keys.data, id)));
+    const bytes = Buffer.concat(chunks).subarray(0, Number(row.size));
+    if (bytes.byteLength !== Number(row.size)) throw new Error('Files version length does not match its manifest');
+    return bytes;
   }
 
   private async verifyHash(file:PinnedRegularFile, expected:string):Promise<void> {

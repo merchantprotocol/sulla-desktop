@@ -29,7 +29,16 @@ async function removeGuestCodexAuthFile(): Promise<void> {
   const { execFile } = await import('child_process');
 
   await new Promise<void>((resolve, reject) => {
-    execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', 'set -eu; d="$HOME/.codex"; [ ! -L "$d" ]; rm -f -- "$d/auth.json"'], {
+    execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', [
+      'set -eu',
+      'd="$HOME/.codex"',
+      // Old releases created this exact guest-side link. Remove the link
+      // itself; never append a child path and accidentally follow it into the
+      // host credential directory.
+      'if [ -L "$d" ]; then rm -- "$d"; exit 0; fi',
+      '[ ! -e "$d" ] || [ -d "$d" ]',
+      'rm -f -- "$d/auth.json"',
+    ].join('\n')], {
       env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
     }, err => (err ? reject(err) : resolve()));
   });
@@ -150,19 +159,28 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
       throw new Error('Guest returned an invalid Codex auth staging path');
     }
     const incoming = `${ staged }/auth.json.incoming`;
+    const hostAuthMtime = Math.trunc(fs.statSync(target).mtimeMs / 1_000);
     const script = [
       'set -eu',
       'stage="$1"',
       'incoming="$2"',
+      'host_mtime="$3"',
       'd="$HOME/.codex"',
       'tmp=""',
       'cleanup() { rm -f -- "$incoming"; [ -z "$tmp" ] || rm -f -- "$tmp"; rmdir -- "$stage" 2>/dev/null || true; }',
       'trap cleanup EXIT HUP INT TERM',
-      '[ ! -L "$d" ]',
+      // Retire only the legacy link created by prior Sulla releases. `rm`
+      // unlinks it and cannot traverse to or delete its host-side target.
+      'if [ -L "$d" ]; then rm -- "$d"; fi',
+      '[ ! -e "$d" ] || [ -d "$d" ]',
       'umask 077',
       'mkdir -p "$d"',
       '[ -d "$d" ] && [ "$(stat -c %u "$d")" = "$(id -u)" ]',
       'chmod 700 "$d"',
+      // Once the homes are independent, Codex may have rotated the guest
+      // refresh token. Compare against the host file's original timestamp,
+      // rather than copy metadata that the Lima transport may have changed.
+      'if [ -f "$d/auth.json" ] && [ ! -L "$d/auth.json" ] && [ "$(stat -c %Y "$d/auth.json")" -ge "$host_mtime" ]; then exit 0; fi',
       'tmp=$(mktemp "$d/.auth.json.XXXXXXXX")',
       'install -m 600 "$incoming" "$tmp"',
       'mv -f -- "$tmp" "$d/auth.json"',
@@ -174,7 +192,7 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
         timeout: 30_000,
       }, err => (err ? reject(err) : resolve()));
     });
-    await lima(['shell', '0', '--', 'sh', '-c', script, 'sh', staged, incoming]);
+    await lima(['shell', '0', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
     console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
     return true;
   } catch (err) {

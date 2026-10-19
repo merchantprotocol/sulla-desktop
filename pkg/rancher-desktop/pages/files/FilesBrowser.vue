@@ -131,6 +131,13 @@
             /> New folder
           </button>
           <button
+            v-if="dataSource.nativeSourceReady && dataSource.chooseNativeSource"
+            class="btn"
+            type="button"
+            :disabled="busy"
+            @click="chooseNativeSource"
+          >Add native file</button>
+          <button
             class="btn pri"
             type="button"
             :disabled="busy || !dataSource.capabilities.upload"
@@ -183,6 +190,10 @@
         </div>
         <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
           Search coverage is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.partial }} partially indexed, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Partial files can still match within the extracted portion; unsupported and failed files cannot contribute content matches.
+        </div>
+        <div v-for="source in nativeSources.filter(item => item.state !== 'active')" :key="source.fileId" class="operation-error" role="status">
+          {{ source.name }} needs native access restored. {{ source.lastError || '' }}
+          <button class="btn sm" type="button" :disabled="busy || !dataSource.recoverNativeSource" @click="recoverNativeSource(source.fileId)">Reselect file</button>
         </div>
 
         <div class="filters">
@@ -660,6 +671,7 @@ const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
 const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>([]);
 const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
@@ -796,7 +808,7 @@ const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) &
 const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 
-async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const [stars, sources] = await Promise.all([props.dataSource.listStars(snapshot.value.collection.id), props.dataSource.listNativeSources?.() ?? Promise.resolve([])]); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); nativeSources.value = sources; error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
 async function selectCollection(collectionId:string) {
   if (!props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
   props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; selectedKeys.value = new Set();
@@ -804,6 +816,8 @@ async function selectCollection(collectionId:string) {
 }
 function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
+async function chooseNativeSource() { if (!props.dataSource.chooseNativeSource) return; busy.value = true; operationError.value = ''; try { if (await props.dataSource.chooseNativeSource()) await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function recoverNativeSource(fileId:string) { if (!props.dataSource.recoverNativeSource) return; busy.value = true; operationError.value = ''; try { await props.dataSource.recoverNativeSource(fileId); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function reindex(entry:FilesItem) { busy.value = true; operationError.value = ''; try { await props.dataSource.reindex(entry.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
 function shareEntry(entry:DisplayEntry | null) {

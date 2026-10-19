@@ -89,7 +89,7 @@ async function uploadDestination(root:string, relativePath:string):Promise<strin
   return realTarget;
 }
 
-async function importPaths(paths:string[], destination = '', progress?:(value:{ current:number; total:number; name:string; percent:number; done:boolean }) => void, collectionId?:string):Promise<number> {
+async function importPaths(paths:string[], destination = '', progress?:(value:{ current: number; total: number; name: string; percent: number; done: boolean }) => void, collectionId?:string):Promise<number> {
   const watcher = getSullaFilesWatcher(); const targetRoot = await uploadDestination(await watcher.folderForCollection(collectionId), destination); let imported = 0;
   for (const [index, source] of paths.entries()) {
     const info = await fs.promises.stat(source);
@@ -105,18 +105,18 @@ async function importPaths(paths:string[], destination = '', progress?:(value:{ 
 }
 
 interface FileReference {
-  fileId: string;
-  versionId: string;
-  path: string;
-  name: string;
-  mime: string;
-  size: number;
-  updatedAt: string;
-  createdByType?: string;
-  createdById?: string;
-  collectionId?: string;
+  fileId:          string;
+  versionId:       string;
+  path:            string;
+  name:            string;
+  mime:            string;
+  size:            number;
+  updatedAt:       string;
+  createdByType?:  string;
+  createdById?:    string;
+  collectionId?:   string;
   collectionKind?: string;
-  agentRunId?: string;
+  agentRunId?:     string;
 }
 
 function reference(file:any, collection?:any):FileReference {
@@ -136,7 +136,7 @@ function reference(file:any, collection?:any):FileReference {
   };
 }
 
-async function collectionsWithFiles():Promise<{ collection:any; files:any[] }[]> {
+async function collectionsWithFiles():Promise<{ collection: any; files: any[] }[]> {
   const collections = await json('/v1/collections') as any[];
   return Promise.all(collections.map(async collection => ({
     collection,
@@ -155,7 +155,7 @@ async function findReferenceByPath(relativePath:string, collectionId?:string):Pr
   return matches[0];
 }
 
-async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+async function openReference(input:{ fileId: string; versionId?: string }):Promise<void> {
   const file = await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
   const versionId = input.versionId || file.current_version_id;
   if (!versionId) throw new Error('This file has no readable version.');
@@ -181,7 +181,7 @@ async function openReference(input:{ fileId:string; versionId?:string }):Promise
   if (error) throw new Error(error);
 }
 
-async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ fileId:string; versionId?:string; name:string }):Promise<boolean> {
+async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ fileId: string; versionId?: string; name: string }):Promise<boolean> {
   const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
   const picked = owner ? await dialog.showSaveDialog(owner, { defaultPath: path.basename(input.name) }) : await dialog.showSaveDialog({ defaultPath: path.basename(input.name) });
   if (picked.canceled || !picked.filePath) return false;
@@ -199,7 +199,7 @@ async function downloadReference(event:Electron.IpcMainInvokeEvent, input:{ file
   return true;
 }
 
-async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> {
+async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fileId: string; name: string; versionId?: string }[]):Promise<{ count: number; error?: string }> {
   if (!Array.isArray(items) || !items.length || items.length > 250 || items.some(item => !item.fileId || !item.name || path.basename(item.name) !== item.name)) throw new Error('Choose between 1 and 250 valid files to download.');
   const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
   const picked = owner ? await dialog.showOpenDialog(owner, { title: 'Download selected Files', properties: ['openDirectory', 'createDirectory'] }) : await dialog.showOpenDialog({ title: 'Download selected Files', properties: ['openDirectory', 'createDirectory'] });
@@ -220,8 +220,8 @@ async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fil
   } catch (error) { return { count: created.length, error: `${ created.length } file${ created.length === 1 ? '' : 's' } downloaded before the remaining download failed: ${ error instanceof Error ? error.message : String(error) }` } }
 }
 
-const mediaCapabilities = new Map<string, { fileId:string; versionId?:string; expiresAt:number }>();
-function mediaCapability(input:{ fileId:string; versionId?:string }):string {
+const mediaCapabilities = new Map<string, { fileId: string; versionId?: string; expiresAt: number }>();
+function mediaCapability(input:{ fileId: string; versionId?: string }):string {
   const now = Date.now();
   for (const [token, capability] of mediaCapabilities) if (capability.expiresAt <= now) mediaCapabilities.delete(token);
   const token = randomUUID();
@@ -256,34 +256,34 @@ function initFilesMediaProtocol():void {
 export function initSullaFilesIpc():void {
   try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
-  ipcMain.handle('sulla-files:list', (_event, input:{ collectionId:string; path?:string; trash?:boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
-  ipcMain.handle('sulla-files:search', (_event, input:{ query:string; collectionId?:string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
-  ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
-  ipcMain.handle('sulla-files:stars', (_event, input:{ collectionId:string }) => json(`/v1/stars?collectionId=${ encodeURIComponent(input.collectionId) }`));
-  ipcMain.handle('sulla-files:set-star', (_event, input:{ starred:boolean; collectionId:string; fileId?:string; folderPath?:string }) => json('/v1/stars', { method: input.starred ? 'PUT' : 'DELETE', body: JSON.stringify(input) }));
-  ipcMain.handle('sulla-files:operate', (_event, input:{ action:'move' | 'copy'; collectionId:string; items:{ fileId?:string; folderPath?:string; targetPath:string }[] }) => json('/v1/file-operations', { method: 'POST', body: JSON.stringify(input) }));
-  ipcMain.handle('sulla-files:metadata', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`));
-  ipcMain.handle('sulla-files:history', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`));
-  ipcMain.handle('sulla-files:preview', async(_event, input:{ fileId:string; versionId?:string; thumbnail?:boolean }) => {
+  ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
+  ipcMain.handle('sulla-files:search', (_event, input:{ query: string; collectionId?: string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
+  ipcMain.handle('sulla-files:stars', (_event, input:{ collectionId: string }) => json(`/v1/stars?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:set-star', (_event, input:{ starred: boolean; collectionId: string; fileId?: string; folderPath?: string }) => json('/v1/stars', { method: input.starred ? 'PUT' : 'DELETE', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:operate', (_event, input:{ action: 'move' | 'copy'; collectionId: string; items: { fileId?: string; folderPath?: string; targetPath: string }[] }) => json('/v1/file-operations', { method: 'POST', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:metadata', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`));
+  ipcMain.handle('sulla-files:history', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/history`));
+  ipcMain.handle('sulla-files:preview', async(_event, input:{ fileId: string; versionId?: string; thumbnail?: boolean }) => {
     const route = input.thumbnail ? 'thumbnail' : 'preview'; const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : ''; const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/${ route }${ query }`);
     if (!response.ok) throw new Error(`Files preview failed (${ response.status })`);
 
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
-  ipcMain.handle('sulla-files:upload', (_event, input:{ collectionId:string; path:string; mime?:string; data:Uint8Array }) => json(`/v1/files/upload?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'PUT', headers: { 'content-type': input.mime ?? 'application/octet-stream' }, body: Buffer.from(input.data) }));
-  ipcMain.handle('sulla-files:trash', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`, { method: 'DELETE' }));
-  ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId:string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));
-  ipcMain.handle('sulla-files:trash-restore', (_event, input:{ fileId:string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: '{}' }));
-  ipcMain.handle('sulla-files:restore-version', (_event, input:{ fileId:string; versionId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: JSON.stringify({ versionId: input.versionId }) }));
-  ipcMain.handle('sulla-files:shares', (_event, input:{ collectionId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, {}, true));
-  ipcMain.handle('sulla-files:share', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string; role:'view' | 'edit' }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
-  ipcMain.handle('sulla-files:unshare', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'DELETE', body: JSON.stringify(input) }, true));
-  ipcMain.handle('sulla-files:file-shares', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, {}, true));
-  ipcMain.handle('sulla-files:share-file', (_event, input:{ fileId:string; principalType:'user' | 'group'; principalId:string; role:'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
-  ipcMain.handle('sulla-files:update-file-share', (_event, input:{ fileId:string; shareId:string; role:'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'PATCH', body: JSON.stringify({ role: input.role }) }, true));
-  ipcMain.handle('sulla-files:unshare-file', (_event, input:{ fileId:string; shareId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'DELETE' }, true));
-  ipcMain.handle('sulla-files:members', (_event, input:{ orgId:string }) => json(`/v1/orgs/${ encodeURIComponent(input.orgId) }/members`, {}, true));
-  ipcMain.handle('sulla-files:keep', (_event, input:{ fileId:string; collectionId:string; path?:string }) => json(`/v1/agent-files/${ encodeURIComponent(input.fileId) }/keep`, { method: 'POST', body: JSON.stringify({ collectionId: input.collectionId, path: input.path }) }));
+  ipcMain.handle('sulla-files:upload', (_event, input:{ collectionId: string; path: string; mime?: string; data: Uint8Array }) => json(`/v1/files/upload?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'PUT', headers: { 'content-type': input.mime ?? 'application/octet-stream' }, body: Buffer.from(input.data) }));
+  ipcMain.handle('sulla-files:trash', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`, { method: 'DELETE' }));
+  ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId: string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:trash-restore', (_event, input:{ fileId: string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: '{}' }));
+  ipcMain.handle('sulla-files:restore-version', (_event, input:{ fileId: string; versionId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: JSON.stringify({ versionId: input.versionId }) }));
+  ipcMain.handle('sulla-files:shares', (_event, input:{ collectionId: string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, {}, true));
+  ipcMain.handle('sulla-files:share', (_event, input:{ collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
+  ipcMain.handle('sulla-files:unshare', (_event, input:{ collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'DELETE', body: JSON.stringify(input) }, true));
+  ipcMain.handle('sulla-files:file-shares', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, {}, true));
+  ipcMain.handle('sulla-files:share-file', (_event, input:{ fileId: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
+  ipcMain.handle('sulla-files:update-file-share', (_event, input:{ fileId: string; shareId: string; role: 'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'PATCH', body: JSON.stringify({ role: input.role }) }, true));
+  ipcMain.handle('sulla-files:unshare-file', (_event, input:{ fileId: string; shareId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'DELETE' }, true));
+  ipcMain.handle('sulla-files:members', (_event, input:{ orgId: string }) => json(`/v1/orgs/${ encodeURIComponent(input.orgId) }/members`, {}, true));
+  ipcMain.handle('sulla-files:keep', (_event, input:{ fileId: string; collectionId: string; path?: string }) => json(`/v1/agent-files/${ encodeURIComponent(input.fileId) }/keep`, { method: 'POST', body: JSON.stringify({ collectionId: input.collectionId, path: input.path }) }));
   ipcMain.handle('files-ui:capabilities', async() => {
     const [status, cloudAvailable, residencyResult] = await Promise.all([
       getSullaFilesWatcher().status(),
@@ -297,17 +297,17 @@ export function initSullaFilesIpc():void {
       residency.authenticatedRemote === true && residency.verifiedRecovery === true;
 
     return {
-      orgSharing:  status.serverConfigured && status.state !== 'error',
-      publicLinks: cloudAvailable && status.state !== 'error',
+      orgSharing:          status.serverConfigured && status.state !== 'error',
+      publicLinks:         cloudAvailable && status.state !== 'error',
       onlineOnly,
-      keepOnComputer: onlineOnly,
+      keepOnComputer:      onlineOnly,
       authenticatedRemote: onlineOnly,
-      verifiedRecovery: onlineOnly,
-      onlineOnlyReason: onlineOnly ? '' : onlineOnlyReason || 'Online-only recovery is not fully configured.',
+      verifiedRecovery:    onlineOnly,
+      onlineOnlyReason:    onlineOnly ? '' : onlineOnlyReason || 'Online-only recovery is not fully configured.',
     };
   });
-  ipcMain.handle('files-ui:residency-status', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`));
-  ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId:string; desiredState:'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }), signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS) }));
+  ipcMain.handle('files-ui:residency-status', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`));
+  ipcMain.handle('files-ui:set-residency', (_event, input:{ fileId: string; desiredState: 'local' | 'online-only' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/residency`, { method: 'POST', body: JSON.stringify({ desiredState: input.desiredState }), signal: AbortSignal.timeout(RESIDENCY_TRANSFER_TIMEOUT_MS) }));
   ipcMain.handle('files-ui:recent-references', async(_event, limit = 5) => {
     const groups = await collectionsWithFiles();
     return groups.flatMap(item => item.files.map(file => reference(file, item.collection)))
@@ -323,7 +323,7 @@ export function initSullaFilesIpc():void {
     for (const selected of picked.filePaths) {
       const resolved = await fs.promises.realpath(selected);
       const candidates = (await Promise.all(roots.map(async root => fs.promises.realpath(root.path).then(realPath => ({ root, realPath }), () => undefined))))
-        .filter((item):item is { root:typeof roots[number]; realPath:string } => Boolean(item));
+        .filter((item):item is { root: typeof roots[number]; realPath: string } => Boolean(item));
       const matched = candidates.filter(item => resolved.startsWith(`${ item.realPath }${ path.sep }`)).sort((left, right) => right.realPath.length - left.realPath.length)[0];
       if (!matched) throw new Error('Choose a file inside an active tracked Files folder.');
       if (!(await fs.promises.stat(resolved)).isFile()) throw new Error('Choose a regular file from Sulla Files.');
@@ -334,47 +334,47 @@ export function initSullaFilesIpc():void {
     }
     return refs;
   });
-  ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId:string; versionId?:string }) => {
+  ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId: string; versionId?: string }) => {
     const query = input.versionId ? `?versionId=${ encodeURIComponent(input.versionId) }` : '';
     const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/preview${ query }`);
     if (!response.ok) throw new Error(`Files content failed (${ response.status })`);
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
   ipcMain.handle('files-ui:capture-screenshot', (_event, mode:ScreenshotMode = 'area') => getSullaFilesCaptureService().screenshot(mode));
-  ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic:boolean; camera:boolean }) => getSullaFilesCaptureService().toggleRecording(input));
+  ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic: boolean; camera: boolean }) => getSullaFilesCaptureService().toggleRecording(input));
   ipcMain.handle('files-ui:create-link', (_event, input:CreateShareInput) => getSullaFilesLinkService().create(input));
   ipcMain.handle('files-ui:list-links', () => getSullaFilesLinkService().list());
   ipcMain.handle('files-ui:revoke-link', (_event, id:string) => getSullaFilesLinkService().revoke(id));
-  ipcMain.handle('files-ui:update-link', (_event, input:{ id:string; options:Partial<CreateShareInput> }) => getSullaFilesLinkService().update(input.id, input.options));
-  ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id:string; enabled:boolean }) => getSullaFilesLinkService().update(input.id, { keepAvailable: input.enabled }));
-  ipcMain.handle('files-ui:restore-link', (_event, input:{ id:string; password?:string }) => getSullaFilesLinkService().restore(input.id, input.password));
+  ipcMain.handle('files-ui:update-link', (_event, input:{ id: string; options: Partial<CreateShareInput> }) => getSullaFilesLinkService().update(input.id, input.options));
+  ipcMain.handle('files-ui:set-link-keep', (_event, input:{ id: string; enabled: boolean }) => getSullaFilesLinkService().update(input.id, { keepAvailable: input.enabled }));
+  ipcMain.handle('files-ui:restore-link', (_event, input:{ id: string; password?: string }) => getSullaFilesLinkService().restore(input.id, input.password));
   ipcMain.handle('files-ui:link-activity', (_event, id?:string) => getSullaFilesLinkService().activity(id));
   ipcMain.handle('files-ui:status', () => getSullaFilesWatcher().status());
   ipcMain.handle('files-preferences:list-roots', () => getSullaFilesRootRegistry().list());
   ipcMain.handle('files-preferences:add-root', event => getSullaFilesRootRegistry().add(BrowserWindow.fromWebContents(event.sender) ?? undefined));
-  ipcMain.handle('files-preferences:update-root', (_event, input:{ id:string; syncMode?:'local' | 'server'; paused?:boolean; exclusions?:string[] }) => {
+  ipcMain.handle('files-preferences:update-root', (_event, input:{ id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => {
     const { id, ...updates } = input;
     return getSullaFilesRootRegistry().update(id, updates);
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', (_event, collectionId?:string) => getSullaFilesWatcher().openFolder(collectionId));
-  ipcMain.handle('files-ui:create-folder', async(_event, input:string | { collectionId?:string; path:string }) => {
+  ipcMain.handle('files-ui:create-folder', async(_event, input:string | { collectionId?: string; path: string }) => {
     const relativePath = typeof input === 'string' ? input : input.path;
     const collectionId = typeof input === 'string' ? undefined : input.collectionId;
     await createDirectoryWithinRoot(await getSullaFilesWatcher().folderForCollection(collectionId), relativePath);
     await getSullaFilesWatcher().notifyRescan();
   });
-  ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
-  ipcMain.handle('files-ui:download-file', (event, input:{ fileId:string; versionId?:string; name:string }) => downloadReference(event, input));
-  ipcMain.handle('files-ui:download-files', (event, input:{ fileId:string; versionId?:string; name:string }[]) => downloadReferences(event, input));
-  ipcMain.handle('files-ui:media-url', async(event, input:{ fileId:string; versionId?:string }) => {
+  ipcMain.handle('files-ui:open-file', (_event, input:{ fileId: string; versionId?: string }) => openReference(input));
+  ipcMain.handle('files-ui:download-file', (event, input:{ fileId: string; versionId?: string; name: string }) => downloadReference(event, input));
+  ipcMain.handle('files-ui:download-files', (event, input:{ fileId: string; versionId?: string; name: string }[]) => downloadReferences(event, input));
+  ipcMain.handle('files-ui:media-url', async(event, input:{ fileId: string; versionId?: string }) => {
     const senderUrl = event.senderFrame?.url;
     if (!senderUrl || new URL(senderUrl).protocol !== 'app:') throw new Error('Files media URLs are only available to the Sulla application');
     await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
     return mediaCapability(input);
   });
-  ipcMain.handle('files-ui:pick-upload', async(event, input:string | { collectionId?:string; destination?:string } = '') => {
+  ipcMain.handle('files-ui:pick-upload', async(event, input:string | { collectionId?: string; destination?: string } = '') => {
     const destination = typeof input === 'string' ? input : input.destination ?? '';
     const collectionId = typeof input === 'string' ? undefined : input.collectionId;
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
@@ -393,8 +393,8 @@ export function initSullaFilesIpc():void {
     if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options:Electron.OpenDialogOptions = {
-      title: 'Choose one synthetic file for the Files source experiment',
-      properties: ['openFile'],
+      title:                   'Choose one synthetic file for the Files source experiment',
+      properties:              ['openFile'],
       securityScopedBookmarks: process.platform === 'darwin',
     };
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
@@ -412,29 +412,62 @@ export function initSullaFilesIpc():void {
         operationId,
         handle,
         sourceRevision: snapshot.revision,
-        contentHash: snapshot.contentHash,
-        name: path.basename(picked.filePaths[0]),
-        bytes: snapshot.bytes,
+        contentHash:    snapshot.contentHash,
+        name:           path.basename(picked.filePaths[0]),
+        bytes:          snapshot.bytes,
       });
       return {
         handle,
         operationId,
         sourceRevision: snapshot.revision,
-        contentHash: snapshot.contentHash,
-        fileId: file.id,
-        versionId: file.current_version_id,
-        path: file.path,
+        contentHash:    snapshot.contentHash,
+        fileId:         file.id,
+        versionId:      file.current_version_id,
+        path:           file.path,
       };
     } catch (error) {
       gateway.revoke(handle);
       throw error;
     }
   });
+  ipcMain.handle('files-experiment:list-native-sources', async() => {
+    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') return [];
+    return (await getSullaFilesWatcher().listNativeSources()).map(({ handle: _handle, versionId: _versionId, path: _path, sourceRevision: _sourceRevision, sourceHash: _sourceHash, ...source }) => source);
+  });
+  ipcMain.handle('files-experiment:recover-native-source', async(event, fileId:string) => {
+    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !UUID.test(fileId)) throw new Error('Native Files recovery input is invalid');
+    const source = (await getSullaFilesWatcher().listNativeSources()).find(item => item.fileId === fileId);
+    if (source?.state !== 'reselect-required') throw new Error('Native Files source does not require reselection');
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options:Electron.OpenDialogOptions = { title: `Reselect ${ source.name }`, properties: ['openFile'], securityScopedBookmarks: process.platform === 'darwin' };
+    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths[0]) return undefined;
+    await getSullaFilesWatcher().prepareNativeSourceSession();
+    const release = process.platform === 'darwin' && picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
+    const gateway = getSullaFilesSourceGateway();
+    const handle = await gateway.registerExactFile(picked.filePaths[0], release);
+    try {
+      const snapshot = await gateway.read(handle);
+      const result = await getSullaFilesWatcher().ingestNativeSource({
+        operationId:    randomUUID(),
+        handle,
+        sourceRevision: snapshot.revision,
+        contentHash:    snapshot.contentHash,
+        name:           source.name,
+        bytes:          snapshot.bytes,
+        fileId:         source.fileId,
+        baseVersionId:  source.versionId,
+        filesPath:      source.path,
+      });
+      gateway.revoke(source.handle);
+      return { fileId: result.id, versionId: result.current_version_id };
+    } catch (error) { gateway.revoke(handle); throw error }
+  });
   ipcMain.handle('files-experiment:revoke-native-source', (_event, handle:string) => {
     if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
     getSullaFilesSourceGateway().revoke(handle);
   });
-  ipcMain.handle('files-experiment:publish-native-source', async(_event, input:{ handle:string; sourceRevision:string; fileId:string; versionId:string }) => {
+  ipcMain.handle('files-experiment:publish-native-source', async(_event, input:{ handle: string; sourceRevision: string; fileId: string; versionId: string }) => {
     if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
     if (!/^[A-Za-z0-9_-]{43}$/.test(input.handle) || !/^[a-f0-9]{64}$/i.test(input.sourceRevision) ||
         !UUID.test(input.fileId) || !UUID.test(input.versionId)) throw new Error('Native Files publication input is invalid');
@@ -445,11 +478,11 @@ export function initSullaFilesIpc():void {
     const watcher = getSullaFilesWatcher();
     await watcher.planNativePublication({
       operationId,
-      handle: input.handle,
+      handle:         input.handle,
       sourceRevision: input.sourceRevision,
       contentHash,
-      fileId: input.fileId,
-      baseVersionId: input.versionId,
+      fileId:         input.fileId,
+      baseVersionId:  input.versionId,
     });
     try {
       const result = await getSullaFilesSourceGateway().write(input.handle, input.sourceRevision, bytes);
@@ -461,5 +494,5 @@ export function initSullaFilesIpc():void {
       throw error;
     }
   });
-  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string; collectionId?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
+  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths: string[]; destination?: string; collectionId?: string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
 }

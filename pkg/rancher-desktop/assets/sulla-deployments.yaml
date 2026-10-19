@@ -223,11 +223,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "/mnt/data/sulla/functions"
+          path: "{{sullaFunctionsDir}}"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "/mnt/data/sulla/runtime/functions"
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
       - name: python-runtime-cache
         hostPath:
@@ -313,11 +313,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "/mnt/data/sulla/functions"
+          path: "{{sullaFunctionsDir}}"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "/mnt/data/sulla/runtime/functions"
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -401,11 +401,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "/mnt/data/sulla/functions"
+          path: "{{sullaFunctionsDir}}"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "/mnt/data/sulla/runtime/functions"
+          path: "{{sullaRuntimeTempDir}}"
           type: DirectoryOrCreate
       - name: node-runtime-cache
         hostPath:

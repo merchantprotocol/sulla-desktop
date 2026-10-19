@@ -15,6 +15,7 @@ import { createApp } from '../../src/app.ts';
 import { migrate } from '../../src/db.ts';
 import { FilesKeyring } from '../../src/keyring.ts';
 import { LocalFilesManager } from '../../src/localManager.ts';
+import { SullaFilesSourceGateway } from '../../../../pkg/rancher-desktop/main/sullaFilesSourceGateway.ts';
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,7 +26,7 @@ const cluster = join(root, 'postgres');
 const sourceRoot = join(root, 'synthetic-source');
 const mountRoot = join(root, 'mount');
 const proofPath = join(sourceRoot, 'Proof', 'round-trip.txt');
-const mountedPath = join(mountRoot, 'Proof', 'round-trip.txt');
+const mountedPath = join(mountRoot, 'Native Sources', 'round-trip.txt');
 const databasePort = 50_000 + (process.pid % 10_000);
 const originalBytes = 'original synthetic bytes\n';
 
@@ -34,6 +35,8 @@ let db;
 let fuse;
 let keyring;
 let manager;
+let gateway;
+let brokerTimer;
 let server;
 let stopping = false;
 
@@ -94,6 +97,8 @@ async function stop(exitCode = 0) {
   await run('fusermount3', ['-u', mountRoot]).catch(() => undefined);
   if (fuse?.exitCode === null) fuse.kill('SIGTERM');
   await manager?.close().catch(() => undefined);
+  if (brokerTimer) clearInterval(brokerTimer);
+  await gateway?.stop().catch(() => undefined);
   await new Promise(resolvePromise => server ? server.close(resolvePromise) : resolvePromise());
   keyring?.close();
   await db?.end().catch(() => undefined);
@@ -121,13 +126,14 @@ try {
   keyring = new FilesKeyring(db);
   await keyring.unlock(master, signingKey);
   master.fill(0);
+  const localToken = randomBytes(32).toString('base64url');
   const config = {
     keyring,
     port,
     databaseUrl,
     chunkRoot: join(root, 'chunks'),
     dataRoot: join(root, 'data'),
-    filesRoot: sourceRoot,
+    filesRoot: undefined,
     caseInsensitiveRoot: false,
     capabilitySigningKey: signingKey,
     mode: 'desktop',
@@ -136,12 +142,13 @@ try {
     cloudUrl: 'https://invalid.test',
     paused: false,
     modelDir: join(root, 'unused-model'),
-    fileRoots: [{ id: 'default', name: 'Synthetic tracked collection', path: sourceRoot, syncMode: 'local', paused: false, exclusions: [], primary: true }],
+    fileRoots: [],
     fuseExperiment: true,
+    localToken,
   };
   manager = new LocalFilesManager(db, config);
   await manager.initialize();
-  const collectionId = (await manager.listRoots())[0].collectionId;
+  const collectionId = await manager.nativeCollectionId();
   const token = issueProofToken({ sub: config.userId, device_id: config.deviceId, scopes: ['files/*'] }, signingKey);
   const filesApp = createApp(db, config, manager);
   const app = express();
@@ -168,6 +175,68 @@ try {
 
   server = app.listen(port, '0.0.0.0');
   await new Promise((resolvePromise, reject) => { server.once('listening', resolvePromise); server.once('error', reject) });
+  gateway = new SullaFilesSourceGateway();
+  await gateway.start();
+  gateway.unlock();
+  const sourceHandle = await gateway.registerExactFile(proofPath);
+  const initial = await gateway.read(sourceHandle);
+  const localHeaders = { 'x-sulla-files-token': localToken };
+  const ingest = async({ operationId = randomUUID(), handle = sourceHandle, snapshot: source, fileId, baseVersionId, filesPath = 'Native Sources/round-trip.txt' }) => {
+    const query = new URLSearchParams({ collectionId, path: filesPath });
+    if (fileId) query.set('fileId', fileId);
+    const response = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/ingest?${ query }`, {
+      method: 'PUT', headers: {
+        ...localHeaders, 'content-type': 'text/plain', 'x-sulla-operation-id': operationId,
+        'x-sulla-source-handle': handle, 'x-sulla-source-revision': source.revision,
+        'x-sulla-source-hash': source.contentHash, ...(baseVersionId ? { 'x-sulla-files-base-version': baseVersionId } : {}),
+      }, body: source.bytes,
+    });
+    if (!response.ok) throw new Error(`native ingest failed ${ response.status }: ${ await response.text() }`);
+    return response.json();
+  };
+  await ingest({ snapshot: initial });
+  let brokerBusy = false;
+  const brokerCycle = async() => {
+    if (brokerBusy) return;
+    brokerBusy = true;
+    try {
+      const actionResponse = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/actions`, { headers: localHeaders });
+      const actions = await actionResponse.json();
+      for (const action of actions) {
+        try {
+          const content = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/actions/${ action.operationId }/content`, { headers: localHeaders });
+          const bytes = Buffer.from(await content.arrayBuffer());
+          const before = await gateway.read(action.handle);
+          const result = before.contentHash === action.desiredHash ? before : await gateway.write(action.handle, action.sourceRevision, bytes);
+          const finished = await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ action.operationId }/finish`, {
+            method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ nextSourceRevision: result.revision }),
+          });
+          if (!finished.ok) throw new Error(`native finish failed ${ finished.status }: ${ await finished.text() }`);
+        } catch (error) {
+          if (!error?.conflictHandle) throw error;
+          const source = (await manager.listNativeSources()).find(item => item.handle === action.handle);
+          const conflict = await gateway.read(error.conflictHandle);
+          const conflictFile = await ingest({ handle: error.conflictHandle, snapshot: conflict, filesPath: 'Native Sources/round-trip (conflicted copy Files).txt' });
+          const external = await gateway.read(source.handle);
+          const currentFile = await ingest({ snapshot: external, fileId: source.fileId, baseVersionId: source.versionId, filesPath: source.path });
+          await fetch(`http://127.0.0.1:${ port }/v1/local/native-sources/publications/${ action.operationId }/finish`, {
+            method: 'POST', headers: { ...localHeaders, 'content-type': 'application/json' }, body: JSON.stringify({
+              conflictFileId: conflictFile.id, currentSourceRevision: external.revision, currentSourceHash: external.contentHash,
+              currentFilesVersionId: currentFile.current_version_id,
+            }),
+          });
+        }
+      }
+      if (!actions.length) {
+        const [source] = await manager.listNativeSources();
+        if (source?.state === 'active') {
+          const current = await gateway.read(source.handle);
+          if (current.revision !== source.sourceRevision) await ingest({ snapshot: current, fileId: source.fileId, baseVersionId: source.versionId, filesPath: source.path });
+        }
+      }
+    } finally { brokerBusy = false }
+  };
+  brokerTimer = setInterval(() => brokerCycle().catch(error => console.error('[synthetic-broker]', error.message)), 25);
   fuse = spawn('python3', [resolve(here, 'sulla_files_fuse.py'), '--url', `http://127.0.0.1:${ port }`, '--collection', collectionId, mountRoot], {
     env: { ...process.env, SULLA_FILES_FUSE_TOKEN: token },
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -180,6 +249,7 @@ try {
     url: `http://127.0.0.1:${ port }/proof-control/`,
     vmUrl: `http://${ reachableAddress() }:${ port }/proof-control/`,
     fixture: basename(root),
+    sourceHandle: `${ sourceHandle.slice(0, 6) }…`,
     sourcePath: proofPath,
     mountPath: mountedPath,
     controls: ['fuse-edit', 'external-edit', 'reset', 'status'],

@@ -72,6 +72,7 @@ export class SullaFilesSourceGateway {
   private sessionsEnabled = false;
   private activeRequests = 0;
   private reservedBytes = 0;
+  private drainWaiters = new Set<() => void>();
 
   get vmUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
@@ -81,6 +82,11 @@ export class SullaFilesSourceGateway {
   get loopbackUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
     return `http://${ BIND_HOST }:${ this.port }`;
+  }
+
+  activeHandles():string[] {
+    if (!this.sessionsEnabled) return [];
+    return [...this.sources].filter(([, source]) => source.epoch === this.epoch).map(([handle]) => handle);
   }
 
   async registerExactFile(sourcePath:string, release?:() => void):Promise<string> {
@@ -137,13 +143,16 @@ export class SullaFilesSourceGateway {
     this.sessionsEnabled = true;
   }
 
-  lock():void {
+  async lock():Promise<void> {
     this.epoch++;
     this.sessionsEnabled = false;
     this.capabilities.clear();
+    if (this.activeRequests) {
+      await new Promise<void>(resolve => this.drainWaiters.add(resolve));
+    }
     for (const source of this.sources.values()) {
       source.release?.();
-      source.file.close().catch(() => undefined);
+      await source.file.close().catch(() => undefined);
     }
     this.sources.clear();
   }
@@ -280,7 +289,7 @@ export class SullaFilesSourceGateway {
     this.server = undefined;
     this.port = 0;
     if (server) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    this.lock();
+    await this.lock();
   }
 
   private async requireSource(handle:string):Promise<RegisteredSource> {
@@ -363,6 +372,10 @@ export class SullaFilesSourceGateway {
   private releaseRequest():void {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
     this.reservedBytes = Math.max(0, this.reservedBytes - MAX_SOURCE_BYTES);
+    if (!this.activeRequests) {
+      for (const resolve of this.drainWaiters) resolve();
+      this.drainWaiters.clear();
+    }
   }
 
   private async withCapacity<T>(operation:()=>Promise<T>):Promise<T> {
@@ -448,8 +461,8 @@ export async function stopSullaFilesSourceGateway():Promise<void> {
   await gateway?.stop();
 }
 
-export function lockSullaFilesSourceGateway():void {
-  sourceGateway?.lock();
+export async function lockSullaFilesSourceGateway():Promise<void> {
+  await sourceGateway?.lock();
 }
 
 export function unlockSullaFilesSourceGateway():void {
