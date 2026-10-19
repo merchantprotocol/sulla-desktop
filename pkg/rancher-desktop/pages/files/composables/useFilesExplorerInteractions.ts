@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 
-import type { FilesFolderState } from '../types';
+import type { FilesCrossCollectionCapability, FilesFolderState } from '../types';
 
 export interface ExplorerLocation {
   collectionId: string;
@@ -13,6 +13,7 @@ export interface ExplorerTarget {
   fileId?: string;
   folderPath?: string;
   expectedFolder?: FilesFolderState;
+  sourceSubtreeSignature?: string;
   expectedVersionId?: string;
   expectedRevision?: string;
   path: string;
@@ -22,6 +23,7 @@ export interface ExplorerTarget {
 
 export interface ExplorerClipboard {
   collectionId: string;
+  sourceCapability: FilesCrossCollectionCapability;
   mode: 'copy' | 'cut';
   targets: ExplorerTarget[];
 }
@@ -69,8 +71,8 @@ export function useFilesExplorerInteractions(tabId:string) {
     forwardStack.value = [];
   }
 
-  function setClipboard(collectionId:string, mode:'copy' | 'cut', targets:ExplorerTarget[]) {
-    clipboard.value = { collectionId, mode, targets: targets.map(target => ({ ...target })) };
+  function setClipboard(collectionId:string, sourceCapability:FilesCrossCollectionCapability, mode:'copy' | 'cut', targets:ExplorerTarget[]) {
+    clipboard.value = { collectionId, sourceCapability, mode, targets: targets.map(target => ({ ...target, ...(target.expectedFolder ? { expectedFolder: { ...target.expectedFolder } } : {}) })) };
   }
 
   function storageKey(collectionId:string, path:string) {
