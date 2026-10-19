@@ -21,6 +21,18 @@ interface Plan {
   grants?:any;
   disposal?:{undoInvalidatedAt:string;invalidatedBy:string;reason:string;disposedPaths?:string[];artifactsDisposedAt?:string;lastError?:string};
 }
+interface CrossLeaf {
+  kind:'publish'|'evict'|'relocate'|'mkdir'|'rmdir'; rootId:string;
+  source?:string; target?:string; stage:string; fileId?:string; versionId?:string; hash?:string;
+  before?:Fingerprint; published?:Fingerprint; directory?:DirectoryReceipt; started?:boolean; completed?:boolean;
+  sourceRootId?:string;
+}
+interface CrossPlan {
+  version:3; receiptId:string; sourceCollectionId:string; targetCollectionId:string; operationId:string; itemId:string;
+  sourceRootId?:string; targetRootId?:string; leaves:CrossLeaf[]; watched:any[];
+  committed?:Committed; inverseCommitted?:Committed; undoProgress?:number; grants?:any;
+  sourceTree?:string; targetTrees?:string[]; absentAfter?:{rootId:string;path:string}[];
+}
 interface Committed { fileIds:string[]; folderIds:string[]; files:any[]; folders:any[]; watched:any[]; grants?:any }
 export interface NativeJournalRoot { id:string; collectionId:string; mutations:FilesMutationCoordinator }
 const packed = (value:FileFingerprint):Fingerprint => ({ ...value,dev:String(value.dev),ino:String(value.ino) });
@@ -39,7 +51,8 @@ async function verify(pinned:PinnedRegularFile,hash:string,expected?:Fingerprint
 /** Uses only files_path_operations; LocalFilesManager owns scheduling/recovery. */
 export class NativeOperationJournal {
   constructor(private readonly db:pg.Pool,private readonly resolve:(collectionId:string)=>Promise<NativeJournalRoot|null>,
-    private readonly verifyVersion:(fileId:string,versionId:string,hash:string)=>Promise<void>) {}
+    private readonly verifyVersion:(fileId:string,versionId:string,hash:string)=>Promise<void>,
+    private readonly readVersion:(fileId:string,versionId:string)=>Promise<AsyncIterable<Uint8Array>>) {}
 
   async occupied(collectionId:string,path:string):Promise<boolean> {
     const root=await this.resolve(collectionId);
@@ -72,6 +85,11 @@ export class NativeOperationJournal {
   }
 
   async publish(client:pg.PoolClient,receipt:any,undo:boolean):Promise<void> {
+    const targetCollection=receipt.request?.targetCollectionId;
+    if (targetCollection && targetCollection!==receipt.collection_id) {
+      if (undo) return this.inverseCross(client,receipt);
+      return this.publishCross(client,receipt,targetCollection);
+    }
     const root=await this.resolve(receipt.collection_id);
     if (!root) return;
     const m=root.mutations;
@@ -174,13 +192,300 @@ export class NativeOperationJournal {
     });
   }
 
+  private async publishCross(client:pg.PoolClient,receipt:any,targetCollectionId:string):Promise<void> {
+    const source=await this.resolve(receipt.collection_id);
+    const target=await this.resolve(targetCollectionId);
+    if (!source && !target) return;
+    const roots=[source,target].filter((root,index,items):root is NativeJournalRoot=>Boolean(root) && items.findIndex(item=>item?.id===root!.id)===index)
+      .sort((left,right)=>left.id.localeCompare(right.id));
+    const run=(index:number,operation:()=>Promise<void>):Promise<void>=>index===roots.length?operation():roots[index].mutations.runExclusive([],()=>run(index+1,operation));
+    await run(0,async()=>{
+      await FilesMutationCoordinator.requireAtomicRename();
+      const itemId=receipt.request.itemId??receipt.id;
+      const operationId=receipt.request.batchOperationId??receipt.id;
+      const prefix=`.sulla-trash/.operations/${operationId}/${itemId}/${receipt.id}`;
+      const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+      const incoming=(folderPlan?.children??[{before:receipt.before_state,after:receipt.after_state,action:receipt.action}]).map((item:any)=>({before:item.before??item.before_state,after:item.after??item.after_state,action:item.action??receipt.action}));
+      const displaced=(folderPlan?.displaced?.children??(receipt.displaced_before?[{before:receipt.displaced_before,after:receipt.displaced_after,action:'rename'}]:[]))
+        .map((item:any)=>({before:item.before??item.before_state,after:item.after??item.after_state,action:item.action??'rename'}));
+      const ids=[...new Set<string>([...incoming,...displaced].flatMap(item=>[item.before?.fileId,item.after?.fileId]).filter(Boolean))];
+      const watched=(await client.query('SELECT * FROM watched_folder_state WHERE file_id=ANY($1::uuid[]) FOR UPDATE',[ids])).rows;
+      const plan:CrossPlan={version:3,receiptId:receipt.id,sourceCollectionId:receipt.collection_id,targetCollectionId,operationId,itemId,
+        ...(source?{sourceRootId:source.id}:{}),...(target?{targetRootId:target.id}:{}),leaves:[],watched,
+        ...(folderPlan?{sourceTree:folderPlan.source,targetTrees:[folderPlan.target,...(folderPlan.displaced?[folderPlan.displaced.target]:[])].filter(Boolean)}:{})};
+      const rootById=(id:string)=>roots.find(root=>root.id===id)!;
+      const addRelocate=async(record:any,index:number)=>{
+        if (!target || !record.before?.fileId || !record.after?.fileId) return;
+        const w=watched.find(row=>row.file_id===record.before.fileId && row.root_id===target.id && row.path===record.before.path);
+        if (!w) return;
+        await this.verifyVersion(record.before.fileId,record.before.versionId,w.content_hash);
+        const pin=await target.mutations.pinVerified(record.before.path,p=>verify(p,w.content_hash));
+        try { plan.leaves.push({kind:'relocate',rootId:target.id,source:record.before.path,target:record.after.path,stage:`${prefix}/displaced-${index}`,fileId:record.before.fileId,versionId:record.before.versionId,hash:w.content_hash,before:packed(pin.fingerprint)}) }
+        finally { await pin.close() }
+      };
+      if (target && folderPlan?.displaced) {
+        const desired=[...new Set<string>((folderPlan.displaced.folders??[]).map((item:any)=>item.after.path))].sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b));
+        for (const [index,path] of desired.entries()) if (!await target.mutations.exists(path)) plan.leaves.push({kind:'mkdir',rootId:target.id,target:path,stage:`${prefix}/displaced-dir-${index}`});
+        for (const [index,record] of displaced.entries()) await addRelocate(record,index);
+        for (const [index,item] of [...(folderPlan.displaced.folders??[])].reverse().entries()) {
+          if (!await target.mutations.exists(item.before.path)) continue;
+          plan.leaves.push({kind:'rmdir',rootId:target.id,source:item.before.path,stage:`${prefix}/displaced-rmdir-${index}`,directory:await target.mutations.directory(item.before.path)});
+        }
+      }
+      if (target && folderPlan) {
+        const desired=[...new Set<string>((folderPlan.folders??[]).filter((item:any)=>!item.deleted).map((item:any)=>item.after.path))].sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b));
+        for (const [index,path] of desired.entries()) {
+          const replaced=folderPlan.displaced && (path===folderPlan.displaced.source || path.startsWith(folderPlan.displaced.source+'/'));
+          if (replaced || !await target.mutations.exists(path)) plan.leaves.push({kind:'mkdir',rootId:target.id,target:path,stage:`${prefix}/target-dir-${index}`});
+        }
+      }
+      for (const [index,record] of incoming.entries()) {
+        const sourceWatch=source&&watched.find(row=>row.file_id===record.before?.fileId && row.root_id===source.id && row.path===record.before.path);
+        let sourceFingerprint:Fingerprint|undefined;
+        if (sourceWatch) {
+          const pin=await source!.mutations.pinVerified(record.before.path,p=>verify(p,sourceWatch.content_hash));
+          try { sourceFingerprint=packed(pin.fingerprint) } finally { await pin.close() }
+        }
+        if (target && record.after?.fileId && !record.after.deleted) plan.leaves.push({kind:'publish',rootId:target.id,sourceRootId:sourceWatch?source!.id:undefined,
+          source:record.before.path,target:record.after.path,stage:`${prefix}/incoming-${index}`,fileId:record.before.fileId,versionId:record.before.versionId,
+          ...(sourceWatch?{hash:sourceWatch.content_hash,before:sourceFingerprint}:{})});
+        if (sourceWatch && receipt.action!=='copy') {
+          const pin=await source!.mutations.pinVerified(record.before.path,p=>verify(p,sourceWatch.content_hash));
+          try { plan.leaves.push({kind:'evict',rootId:source!.id,source:record.before.path,stage:`${prefix}/source-${index}`,fileId:record.before.fileId,versionId:record.before.versionId,hash:sourceWatch.content_hash,before:packed(pin.fingerprint)}) }
+          finally { await pin.close() }
+        }
+      }
+      if (source && folderPlan && receipt.action!=='copy') for (const [index,item] of [...(folderPlan.folders??[])].reverse().entries()) {
+        if (!await source.mutations.exists(item.before.path)) continue;
+        plan.leaves.push({kind:'rmdir',rootId:source.id,source:item.before.path,stage:`${prefix}/source-dir-${index}`,directory:await source.mutations.directory(item.before.path)});
+      }
+      await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3)`,[receipt.id,receipt.action,plan]);
+      await this.db.query("UPDATE files_path_operations SET state='publishing' WHERE operation_id=$1",[receipt.id]);
+      for (const leaf of plan.leaves) {
+        assertOperationNotCancelled(operationId);
+        const root=rootById(leaf.rootId);
+        if (leaf.kind==='publish') await this.stageCrossLeaf(plan,leaf,root,source);
+        if (leaf.kind==='mkdir') {
+          const staged=await root.mutations.stageDirectory(leaf.stage); leaf.directory={...staged,path:leaf.target!};
+          await this.save(receipt.id,plan);
+        }
+        leaf.started=true; await this.save(receipt.id,plan);
+        await this.forwardCross(leaf,root);
+        leaf.completed=true; await this.save(receipt.id,plan);
+      }
+      assertOperationNotCancelled(operationId);
+      for (const record of displaced) if (record.before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[record.before.fileId]);
+      if (receipt.action!=='copy') for (const record of incoming) if (record.before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[record.before.fileId]);
+      for (const record of [...incoming,...displaced]) {
+        if (!target || !record.after?.fileId || record.after.deleted) continue;
+        const leaf=plan.leaves.find(item=>item.target===record.after.path && ['publish','relocate'].includes(item.kind));
+        if (!leaf?.published || !leaf.hash) throw failure();
+        await this.watch(client,target,record.after.fileId,record.after.path,leaf.hash,leaf.published);
+      }
+      plan.grants=this.receiptGrants(receipt);
+      plan.committed=await this.capture(client,receipt);
+      await client.query("UPDATE files_path_operations SET state='db-committed',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
+    });
+  }
+
+  private async stageCrossLeaf(plan:CrossPlan,leaf:CrossLeaf,target:NativeJournalRoot,source:NativeJournalRoot|null):Promise<void> {
+    if (await target.mutations.exists(leaf.stage)) throw failure();
+    const output=await target.mutations.openPrivateExclusive(leaf.stage); const digest=createHash('sha256');
+    try {
+      const write=async(stream:AsyncIterable<Uint8Array>)=>{ for await (const value of stream) { const bytes=Buffer.from(value); digest.update(bytes); let offset=0; while (offset<bytes.length) { const result=await output.write(bytes,offset); if (!result.bytesWritten) throw failure(); offset+=result.bytesWritten } } };
+      if (leaf.sourceRootId) {
+        if (!source || source.id!==leaf.sourceRootId) throw failure();
+        const pin=await source.mutations.pinVerified(leaf.source!,p=>verify(p,leaf.hash!,leaf.before));
+        try { await write(pin.createReadStream()); await pin.assertUnchanged() } finally { await pin.close() }
+      } else await write(await this.readVersion(leaf.fileId!,leaf.versionId!));
+      await output.sync();
+    } finally { await output.close() }
+    const hash=digest.digest('hex'); if (leaf.hash && leaf.hash!==hash) throw failure(); leaf.hash=hash;
+    const staged=await target.mutations.pinVerified(leaf.stage,p=>verify(p,hash)); try { leaf.before=packed(staged.fingerprint) } finally { await staged.close() }
+    await this.save(plan.receiptId,plan);
+  }
+
+  private async forwardCross(leaf:CrossLeaf,root:NativeJournalRoot):Promise<void> {
+    if (leaf.kind==='mkdir') { leaf.directory=await root.mutations.restoreEmptyDirectory(leaf.directory!,leaf.stage); return }
+    if (leaf.kind==='rmdir') { await root.mutations.evictEmptyDirectory(leaf.directory!,leaf.stage); return }
+    if (leaf.kind==='publish') { const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)}); leaf.published=packed(published.fingerprint); return }
+    const pin=await root.mutations.pinVerified(leaf.source!,p=>verify(p,leaf.hash!,leaf.before)); try { leaf.before=packed(pin.fingerprint) } finally { await pin.close() }
+    await root.mutations.evictVerified({source:leaf.source!,quarantine:leaf.stage,verify:p=>verify(p,leaf.hash!,leaf.before)});
+    if (leaf.kind==='relocate') { const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)}); leaf.published=packed(published.fingerprint) }
+  }
+
+  private async crossRoots(plan:CrossPlan):Promise<Map<string,NativeJournalRoot>> {
+    const roots=new Map<string,NativeJournalRoot>();
+    for (const collectionId of [plan.sourceCollectionId,plan.targetCollectionId]) {
+      const root=await this.resolve(collectionId); if (root) roots.set(root.id,root);
+    }
+    for (const id of [plan.sourceRootId,plan.targetRootId].filter(Boolean)) if (!roots.has(id!)) throw failure();
+    return roots;
+  }
+
+  private async validateCrossFilesystem(plan:CrossPlan,undo=false):Promise<void> {
+    const roots=await this.crossRoots(plan);
+    for (const leaf of plan.leaves) {
+      const root=roots.get(leaf.rootId); if (!root || !leaf.completed) throw failure();
+      if (leaf.kind==='mkdir') {
+        if (undo) {
+          const restored=plan.leaves.find(candidate=>candidate.rootId===leaf.rootId && candidate.kind==='rmdir' && candidate.source===leaf.target);
+          if (restored) {
+            const directory=await root.mutations.directory(leaf.target!);
+            if (directory.dev!==restored.directory?.dev || directory.ino!==restored.directory?.ino) throw failure();
+          } else if (await root.mutations.exists(leaf.target!)) throw failure();
+          const retained=await root.mutations.directory(leaf.stage+'.undo');
+          if (retained.dev!==leaf.directory?.dev || retained.ino!==leaf.directory?.ino) throw failure();
+          continue;
+        }
+        const directory=await root.mutations.directory(leaf.target!); if (directory.dev!==leaf.directory?.dev || directory.ino!==leaf.directory?.ino) throw failure();
+      } else if (leaf.kind==='rmdir') {
+        const path=undo?leaf.source!:leaf.stage; const directory=await root.mutations.directory(path);
+        if (directory.dev!==leaf.directory?.dev || directory.ino!==leaf.directory?.ino) throw failure();
+      } else if (undo) {
+        if (leaf.source && ['evict','relocate'].includes(leaf.kind)) { const pin=await root.mutations.pinVerified(leaf.source,p=>verify(p,leaf.hash!,leaf.before)); await pin.close() }
+        if (leaf.target && ['publish','relocate'].includes(leaf.kind) && await root.mutations.exists(leaf.target)) throw failure();
+        if (['publish','relocate'].includes(leaf.kind)) { const retained=await root.mutations.pinVerified(leaf.stage+'.undo',p=>verify(p,leaf.hash!,leaf.published)); await retained.close() }
+      } else {
+        const stage=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.before)); await stage.close();
+        if (leaf.target) { const target=await root.mutations.pinVerified(leaf.target,p=>verify(p,leaf.hash!,leaf.published)); await target.close() }
+        if (leaf.kind==='evict' && await root.mutations.exists(leaf.source!)) throw failure();
+      }
+    }
+  }
+
+  private async verifyCrossCommitted(plan:CrossPlan,undo:boolean):Promise<void> {
+    const expected=undo?plan.inverseCommitted:plan.committed;
+    if (!expected) throw failure();
+    const actual=await this.captureIds(this.db,expected.fileIds,expected.folderIds);
+    if (expected.grants) actual.grants=await this.captureGrants(this.db,plan.grants);
+    if (canonical(expected)!==canonical(actual)) throw failure();
+    await this.validateCrossFilesystem(plan,undo);
+  }
+
+  private async inverseCross(client:pg.PoolClient,receipt:any):Promise<void> {
+    const row=(await this.db.query('SELECT * FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0];
+    if (!row || row.plan?.version!==3 || !['completed','db-committed'].includes(row.state)) throw failure();
+    const plan=row.plan as CrossPlan; await this.validateCrossFilesystem(plan,false);
+    const roots=await this.crossRoots(plan); plan.undoProgress=0;
+    await this.db.query("UPDATE files_path_operations SET state='undo-planned',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
+    await this.db.query("UPDATE files_path_operations SET state='undo-publishing' WHERE operation_id=$1",[receipt.id]);
+    const reverse=[...plan.leaves].reverse();
+    for (const leaf of reverse) {
+      const root=roots.get(leaf.rootId)!; const undoStage=leaf.stage+'.undo';
+      if (leaf.kind==='rmdir') await root.mutations.restoreEmptyDirectory(leaf.directory!,leaf.stage);
+      else if (leaf.kind==='mkdir') await root.mutations.evictEmptyDirectory(leaf.directory!,undoStage);
+      else if (leaf.kind==='evict') await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+      else if (leaf.kind==='publish') await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:undoStage,fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+      else {
+        await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:undoStage,fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+        await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+      }
+      plan.undoProgress=(plan.undoProgress??0)+1; await this.save(receipt.id,plan);
+    }
+    const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+    const afterStates=folderPlan?[...folderPlan.children,...(folderPlan.displaced?.children??[])].map((item:any)=>item.after):[receipt.after_state,receipt.displaced_after];
+    for (const state of afterStates) if (state?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[state.fileId]);
+    for (const watched of plan.watched) {
+      const root=roots.get(watched.root_id); if (!root) throw failure();
+      const pin=await root.mutations.pinVerified(watched.path,p=>verify(p,watched.content_hash));
+      try { await this.watch(client,root,watched.file_id,watched.path,watched.content_hash,packed(pin.fingerprint)) } finally { await pin.close() }
+    }
+    plan.inverseCommitted=await this.capture(client,receipt);
+    await client.query("UPDATE files_path_operations SET state='undo-db-committed',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
+  }
+
+  private async rollbackCrossForward(plan:CrossPlan):Promise<void> {
+    const roots=await this.crossRoots(plan);
+    for (const leaf of [...plan.leaves].reverse().filter(item=>item.started || item.completed)) {
+      const root=roots.get(leaf.rootId)!;
+      if (leaf.kind==='mkdir') await root.mutations.evictEmptyDirectory(leaf.directory!,leaf.stage+'.rollback');
+      else if (leaf.kind==='rmdir') await root.mutations.restoreEmptyDirectory(leaf.directory!,leaf.stage);
+      else if (leaf.kind==='publish') await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+      else if (leaf.kind==='evict') await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+      else {
+        await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+        await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+      }
+    }
+  }
+
+  /** Return a partially published inverse to its exact committed-forward state. */
+  private async rollbackCrossUndo(plan:CrossPlan):Promise<void> {
+    const roots=await this.crossRoots(plan);
+    // Reconcile every leaf in original order. Leaves not yet inverted are
+    // already exact no-ops; leaves interrupted at any inverse boundary are
+    // driven back to the durable forward identity without guessing ownership.
+    for (const leaf of plan.leaves) {
+      const root=roots.get(leaf.rootId); if (!root) throw failure();
+      const undoStage=leaf.stage+'.undo';
+      if (leaf.kind==='rmdir') {
+        if (await root.mutations.exists(leaf.stage)) {
+          const retained=await root.mutations.directory(leaf.stage);
+          if (retained.dev!==leaf.directory?.dev || retained.ino!==leaf.directory?.ino) throw failure();
+          if (await root.mutations.exists(leaf.source!)) {
+            const replacement=plan.leaves.slice(plan.leaves.indexOf(leaf)+1).find(candidate=>candidate.rootId===leaf.rootId && candidate.kind==='mkdir' && candidate.target===leaf.source);
+            const current=await root.mutations.directory(leaf.source!);
+            if (!replacement?.directory || current.dev!==replacement.directory.dev || current.ino!==replacement.directory.ino) throw failure();
+          }
+        } else await root.mutations.evictEmptyDirectory(leaf.directory!,leaf.stage);
+      } else if (leaf.kind==='mkdir') {
+        if (await root.mutations.exists(leaf.target!)) {
+          const current=await root.mutations.directory(leaf.target!);
+          if (current.dev!==leaf.directory?.dev || current.ino!==leaf.directory?.ino) throw failure();
+        } else await root.mutations.restoreEmptyDirectory(leaf.directory!,undoStage);
+      } else if (leaf.kind==='evict') {
+        if (await root.mutations.exists(leaf.stage)) {
+          const retained=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.before)); await retained.close();
+          if (await root.mutations.exists(leaf.source!)) throw failure();
+        } else await root.mutations.evictVerified({source:leaf.source!,quarantine:leaf.stage,verify:p=>verify(p,leaf.hash!,leaf.before)});
+      } else if (leaf.kind==='publish') {
+        if (await root.mutations.exists(leaf.target!)) {
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published)); await target.close();
+        } else {
+          const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)});
+          if (!same(packed(published.fingerprint),leaf.published!)) throw failure();
+        }
+      } else {
+        if (!await root.mutations.exists(leaf.stage)) await root.mutations.evictVerified({source:leaf.source!,quarantine:leaf.stage,verify:p=>verify(p,leaf.hash!,leaf.before)});
+        else if (await root.mutations.exists(leaf.source!)) {
+          const replacement=plan.leaves.slice(plan.leaves.indexOf(leaf)+1).find(candidate=>candidate.rootId===leaf.rootId && candidate.kind==='publish' && candidate.target===leaf.source);
+          if (!replacement?.published) throw failure();
+          const current=await root.mutations.pinVerified(leaf.source!,p=>verify(p,replacement.hash!,replacement.published)); await current.close();
+        }
+        if (await root.mutations.exists(leaf.target!)) {
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published)); await target.close();
+        } else {
+          const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)});
+          if (!same(packed(published.fingerprint),leaf.published!)) throw failure();
+        }
+      }
+      plan.undoProgress=0;
+      await this.save(plan.receiptId,plan);
+    }
+  }
+
+  private async recoverCross(row:any):Promise<void> {
+    const plan=row.plan as CrossPlan;
+    if (row.state==='db-committed') { await this.verifyCrossCommitted(plan,false); await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1",[row.operation_id]); return }
+    if (row.state==='undo-db-committed') { await this.verifyCrossCommitted(plan,true); await this.db.query("UPDATE files_path_operations SET state='undone',last_error=NULL,updated_at=NOW() WHERE operation_id=$1",[row.operation_id]); return }
+    if (row.state==='planned' || row.state==='publishing') {
+      await this.rollbackCrossForward(plan); await this.db.query("UPDATE files_path_operations SET state='rolled-back',last_error=NULL,updated_at=NOW() WHERE operation_id=$1",[row.operation_id]); return;
+    }
+    if (row.state==='undo-planned' || row.state==='undo-publishing') {
+      await this.rollbackCrossUndo(plan); await this.verifyCrossCommitted(plan,false);
+      await this.db.query("UPDATE files_path_operations SET state='completed',plan=$2,last_error=NULL,updated_at=NOW() WHERE operation_id=$1",[row.operation_id,plan]); return;
+    }
+    throw failure();
+  }
+
   private async watch(client:pg.PoolClient,root:NativeJournalRoot,fileId:string,path:string,hash:string,fp:Fingerprint):Promise<void> {
     await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`,
     [root.collectionId,path,fileId,hash,fp.size,fp.mtimeMs,root.id]);
   }
 
-  private async save(id:string,plan:Plan):Promise<void> {
+  private async save(id:string,plan:Plan|CrossPlan):Promise<void> {
     await this.db.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1',[id,plan]);
   }
 
@@ -254,8 +559,20 @@ export class NativeOperationJournal {
     const fileIds=[...new Set<string>(records.flatMap((r:any)=>[r.before?.fileId,r.after?.fileId]).filter(Boolean))].sort();
     const folderIds=[...new Set<string>((folderPlan?[...folderPlan.folders,...(folderPlan.displaced?.folders??[])]:[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
     const committed=await this.captureIds(client,fileIds,folderIds);
-    if (folderPlan?.displaced?.grants) committed.grants=await this.captureGrants(client,folderPlan.displaced.grants);
+    const grants=this.receiptGrants(receipt);
+    if (grants) committed.grants=await this.captureGrants(client,grants);
     return committed;
+  }
+
+  private receiptGrants(receipt:any):any|undefined {
+    const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
+    const groups=[folderPlan?.displaced?.grants,folderPlan?.transferredGrants].filter(Boolean);
+    if (!groups.length) return undefined;
+    return {
+      folderShares:groups.flatMap((group:any)=>group.folderShares??[]),
+      publicLinks:groups.flatMap((group:any)=>group.publicLinks??[]),
+      fileIds:[...new Set<string>(groups.flatMap((group:any)=>group.fileIds??[]))],
+    };
   }
 
   private async captureGrants(client:Pick<pg.PoolClient,'query'>,grants:any):Promise<any> {
@@ -348,6 +665,7 @@ export class NativeOperationJournal {
   }
 
   async recover(row:any):Promise<void> {
+    if (row.plan?.version===3) return this.recoverCross(row);
     const plan:Plan=row.plan;
     const root=await this.resolve(plan.collectionId);
     if (!root || root.id!==plan.rootId) throw failure();

@@ -8,7 +8,7 @@ import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
-import { purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
+import { folderOperationState,purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
@@ -374,6 +374,11 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? '');
     await requireCollection(request, collectionId, 'edit', true, true);
     response.json(await databaseOperationCapabilities(db, collectionId, operationAccess(request)));
+  } catch (error) { next(error) } });
+  app.get('/v1/database-file-operations/folder-state', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId=String(request.query.collectionId??''); const path=cleanPath(request.query.path,false);
+    await requirePath(request,collectionId,path,'edit');
+    response.json(await folderOperationState(db,collectionId,path,operationAccess(request)));
   } catch (error) { next(error) } });
   app.get('/v1/database-file-operations/:id', async(request:RequestWithIdentity, response, next) => { try {
     response.json(await getDatabaseBatch(db, request.params.id, identity(request), operationAccess(request)));
