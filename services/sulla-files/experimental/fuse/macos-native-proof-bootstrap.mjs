@@ -41,4 +41,9 @@ app.setPath('logs', isolatedPaths.logs);
 app.setPath('crashDumps', isolatedPaths['crash-dumps']);
 
 globalThis[Symbol.for('sulla.files.nativeProof.electron')] = { app, dialog };
-await import('./live-proof.mjs');
+// Electron readiness waits for the entry module to finish evaluating.
+// The proof awaits app.whenReady(), so do not await its import here.
+void import('./live-proof.mjs').catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  app.exit(1);
+});
