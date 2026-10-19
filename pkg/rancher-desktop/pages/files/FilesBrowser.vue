@@ -2,8 +2,8 @@
   <div
     class="files-browser"
     :class="{ dragging }"
-    @dragenter.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
-    @dragover.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
+    @dragenter.prevent="onBrowserDragEnter"
+    @dragover.prevent="onBrowserDragOver"
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
@@ -356,10 +356,17 @@
                   v-for="entry in group.entries"
                   :key="entry.key"
                   class="row"
-                  :class="{ 'is-sel': selectedKeys.has(entry.key), agent: entry.agent }"
+                  :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
+                  :draggable="section === 'files' && !entry.folder && !busy"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
                   @contextmenu.prevent.stop="openActions(entry, $event)"
+                  @dragstart="onEntryDragStart(entry, $event)"
+                  @dragenter="onFolderDragEnter(entry, $event)"
+                  @dragover="onFolderDragOver(entry, $event)"
+                  @dragleave="onFolderDragLeave(entry, $event)"
+                  @drop="onFolderDrop(entry, $event)"
+                  @dragend="clearInternalDrag"
                   tabindex="0"
                   :aria-selected="selectedKeys.has(entry.key)"
                   @keydown="onEntryKeydown(entry, $event)"
@@ -476,10 +483,17 @@
             v-for="entry in visibleEntries"
             :key="entry.key"
             class="tile"
-            :class="{ 'is-sel': selectedKeys.has(entry.key) }"
+            :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
+            :draggable="section === 'files' && !entry.folder && !busy"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
             @contextmenu.prevent.stop="openActions(entry, $event)"
+            @dragstart="onEntryDragStart(entry, $event)"
+            @dragenter="onFolderDragEnter(entry, $event)"
+            @dragover="onFolderDragOver(entry, $event)"
+            @dragleave="onFolderDragLeave(entry, $event)"
+            @drop="onFolderDrop(entry, $event)"
+            @dragend="clearInternalDrag"
                   tabindex="0"
                   :aria-selected="selectedKeys.has(entry.key)"
                   @keydown="onEntryKeydown(entry, $event)"
@@ -661,6 +675,7 @@ const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
+const draggedKeys = ref(new Set<string>()); const dropTargetKey = ref('');
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
@@ -856,8 +871,31 @@ function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); 
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
+function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
+function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; if (!props.dataSource.capabilities.nativeFilesystem) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return } const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) { dragging.value = false; if (draggedKeys.value.size) { clearInternalDrag(); return } if (!props.dataSource.capabilities.nativeFilesystem) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return } const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (entry.folder || section.value !== 'files' || busy.value || !event.dataTransfer) { event.preventDefault(); return }
+  const selected = selectedEntries.value.filter(item => !item.folder);
+  const entries = selectedKeys.value.has(entry.key) && selected.length ? selected : [entry];
+  draggedKeys.value = new Set(entries.map(item => item.key));
+  if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('application/x-sulla-files', 'move');
+}
+function canDropOnFolder(entry:DisplayEntry) { return entry.folder && draggedKeys.value.size > 0 && !busy.value }
+function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); dropTargetKey.value = entry.key } }
+function onFolderDragOver(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; dropTargetKey.value = entry.key } }
+function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTargetKey.value === entry.key && !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dropTargetKey.value = '' }
+async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
+  if (!canDropOnFolder(entry)) return;
+  event.preventDefault(); event.stopPropagation();
+  const entries = visibleEntries.value.filter(item => draggedKeys.value.has(item.key) && !item.folder);
+  clearInternalDrag();
+  if (entries.length) await perform('move', operationItems(entries, entry.path));
+}
+function clearInternalDrag() { draggedKeys.value = new Set(); dropTargetKey.value = '' }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -1147,8 +1185,12 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .files .tbl th:last-child, .files .tbl td:last-child { padding-right: 14px; }
 .muted { color: var(--muted); }
 .files tr.row { cursor: default; }
+.files tr.row[draggable="true"] { cursor: grab; }
+.files tr.row.is-dragging { opacity: .45; }
 .files tr.row:hover td { background: color-mix(in srgb, var(--accent) 4.5%, transparent); }
 .files tr.row.is-sel td { background: var(--accent-soft); }
+.files tr.row.drop-target td { background: var(--accent-soft); }
+.files tr.row.drop-target td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .tbl tr.sechead td { padding: 10px 16px 4px; border-bottom: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
 .tbl tr.sechead:not(:first-child) td { padding-top: 14px; }
@@ -1193,6 +1235,9 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 /* Grid view */
 .gridv { display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 14px; }
 .tile { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; cursor: default; }
+.tile[draggable="true"] { cursor: grab; }
+.tile.is-dragging { opacity: .45; }
+.tile.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
 .tile:hover, .tile.is-sel { border-color: var(--accent-line); box-shadow: var(--shadow); }
 .tile .th { height: 116px; background: var(--paper-2); display: grid; place-items: center; position: relative; overflow: hidden; }
 .tile .th .fi { width: 44px; height: 44px; border-radius: 10px; }
