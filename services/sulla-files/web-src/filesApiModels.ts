@@ -34,6 +34,10 @@ export function filesItem(file:FilesApiFile):FilesItem {
     ownerAvatarUrl:   file.owner_avatar_url,
     syncState:        file.sync_state,
     conflictDevices:  file.conflict_devices === undefined ? undefined : Number(file.conflict_devices),
+    indexStatus:      file.extraction_status ?? 'pending',
+    indexReasonCode:  file.extraction_reason_code,
+    indexReason:      file.extraction_reason ?? 'Waiting for local indexing.',
+    indexedAt:        file.extracted_at,
   };
 }
 

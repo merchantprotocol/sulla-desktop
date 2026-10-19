@@ -22,10 +22,14 @@ export interface StoredSullaFilesRoot {
   exclusions: string[];
 }
 
-export type SullaFilesRootView = StoredSullaFilesRoot & Partial<SullaFilesRootStatus> & {
+export type SullaFilesRootView = Omit<StoredSullaFilesRoot, 'bookmark'> & Partial<SullaFilesRootStatus> & {
   activation: 'active' | 'pending-restart' | 'offline';
   removable:  boolean;
 };
+
+function publicRoot(root:StoredSullaFilesRoot):Omit<StoredSullaFilesRoot, 'bookmark'> {
+  return { id: root.id, name: root.name, path: root.path, syncMode: root.syncMode, paused: root.paused, exclusions: root.exclusions };
+}
 
 function defaultRoot():StoredSullaFilesRoot {
   return { id: 'default', name: 'Sulla Files', path: resolveSullaFilesUserRoot().activePath, syncMode: 'server', paused: false, exclusions: [] };
@@ -103,7 +107,7 @@ export class SullaFilesRootRegistry {
     return stored.map(root => {
       const status = runtime?.find(item => item.id === root.id);
       return {
-        ...root,
+        ...publicRoot(root),
         ...status,
         activation: status ? 'active' : runtime ? 'pending-restart' : 'offline',
         removable:  root.id !== 'default',
@@ -142,7 +146,7 @@ export class SullaFilesRootRegistry {
     };
     await this.persist([...roots, root]);
     await this.startBookmarks();
-    return { ...root, activation: 'pending-restart', removable: true, state: 'offline', pendingFiles: 0 };
+    return { ...publicRoot(root), activation: 'pending-restart', removable: true, state: 'offline', pendingFiles: 0 };
   }
 
   async update(id:string, input:{ syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }):Promise<SullaFilesRootView> {
@@ -158,14 +162,20 @@ export class SullaFilesRootRegistry {
     if (input.exclusions !== undefined) next.exclusions = cleanPatterns(input.exclusions);
     roots[index] = next;
     await this.persist(roots);
-    return { ...next, ...runtime, activation: runtime ? 'active' : 'pending-restart', removable: id !== 'default' };
+    return { ...publicRoot(next), ...runtime, activation: runtime ? 'active' : 'pending-restart', removable: id !== 'default' };
   }
 
   async remove(id:string):Promise<void> {
     if (id === 'default') throw new Error('The default Sulla Files folder cannot be removed.');
     const roots = await this.stored();
     if (!roots.some(root => root.id === id)) return;
-    await getSullaFilesWatcher().detachRoot(id).catch(() => undefined);
+    let runtimeRoots:SullaFilesRootStatus[];
+    try {
+      runtimeRoots = await getSullaFilesWatcher().rootStatuses();
+    } catch {
+      throw new Error('Files service is unavailable, so this tracked folder cannot be safely removed yet.');
+    }
+    if (runtimeRoots.some(root => root.id === id)) await getSullaFilesWatcher().detachRoot(id);
     await this.persist(roots.filter(root => root.id !== id));
     this.bookmarkStops.get(id)?.(); this.bookmarkStops.delete(id);
   }

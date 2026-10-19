@@ -2,7 +2,7 @@ import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollect
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
+import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesIndexCoverage, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface RemoteCapabilities {
@@ -13,6 +13,13 @@ interface RemoteCapabilities {
   authenticatedRemote: boolean;
   verifiedRecovery: boolean;
   onlineOnlyReason?: string;
+}
+
+function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
+  const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, unsupported: 0, failed: 0, complete: true };
+  for (const file of files) coverage[file.indexStatus]++;
+  coverage.complete = coverage.pending === 0 && coverage.indexing === 0 && coverage.unsupported === 0 && coverage.failed === 0;
+  return coverage;
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
@@ -127,7 +134,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     });
     if (this.files.some(file => /\(conflicted copy [^)]+\)/i.test(file.path))) status.state = 'conflict';
 
-    return {
+    const snapshot:FilesSnapshot = {
       collection: {
         id:              collection.id,
         name:            collection.name,
@@ -147,6 +154,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
       files: this.files,
       status,
     };
+    snapshot.status.indexing = indexCoverage(this.files.filter(file => !file.deletedAt));
+    return snapshot;
   }
 
   async history(fileId:string):Promise<FilesVersion[]> {
@@ -164,11 +173,13 @@ export class DesktopFilesDataSource implements FilesDataSource {
   detail(fileId:string):Promise<FilesDetail> { return ipcRenderer.invoke('sulla-files:metadata', { fileId }) }
   mediaUrl(fileId:string, versionId?:string):Promise<string> { return ipcRenderer.invoke('files-ui:media-url', { fileId, versionId }) }
 
-  async search(query:string):Promise<FilesItem[]> {
-    const results = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { id:string }[];
+  async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
+    const response = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
     const byId = new Map(this.files.map(file => [file.id, file]));
-    return results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt));
+    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: response.coverage };
   }
+
+  reindex(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:reindex', { fileId }) }
 
   async setPaused(paused:boolean):Promise<FilesSnapshot['status']> {
     if (!this.rootId) throw new Error('This Files collection is not backed by a tracked folder.');
@@ -179,6 +190,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);
     return () => this.capabilitiesListeners.delete(listener);

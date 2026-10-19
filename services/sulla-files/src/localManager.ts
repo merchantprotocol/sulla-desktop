@@ -58,7 +58,18 @@ interface PathOperationReceipt {
 
 function mime(path:string):string {
   const extension = extname(path).toLowerCase();
-  return ({ '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska' } as Record<string, string>)[extension] ?? 'application/octet-stream';
+  return ({
+    '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.tsv': 'text/tab-separated-values',
+    '.js': 'text/javascript', '.jsx': 'text/javascript', '.mjs': 'text/javascript', '.cjs': 'text/javascript', '.ts': 'text/typescript', '.tsx': 'text/typescript',
+    '.css': 'text/css', '.html': 'text/html', '.htm': 'text/html', '.vue': 'text/plain', '.svelte': 'text/plain', '.py': 'text/x-python', '.rb': 'text/x-ruby', '.go': 'text/x-go', '.rs': 'text/x-rust',
+    '.java': 'text/x-java-source', '.c': 'text/x-c', '.h': 'text/x-c', '.cc': 'text/x-c++', '.cpp': 'text/x-c++', '.hpp': 'text/x-c++', '.swift': 'text/x-swift', '.kt': 'text/x-kotlin',
+    '.sh': 'text/x-shellscript', '.sql': 'text/x-sql', '.toml': 'text/x-toml', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.xml': 'application/xml',
+    '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.opus': 'audio/opus', '.aif': 'audio/aiff', '.aiff': 'audio/aiff', '.weba': 'audio/webm',
+    '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+  } as Record<string, string>)[extension] ?? 'application/octet-stream';
 }
 function matchIgnore(path:string, patterns:string[]):boolean {
   const parts = path.split('/');
@@ -208,12 +219,20 @@ export class LocalFilesManager {
 
   async detachRoot(id:string):Promise<void> {
     if (id === 'default') throw Object.assign(new Error('The default Files root cannot be removed'), { status: 409 });
-    const result = await this.db.query("UPDATE file_roots SET enabled=FALSE,paused=TRUE,state='detached',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE RETURNING collection_id", [id]);
-    if (!result.rowCount) throw Object.assign(new Error('File root was not found'), { status: 404 });
-    // Detaching forgets scan custody only. Source files, encrypted versions,
-    // search records and journal history remain untouched and no delete versions
-    // are emitted.
-    await this.db.query('DELETE FROM watched_folder_state WHERE root_id=$1', [id]);
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query("UPDATE file_roots SET enabled=FALSE,paused=TRUE,state='detached',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE RETURNING collection_id", [id]);
+      if (!result.rowCount) throw Object.assign(new Error('File root was not found'), { status: 404 });
+      // Detaching forgets scan custody only. Source files, encrypted versions,
+      // search records and journal history remain untouched and no delete versions
+      // are emitted.
+      await client.query('DELETE FROM watched_folder_state WHERE root_id=$1', [id]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release() }
     const configuredIndex = this.roots.findIndex(root => root.id === id);
     if (configuredIndex >= 0) this.roots.splice(configuredIndex, 1);
     this.rootCollections.delete(id);

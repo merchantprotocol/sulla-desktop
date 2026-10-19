@@ -45,16 +45,16 @@ test('search enforces user, group, and no-grant collection ACLs', { skip: !enabl
     const own = await h.collection('user', 'alice'); const group = await h.collection('group', 'designers'); const denied = await h.collection('group', 'finance');
     await h.version(own, 'mine.txt', 'quarterly rebate notes'); await h.version(group, 'team.txt', 'quarterly rebate schedule'); await h.version(denied, 'secret.txt', 'quarterly rebate secret');
     const rows = await h.search.search({ query: 'quarterly rebate' }, await h.scopes('alice', ['designers']));
-    assert.deepEqual(new Set(rows.map(row => row.path)), new Set(['mine.txt', 'team.txt']));
+    assert.deepEqual(new Set(rows.results.map(row => row.path)), new Set(['mine.txt', 'team.txt']));
   } finally { h.indexer.close(); await h.db.end() }
 });
 
 test('trash/delete removes a file from keyword and meaning results', { skip: !enabled }, async() => {
   const h = await harness(); try {
     const collection = await h.collection('user', 'alice'); const file = await h.version(collection, 'trash.txt', 'violet warranty exception');
-    assert.equal((await h.search.search({ query: 'violet warranty' }, await h.scopes('alice'))).length, 1);
+    assert.equal((await h.search.search({ query: 'violet warranty' }, await h.scopes('alice'))).results.length, 1);
     await h.db.query('UPDATE files SET deleted_at=NOW() WHERE id=$1', [file]);
-    assert.equal((await h.search.search({ query: 'violet warranty' }, await h.scopes('alice'))).length, 0);
+    assert.equal((await h.search.search({ query: 'violet warranty' }, await h.scopes('alice'))).results.length, 0);
   } finally { h.indexer.close(); await h.db.end() }
 });
 
@@ -62,7 +62,7 @@ test('a new version drops stale chunks and reindexes current content', { skip: !
   const h = await harness(); try {
     const collection = await h.collection('user', 'alice'); const file = await h.version(collection, 'versioned.txt', 'orchard irrigation handbook');
     await h.version(collection, 'versioned.txt', 'satellite antenna calibration', file);
-    assert.equal((await h.search.search({ query: 'orchard irrigation' }, await h.scopes('alice'))).length, 0);
-    assert.equal((await h.search.search({ query: 'satellite antenna' }, await h.scopes('alice'))).length, 1);
+    assert.equal((await h.search.search({ query: 'orchard irrigation' }, await h.scopes('alice'))).results.length, 0);
+    assert.equal((await h.search.search({ query: 'satellite antenna' }, await h.scopes('alice'))).results.length, 1);
   } finally { h.indexer.close(); await h.db.end() }
 });

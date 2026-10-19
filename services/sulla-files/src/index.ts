@@ -7,24 +7,24 @@ import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
 import { loadConfig } from './config.js';
 import { connect, connectOptional, migrate } from './db.js';
-import { desktopIndexSource, storedIndexSource } from './indexSource.js';
+import { storedIndexSource } from './indexSource.js';
 import { IndexingQueue } from './indexing.js';
 import { FilesKeyBundleRecovery } from './keyBundleRecovery.js';
 import { SecureCollectionKeyExchange } from './keyExchange.js';
 import { FilesKeyring } from './keyring.js';
-import { FilesLifecycle } from './lifecycle.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
+import { FilesLifecycle } from './lifecycle.js';
 import { LocalFilesManager } from './localManager.js';
 import { PotionEmbedder } from './potionEmbedder.js';
 import { RecordingEnrichmentQueue } from './recordingEnrichment.js';
 import { FileResidencyManager } from './residency.js';
 import { HttpResidencyTransport, loadResidencySyncBundle } from './residencyHttp.js';
 import { FileSearch } from './search.js';
+import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 import { Store } from './store.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
-import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
@@ -51,7 +51,7 @@ const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   : undefined;
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);
-const indexer = new IndexingQueue(db, config.mode === 'desktop' && config.filesRoot ? desktopIndexSource(config.filesRoot, db) : storedIndexSource(db, config), embedder);
+const indexer = new IndexingQueue(db, storedIndexSource(db, config), embedder);
 const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer) : undefined;
 const residency = manager && config.filesRoot && config.serverUrl && vaultAuthority && keyRecovery && config.keyring instanceof FilesKeyring
   ? new FileResidencyManager(
@@ -151,7 +151,7 @@ if (config.mode === 'server') {
   delete process.env.SULLA_FILES_MASTER_KEY;
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority);
+const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
 const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
 if (config.mode === 'desktop' && !tlsEnabled) throw new Error('Files TLS identity is required in desktop mode');
 const server = tlsEnabled

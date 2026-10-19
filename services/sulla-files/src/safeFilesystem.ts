@@ -47,7 +47,14 @@ export class FilesMutationCoordinator {
   }
 
   private ready():Promise<string> {
-    this.rootReady ??= realpath(this.root);
+    if (!this.rootReady) {
+      const pending = realpath(this.root);
+      const retryable:Promise<string> = pending.catch((error) => {
+        if (this.rootReady === retryable) this.rootReady = undefined;
+        throw error;
+      });
+      this.rootReady = retryable;
+    }
     return this.rootReady;
   }
 

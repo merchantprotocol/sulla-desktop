@@ -66,6 +66,17 @@ export interface SullaFilesCapabilityContext {
   threadId?: string;
 }
 
+function requestHeaders(initHeaders:HeadersInit | undefined, internal:Record<string, string>, defaults:Record<string, string> = {}):Headers {
+  const headers = new Headers(initHeaders);
+
+  for (const [name, value] of Object.entries(defaults)) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  for (const [name, value] of Object.entries(internal)) headers.set(name, value);
+
+  return headers;
+}
+
 function ignored(relativePath:string, patterns:string[]):boolean {
   const normalized = relativePath.split(path.sep).join('/'); const parts = normalized.split('/');
   return patterns.some(raw => { const pattern = raw.trim().replace(/^\//, ''); if (!pattern || pattern.startsWith('#')) return false; if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1)); const expression = new RegExp(`^${ pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*') }$`); return expression.test(normalized) || parts.some(part => expression.test(part)) });
@@ -123,7 +134,9 @@ class SullaFilesWatcher {
 
   private async rawLocalRequest(endpoint:string, init:RequestInit = {}, timeoutMs = 30_000):Promise<Response> {
     const token = await SullaSettingsModel.getServicePassword();
-    return desktopFilesFetch(`${ API }${ endpoint }`, { ...init, headers: { 'content-type': 'application/json', ...(init.headers as any), 'x-sulla-files-token': token }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+    const headers = requestHeaders(init.headers, { 'x-sulla-files-token': token }, { 'content-type': 'application/json' });
+
+    return desktopFilesFetch(`${ API }${ endpoint }`, { ...init, headers, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   }
 
   private async isLockedResponse(response: Response): Promise<boolean> {
@@ -208,15 +221,17 @@ class SullaFilesWatcher {
     if (url.origin !== new URL(base).origin) throw new Error('Files endpoint must use the configured service');
     if (base !== API) {
       const token = await this.capabilityToken(undefined, capability);
+      const headers = requestHeaders(init.headers, { authorization: `Bearer ${ token }` });
 
-      return fetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(30_000) });
+      return fetch(url, { ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(30_000) });
     }
     await this.ensureUnlocked();
     let principalId = await this.localPrincipalId();
     const send = async() => {
       const token = await this.capabilityToken(principalId, capability);
+      const headers = requestHeaders(init.headers, { authorization: `Bearer ${ token }` });
 
-      return desktopFilesFetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
+      return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;
@@ -234,8 +249,9 @@ class SullaFilesWatcher {
     let principalId = await this.localPrincipalId();
     const send = async() => {
       const token = await this.capabilityToken(principalId);
+      const headers = requestHeaders(init.headers, { authorization: `Bearer ${ token }` });
 
-      return desktopFilesFetch(url, { ...init, headers: { authorization: `Bearer ${ token }`, ...(init.headers as any) }, redirect: 'error' as const, signal });
+      return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal });
     };
     const response = await send();
     if (!await this.isLockedResponse(response)) return response;
