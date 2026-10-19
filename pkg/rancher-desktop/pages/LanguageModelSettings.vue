@@ -132,7 +132,12 @@ export default defineComponent({
       // Primary / Secondary provider selection
       primaryProvider:      'grok' as string,
       secondaryProvider:    'grok' as string,
-      availableProviders:   [] as { id: string; name: string }[],
+      availableProviders:   [] as { id: string; name: string; connected: boolean }[],
+      providersError:       '' as string,
+      providersLoading:     false,
+      providerRetryTimer:   null as ReturnType<typeof setTimeout> | null,
+      providerRetryAttempt: 0,
+      modelsError:          '' as string,
 
       // Activation state
       activating:             false,
@@ -273,21 +278,11 @@ export default defineComponent({
       remoteRetryCount:     this.remoteRetryCount,
     });
 
-    // Build available providers list from ModelProviderService
-    try {
-      const providers = await ipcRenderer.invoke('model-provider:get-providers');
-      // Keep every provider already chosen in a slot selectable, so an
-      // unreported connection state (e.g. vault metadata not ready) can't empty
-      // the pickers and strand the user without a choice.
-      const chosen = [this.primaryProvider, this.secondaryProvider, this.subconsciousProvider];
-      this.availableProviders = providers
-        .filter((p: { id: string; name: string; connected?: boolean }) => p.connected !== false || chosen.includes(p.id))
-        .map((p: { id: string; name: string; connected?: boolean }) => ({
-          id: p.id, name: p.name,
-        }));
-    } catch (err) {
-      console.warn('[LM Settings] Failed to load available providers:', err);
-    }
+    // Build available providers list from ModelProviderService. Self-healing:
+    // re-fetched on focus/visibility and retried when the vault isn't ready.
+    window.addEventListener('focus', this.loadProviders);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    await this.loadProviders();
 
     // Load remote models if API key exists
     if (this.selectedProvider && this.apiKey.trim()) {
@@ -324,7 +319,7 @@ export default defineComponent({
       if (!newProvider || newProvider === oldProvider) return;
       try {
         await ipcRenderer.invoke('model-provider:set-secondary', newProvider);
-        this.secondaryModels = await ipcRenderer.invoke('model-provider:get-models', newProvider);
+        this.secondaryModels = await ipcRenderer.invoke('model-provider:get-models', newProvider) || [];
       } catch (err) {
         console.error('[LM Settings] Failed to set secondary provider:', err);
       }
@@ -394,7 +389,11 @@ export default defineComponent({
         // Reload primary model list for the new provider
         try {
           this.primaryModels = await ipcRenderer.invoke('model-provider:get-models', newProvider) || [];
-        } catch { /* ignore */ }
+          this.modelsError = this.primaryModels.length === 0 ? 'No models were returned for this provider. Using the provider default.' : '';
+        } catch (err) {
+          this.primaryModels = [];
+          this.modelsError = `Could not load models: ${ err instanceof Error ? err.message : String(err) }. Using the provider default.`;
+        }
       } catch (err) {
         console.error('[LM Settings] Failed to change primary provider via service:', err);
       }
@@ -403,6 +402,9 @@ export default defineComponent({
 
   beforeUnmount() {
     window.removeEventListener('focus', this.refreshSwitches);
+    window.removeEventListener('focus', this.loadProviders);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    if (this.providerRetryTimer) clearTimeout(this.providerRetryTimer);
     // Clean up IPC listeners
     ipcRenderer.removeAllListeners('settings-write-error');
     ipcRenderer.removeAllListeners('model-provider:state-changed');
@@ -1014,6 +1016,58 @@ export default defineComponent({
       }
     },
 
+    onVisibilityChange() {
+      if (document.visibilityState === 'visible') this.loadProviders();
+    },
+
+    // Fetch every provider the main process knows about. Never filters on
+    // `connected` (a fail-closed snapshot when the vault is unavailable):
+    // connected ones sort first, the rest stay selectable with a hint.
+    async loadProviders(manual?: unknown) {
+      if (this.providersLoading) return;
+      this.providersLoading = true;
+      if (this.providerRetryTimer) {
+        clearTimeout(this.providerRetryTimer);
+        this.providerRetryTimer = null;
+      }
+      if (manual === true) this.providerRetryAttempt = 0;
+      let suspicious = false;
+      try {
+        const providers = await ipcRenderer.invoke('model-provider:get-providers');
+        const list: { id: string; name: string; connected: boolean }[] = (Array.isArray(providers) ? providers : [])
+          .map((p: { id: string; name: string; connected?: boolean }) => ({ id: p.id, name: p.name, connected: p.connected === true }));
+        // Keep any provider already chosen in a slot visible.
+        for (const id of [this.primaryProvider, this.secondaryProvider, this.subconsciousProvider]) {
+          if (id && id !== 'default' && !list.some(p => p.id === id)) {
+            list.push({ id, name: id, connected: false });
+          }
+        }
+        list.sort((a, b) => Number(b.connected) - Number(a.connected));
+        this.availableProviders = list;
+        this.providersError = '';
+        // Empty or opencode-only result usually means the vault wasn't ready.
+        suspicious = list.length === 0 || list.filter(p => p.connected).every(p => p.id === 'opencode');
+      } catch (err) {
+        console.warn('[LM Settings] Failed to load available providers:', err);
+        this.providersError = `Could not load providers: ${ err instanceof Error ? err.message : String(err) }`;
+        suspicious = true;
+      } finally {
+        this.providersLoading = false;
+      }
+      const delays = [1000, 3000, 6000];
+      if (suspicious && this.providerRetryAttempt < delays.length) {
+        const delay = delays[this.providerRetryAttempt++];
+        this.providerRetryTimer = setTimeout(() => this.loadProviders(), delay);
+      } else if (!suspicious) {
+        this.providerRetryAttempt = 0;
+      }
+    },
+
+    providerIsDisconnected(id: string): boolean {
+      const p = this.availableProviders.find(x => x.id === id);
+      return !!p && !p.connected;
+    },
+
     async refreshSwitches() {
       this.heartbeatEnabled = Boolean(await SullaSettingsModel.get('heartbeatEnabled', true));
       this.fallbackEnabled = Boolean(await SullaSettingsModel.get('fallbackEnabled', true));
@@ -1039,6 +1093,7 @@ export default defineComponent({
         ]);
         this.primaryModels = primary || [];
         this.secondaryModels = secondary || [];
+        this.modelsError = this.primaryModels.length === 0 ? 'No models were returned for the primary provider. Using the provider default; try Refresh providers.' : '';
 
         const effectiveSubProvider = this.subconsciousProvider === 'default'
           ? this.primaryProvider
@@ -1048,6 +1103,7 @@ export default defineComponent({
         }
       } catch (err) {
         console.warn('[LM Settings] Failed to load slot model lists:', err);
+        this.modelsError = `Could not load models: ${ err instanceof Error ? err.message : String(err) }. Using the provider default.`;
       }
     },
 
@@ -1221,7 +1277,7 @@ export default defineComponent({
                 :key="provider.id"
                 :value="provider.id"
               >
-                {{ provider.name }}
+                {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
             <div class="noir-segment-row">
@@ -1231,9 +1287,12 @@ export default defineComponent({
                 :class="{ 'is-current': primaryProvider === provider.id }"
               >
                 <input v-model="primaryProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}</span>
+                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
             </div>
+            <p v-if="providerIsDisconnected(primaryProvider)" class="setting-description provider-hint" role="status">
+              This provider isn't connected yet. Open <strong>Integrations</strong> to connect it.
+            </p>
             <p class="setting-description">
               The main language model provider used for all agent tasks.
             </p>
@@ -1250,9 +1309,8 @@ export default defineComponent({
               <option
                 v-if="primaryModels.length === 0"
                 value=""
-                disabled
               >
-                Loading models...
+                Provider default
               </option>
               <option
                 v-for="model in primaryModels"
@@ -1262,6 +1320,9 @@ export default defineComponent({
                 {{ model.name }}
               </option>
             </select>
+            <p v-if="modelsError" class="setting-description provider-hint" role="alert">
+              {{ modelsError }}
+            </p>
             <div class="noir-choice-rows">
               <label
                 v-for="model in primaryModels"
@@ -1298,6 +1359,9 @@ export default defineComponent({
                 <span class="slider" />
               </label>
             </div>
+            <p v-if="providerIsDisconnected(secondaryProvider)" class="setting-description provider-hint" role="status">
+              This provider isn't connected yet. Open <strong>Integrations</strong> to connect it.
+            </p>
             <select
               v-model="secondaryProvider"
               class="model-select"
@@ -1307,7 +1371,7 @@ export default defineComponent({
                 :key="provider.id"
                 :value="provider.id"
               >
-                {{ provider.name }}
+                {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
             <div class="noir-segment-row">
@@ -1317,7 +1381,7 @@ export default defineComponent({
                 :class="{ 'is-current': secondaryProvider === provider.id }"
               >
                 <input v-model="secondaryProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}</span>
+                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
             </div>
             <p class="setting-description">
@@ -1397,7 +1461,7 @@ export default defineComponent({
                 :key="provider.id"
                 :value="provider.id"
               >
-                {{ provider.name }}
+                {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
             <div class="noir-segment-row">
@@ -1411,7 +1475,7 @@ export default defineComponent({
                 :class="{ 'is-current': subconsciousProvider === provider.id }"
               >
                 <input v-model="subconsciousProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}</span>
+                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
               </label>
             </div>
             <p class="setting-description">
@@ -1476,22 +1540,20 @@ export default defineComponent({
             </p>
           </div>
 
-          <div
-            v-if="availableProviders.length === 0"
-            class="info-box"
-          >
-            <p>
+          <div class="info-box">
+            <p v-if="providersError" role="alert">
+              {{ providersError }}
+            </p>
+            <p v-else-if="availableProviders.length === 0">
               Loading providers...
             </p>
-          </div>
-          <div
-            v-else
-            class="info-box"
-          >
-            <p>
-              Only connected providers appear in these dropdowns. Open
-              <strong>Integrations</strong> to add credentials for Grok, OpenAI, Anthropic, etc.
+            <p v-else>
+              Providers marked "not connected" stay selectable. Open
+              <strong>Integrations</strong> to add credentials for Claude Code, Codex, Grok, OpenAI, etc.
             </p>
+            <button type="button" class="btn role-secondary" :disabled="providersLoading" @click="loadProviders(true)">
+              {{ providersLoading ? 'Refreshing...' : 'Refresh providers' }}
+            </button>
           </div>
           <div class="noir-secret-card">
             <div>
@@ -1885,7 +1947,7 @@ export default defineComponent({
                 :key="provider.id"
                 :value="provider.id"
               >
-                {{ provider.name }}
+                {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
             <p class="setting-description">
@@ -1909,7 +1971,7 @@ export default defineComponent({
                 :key="provider.id"
                 :value="provider.id"
               >
-                {{ provider.name }}
+                {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
             <p class="setting-description">
@@ -3272,6 +3334,11 @@ export default defineComponent({
 
 .theme-noir .noir-models-pane .model-select {
   display: none;
+}
+
+.provider-hint {
+  color: var(--text-muted, #8a8f98);
+  font-size: 0.85em;
 }
 
 .theme-noir .noir-segment-row {
