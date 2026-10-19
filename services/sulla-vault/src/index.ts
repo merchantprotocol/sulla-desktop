@@ -4,12 +4,12 @@ import http from 'node:http';
 import https from 'node:https';
 import { ensureDesktopAccount } from './auth.js';
 import { loadConfig } from './config.js';
-import { connectDatabase, migrate } from './db.js';
+import { connectDatabase, migrate, untilDatabaseReady } from './db.js';
 
 const config = loadConfig();
 const db = await connectDatabase(config);
-await migrate(db);
-await ensureDesktopAccount(db, config);
+await untilDatabaseReady('migrations', () => migrate(db));
+await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config));
 
 const app = createApp(db, config);
 if (config.mode === 'desktop' && (!config.tlsCertificatePath || !config.tlsPrivateKeyPath)) {

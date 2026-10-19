@@ -1352,6 +1352,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
 
     const legacy = new Pool({ connectionString: this.config.legacyDatabaseUrl, max: 1 });
+    legacy.on('error', () => { /* idle client dropped; this one-shot pool is ended below */ });
     let rows: LegacyIntegrationRow[] = [];
     try {
       const client = await legacy.connect();
