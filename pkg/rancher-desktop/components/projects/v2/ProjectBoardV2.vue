@@ -515,7 +515,7 @@ function labelTone(label: string): string {
 .clear:hover { color: var(--v2-text); background: color-mix(in srgb, var(--v2-text) 5%, transparent); }
 .lane { display: flex; min-height: 120px; flex-direction: column; border: 1px solid var(--border, rgba(26,35,50,.09)); border-radius: 12px; background: color-mix(in srgb, var(--v2-text) 3.5%, transparent); transition: background .12s, border-color .12s; }
 .lane.over { border-color: color-mix(in srgb, var(--accent, #3a7fa0) 35%, transparent); background: color-mix(in srgb, var(--accent, #3a7fa0) 11%, transparent); }
-.lane-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.lane-header { z-index: auto !important; display: flex; align-items: center; gap: 8px; padding: 10px 12px 8px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .lane-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; }
 .lane-count { padding: 0 7px; border: 1px solid var(--border, rgba(26,35,50,.09)); border-radius: 999px; color: var(--v2-muted); background: color-mix(in srgb, var(--v2-card) 75%, transparent); font-size: 11px; line-height: 17px; }
 .lane-add { width: 24px; height: 24px; display: grid; place-items: center; margin-left: auto; padding: 0; border: 0; border-radius: 6px; color: var(--v2-dim); background: transparent; cursor: pointer; opacity: 0; }
