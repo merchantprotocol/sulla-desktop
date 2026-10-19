@@ -3593,6 +3593,38 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       this.#managedSullaRefreshImages.set('sulla_files', filesImage.image);
     }
     const filesUserRoot = resolveSullaFilesUserRoot();
+    const storedFileRoots = await SullaSettingsModel.get('sullaFilesRoots', []);
+    const storedDefaultFileRoot = (Array.isArray(storedFileRoots) ? storedFileRoots : []).find((root:any) => root?.id === 'default');
+    const protectedFileRootPaths = [
+      paths.appHome, paths.altAppHome, paths.sullaConfig,
+      path.join(os.homedir(), 'sulla', 'data'),
+      path.join(os.homedir(), 'sulla', 'crypto-wallet'),
+      path.join(os.homedir(), 'sulla', 'wallets'),
+      path.join(os.homedir(), 'Sites', 'crypto-wallet'),
+      path.join(os.homedir(), 'Library', 'Application Support', 'Sulla Wallet'),
+    ].filter(Boolean).map(value => path.resolve(value));
+    const containsPath = (parent:string, child:string) => { const relative = path.relative(parent, child); return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`)) };
+    const safeTrackedRoot = (value:unknown) => {
+      if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
+      const resolved = path.resolve(value);
+      if (resolved.split(path.sep).some(part => part.toLowerCase().includes('wallet') || ['vault', 'vaults'].includes(part.toLowerCase()))) return false;
+      return !protectedFileRootPaths.some(protectedPath => containsPath(resolved, protectedPath) || containsPath(protectedPath, resolved));
+    };
+    const secondaryFileRoots = (Array.isArray(storedFileRoots) ? storedFileRoots : [])
+      .filter((root:any) => root?.id !== 'default' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(root?.id) && safeTrackedRoot(root?.path))
+      .map((root:any) => ({
+        id:         String(root.id),
+        name:       String(root.name || path.basename(root.path)),
+        hostPath:   path.resolve(root.path),
+        path:       `/data/files-roots/${ root.id }`,
+        syncMode:   root.syncMode === 'server' ? 'server' : 'local',
+        paused:     root.paused === true,
+        exclusions: Array.isArray(root.exclusions) ? root.exclusions.filter((item:unknown):item is string => typeof item === 'string') : [],
+      }));
+    const configuredFileRoots = [
+      { id: 'default', name: 'Sulla Files', hostPath: filesUserRoot.activePath, path: '/data/files', syncMode: storedDefaultFileRoot ? (storedDefaultFileRoot.syncMode === 'server' ? 'server' : 'local') : (process.env.SULLA_FILES_SERVER_URL ? 'server' : 'local'), paused: storedDefaultFileRoot?.paused === true, exclusions: Array.isArray(storedDefaultFileRoot?.exclusions) ? storedDefaultFileRoot.exclusions.filter((item:unknown):item is string => typeof item === 'string') : [] as string[] },
+      ...secondaryFileRoots,
+    ];
     compose.services.sulla_files = {
       ...filesImage,
       image: resolvedFilesImage,
@@ -3621,6 +3653,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
         SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
+        SULLA_FILES_ROOTS_JSON:            JSON.stringify(configuredFileRoots.map(({ hostPath: _hostPath, ...root }) => root)),
         ...(vaultIdentities ? {
           SULLA_FILES_VAULT_AUTHORITY_URL:        'https://sulla_vault:8787',
           SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID: 'sulla-files',
@@ -3636,6 +3669,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         `${ filesUserRoot.activePath }:/data/files`,
+        ...secondaryFileRoots.map(root => ({ type: 'bind', source: root.hostPath, target: root.path })),
         filesTlsBind(),
         ...(vaultIdentities
           ? [vaultTlsBind(true)]
@@ -3666,6 +3700,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
     await fs.promises.mkdir(filesUserRoot.activePath, { recursive: true });
+    await Promise.all(secondaryFileRoots.map(root => fs.promises.mkdir(root.hostPath, { recursive: true, mode: 0o700 })));
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
 

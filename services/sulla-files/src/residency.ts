@@ -244,7 +244,8 @@ export class FileResidencyManager {
               m.total_size,m.chunk_ids
          FROM files f JOIN file_versions v ON v.id=f.current_version_id AND v.file_id=f.id
          JOIN manifests m ON m.hash=v.manifest_hash
-        WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT v.deleted`,
+        WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT v.deleted
+          AND f.collection_id=(SELECT collection_id FROM file_roots WHERE id='default' AND enabled=TRUE)`,
       [fileId],
     )).rows[0] as VersionRow | undefined;
     if (!row) throw new Error('Current file version is unavailable');
@@ -528,8 +529,8 @@ export class FileResidencyManager {
       await client.query('BEGIN');
       await this.assertTransactionState(client, descriptor, operationId, 'hydrating');
       await client.query(
-        `INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms)
-         VALUES($1,$2,$3,$4,$5,$6)
+        `INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
+         VALUES($1,$2,$3,$4,$5,$6,'default')
          ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,
            content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms`,
         [descriptor.collectionId, descriptor.path, descriptor.fileId, local.contentHash, local.size, local.mtimeMs],

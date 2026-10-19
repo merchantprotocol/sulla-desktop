@@ -24,6 +24,7 @@ export default defineComponent({
       const glyphs: Record<string, string> = {
         Application:        '◎',
         Appearance:         '◇',
+        Files:              '▧',
         'Virtual Machine':  '▣',
         WSL:                '▣',
         'Container Engine': '▤',
