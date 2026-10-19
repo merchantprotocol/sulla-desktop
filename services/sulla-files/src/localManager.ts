@@ -9,11 +9,14 @@ import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
 import { copyLockedFile } from './fileOperations.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
+import { NativeOperationJournal } from './nativeOperationJournal.js';
+import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
 import type { IndexingQueue } from './indexing.js';
+import type { OriginalRevealTarget } from './originalReveal.js';
 import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 
@@ -145,6 +148,67 @@ export class LocalFilesManager {
   private readonly rootCollections = new Map<string, string>();
   private readonly rootMutations = new Map<string, FilesMutationCoordinator>();
   private readonly roots:FileRootConfig[];
+  private nativeJournalInstance?:NativeOperationJournal;
+  private get nativeJournal():NativeOperationJournal { return this.nativeJournalInstance ??= new NativeOperationJournal(this.db,async(collectionId) => {
+    const row=(await this.db.query('SELECT * FROM file_roots WHERE collection_id=$1',[collectionId])).rows[0];
+    if (!row) {
+      if ((await this.db.query('SELECT 1 FROM watched_folder_state WHERE collection_id=$1 LIMIT 1',[collectionId])).rowCount) throw new Error('Tracked root is missing');
+      return null;
+    }
+    const root=this.roots.find(root=>root.id===row.id);
+    if (!root || !row.enabled || ['detached','offline'].includes(row.state) || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) throw new Error('Tracked root is unavailable');
+    return { id:root.id,collectionId,mutations:this.rootMutations.get(root.id)! };
+  }) }
+
+  operationCustody():NonNullable<DatabaseOperationAccess['custody']> {
+    const locked=<T>(operation:()=>Promise<T>):Promise<T> => {
+      const roots=[...this.rootMutations.entries()].sort(([a],[b])=>a.localeCompare(b));
+      const acquire=(index:number):Promise<T>=>index===roots.length?operation():roots[index][1].runExclusive([],()=>acquire(index+1));
+      return acquire(0);
+    };
+    return {
+      run:<T>(operation:()=>Promise<T>) => this.serial(()=>locked(async() => {
+        await this.recoverPathOperations();
+        try {
+          const result=await operation();
+          await this.recoverPathOperations();
+          return result;
+        } catch (error) {
+          try { await this.recoverPathOperations() } catch {
+            throw Object.assign(new Error('Native operation requires preserved-artifact reconciliation'),{ status:409,code:'recovery-required' });
+          }
+          throw error;
+        }
+      })),
+      publish:(client,receipt,undo) => this.nativeJournal.publish(client,receipt,undo),
+      occupied:(collectionId,path)=>this.nativeJournal.occupied(collectionId,path),
+      folders:(collectionId,path,files)=>this.nativeJournal.folders(collectionId,path,files),
+    };
+  }
+
+  async originalRevealTarget(file:any):Promise<OriginalRevealTarget|null> {
+    return this.serial(async() => {
+      const row = (await this.db.query(`SELECT w.*,r.enabled,r.state,r.mount_path FROM watched_folder_state w
+        JOIN file_roots r ON r.id=w.root_id AND r.collection_id=w.collection_id
+        WHERE w.file_id=$1 AND w.collection_id=$2 AND w.path=$3`, [file.id,file.collection_id,file.path])).rows[0];
+      if (!row) return null;
+      const root = this.roots.find(root => root.id === row.root_id);
+      if (!root || !row.enabled || ['detached','offline','error'].includes(row.state) || root.path !== row.mount_path ||
+        this.rootCollections.get(root.id) !== file.collection_id) throw Object.assign(new Error('Original root is unavailable'), { status:409,code:'original-unavailable' });
+      if (isProtectedPath(file.path) || file.path.split('/').some((part:string) => part === '.sulla-trash' || part === '.sulla-operation-recovery')) throw Object.assign(new Error('Protected original path'), { status:403,code:'original-forbidden' });
+      const mutations = this.rootMutations.get(root.id)!;
+      return mutations.runExclusive([file.path],async() => {
+        const pinned = await mutations.pinVerified(file.path,pinned => this.verifyOperationPinned(pinned,row.content_hash));
+        try {
+          if (pinned.fingerprint.size !== Number(row.size) || pinned.fingerprint.mtimeMs !== Number(row.mtime_ms)) throw Object.assign(new Error('Original changed since indexing'), { status:409,code:'original-changed' });
+          return { rootId:root.id,collectionId:file.collection_id,relativePath:file.path,fileId:file.id,
+            versionId:file.current_version_id,revision:String(file.operation_revision),hash:row.content_hash,
+            size:pinned.fingerprint.size,mtimeMs:pinned.fingerprint.mtimeMs };
+        } finally { await pinned.close() }
+      });
+    });
+  }
+
   constructor(private readonly db:pg.Pool, private readonly config:Config, private readonly indexer?:IndexingQueue, mutations?:FilesMutationCoordinator) {
     this.store = new Store(config.chunkRoot); this.paused = config.paused;
     this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
@@ -435,10 +499,11 @@ export class LocalFilesManager {
     return this.mutations.runExclusive(['.sulla-trash/.operations'], async() => {
       const rows = (await this.db.query(
         `SELECT operation_id,state,plan,receipts FROM files_path_operations
-          WHERE state IN('planned','publishing','db-committed') ORDER BY created_at`,
+          WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') ORDER BY created_at`,
       )).rows as PathOperationRow[];
       for (const row of rows) {
         try {
+          if ((row.plan as any)?.version===2) { await this.nativeJournal.recover(row); continue }
           const plan = Array.isArray(row.plan) ? row.plan : [];
           if (!plan.length) throw new Error('Path operation has no recoverable plan');
           const receipts = Array.isArray(row.receipts) ? row.receipts : [];
@@ -526,12 +591,13 @@ export class LocalFilesManager {
 
   async rescan():Promise<void> { return this.serial(async() => { await this.recoverPathOperations(); await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
-  private async serial(operation:()=>Promise<void>):Promise<void> {
+  private async serial<T>(operation:()=>Promise<T>):Promise<T> {
     return this.mutations.runExclusive(['.'], async() => {
       if (this.stopped) throw new Error('Files is locked');
-      const running = operation().then(() => { this.lastError = undefined }).catch(error => { this.fail(error); throw error });
+      const result = operation().then(value => { this.lastError = undefined; return value }).catch(error => { this.fail(error); throw error });
+      const running = result.then(() => undefined);
       this.running = running;
-      try { await running } finally { if (this.running === running) this.running = undefined; }
+      try { await running; return await result } finally { if (this.running === running) this.running = undefined; }
     });
   }
 
@@ -579,7 +645,7 @@ export class LocalFilesManager {
   }
 
   private async scanFolder():Promise<void> {
-    const pendingOperation = await this.db.query("SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed') LIMIT 1");
+    const pendingOperation = await this.db.query("SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') LIMIT 1");
     if (pendingOperation.rowCount) throw new Error(`Files path operation ${ pendingOperation.rows[0].operation_id } must be reconciled before watcher scanning`);
     for (const root of this.roots) {
       if (root.paused) continue;

@@ -1,4 +1,110 @@
-# Database Explorer operation contract
+# Explorer operation contract
+
+## Native custody and folder extension (028)
+
+Apply `028_native_operation_journal.sql` after 027. Endpoint names and batch
+identity/control semantics remain unchanged. This is service source, not evidence
+that an installed deployment has applied the migration or passed runtime checks.
+
+`DatabaseBatchItem` accepts `kind?: 'file' | 'folder'`. Omitted kind keeps the
+existing file/create-folder behavior. Folder move/copy/rename/trash uses
+`kind: 'folder', folderPath: string, expectedFolder?: {folderId,path,revision}`;
+do not supply fileId/expectedVersionId. The optional explicit-folder snapshot is
+CAS checked. An implicit folder is snapshotted and each descendant is authorized
+at execution. Descendant files, explicit folders, and native empty directories
+form a stable plan. Folder collision policies are `keep-both` and `skip`; folder
+Replace is rejected, not silently merged. Unknown native files, symlinks, protected
+paths, nested folder/public-link grants, and mixed live/trashed trees block an item.
+
+GET `/v1/folders?collectionId=UUID` remains `string[]`. Add `details=true` for
+`{folderId:string,path:string,revision:string}[]`, excluding trashed explicit rows.
+Folder receipt before/after are `{folderId,path,revision}|null`; before is null
+for an implicit folder. File snapshots additionally include `collectionId`.
+
+The request collectionId is the source collection. File move/copy may include
+`targetCollectionId`; source version/revision requirements are unchanged. The
+implemented cross-collection contract requires stored collections, the current
+actor as both owners, matching collection kind and ACL audience, and no folder
+shares or active public links. File identities/history/grants survive moves;
+copies preserve immutable chunk/key contexts and publication policy. Native
+cross-root, stored/native, cross-collection folders, and cross-collection Replace
+return explicit 422 errors. They are not advertised as supported transfers.
+
+Capabilities adds `folderReceipts:boolean`, `nativeFolderReceipts:boolean`,
+`folderCollisionPolicies:['keep-both','skip']`, and
+`crossCollectionOperations:'stored-same-audience-files'|'unavailable'`.
+Root availability, authorization, collision and CAS are checked on execution.
+
+Native execution uses only `files_path_operations` and
+`LocalFilesManager.recoverPathOperations`. Its primary key is the service item
+receipt UUID; the version-2 plan links the public batch operationId and itemId,
+indexed together. The batch's immutable item key resolves the receipt before
+execution; a completed receipt is never rerun. Retry reconciles pending native
+journals before changing retry policy. A rolled-back attempt has no committed
+receipt and a new receipt UUID gives its retry a distinct retained-artifact path.
+
+Relative artifacts live below
+`.sulla-trash/.operations/<batchOperationId>/<itemId>/<receiptId>/`.
+Plans are durable before publication; metadata, watched rows, public item receipt
+and db-committed phase commit together. Recovery verifies committed metadata,
+versions/revisions, watched rows, target fingerprints/hashes and retained stages
+before accepting success. Lost COMMIT acknowledgement is resolved by that phase.
+Source and displaced artifacts remain retained for undo; Replace also keeps the
+displaced identity at its authorized recovery sibling with its history/grants.
+Native Trash removes the original to quarantine before committing its tombstone
+and removes its watched row. All configured mutation coordinators remain held
+through the transaction and reconciliation.
+
+Undo reauthorizes and CAS-checks metadata, then writes undo-planned and
+undo-publishing phases in the same journal. Its metadata/receipt changes and
+undo-db-committed phase are atomic; verified recovery marks undone. Directories
+are created top-down, files published next, and emptied source directories
+quarantined bottom-up. Empty-directory removal retains the exact inode and never
+recursively deletes. Restoration creates a no-clobber empty directory; unknown
+children or a substituted identity block inversion. Deterministic rollback
+artifact suffixes remain reachable from the plan.
+
+Cancellation signals publication between leaves and rolls back the current item
+before the durable cancelled flag is committed. If rollback cannot prove safety,
+the item reports `recovery-required`; committed items remain committed. Uncertain
+mkdir/restore crash windows deliberately require preserved-artifact reconciliation
+rather than claiming an unowned directory. Recovery artifacts have no automatic
+purge/retention job in this change.
+
+## Main-only original reveal
+
+Both POST `/v1/original-reveal/attest` and `/v1/original-reveal/redeem` require
+desktop mode, the native `x-sulla-files-token` secret, and an owner/device
+capability without agent/job/thread identity. The local secret alone is not
+authorization. Responses are no-store. Neither tokens nor targets may be sent to
+the renderer.
+
+Attest accepts `{fileId,versionId?}`. After view/version authorization it returns
+`{status:'attested',token,expiresAt,target}` or
+`{status:'unavailable',code:'no-current-original'}` for a historical/deleted/stored
+or otherwise unwatched original. Target is exactly
+`{rootId,collectionId,relativePath,fileId,versionId,revision,hash,size,mtimeMs}`;
+hash is SHA-256, size/mtimeMs are integer numbers, revision is a decimal string,
+and expiresAt is epoch milliseconds. The signed opaque handle expires in 15s,
+is principal/device-bound, and is consumed once; restart invalidates handles.
+
+Main validates the active native root, canonical relative path, regular-file
+identity, size, integer mtime and full hash. It then redeems `{token}` immediately
+before reveal. Redemption reauthorizes current visibility and returns
+`{status:'redeemed',target}` only for exact target equality, otherwise HTTP409.
+Main compares the targets and revalidates its pinned filesystem identity before
+calling showItemInFolder. No absolute host path is provided by Files.
+
+Errors: HTTP401 unauthorized; HTTP403 original-forbidden; HTTP404
+original-not-found; HTTP409 original-changed, original-unavailable, or
+original-attestation-invalid; HTTP429 original-reveal-busy. Auth errors are fatal
+and must not trigger a cache fallback. Only the explicit unavailable result permits
+the separately authorized downloaded-copy path. Main/renderer integration belongs
+to the parent and is not changed by this service PR.
+
+The older foundation notes below describe the pre-028 implementation. Their native
+and folder limitations are superseded by the explicit extension contract above;
+their transaction, authorization and file-copy rules still apply.
 
 Canonical exported types: `src/databaseOperationBatches.ts`, with file snapshots
 from `src/databaseOperations.ts`. This extends the existing endpoint; it does not

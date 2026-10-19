@@ -5,6 +5,7 @@ import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './pr
 export interface DatabaseOperationRequest {
   idempotencyKey:string;
   collectionId:string;
+  targetCollectionId?:string;
   action:'move' | 'copy' | 'rename' | 'trash';
   fileId:string;
   expectedVersionId:string;
@@ -14,6 +15,7 @@ export interface DatabaseOperationRequest {
   expectedDestination?:DatabaseOperationState;
 }
 export interface DatabaseOperationState {
+  collectionId?:string;
   fileId:string;
   path:string;
   versionId:string;
@@ -34,6 +36,12 @@ export interface DatabaseOperationReceipt {
   displacedAfter?:DatabaseOperationState;
 }
 export interface DatabaseOperationAccess {
+  custody?: {
+    run<T>(operation:()=>Promise<T>):Promise<T>;
+    publish(client:pg.PoolClient,receipt:any,undo:boolean):Promise<void>;
+    occupied(collectionId:string,path:string):Promise<boolean>;
+    folders(collectionId:string,path:string,files:string[]):Promise<string[]>;
+  };
   prepare?(collectionId:string):Promise<void>;
   file(client:pg.PoolClient, fileId:string):Promise<any>;
   path(client:pg.PoolClient, collectionId:string, path:string):Promise<unknown>;
@@ -42,6 +50,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (status:number, message:string):Error => Object.assign(new Error(message), { status });
 const scope = (actor:FilesIdentity):string => JSON.stringify([actor.kind, actor.deviceId, actor.agentId ?? '', actor.jobId ?? '', actor.threadId ?? '']);
 const snapshot = (file:any):DatabaseOperationState => ({
+  collectionId:file.collection_id,
   fileId: file.id, path: file.path, versionId: file.current_version_id,
   revision: String(file.operation_revision), deleted: Boolean(file.deleted_at),
 });
@@ -57,16 +66,18 @@ export function parseDatabaseOperation(value:any):DatabaseOperationRequest {
   for (const key of ['idempotencyKey', 'collectionId', 'fileId', 'expectedVersionId']) {
     if (typeof value[key] !== 'string' || !uuid.test(value[key])) throw fail(400, key + ' must be a UUID');
   }
+  if (value.targetCollectionId!==undefined && (typeof value.targetCollectionId!=='string' || !uuid.test(value.targetCollectionId) || !['move','copy'].includes(value.action))) throw fail(400,'Only move/copy accept a UUID targetCollectionId');
   if (typeof value.expectedRevision !== 'string' || !/^[0-9]+$/.test(value.expectedRevision)) throw fail(400, 'expectedRevision must be the file operation_revision string');
   if (value.collisionPolicy !== undefined && !['replace', 'keep-both', 'skip'].includes(value.collisionPolicy)) throw fail(422, 'Unsupported collision policy');
   if (value.collisionPolicy === 'replace' && (!value.expectedDestination || !uuid.test(value.expectedDestination.fileId) || !uuid.test(value.expectedDestination.versionId) || !/^[0-9]+$/.test(value.expectedDestination.revision))) throw fail(400, 'Replace requires the displayed destination identity, version and revision');
   if (value.action !== 'trash' && (typeof value.targetPath !== 'string' || !value.targetPath || value.targetPath.includes('\\') ||
-    value.targetPath.includes('\0') || value.targetPath.split('/').some((part:string) => !part || part === '.' || part === '..'))) throw fail(400, 'targetPath must be a canonical relative Files path');
+    value.targetPath.includes('\0') || value.targetPath.split('/').some((part:string) => !part || part === '.' || part === '..' || part==='.sulla-trash' || part==='.sulla-operation-recovery'))) throw fail(400, 'targetPath must be a canonical relative Files path');
   if (value.action === 'trash' && (value.targetPath !== undefined || value.collisionPolicy !== undefined)) throw fail(400, 'Trash does not accept a destination or collision policy');
   return {
     idempotencyKey: value.idempotencyKey.toLowerCase(), collectionId: value.collectionId.toLowerCase(),
     fileId: value.fileId.toLowerCase(), expectedVersionId: value.expectedVersionId.toLowerCase(),
     expectedRevision: value.expectedRevision, action: value.action,
+    ...(value.targetCollectionId?{targetCollectionId:value.targetCollectionId.toLowerCase()}:{}),
     ...(value.action === 'trash' ? {} : { targetPath: value.targetPath, collisionPolicy: value.collisionPolicy }),
     ...(value.expectedDestination ? { expectedDestination: value.expectedDestination } : {}),
   };
@@ -74,6 +85,7 @@ export function parseDatabaseOperation(value:any):DatabaseOperationRequest {
 
 export async function transaction<T>(db:pg.Pool, run:(client:pg.PoolClient)=>Promise<T>):Promise<T> {
   const client = await db.connect();
+  let commitAttempted=false; let committed=false;
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
     await client.query("SET LOCAL lock_timeout='5s'");
@@ -82,23 +94,24 @@ export async function transaction<T>(db:pg.Pool, run:(client:pg.PoolClient)=>Pro
     // protects ACL/custody predicates without a service-wide lock across the
     // operation. External identity membership is prepared before BEGIN.
     const result = await run(client);
-    await client.query('COMMIT');
+    commitAttempted=true;
+    await client.query('COMMIT'); committed=true;
     return result;
   } catch (error:any) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (['40001', '40P01', '23505', '55P03', '57014'].includes(error?.code)) throw fail(409, 'Files changed concurrently or are busy; refresh before retrying. Receipt requests must reuse their idempotency key');
     throw error;
-  } finally { client.release() }
+  } finally { client.release(commitAttempted && !committed) }
 }
 
-async function lockedFile(client:pg.PoolClient, id:string, access:DatabaseOperationAccess):Promise<any> {
+export async function lockedFile(client:pg.PoolClient, id:string, access:DatabaseOperationAccess):Promise<any> {
   const row = (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [id])).rows[0];
   if (!row) throw fail(409, 'The file no longer exists');
   await assertUnprotectedFile(client, row);
   await access.file(client, id);
   const native = await client.query(`SELECT 1 FROM file_roots WHERE collection_id=$1
     UNION ALL SELECT 1 FROM watched_folder_state WHERE file_id=$2 LIMIT 1`, [row.collection_id, id]);
-  if (native.rowCount) throw Object.assign(fail(422, 'Native Files receipt and undo are unsupported; a custody-coordinated native operation is required'), { code:'native-custody-required' });
+  if (native.rowCount && !access.custody) throw Object.assign(fail(422, 'Native Files receipt and undo are unsupported; a custody-coordinated native operation is required'), { code:'native-custody-required' });
   return row;
 }
 function editable(file:any, actor:FilesIdentity):void {
@@ -112,7 +125,7 @@ async function journal(client:pg.PoolClient, actor:FilesIdentity, file:any, op:'
   await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
     VALUES($1,$2,$3,$4,$5,$6,$7)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, file.id, file.current_version_id, 'database-operation-' + op, { operationId }]);
 }
-async function permissionBoundary(client:pg.PoolClient, collectionId:string, from:string, to:string):Promise<void> {
+export async function permissionBoundary(client:pg.PoolClient, collectionId:string, from:string, to:string):Promise<void> {
   // Moving across inherited grant/public-link boundaries can expose content to
   // new readers. Stage one refuses that transition; direct file grants stay put.
   const changed = await client.query(`SELECT 1 FROM folder_shares WHERE collection_id=$1 AND
@@ -122,7 +135,19 @@ async function permissionBoundary(client:pg.PoolClient, collectionId:string, fro
   if (changed.rowCount) throw fail(422, 'Moving across folder permission boundaries is not supported by this receipt API');
 }
 
-async function permissionSignature(client:pg.PoolClient, collectionId:string, operationId:string):Promise<string> {
+export async function crossCollectionBoundary(client:pg.PoolClient,source:string,target:string,actor:FilesIdentity):Promise<void> {
+  const deny=()=>Object.assign(fail(422,'Cross-collection transfer requires stored collections with the same owner, kind and audience and no folder or public-link grants'),{code:'cross-collection-boundary'});
+  const rows=(await client.query('SELECT id,owner_user_id,kind FROM collections WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[[source,target]])).rows;
+  if (rows.length!==2 || rows.some(r=>r.owner_user_id!==actor.userId || r.kind==='scratch') || rows[0].kind!==rows[1].kind) throw deny();
+  if ((await client.query(`SELECT 1 FROM file_roots WHERE collection_id=ANY($1::uuid[])
+    UNION ALL SELECT 1 FROM watched_folder_state WHERE collection_id=ANY($1::uuid[])
+    UNION ALL SELECT 1 FROM folder_shares WHERE collection_id=ANY($1::uuid[])
+    UNION ALL SELECT 1 FROM file_share_links WHERE collection_id=ANY($1::uuid[]) AND revoked_at IS NULL LIMIT 1`,[[source,target]])).rowCount) throw deny();
+  const grants=async(id:string)=>(await client.query('SELECT principal_type,principal_id,role FROM collection_acl WHERE collection_id=$1 ORDER BY principal_type,principal_id,role',[id])).rows;
+  if (JSON.stringify(await grants(source))!==JSON.stringify(await grants(target))) throw deny();
+}
+
+export async function permissionSignature(client:pg.PoolClient, collectionId:string, operationId:string):Promise<string> {
   return (await client.query(`SELECT md5(jsonb_build_array(
     (SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY principal_type,principal_id),'[]') FROM collection_acl a WHERE collection_id=$1),
     (SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY id),'[]') FROM folder_shares a WHERE collection_id=$1),
@@ -131,11 +156,11 @@ async function permissionSignature(client:pg.PoolClient, collectionId:string, op
     (SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY id),'[]') FROM file_share_links a WHERE collection_id=$1))::text) AS signature`, [collectionId,operationId])).rows[0].signature;
 }
 
-async function copyReceiptFile(client:pg.PoolClient, source:any, target:string, actor:FilesIdentity):Promise<any> {
+async function copyReceiptFile(client:pg.PoolClient, source:any, target:string, actor:FilesIdentity,destinationCollection=source.collection_id):Promise<any> {
   const copied = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,expires_at,
     versioning_enabled,major_minor_enabled,require_approval)
     VALUES($1,$2,'user',$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-  [source.collection_id, target, actor.userId, source.mime, source.size, source.expires_at, source.versioning_enabled, source.major_minor_enabled, source.require_approval])).rows[0];
+  [destinationCollection, target, actor.userId, source.mime, source.size, source.expires_at, source.versioning_enabled, source.major_minor_enabled, source.require_approval])).rows[0];
   const ids = [...new Set([source.published_version_id, source.current_version_id].filter(Boolean))];
   let current:string | undefined;
   for (const id of ids) {
@@ -162,10 +187,14 @@ async function copyReceiptFile(client:pg.PoolClient, source:any, target:string, 
     source.retention_event_at, source.retention_duration_days, source.disposal_status, source.disposal_review_at, source.disposal_extended_until,actor.userId,actor.deviceId || 'server-web'])).rows[0];
 }
 
-export async function executeDatabaseOperation(db:pg.Pool, input:DatabaseOperationRequest, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>):Promise<DatabaseOperationReceipt> {
-  await access.prepare?.(input.collectionId);
-  return transaction(db, async client => {
+export async function executeDatabaseOperation(db:pg.Pool, input:DatabaseOperationRequest, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>, existingClient?:pg.PoolClient):Promise<DatabaseOperationReceipt> {
+  if (!existingClient) await access.prepare?.(input.collectionId);
+  const destinationCollection=input.targetCollectionId??input.collectionId;
+  if (!existingClient && destinationCollection!==input.collectionId) await access.prepare?.(destinationCollection);
+  const execute = async(client:pg.PoolClient) => {
     if (guard) await guard(client);
+    for (const id of [...new Set([input.collectionId,destinationCollection])].sort()) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['stored-namespace:'+id]);
+    if (destinationCollection!==input.collectionId) await crossCollectionBoundary(client,input.collectionId,destinationCollection,actor);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['stored-namespace:' + input.collectionId]);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify([actor.userId, scope(actor), input.idempotencyKey])]);
     const prior = (await client.query(`SELECT *,request=$4::jsonb AS same_request FROM files_database_operation_receipts
@@ -194,15 +223,16 @@ export async function executeDatabaseOperation(db:pg.Pool, input:DatabaseOperati
     } else {
       let target = input.targetPath!;
       if (isProtectedPath(target)) throw protectedPathError();
-      if (target === file.path && input.action !== 'copy') throw fail(400, 'Destination must differ from source');
-      await access.path(client, file.collection_id, target);
+      if (target === file.path && input.action !== 'copy' && destinationCollection===input.collectionId) throw fail(400, 'Destination must differ from source');
+      await access.path(client, destinationCollection, target);
       await permissionBoundary(client, file.collection_id, file.path, target);
-      const ancestorFile = await client.query("SELECT 1 FROM files WHERE collection_id=$1 AND starts_with($2,path||'/') LIMIT 1", [file.collection_id, target]);
+      const ancestorFile = await client.query("SELECT 1 FROM files WHERE collection_id=$1 AND starts_with($2,path||'/') LIMIT 1", [destinationCollection, target]);
       if (ancestorFile.rowCount) throw fail(409, 'A file occupies an ancestor of the destination');
       const occupied = async(path:string) => Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))
-        UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [file.collection_id, path])).rowCount);
+        UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [destinationCollection, path])).rowCount) || Boolean(await access.custody?.occupied(destinationCollection,path));
       if (await occupied(target)) {
         if (input.collisionPolicy === 'replace') {
+          if (destinationCollection!==input.collectionId) throw Object.assign(fail(422,'Cross-collection Replace is not supported; choose Keep Both or Skip'),{code:'cross-collection-replace-unsupported'});
           if ((await client.query("SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1", [file.collection_id,target])).rowCount) throw Object.assign(fail(409,'A folder occupies the destination; choose Keep Both or Skip'), { code:'destination-conflict' });
           const destination = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [file.collection_id, target])).rows[0];
           if (!destination || destination.deleted_at) throw fail(409, 'Replace requires a live file destination');
@@ -230,35 +260,41 @@ export async function executeDatabaseOperation(db:pg.Pool, input:DatabaseOperati
           }
           if (!found) throw fail(409, 'No Keep Both destination is available');
         } else {
-          const destination = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2', [file.collection_id, target])).rows[0];
+          const destination = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2', [destinationCollection, target])).rows[0];
           if (destination) await access.file(client, destination.id);
           throw Object.assign(fail(409, 'Destination already exists; choose Replace, Keep Both or Skip'), { code: 'destination-conflict', ...(destination ? { destination: snapshot(destination) } : {}) });
         }
       }
       if (!skipped) {
-        await access.path(client, file.collection_id, target);
+        await access.path(client, destinationCollection, target);
         await permissionBoundary(client, file.collection_id, file.path, target);
-        if ((await client.query("SELECT 1 FROM files WHERE collection_id=$1 AND starts_with($2,path||'/') LIMIT 1", [file.collection_id, target])).rowCount) throw fail(409, 'A file occupies an ancestor of the destination');
+        if ((await client.query("SELECT 1 FROM files WHERE collection_id=$1 AND starts_with($2,path||'/') LIMIT 1", [destinationCollection, target])).rowCount) throw fail(409, 'A file occupies an ancestor of the destination');
         if (input.action === 'copy') {
-          updated = await copyReceiptFile(client, file, target, actor);
-        } else updated = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id, target])).rows[0];
+          updated = await copyReceiptFile(client, file, target, actor,destinationCollection);
+        } else updated = (await client.query('UPDATE files SET path=$2,collection_id=$3,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id, target,destinationCollection])).rows[0];
       }
     }
     if (!skipped) await journal(client, actor, updated, input.action === 'trash' ? 'delete' : input.action === 'copy' ? 'put' : 'rename', row.id);
     await client.query('UPDATE files_database_operation_receipts SET after_state=$2,state=$3 WHERE id=$1', [row.id,snapshot(updated),skipped ? 'skipped' : 'completed']);
     const committed = (await client.query('UPDATE files_database_operation_receipts SET permission_signature=$2 WHERE id=$1 RETURNING *', [row.id,await permissionSignature(client,input.collectionId,row.id)])).rows[0];
+    if (!skipped) await access.custody?.publish(client,committed,false);
     return receipt(committed);
-  });
+  };
+  return existingClient ? execute(existingClient) : transaction(db,execute);
 }
 
-export async function undoDatabaseOperation(db:pg.Pool, operationId:string, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>):Promise<DatabaseOperationReceipt> {
+export async function undoDatabaseOperation(db:pg.Pool, operationId:string, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>, existingClient?:pg.PoolClient):Promise<DatabaseOperationReceipt> {
   if (!uuid.test(operationId)) throw fail(400, 'operationId must be a UUID');
-  const collection = (await db.query('SELECT collection_id FROM files_database_operation_receipts WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3', [operationId,actor.userId,scope(actor)])).rows[0];
-  if (collection) await access.prepare?.(collection.collection_id);
-  return transaction(db, async client => {
+  const collection = (await (existingClient ?? db).query('SELECT collection_id,request FROM files_database_operation_receipts WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3', [operationId,actor.userId,scope(actor)])).rows[0];
+  if (collection && !existingClient) await access.prepare?.(collection.collection_id);
+  if (collection?.request.targetCollectionId && !existingClient) await access.prepare?.(collection.request.targetCollectionId);
+  const execute = async(client:pg.PoolClient) => {
     if (guard) await guard(client);
     const row = (await client.query('SELECT * FROM files_database_operation_receipts WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3 FOR UPDATE', [operationId, actor.userId, scope(actor)])).rows[0];
     if (!row) throw fail(404, 'Database operation receipt not found; native undo is unsupported');
+    if (row.request.targetCollectionId && row.request.targetCollectionId!==row.collection_id) {
+      await crossCollectionBoundary(client,row.collection_id,row.request.targetCollectionId,actor);
+    }
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['stored-namespace:' + row.collection_id]);
     if (row.state === 'completed' && row.permission_signature && row.permission_signature !== await permissionSignature(client,row.collection_id,row.id)) throw fail(409, 'Permissions or public links changed after the operation');
     if (row.action === 'create-folder') {
@@ -274,6 +310,7 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
         UNION ALL SELECT 1 FROM file_share_links WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) LIMIT 1`, [row.collection_id, folder.path]);
       if (occupied.rowCount) throw fail(409, 'Folder acquired children or grants; undo refused');
       await client.query('DELETE FROM file_folders WHERE id=$1', [folder.id]);
+      await access.custody?.publish(client,row,true);
       await client.query(`INSERT INTO audit_log(who_type,who_id,action,details) VALUES('user',$1,'undo-create-folder',$2)`, [actor.userId, { operationId, collectionId: row.collection_id, path: folder.path }]);
       return receipt((await client.query("UPDATE files_database_operation_receipts SET state='undone',undone_at=NOW() WHERE id=$1 RETURNING *", [row.id])).rows[0]);
     }
@@ -282,13 +319,13 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
     if (row.state !== 'completed') throw fail(409, 'Skipped operations cannot be undone');
     const expected = row.after_state as DatabaseOperationState; const before = row.before_state as DatabaseOperationState;
     if (JSON.stringify(snapshot(file)) !== JSON.stringify({
-      fileId: expected.fileId, path: expected.path, versionId: expected.versionId, revision: expected.revision, deleted: expected.deleted,
+      collectionId:expected.collectionId??row.collection_id,fileId: expected.fileId, path: expected.path, versionId: expected.versionId, revision: expected.revision, deleted: expected.deleted,
     })) throw fail(409, 'Undo refused because the file changed after the operation');
     editable(file, actor);
-    await access.path(client, file.collection_id, before.path);
+    await access.path(client, before.collectionId??row.collection_id, before.path);
     await permissionBoundary(client, file.collection_id, file.path, before.path);
     if (row.action !== 'copy' && (await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND id<>$3
-      AND (path=$2 OR starts_with(path,$2||'/') OR starts_with($2,path||'/')) LIMIT 1`, [file.collection_id, before.path, file.id])).rowCount) throw fail(409, 'Undo destination is occupied');
+      AND (path=$2 OR starts_with(path,$2||'/') OR starts_with($2,path||'/')) LIMIT 1`, [before.collectionId??row.collection_id, before.path, file.id])).rowCount) throw fail(409, 'Undo destination is occupied');
     let updated:any;
     if (row.action === 'copy') {
       const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,size,deleted,created_by_type,created_by_id,message,device_id)
@@ -305,7 +342,7 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
       // Trash did not change publication pointers/statuses; restore that exact
       // parent while retaining the tombstone and all history.
       updated = (await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id, before.versionId])).rows[0];
-    } else updated = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id, before.path])).rows[0];
+    } else updated = (await client.query('UPDATE files SET path=$2,collection_id=$3,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id, before.path,before.collectionId??row.collection_id])).rows[0];
     if (row.displaced_before) {
       const displaced = await lockedFile(client, row.displaced_after.fileId, access);
       const expectedDisplaced = row.displaced_after;
@@ -317,8 +354,10 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
       await journal(client, actor, restored, 'rename', row.id);
     }
     await journal(client, actor, updated, row.action === 'trash' ? 'restore' : row.action === 'copy' ? 'delete' : 'rename', row.id);
+    await access.custody?.publish(client,row,true);
     return receipt((await client.query("UPDATE files_database_operation_receipts SET state='undone',undone_at=NOW() WHERE id=$1 RETURNING *", [row.id])).rows[0]);
-  });
+  };
+  return existingClient ? execute(existingClient) : transaction(db,execute);
 }
 
 export async function createDatabaseFolder(db:pg.Pool, input:{ idempotencyKey:string; collectionId:string; targetPath:string; collisionPolicy?:'keep-both'|'skip' }, actor:FilesIdentity, access:DatabaseOperationAccess, guard:(client:pg.PoolClient)=>Promise<void>):Promise<DatabaseOperationReceipt> {
@@ -329,8 +368,8 @@ export async function createDatabaseFolder(db:pg.Pool, input:{ idempotencyKey:st
     await access.path(client, input.collectionId, input.targetPath);
     const prior = (await client.query('SELECT * FROM files_database_operation_receipts WHERE actor_user_id=$1 AND actor_scope=$2 AND idempotency_key=$3', [actor.userId, scope(actor), input.idempotencyKey])).rows[0];
     if (prior) return receipt(prior);
-    if ((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [input.collectionId])).rowCount) throw Object.assign(fail(422, 'Native folders require custody'), { code:'native-custody-required' });
-    const occupied = async(path:string) => Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [input.collectionId, path])).rowCount);
+    if (!access.custody && (await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1', [input.collectionId])).rowCount) throw Object.assign(fail(422, 'Native folders require custody'), { code:'native-custody-required' });
+    const occupied = async(path:string) => Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [input.collectionId, path])).rowCount) || Boolean(await access.custody?.occupied(input.collectionId,path));
     let path = input.targetPath; let skipped = false;
     if (await occupied(path)) {
       if (input.collisionPolicy === 'skip') skipped = true;
@@ -349,6 +388,7 @@ export async function createDatabaseFolder(db:pg.Pool, input:{ idempotencyKey:st
     const row = (await client.query(`INSERT INTO files_database_operation_receipts(actor_user_id,actor_scope,idempotency_key,request,collection_id,action,state,before_state,after_state)
       VALUES($1,$2,$3,$4,$5,'create-folder',$6,'null'::jsonb,$7::jsonb) RETURNING *`, [actor.userId, scope(actor), input.idempotencyKey, input, input.collectionId, skipped ? 'skipped' : 'completed', JSON.stringify(after)])).rows[0];
     await client.query(`INSERT INTO audit_log(who_type,who_id,action,details) VALUES('user',$1,'create-folder',$2)`, [actor.userId, { operationId: row.id, collectionId: input.collectionId, path, skipped }]);
+    if (!skipped) await access.custody?.publish(client,row,false);
     return receipt(row);
   });
 }

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { FileHandle } from 'node:fs/promises';
@@ -9,7 +9,8 @@ import type { Readable } from 'node:stream';
 
 export interface FileFingerprint { dev: bigint; ino: bigint; size: number; mtimeMs: number }
 export interface EvictionReceipt { source: string; quarantine: string; fingerprint: FileFingerprint }
-export interface PublicationReceipt { staged: string; target: string; fingerprint: FileFingerprint }
+export interface PublicationReceipt { staged: string; target: string; fingerprint: FileFingerprint; rollback?:string }
+export interface DirectoryReceipt { path:string; dev:string; ino:string }
 
 export class PinnedRegularFile {
   constructor(
@@ -124,7 +125,8 @@ export class FilesMutationCoordinator {
         await input.verify(source);
         return await this.publishVerified({ staged, target: input.target, verify: input.verify });
       } catch (error) {
-        if (await this.exists(staged).catch(() => false)) await this.unlinkPinned(staged).catch(() => undefined);
+        // A failed copy may leave partial bytes or an externally replaced
+        // stage. Preserve it; journal reconciliation decides ownership.
         throw error;
       } finally { await source.close() }
     });
@@ -161,12 +163,13 @@ export class FilesMutationCoordinator {
   async rollbackPublication(receipt:PublicationReceipt, verify:Verify):Promise<void> {
     await this.runExclusive([receipt.staged, receipt.target], async() => {
       const target = await this.pin(receipt.target);
-      const rollback = `.sulla-trash/.residency/${ randomUUID() }.rollback`;
+      const rollback = receipt.rollback ?? `.sulla-trash/.residency/${ randomUUID() }.rollback`;
       try {
         if (!sameFingerprint(target.fingerprint, receipt.fingerprint)) throw new Error('Published target changed before rollback');
         await verify(target);
         await target.assertUnchanged();
         await this.ensurePrivateParent(rollback);
+        if (await this.exists(rollback)) throw new Error('Rollback quarantine is occupied; preserved');
         if (!await this.exists(receipt.staged)) await this.linkPinned(receipt.target, receipt.staged);
         const staged = await this.pinVerified(receipt.staged, verify);
         try {
@@ -180,7 +183,8 @@ export class FilesMutationCoordinator {
             throw new Error('Published target was replaced during rollback; replacement was preserved');
           }
         } finally { await moved.close() }
-        await this.unlinkPinned(rollback);
+        // Retain the verified inverse artifact. In journaled operations its
+        // deterministic name is derivable from the durable leaf stage.
       } finally { await target.close() }
     });
   }
@@ -188,7 +192,97 @@ export class FilesMutationCoordinator {
   async openPrivateExclusive(path:string):Promise<FileHandle> {
     await this.ensurePrivateParent(path);
     const parent = await this.pinParent(path);
-    try { return await open(parent.child, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600) } finally { await parent.handle.close() }
+    try {
+      const handle = await open(parent.child, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      try { await parent.handle.sync(); return handle } catch (error) { await handle.close(); throw error }
+    } finally { await parent.handle.close() }
+  }
+
+  async directory(path:string):Promise<DirectoryReceipt> {
+    const parent = await this.pinParent(path);
+    try {
+      const handle = await open(parent.child,constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try {
+        if (await realpath(`/proc/self/fd/${handle.fd}`) !== this.absolute(path)) throw new Error('Directory moved during verification');
+        const info = await handle.stat({ bigint:true });
+        return { path,dev:String(info.dev),ino:String(info.ino) };
+      } finally { await handle.close() }
+    } finally { await parent.handle.close() }
+  }
+
+  async inspectTree(path:string,allow:(path:string)=>boolean=()=>true):Promise<{directories:string[];files:string[]}> {
+    const directories:string[]=[]; const files:string[]=[];
+    const visit=async(current:string):Promise<void>=>{
+      if (!allow(current)) throw new Error('Folder contains a protected path');
+      const expected=await this.directory(current); directories.push(current);
+      const parent=await this.pinParent(current);
+      const handle=await open(parent.child,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW).finally(()=>parent.handle.close());
+      try {
+        const info=await handle.stat({bigint:true});
+        if (String(info.dev)!==expected.dev || String(info.ino)!==expected.ino) throw new Error('Folder changed during enumeration');
+        const names=(await readdir(`/proc/self/fd/${handle.fd}`)).sort();
+        for (const name of names) {
+          const relative=current+'/'+name;
+          if (!allow(relative)) throw new Error('Folder contains a protected path');
+          const entry=await lstat(`/proc/self/fd/${handle.fd}/${name}`);
+          if (entry.isDirectory()) await visit(relative);
+          else if (entry.isFile()) files.push(relative);
+          else throw new Error('Folder contains an unsupported filesystem entry');
+        }
+        if (await realpath(`/proc/self/fd/${handle.fd}`)!==this.absolute(current)) throw new Error('Folder moved during enumeration');
+      } finally { await handle.close() }
+    };
+    await visit(path); return {directories,files};
+  }
+
+  /** Exact mkdir: callers plan every parent separately, including empty dirs. */
+  async createDirectory(path:string):Promise<DirectoryReceipt> {
+    return this.runExclusive([path],async() => {
+      const parent = await this.pinParent(path);
+      try { await mkdir(parent.child,{ mode:0o700 }); await parent.handle.sync() } finally { await parent.handle.close() }
+      return this.directory(path);
+    });
+  }
+
+  async removeEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<void> {
+    await this.evictEmptyDirectory(expected,retained);
+    // The exact, verified empty directory remains retained. Never recursively
+    // remove a pathname that another process can replace after verification.
+  }
+
+  async evictEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<void> {
+    return this.runExclusive([expected.path],async() => {
+      const actual = await this.directory(expected.path);
+      if (actual.dev !== expected.dev || actual.ino !== expected.ino) throw new Error('Directory identity changed; inverse refused');
+      const parent = await this.pinParent(expected.path);
+      try {
+        if ((await readdir(parent.child)).length) throw new Error('Directory acquired unknown children');
+        await this.ensurePrivateParent(retained);
+        if (await this.exists(retained)) throw new Error('Directory quarantine is occupied');
+        await this.renamePinned(expected.path,retained);
+        const moved=await this.directory(retained);
+        if (moved.dev!==expected.dev || moved.ino!==expected.ino) throw new Error('Directory changed during eviction; quarantined entry preserved');
+        const stage=await this.pinParent(retained);
+        try { if ((await readdir(stage.child)).length) throw new Error('Quarantined directory has unknown children; preserved') } finally { await stage.handle.close() }
+      } finally { await parent.handle.close() }
+    });
+  }
+
+  async restoreEmptyDirectory(expected:DirectoryReceipt,retained:string):Promise<DirectoryReceipt> {
+    const moved=await this.directory(retained);
+    if (moved.dev!==expected.dev || moved.ino!==expected.ino) throw new Error('Retained directory identity changed');
+    const stage=await this.pinParent(retained);
+    try { if ((await readdir(stage.child)).length) throw new Error('Retained directory acquired children') } finally { await stage.handle.close() }
+    return this.createDirectory(expected.path);
+  }
+
+  /** Both old and incoming bytes remain retained for a guarded inverse. */
+  async replaceVerified(input:{ staged:string; target:string; backup:string; verify:Verify; verifyDisplaced:Verify }):Promise<{ publication:PublicationReceipt; displaced:EvictionReceipt }> {
+    return this.runExclusive([input.staged,input.target,input.backup],async() => {
+      const displaced = await this.evictVerified({ source:input.target,quarantine:input.backup,verify:input.verifyDisplaced });
+      try { return { publication:await this.publishVerified(input),displaced } }
+      catch (error) { await this.recoverEviction(displaced,input.verifyDisplaced); throw error }
+    });
   }
 
   async finalizePublication(receipt:PublicationReceipt | EvictionReceipt):Promise<void> {
@@ -256,6 +350,7 @@ export class FilesMutationCoordinator {
       for (const part of rel.split(sep).filter(Boolean)) {
         const child = `/proc/self/fd/${ current.fd }/${ part }`;
         await mkdir(child, { mode: 0o700 }).catch((error:any) => { if (error?.code !== 'EEXIST') throw error; });
+        await current.sync();
         const next = await open(child, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
         expected = resolve(expected, part);
         try {
@@ -292,17 +387,17 @@ export class FilesMutationCoordinator {
 
   private async linkPinned(source:string, target:string):Promise<void> {
     const from = await this.pinParent(source); const to = await this.pinParent(target);
-    try { await link(from.child, to.child) } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
+    try { await link(from.child, to.child); await to.handle.sync() } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
   }
 
   private async renamePinned(source:string, target:string):Promise<void> {
     const from = await this.pinParent(source); const to = await this.pinParent(target);
-    try { await rename(from.child, to.child) } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
+    try { await rename(from.child, to.child); await to.handle.sync(); await from.handle.sync() } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
   }
 
   private async unlinkPinned(path:string):Promise<void> {
     const parent = await this.pinParent(path);
-    try { await unlink(parent.child) } finally { await parent.handle.close() }
+    try { await unlink(parent.child); await parent.handle.sync() } finally { await parent.handle.close() }
   }
 
   private absolute(path:string):string { return resolve(this.root, this.clean(path)) }
