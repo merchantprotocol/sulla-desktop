@@ -2,9 +2,9 @@ import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource,
 import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSource';
 
 import type { IpcRendererEvent } from 'electron';
+import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 
 interface RemoteCapabilities {
   orgSharing: boolean;
@@ -27,7 +27,7 @@ function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
 }
 
 export class DesktopFilesDataSource implements FilesDataSource {
-  readonly nativeSourceReady = SULLA_FILES_NATIVE_SOURCE_READY;
+  nativeSourceReady = false;
   readonly capabilities = {
     upload:          true,
     versionHistory:  true,
@@ -50,6 +50,25 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private rootId = '';
   private capabilitiesGeneration = 0;
   private capabilitiesListeners = new Set<() => void>();
+  private nativeRuntimeGeneration = -1;
+
+  constructor() {
+    const changed = (_event:IpcRendererEvent, status:SullaFilesNativeRuntimeStatus) => this.applyNativeRuntime(status);
+
+    ipcRenderer.on('files-ui:native-runtime-changed', changed);
+    (ipcRenderer.invoke('files-ui:native-runtime') as Promise<SullaFilesNativeRuntimeStatus>)
+      .then(status => this.applyNativeRuntime(status))
+      .catch(() => this.applyNativeRuntime({ state: 'disabled', ready: false, generation: 0, sourceGrant: 'unsupported' }));
+  }
+
+  private applyNativeRuntime(status:SullaFilesNativeRuntimeStatus):void {
+    if (!status || status.generation < this.nativeRuntimeGeneration) return;
+    this.nativeRuntimeGeneration = status.generation;
+    const ready = status.state === 'ready' && status.ready;
+    if (ready === this.nativeSourceReady) return;
+    this.nativeSourceReady = ready;
+    this.capabilitiesListeners.forEach(listener => listener());
+  }
 
   selectCollection(collectionId:string):void { this.collectionId = collectionId }
 
