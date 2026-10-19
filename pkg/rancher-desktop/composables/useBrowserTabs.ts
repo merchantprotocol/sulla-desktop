@@ -100,7 +100,11 @@ function loadPersistedTabs(): BrowserTab[] {
       .filter((t: any) => !/^javascript:/i.test(t?.url || ''))
       .map((t: any) => {
         const { content: _c, ...rest } = t;
-        return { ...rest, loading: false };
+        const title = rest.mode === 'files' && (!rest.title || rest.title === 'New Tab' || rest.title === 'Files')
+          ? 'File Manager'
+          : rest.title;
+
+        return { ...rest, title, loading: false };
       });
   } catch {
     return [];
@@ -440,6 +444,7 @@ export function useBrowserTabs() {
     terminal:     'Terminal',
     agents:       'Agents',
     projects:     'Projects',
+    files:        'File Manager',
     decide:       'Decide',
     usage:        'Usage',
   };

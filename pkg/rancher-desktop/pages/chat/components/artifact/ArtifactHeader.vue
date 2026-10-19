@@ -48,7 +48,7 @@ function shareFile(): void {
   if (!props.artifact.filesFileId) return;
   const filesNavigation = { fileId: props.artifact.filesFileId, path: props.artifact.filesPath ?? undefined, section: 'share-review' };
   const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'Files', filesNavigation });
+  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
   if (existing) updateTab(existing.id, { filesNavigation });
   window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }

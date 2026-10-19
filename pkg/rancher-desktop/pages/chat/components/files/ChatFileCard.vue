@@ -18,7 +18,7 @@ async function open() { await ipcRenderer.invoke('files-ui:open-file', { fileId:
 function navigate(section:'versions' | 'share-review') {
   const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, section };
   const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'Files', filesNavigation });
+  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
   if (existing) updateTab(existing.id, { filesNavigation });
   window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
