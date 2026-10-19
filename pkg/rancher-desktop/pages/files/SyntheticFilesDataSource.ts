@@ -462,7 +462,8 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     if (operation.receipt.state === 'pending') this.schedule(id);
   }
   private executeItem(operation:SyntheticOperation, item:FilesOperationItem, receipt:FilesOperationItemReceipt) {
-    const before = clone(this.state.collections); const beforeFolderShares = clone(this.folderShares); const receiptId = crypto.randomUUID();
+    const before = clone(this.state.collections); const beforeFolderShares = clone(this.folderShares); const beforeFolderReceipts = clone(this.state.folderReceipts);
+    const beforeRevision = this.state.revision; const beforeSequence = this.state.sequence; const beforeStaleReplaceAdvanced = this.state.staleReplaceAdvanced; const receiptId = crypto.randomUUID();
 
     try {
       const override = operation.retryOverrides[item.itemId]; const policy = override?.collisionPolicy ?? item.collisionPolicy; const collection = this.collection(operation.request.collectionId);
@@ -472,7 +473,12 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       else this.executeFile(collection, item, receipt, receiptId, policy, override?.expectedDestination ?? item.expectedDestination);
       if (receipt.state === 'completed') operation.mutations[item.itemId] = this.captureMutation(before, this.state.collections, beforeFolderShares, this.folderShares);
     } catch (cause) {
-      const error = cause as { status?:number; code?:string; message?:string; destination?:FilesCollisionDestination };
+      const error = cause as { status?:number; code?:string; message?:string; destination?:FilesCollisionDestination; preserveSyntheticFixture?:boolean };
+
+      if (!error.preserveSyntheticFixture) {
+        this.state.collections = before; this.folderShares = beforeFolderShares; this.state.folderReceipts = beforeFolderReceipts;
+        this.state.revision = beforeRevision; this.state.sequence = beforeSequence; this.state.staleReplaceAdvanced = beforeStaleReplaceAdvanced;
+      }
 
       Object.assign(receipt, { state: 'failed', receiptId: null, error: { status: error.status ?? 409, code: error.code ?? 'state-conflict', message: error.message ?? String(cause), ...(error.destination ? { destination: error.destination } : {}) }, retryable: true, undoSupported: false });
     }
@@ -480,7 +486,10 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   private resolveDestination(collection:SyntheticCollection, requested:string, policy:FilesOperationItem['collisionPolicy'], receipt:FilesOperationItemReceipt, ignoredFiles = new Set<string>(), ignoredFolders = new Set<string>(), expected?:FilesCollisionDestination) {
     const file = this.activeFileAt(collection, requested, ignoredFiles); const folder = this.activeFolderAt(collection, requested, ignoredFolders);
 
-    if (!file && !folder) return { path: requested };
+    if (!file && !folder) {
+      if (policy === 'replace') throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination no longer exists; refresh Files.', ...(expected ? { destination: clone(expected) } : {}) };
+      return { path: requested };
+    }
     if (policy === 'skip') { Object.assign(receipt, { state: 'skipped', receiptId: crypto.randomUUID(), error: null, retryable: false }); return null }
     if (policy === 'keep-both') return { path: this.keepBothPath(collection, requested, ignoredFiles, ignoredFolders) };
     const destination = file ? this.fileState(file, collection.id) : undefined;
@@ -605,7 +614,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
               this.state.staleReplaceAdvanced = true;
               if (child) { child.operationRevision = this.nextRevision(); child.updatedAt = new Date().toISOString() }
             }
-            throw { status: 409, code: 'destination-conflict', message: 'A synthetic folder already exists at ' + requestedTarget + '. Choose Replace, Keep Both or Skip.', ...(displayed ? { destination: displayed } : {}) };
+            throw { status: 409, code: 'destination-conflict', message: 'A synthetic folder already exists at ' + requestedTarget + '. Choose Replace, Keep Both or Skip.', ...(displayed ? { destination: displayed } : {}), preserveSyntheticFixture: destinationFolder?.folderId === 'synthetic-folder-stale-destination' };
           }
           if (!displayed || !this.sameFolderReplacementDestination(displayed, expectedDestination)) {
             throw { status: 409, code: 'destination-conflict', message: 'The synthetic Replace destination subtree changed; refresh Files.', ...(displayed ? { destination: displayed } : expectedDestination ? { destination: clone(expectedDestination) } : {}) };
