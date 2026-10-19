@@ -23,7 +23,7 @@ async function runtime():Promise<Runtime | undefined> {
     process.env.WHISPER_CPP_BIN, '/usr/local/bin/whisper-cli', '/usr/bin/whisper-cli', '/app/bin/whisper-cli',
   ]);
   const model = await executable([
-    process.env.WHISPER_CPP_MODEL, '/var/lib/sulla-files/models/ggml-base.en.bin', '/app/models/ggml-base.en.bin',
+    process.env.WHISPER_CPP_MODEL, '/var/lib/sulla-files/models/ggml-tiny-q5_1.bin', '/app/models/ggml-tiny-q5_1.bin',
   ]);
   if (!whisper || !model) return undefined;
   const ffmpeg = await executable([process.env.FFMPEG_BIN, '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']);
@@ -71,9 +71,9 @@ function chapters(segments:Segment[]):Array<{ start:number; end:number; title:st
 }
 
 /**
- * Persisted recording enrichment queue. The Files image may omit whisper.cpp;
- * jobs then remain in waiting_runtime and are retried when the coordinated
- * Phase 6 image supplies WHISPER_CPP_BIN + WHISPER_CPP_MODEL.
+ * Persisted recording enrichment queue. The Files image ships a pinned local
+ * whisper.cpp runtime and model; explicit overrides remain available for
+ * operators that want a larger model.
  */
 export class RecordingEnrichmentQueue {
   private timer?: NodeJS.Timeout;

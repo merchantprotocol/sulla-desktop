@@ -172,6 +172,12 @@
             </button>
           </div>
         </div>
+        <div v-if="snapshot?.status.indexing" class="operation-error" :class="{ 'index-complete': snapshot.status.indexing.complete }">
+          Index: {{ indexSummary }}
+        </div>
+        <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
+          Search is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Unsupported and failed files cannot contribute content matches.
+        </div>
 
         <div class="filters">
           <label
@@ -396,6 +402,7 @@
                   </td>
                   <td @dblclick.stop>
                     <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
+                    <button v-if="!entry.folder && ['failed', 'unsupported'].includes(entry.indexStatus)" class="btn sm" type="button" :disabled="busy" :title="entry.indexReason" @click.stop="reindex(entry)">Re-index</button>
                     <div
                       v-if="entrySync(entry) === 'conflict' && !entry.folder"
                       class="actions keep"
@@ -592,7 +599,7 @@ import SharedByMe from './SharedByMe.vue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesDataSource, FilesItem, FilesSnapshot } from './types';
+import type { FilesDataSource, FilesIndexCoverage, FilesItem, FilesSnapshot } from './types';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
@@ -636,6 +643,7 @@ const snapshot = ref<FilesSnapshot | null>(null); const loading = ref(true); con
 const section = ref<Section>('files'); const currentPath = ref(''); const query = ref(''); const sort = ref('modified'); const view = ref<ViewMode>((localStorage.getItem('sulla:files-view') as ViewMode) || 'list');
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
+const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
@@ -676,6 +684,7 @@ const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me',
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
+const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
 const accountName = computed(() => snapshot.value?.collection.accountName || 'Signed-in user');
 const accountLine = computed(() => {
   const raw = snapshot.value?.collection.accountRole;
@@ -735,7 +744,7 @@ function kindLabel(mime:string, path = '') {
 function toDisplay(file:FilesItem):DisplayEntry {
   const glyph = fileGlyph(file.mime, file.path); const conflict = entrySync(file) === 'conflict';
 
-  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount }` };
+  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · pick a version` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
 function folderEntry(prefix:string, name:string, children:FilesItem[]):DisplayEntry {
   const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
@@ -744,7 +753,7 @@ function folderEntry(prefix:string, name:string, children:FilesItem[]):DisplayEn
   const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'kept on this computer';
   const size = children.reduce((sum, file) => sum + file.size, 0);
 
-  return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'] };
+  return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
 }
 const visibleEntries = computed<DisplayEntry[]>(() => {
   let files = section.value === 'trash' ? trashFiles.value : searchResults.value ?? activeFiles.value;
@@ -783,6 +792,7 @@ const selectedEntries = computed(() => visibleEntries.value.filter(entry => sele
 
 async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
 async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
+async function reindex(entry:FilesItem) { busy.value = true; operationError.value = ''; try { await props.dataSource.reindex(entry.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
 function shareEntry(entry:DisplayEntry | null) {
   if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
@@ -908,12 +918,13 @@ watch([query, section], ([value, requestedSection]) => {
   const generation = ++searchGeneration;
   if (searchTimer) clearTimeout(searchTimer);
   searchResults.value = null;
+  searchCoverage.value = null;
   if (!value.trim() || requestedSection === 'trash') return;
   const isCurrent = () => mounted && generation === searchGeneration && query.value === value && section.value === requestedSection;
   searchTimer = setTimeout(async() => {
     try {
-      const results = await props.dataSource.search(value.trim());
-      if (isCurrent()) searchResults.value = results;
+      const result = await props.dataSource.search(value.trim());
+      if (isCurrent()) { searchResults.value = result.files; searchCoverage.value = result.coverage }
     } catch (cause) {
       if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause);
     }
@@ -988,6 +999,7 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
 .selection-bar b { margin-right:auto; font-size:12px; }
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
+.operation-error.index-complete { border-color:color-mix(in srgb, var(--ok) 35%, transparent); background:var(--ok-soft); color:var(--ok); }
 .operation-error .btn { margin-left:auto; }
 .action-menu { --text:#1a2332; --line-2:rgba(26,35,50,.14); --card-solid:#fff; --ink-05:rgba(26,35,50,.05); --bad:#d9403a; --shadow-lg:0 12px 36px rgba(26,35,50,.2); font:13px system-ui,sans-serif; color:var(--text); box-sizing:border-box; max-width:calc(100vw - 8px); max-height:calc(100vh - 8px); overflow:auto; position:fixed; z-index:1000; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
 .action-menu b { display:block; padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

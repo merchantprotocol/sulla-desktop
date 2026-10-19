@@ -21,6 +21,7 @@ import type { FilesLifecycle } from './lifecycle.js';
 import type { Config } from './config.js';
 import type { LocalFilesManager } from './localManager.js';
 import type { FileResidencyManager } from './residency.js';
+import type { IndexingQueue } from './indexing.js';
 import type { FileSearch } from './search.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
@@ -69,6 +70,7 @@ export function createApp(
   residency?:FileResidencyManager,
   filesLifecycle?:FilesLifecycle,
   bootstrapAuthority?:FilesBootstrapAuthority,
+  indexer?:IndexingQueue,
 ) {
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const bootstrapJsonParser = express.json({ limit: '32kb' });
@@ -654,6 +656,13 @@ export function createApp(
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try { const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required'); const path = cleanPath(String(request.query.path ?? '')); const required = effectiveRight(request, 'view'); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true'; const params:any[] = [collectionId, path ? `${ path }/` : '']; let filter = ''; if (!access.role || ROLE_LEVEL[access.role] < ROLE_LEVEL[required]) { params.push(access.paths.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL[required]).map(value => value.folderPath)); params.push(access.files.filter(value => ROLE_LEVEL[value.role] >= ROLE_LEVEL[required]).map(value => value.fileId)); filter = ` AND (f.id::text=ANY($4::text[]) OR EXISTS (SELECT 1 FROM unnest($3::text[]) p WHERE f.path=p OR starts_with(f.path, p||'/')))` } const rows = await db.query(`SELECT f.*,v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,CASE WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
+  app.post('/v1/files/:id/reindex', async(request:RequestWithIdentity, response, next) => { try {
+    if (!indexer) return response.status(503).json({ error: 'indexing unavailable' });
+    await requireFile(request, request.params.id, 'edit');
+    await indexer.retry(request.params.id);
+    await audit(request, 'reindex', await fileRow(request.params.id));
+    response.status(202).json({ accepted: true });
+  } catch (error) { next(error) } });
   app.get('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');
     const [version, recording, edgeRows, activity] = await Promise.all([

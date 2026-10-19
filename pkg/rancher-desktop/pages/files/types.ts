@@ -1,4 +1,6 @@
 export type FilesSyncState = 'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
+export type FilesIndexState = 'pending' | 'indexing' | 'indexed' | 'unsupported' | 'failed';
+export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; unsupported:number; failed:number; complete:boolean }
 
 export interface FilesLocation {
   kind: 'local' | 'server' | 'cloud';
@@ -20,6 +22,10 @@ export interface FilesItem {
   ownerAvatarUrl?: string;
   syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
   conflictDevices?: number;
+  indexStatus: FilesIndexState;
+  indexReasonCode?: string;
+  indexReason: string;
+  indexedAt?: string;
 }
 
 export interface FilesVersion {
@@ -48,6 +54,7 @@ export interface FilesSnapshot {
     location?: 'local' | 'server' | 'cloud';
     serverLabel?: string;
     legacyImport?: { state: 'clear' | 'secure-import-required'; protectedPrefix?: string; code?: string; action?: string };
+    indexing: FilesIndexCoverage;
   };
 }
 
@@ -178,7 +185,8 @@ export interface FilesDataSource {
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
   detail(fileId:string):Promise<FilesDetail>;
   mediaUrl(fileId:string, versionId?:string):Promise<string>;
-  search(query:string): Promise<FilesItem[]>;
+  search(query:string): Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }>;
+  reindex(fileId:string):Promise<void>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
   chooseUpload(destination?:string): Promise<number>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
