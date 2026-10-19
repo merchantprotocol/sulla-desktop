@@ -246,12 +246,21 @@ export const mutations = {
   },
 } satisfies Partial<MutationsType<ContainersState>> & MutationTree<ContainersState>;
 
-type SubscribeParams = Omit<BulkParams, 'backend' | 'namespace'> & Partial<Pick<BulkParams, 'namespace'>>;
+type SubscribeParams = Omit<BulkParams, 'backend' | 'namespace'> & Partial<Pick<BulkParams, 'namespace'>> & {
+  /** Identifies the page holding the subscription; see `unsubscribe`. */
+  owner?: string;
+};
+
+/** The page that most recently subscribed (not reactive state). */
+let subscriptionOwner: string | undefined;
 
 export const actions = {
   async subscribe({ commit, state, dispatch, getters }, params: SubscribeParams) {
+    const { owner, ...rest } = params;
+
+    subscriptionOwner = owner;
     state.subscriber?.destroy();
-    commit('SET_PARAMS', { ...params, backend: getters.backend, namespace: params.namespace ?? getters.namespace });
+    commit('SET_PARAMS', { ...rest, backend: getters.backend, namespace: params.namespace ?? getters.namespace });
     if (state.backend === ContainerEngine.NONE) {
       return;
     }
@@ -269,7 +278,13 @@ export const actions = {
       commit('SET_SUBSCRIBER', null);
     }
   },
-  unsubscribe({ commit, state }) {
+  unsubscribe({ commit, state }, owner?: string) {
+    // A page being torn down can run after the next page has already
+    // subscribed (e.g. container detail -> list); don't clobber the newer one.
+    if (owner !== undefined && subscriptionOwner !== undefined && owner !== subscriptionOwner) {
+      return;
+    }
+    subscriptionOwner = undefined;
     state.subscriber?.destroy();
     state.subscriber = null;
     // Clear the state; this is needed if the backend becomes unready.

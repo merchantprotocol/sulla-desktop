@@ -152,6 +152,7 @@ const subscribe = async() => {
     await store.dispatch('container-engine/subscribe', {
       type:   'containers',
       client: window.ddClient,
+      owner:  'container-info',
     });
   } catch (error) {
     console.error('There was a problem subscribing to container events:', { error });
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
   store.dispatch('page/setHeader', { action: null });
   ipcRenderer.removeListener('settings-update', handleSettingsUpdate);
   ipcRenderer.removeListener('settings-read', handleSettingsRead);
-  store.dispatch('container-engine/unsubscribe').catch(console.error);
+  store.dispatch('container-engine/unsubscribe', 'container-info').catch(console.error);
   if (subscribeTimer.value) {
     clearTimeout(subscribeTimer.value);
   }
