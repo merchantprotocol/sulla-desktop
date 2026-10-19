@@ -23,7 +23,7 @@
           <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
         </select>
       </label>
-      <div v-if="dragTargets.length && (snapshot?.availableCollections?.length ?? 0) > 1" class="collection-drops" aria-label="Move selection to collection">
+      <div v-if="dragTargets.length && dragSourceCapability !== 'unavailable' && (snapshot?.availableCollections?.length ?? 0) > 1" class="collection-drops" aria-label="Move selection to collection">
         <button v-for="collection in otherCollections" :key="collection.id" class="btn sm" type="button" @dragover.prevent.stop="setCollectionDropEffect" @drop.prevent.stop="onCollectionDrop(collection.id, $event)">Move to {{ collection.name }}</button>
       </div>
       <a
@@ -793,6 +793,9 @@ type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
+interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
+interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
+interface DragSnapshotRequest { sourceIdentity:string; generation:number; promise:Promise<void> }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
 const icons = {
@@ -857,7 +860,7 @@ const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
 const draggedKeys = ref(new Set<string>()); const dropTargetKey = ref('');
 const dragTargets = ref<ExplorerTarget[]>([]); const dragPointer = ref({ x: 0, y: 0 }); let hoverOpenTimer:ReturnType<typeof setTimeout> | undefined;
-const dragSnapshots = new Map<string, ExplorerTarget>(); const dragSnapshotGenerations = new Map<string, number>(); let dragSourceCollectionId = ''; let dragSourceCapability:FilesCrossCollectionCapability = 'unavailable';
+const dragSnapshots = new Map<string, DragSnapshot>(); const dragSnapshotRequests = new Map<string, DragSnapshotRequest>(); const dragSnapshotGenerations = new Map<string, number>(); let dragPreparation:DragPreparation | undefined; let dragPreparationGeneration=0; let dragSourceCollectionId = ''; let dragSourceCapability:FilesCrossCollectionCapability = 'unavailable';
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
@@ -1114,6 +1117,7 @@ function onCollectionChange(event:Event) { selectCollection((event.target as HTM
 function setCollectionDropEffect(event:DragEvent) { if (event.dataTransfer) event.dataTransfer.dropEffect='move' }
 async function onCollectionDrop(collectionId:string,event:DragEvent) {
   if (busy.value || loading.value || !dragTargets.value.length || collectionId===snapshot.value?.collection.id) return;
+  if (dragSourceCapability==='unavailable' || dragTargets.value.some(target=>target.folder && !/^[0-9a-f]{64}$/.test(target.sourceSubtreeSignature ?? ''))) return;
   const targets=[...dragTargets.value]; const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability;
   event.stopPropagation();
   await selectCollection(collectionId);
@@ -1221,30 +1225,59 @@ async function onDrop(event:DragEvent) {
   if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return }
   const destination = currentPath.value; await runMutation(async() => { await props.dataSource.uploadPaths(paths, destination) });
 }
-async function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
-  if (section.value !== 'files' || busy.value || !event.dataTransfer) { event.preventDefault(); return }
+function dragEntriesFor(entry:DisplayEntry) {
   const selected = selectedEntries.value;
   const requested = selectedKeys.value.has(entry.key) && selected.length ? selected : [entry];
   const selectedFolders = requested.filter(item => item.folder).map(item => item.path);
-  const entries = requested.filter(item => item.folder || !selectedFolders.some(folder => item.path.startsWith(`${ folder }/`)));
+
+  return requested.filter(item => item.folder || !selectedFolders.some(folder => item.path.startsWith(`${ folder }/`)));
+}
+function dragEntryIdentity(entry:DisplayEntry,collectionId:string) {
+  const folder=entry.folderState;
+  const descendants=entry.folder ? snapshot.value?.files.filter(file=>file.path===entry.path || file.path.startsWith(`${ entry.path }/`)).map(file=>JSON.stringify([file.id,file.path,file.currentVersionId,file.operationRevision,file.deletedAt])).sort() : undefined;
+  const folders=entry.folder ? snapshot.value?.folders?.filter(item=>(typeof item==='string'?item:item.path).startsWith(`${ entry.path }/`)).map(item=>JSON.stringify(item)).sort() : undefined;
+
+  return JSON.stringify(entry.folder ? [collectionId,entry.key,entry.path,folder?.collectionId,folder?.folderId,folder?.path,folder?.revision,descendants,folders] : [collectionId,entry.key,entry.path,entry.currentVersionId,entry.operationRevision]);
+}
+function dragSelectionSignature(entries:DisplayEntry[],collectionId:string) {
+  return entries.map(entry=>dragEntryIdentity(entry,collectionId)).sort().join('\n');
+}
+function preparedDragSnapshot(entry:DisplayEntry,preparation:DragPreparation) {
+  const record=dragSnapshots.get(dragSnapshotKey(preparation.collectionId,entry.path));
+
+  return record?.sourceIdentity===dragEntryIdentity(entry,preparation.collectionId) && record.preparationSignature===preparation.signature ? record.target : undefined;
+}
+function invalidateDragPreparation() {
+  dragPreparation=undefined; dragPreparationGeneration++; dragSnapshots.clear(); dragSnapshotRequests.clear(); dragSnapshotGenerations.clear();
+}
+function beginDragPreparation(entries:DisplayEntry[],collectionId:string,anchorKey:string) {
+  const signature=dragSelectionSignature(entries,collectionId);
+
+  if (dragPreparation?.collectionId===collectionId && dragPreparation.signature===signature) return dragPreparation;
+  invalidateDragPreparation();
+  dragPreparation={ collectionId,signature,generation:dragPreparationGeneration,anchorKey };
+  return dragPreparation;
+}
+function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (section.value !== 'files' || busy.value || loading.value || !event.dataTransfer) { event.preventDefault(); return }
+  const entries=dragEntriesFor(entry);
   const collectionId=snapshot.value?.collection.id;
   if (!collectionId) { event.preventDefault(); return }
-  const missingFolders=entries.filter(item => item.folder && !dragSnapshots.has(dragSnapshotKey(collectionId,item.path)));
+  const preparation=beginDragPreparation(entries,collectionId,entry.key);
+  const missingFolders=entries.filter(item=>item.folder && !preparedDragSnapshot(item,preparation));
   if (missingFolders.length) {
-    event.preventDefault();
-    await Promise.all(missingFolders.map(captureDragSnapshot));
-    operationNotice.value = missingFolders.every(item=>dragSnapshots.get(dragSnapshotKey(collectionId,item.path))?.sourceSubtreeSignature)
-      ? 'Folder source snapshot captured. Drag the selection again to move it safely.'
-      : 'Cross-collection folder transfer is unavailable. Drag again to move within this collection.';
-    return;
-  }
+    missingFolders.forEach(item=>captureDragSnapshot(item,preparation).catch(()=>undefined));
+    operationNotice.value='Drag within this collection now. Drag again after the exact folder source snapshot is ready to move it to another collection.';
+  } else operationNotice.value='';
   draggedKeys.value = new Set(entries.map(item => item.key));
-  dragTargets.value = entries.map(item => item.folder ? dragSnapshots.get(dragSnapshotKey(collectionId,item.path))! : toTarget(item));
+  // A running gesture keeps these exact targets; late readiness only serves the next gesture.
+  dragTargets.value = entries.map(item => item.folder && !missingFolders.length ? preparedDragSnapshot(item,preparation) ?? toTarget(item) : toTarget(item));
   dragSourceCollectionId=collectionId;
-  dragSourceCapability=props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
+  dragSourceCapability=missingFolders.length ? 'unavailable' : props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   event.dataTransfer.effectAllowed = 'move';
   event.dataTransfer.setData('application/x-sulla-files', JSON.stringify(dragTargets.value));
+  if (!missingFolders.length) invalidateDragPreparation();
 }
 function canDropOnFolder(entry:DisplayEntry) { return entry.folder && draggedKeys.value.size > 0 && !busy.value }
 function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); dropTargetKey.value = entry.key; scheduleHoverOpen(entry) } }
@@ -1257,7 +1290,7 @@ async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
   clearInternalDrag();
   if (targets.length) await perform('move', targets, sourceCollectionId, sourceCapability);
 }
-function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path, expectedFolder: entry.folderState } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
+function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path, expectedFolder: entry.folderState ? { ...entry.folderState } : undefined } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
 function operationTarget(target:ExplorerTarget, destination:string):OperationItem { return { ...(target.folder ? { folderPath: target.folderPath, expectedFolder: target.expectedFolder, sourceSubtreeSignature:target.sourceSubtreeSignature } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(destination, target.name) } }
 function dragSnapshotKey(collectionId:string,path:string) { return `${ collectionId }:${ path }` }
 async function captureTarget(entry:DisplayEntry,collectionId:string):Promise<ExplorerTarget> {
@@ -1270,19 +1303,30 @@ async function captureTarget(entry:DisplayEntry,collectionId:string):Promise<Exp
     return { ...target, expectedFolder:state.folderId && state.revision ? { collectionId,folderId:state.folderId,path:state.path,revision:state.revision } : undefined, sourceSubtreeSignature:state.subtreeSignature };
   } catch { return target }
 }
-async function captureDragSnapshot(entry:DisplayEntry) {
-  const collectionId=snapshot.value?.collection.id;
-  if (!collectionId || !entry.folder) return;
-  const key=dragSnapshotKey(collectionId,entry.path); const generation=(dragSnapshotGenerations.get(key) ?? 0)+1;
+async function captureDragSnapshot(entry:DisplayEntry,preparation:DragPreparation) {
+  const collectionId=preparation.collectionId;
+  if (!entry.folder || preparedDragSnapshot(entry,preparation)) return;
+  const key=dragSnapshotKey(collectionId,entry.path); const sourceIdentity=dragEntryIdentity(entry,collectionId);
+  const pending=dragSnapshotRequests.get(key);
+  if (pending?.sourceIdentity===sourceIdentity && pending.generation===preparation.generation) { await pending.promise; return }
+  const generation=(dragSnapshotGenerations.get(key) ?? 0)+1;
   dragSnapshotGenerations.set(key,generation);
-  const captured=await captureTarget(entry,collectionId);
-  if (dragSnapshotGenerations.get(key)===generation) dragSnapshots.set(key,captured);
+  const promise=(async() => {
+    const captured=await captureTarget(entry,collectionId);
+    if (entry.folderState && (captured.expectedFolder?.folderId!==entry.folderState.folderId || captured.expectedFolder?.revision!==entry.folderState.revision)) return;
+    const current=visibleEntries.value.find(item=>item.key===entry.key);
+    if (mounted && section.value==='files' && dragSnapshotGenerations.get(key)===generation && dragPreparation?.generation===preparation.generation && dragPreparation.signature===preparation.signature && snapshot.value?.collection.id===collectionId && current && dragEntryIdentity(current,collectionId)===sourceIdentity && dragSelectionSignature(dragEntriesFor(current),collectionId)===preparation.signature && captured.sourceSubtreeSignature) {
+      dragSnapshots.set(key,{ sourceIdentity,preparationSignature:preparation.signature,target:captured });
+    }
+  })();
+  dragSnapshotRequests.set(key,{ sourceIdentity,generation:preparation.generation,promise });
+  try { await promise } finally { if (dragSnapshotRequests.get(key)?.promise===promise) dragSnapshotRequests.delete(key) }
 }
 function prepareDragSnapshot(entry:DisplayEntry) {
   const collectionId=snapshot.value?.collection.id;
-  if (section.value!=='files' || !entry.folder || !collectionId) return;
-  dragSnapshots.delete(dragSnapshotKey(collectionId,entry.path));
-  captureDragSnapshot(entry).catch(() => undefined);
+  if (section.value!=='files' || busy.value || loading.value || !collectionId) return;
+  const entries=dragEntriesFor(entry); const preparation=beginDragPreparation(entries,collectionId,entry.key);
+  entries.filter(item=>item.folder && !preparedDragSnapshot(item,preparation)).forEach(item=>captureDragSnapshot(item,preparation).catch(()=>undefined));
 }
 function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTimer = setTimeout(() => { if (dropTargetKey.value === entry.key && dragTargets.value.length) openPath(entry.path) }, 750) }
 function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
@@ -1704,6 +1748,14 @@ watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let mounted = false;
+watch([() => props.dataSource, () => snapshot.value?.collection.id, section, currentPath, query, busy], invalidateDragPreparation, { flush:'sync' });
+watch([selectedKeys, visibleEntries], () => {
+  const preparation=dragPreparation;
+  if (!preparation) return;
+  const anchor=visibleEntries.value.find(entry=>entry.key===preparation.anchorKey);
+  if (!anchor || dragSelectionSignature(dragEntriesFor(anchor),preparation.collectionId)!==preparation.signature) invalidateDragPreparation();
+}, { flush:'sync' });
+onBeforeUnmount(invalidateDragPreparation);
 watch([query, section, busy], ([value, requestedSection, mutating]) => {
   const generation = ++searchGeneration;
   if (searchTimer) clearTimeout(searchTimer);
