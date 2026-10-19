@@ -11,7 +11,7 @@
   <main>
     <header class="page-head">
       <div><p class="eyebrow">Organization security</p><h1>Audit log</h1><p>Every person and agent action. Secret values are never written here.</p></div>
-      <div class="actions"><button id="refresh" type="button">Refresh</button></div>
+      <div class="actions"><button id="open-vault" type="button">Open Vault</button><button id="refresh" type="button">Refresh</button></div>
     </header>
 
     <section id="signed-out" class="empty panel">
@@ -27,14 +27,14 @@
         <article class="panel"><strong class="handling">Metadata only</strong><span>secret values and decryption keys aren't queried</span></article>
       </section>
 
-      <section class="filters panel" aria-label="Audit filters">
-        <label>Action<input id="action" placeholder="All actions" maxlength="120"></label>
-        <label>Person ID<input id="person" placeholder="Everyone"></label>
-        <label>Collection ID<input id="collection" placeholder="All collections"></label>
-        <label>Item ID<input id="item" placeholder="Any item"></label>
-        <label>From<input id="from" type="date"></label>
-        <label>Through<input id="to" type="date"></label>
-        <label class="check"><input id="blocked-only" type="checkbox">Blocked only</label>
+      <section class="filters" aria-label="Audit filters">
+        <div class="segments" role="group" aria-label="Actor and result"><button class="active" type="button" data-preset="everyone">Everyone</button><button type="button" data-preset="people">People</button><button type="button" data-preset="agents">Agents</button><button type="button" data-preset="blocked">Blocked</button></div>
+        <label><span>Action</span><select id="action"><option value="">All actions</option></select></label>
+        <label><span>Person</span><select id="person"><option value="">Everyone</option></select></label>
+        <label><span>Collection</span><select id="collection"><option value="">All collections</option></select></label>
+        <label><span>Item</span><select id="item"><option value="">Any item</option></select></label>
+        <label><span>From</span><input id="from" type="date" aria-label="From"></label>
+        <label><span>Through</span><input id="to" type="date" aria-label="Through"></label>
         <button id="apply" class="primary" type="button">Apply</button>
       </section>
 

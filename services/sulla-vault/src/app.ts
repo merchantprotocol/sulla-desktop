@@ -645,8 +645,13 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
   app.get('/ui/', sendAuditConsole);
   app.get('/ui/audit', sendAuditConsole);
+  app.get('/ui/credentials', sendVaultConsole);
   app.get('/ui/vault', (_request, response) => response.redirect(308, '/ui/vault/'));
   app.get('/ui/vault/', sendVaultConsole);
+  app.use('/ui/vault', (request, response, next) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    next();
+  }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
   app.get('/console', (_request, response) => response.redirect(308, '/ui/'));
   app.use('/ui', (request, response, next) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
@@ -875,6 +880,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (typeof request.query.collection === 'string') add('a.collection_id = ?::uuid', requiredUuid(request.query.collection, 'collection'));
     if (typeof request.query.item === 'string') add('a.item_id = ?::uuid', requiredUuid(request.query.item, 'item'));
     if (typeof request.query.action === 'string') add('a.action = ?', requiredIdentifier(request.query.action, 'action'));
+    if (request.query.actor === 'agents') conditions.push("(a.pod_id IS NOT NULL OR a.action LIKE 'agent_%')");
+    else if (request.query.actor === 'people') conditions.push("(a.pod_id IS NULL AND a.action NOT LIKE 'agent_%')");
+    else if (request.query.actor !== undefined) throw new HttpError(400, 'actor is invalid');
     if (request.query.blocked === 'true') conditions.push('a.blocked = true');
     else if (request.query.blocked !== undefined && request.query.blocked !== 'false') throw new HttpError(400, 'blocked is invalid');
     if (typeof request.query.from === 'string') {
@@ -886,7 +894,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       add('a.created_at < ?::timestamptz', request.query.to);
     }
     params.push(limit, offset);
-    const [events, summary] = await Promise.all([
+    const [events, summary, filters] = await Promise.all([
       db.query(
         `SELECT a.id,a.actor_user_id,a.device_id,a.collection_id,a.item_id,a.action,a.pod_id,
                 a.metadata,a.blocked,a.reason,a.created_at
@@ -904,11 +912,25 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
           WHERE org_id=$1 AND created_at >= NOW() - INTERVAL '7 days'`,
         [orgId],
       ),
+      db.query<{
+        actions:     string[];
+        people:      string[];
+        collections: string[];
+        items:       string[];
+      }>(
+        `SELECT ARRAY(SELECT DISTINCT action FROM audit_log WHERE org_id=$1 ORDER BY action) AS actions,
+                ARRAY(SELECT DISTINCT actor_user_id::text FROM audit_log WHERE org_id=$1 AND actor_user_id IS NOT NULL ORDER BY actor_user_id::text) AS people,
+                ARRAY(SELECT DISTINCT collection_id::text FROM audit_log WHERE org_id=$1 AND collection_id IS NOT NULL ORDER BY collection_id::text) AS collections,
+                ARRAY(SELECT DISTINCT item_id::text FROM audit_log WHERE org_id=$1 AND item_id IS NOT NULL ORDER BY item_id::text) AS items`,
+        [orgId],
+      ),
     ]);
     const counts = summary.rows[0] ?? { total: '0', agent_total: '0', blocked_total: '0' };
+    const filterOptions = filters.rows[0] ?? { actions: [], people: [], collections: [], items: [] };
     response.json({
       events: events.rows.map(event => ({ ...event, metadata: sanitizedAuditMetadata(event.metadata) })),
       summary: { total: Number(counts.total), agents: Number(counts.agent_total), blocked: Number(counts.blocked_total) },
+      filters: filterOptions,
       limit,
       offset,
     });
