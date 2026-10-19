@@ -235,6 +235,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId:string; path?:string; trash?:boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
   ipcMain.handle('sulla-files:search', (_event, input:{ query:string; collectionId?:string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
+  ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
   ipcMain.handle('sulla-files:stars', (_event, input:{ collectionId:string }) => json(`/v1/stars?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:set-star', (_event, input:{ starred:boolean; collectionId:string; fileId?:string; folderPath?:string }) => json('/v1/stars', { method: input.starred ? 'PUT' : 'DELETE', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:operate', (_event, input:{ action:'move' | 'copy'; collectionId:string; items:{ fileId?:string; folderPath?:string; targetPath:string }[] }) => json('/v1/file-operations', { method: 'POST', body: JSON.stringify(input) }));

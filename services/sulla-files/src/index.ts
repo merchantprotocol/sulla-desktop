@@ -151,7 +151,7 @@ if (config.mode === 'server') {
   delete process.env.SULLA_FILES_MASTER_KEY;
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority);
+const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
 const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
 if (config.mode === 'desktop' && !tlsEnabled) throw new Error('Files TLS identity is required in desktop mode');
 const server = tlsEnabled

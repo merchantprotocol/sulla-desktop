@@ -947,7 +947,7 @@ async function runFilesRecall(state: BaseThreadState): Promise<string> {
     if (!userId) return '';
     const terms = extractRecallTerms([query], 16);
     if (!terms.length) return '';
-    const recall = filesContainerJson<any[]>('/v1/search', {
+    const recall = filesContainerJson<{ results:any[] }>('/v1/search', {
       sub:        userId,
       org_id:     meta.orgId,
       device_id:  meta.deviceId,
@@ -957,13 +957,13 @@ async function runFilesRecall(state: BaseThreadState): Promise<string> {
     }, { method: 'POST', body: JSON.stringify({ query, terms, limit: 5 }) });
     const rows = await Promise.race([
       recall,
-      new Promise<any[]>((resolve) => {
-        const timer = setTimeout(() => resolve([]), 300);
+      new Promise<{ results:any[] }>((resolve) => {
+        const timer = setTimeout(() => resolve({ results: [] }), 300);
 
         timer.unref();
       }),
     ]);
-    return rows.slice(0, 5).map((row: any) => `${ row.title } (${ row.path }) — ${ row.why }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
+    return rows.results.slice(0, 5).map((row: any) => `${ row.title } (${ row.path }) — ${ row.why }${ row.snippet ? `: ${ row.snippet.replace(/\s+/g, ' ').slice(0, 140) }` : '' }`).join('\n');
   } catch (error) {
     console.warn('[SubconsciousMiddleware] files recall unavailable:', error instanceof Error ? error.message : error);
     return '';
