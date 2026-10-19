@@ -13,6 +13,11 @@ interface RemoteCapabilities {
   authenticatedRemote: boolean;
   verifiedRecovery: boolean;
   onlineOnlyReason?: string;
+  lifecycle?: FilesDataSource['capabilities']['lifecycle'];
+  canEdit?: boolean;
+  canManage?: boolean;
+  canViewDraft?: boolean;
+  canPublish?: boolean;
 }
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
@@ -38,6 +43,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     authenticatedRemote:false,
     verifiedRecovery:false,
     nativeFilesystem:true,
+    lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
   };
 
   onlineOnlyReason = '';
@@ -59,6 +65,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       keepOnComputer:     false,
       authenticatedRemote:false,
       verifiedRecovery:   false,
+      lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
     });
     this.onlineOnlyReason = '';
     this.capabilitiesListeners.forEach(listener => listener());
@@ -74,6 +81,15 @@ export class DesktopFilesDataSource implements FilesDataSource {
           keepOnComputer: capabilities.keepOnComputer && primaryRoot,
           authenticatedRemote: capabilities.authenticatedRemote && primaryRoot,
           verifiedRecovery: capabilities.verifiedRecovery && primaryRoot,
+          lifecycle: capabilities.lifecycle ?? {
+            updateLifecycle: capabilities.canManage === true,
+            checkout: capabilities.canEdit === true,
+            checkin: capabilities.canEdit === true,
+            publish: capabilities.canPublish === true,
+            retention: capabilities.canManage === true,
+            record: capabilities.canManage === true,
+            disposal: capabilities.canManage === true,
+          },
         });
         this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
         this.capabilitiesListeners.forEach(listener => listener());
@@ -87,6 +103,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
           keepOnComputer:     false,
           authenticatedRemote:false,
           verifiedRecovery:   false,
+          lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
         });
         this.onlineOnlyReason = 'Cloud and remote Files capabilities are unavailable.';
         this.capabilitiesListeners.forEach(listener => listener());
@@ -143,7 +160,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         name:            collection.name,
         home:            collection.home,
         orgId:           collection.org_id,
-        retentionPolicy: collection.retention_policy ?? { trashDays: 90 },
+        retentionPolicy: collection.retention_policy ?? {},
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
         desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),

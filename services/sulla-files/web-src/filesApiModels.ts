@@ -41,9 +41,14 @@ export function filesItem(file:FilesApiFile):FilesItem {
     draftVersionId: file.draft_version_id ?? file.draftVersionId ?? null,
     publishedVersionId: file.published_version_id ?? file.publishedVersionId ?? null,
     publicationState: file.publication_state ?? file.publicationState,
-    versioning: file.versioning,
+    versioning: file.versioning ? {
+      enabled: file.versioning.enabled ?? file.versioning.versioningEnabled ?? false,
+      majorMinor: file.versioning.majorMinor ?? false,
+      requireApproval: file.versioning.requireApproval ?? false,
+      requireCheckout: file.versioning.requireCheckout ?? false,
+    } : undefined,
     checkout: file.checkout ?? null,
-    retention: file.retention,
+    retention: file.retention ? { ...file.retention, reason: file.retention.reason ?? file.retention.lockReason ?? null } : undefined,
     record: file.record,
     disposal: file.disposal,
   };

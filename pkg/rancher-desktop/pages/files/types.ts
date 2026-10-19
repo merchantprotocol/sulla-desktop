@@ -12,11 +12,13 @@ export interface FilesRetentionPolicy {
   eventType?: string | null;
   eventOccurredAt?: string | null;
   durationDays?: number | null;
+  reason?: string | null;
 }
 
 export interface FilesVersioningSettings {
   enabled: boolean;
   majorMinor: boolean;
+  requireApproval: boolean;
   requireCheckout: boolean;
 }
 
@@ -142,6 +144,17 @@ export interface FilesCapabilities {
   authenticatedRemote?: boolean;
   verifiedRecovery?: boolean;
   nativeFilesystem: boolean;
+  lifecycle?: FilesLifecyclePermissions;
+}
+
+export interface FilesLifecyclePermissions {
+  updateLifecycle: boolean;
+  checkout: boolean;
+  checkin: boolean;
+  publish: boolean;
+  retention: boolean;
+  record: boolean;
+  disposal: boolean;
 }
 
 export type ShareAccessMode = 'view' | 'download';
