@@ -28,6 +28,8 @@ spec:
             - {name: SULLA_ACCOUNTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/accounts-workflows-token}
             - {name: SULLA_WORKFLOW_AUDIENCE, value: sulla-workflows}
             - {name: SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES, valueFrom: {secretKeyRef: {name: sulla-server, key: workflow-allowed-runner-scopes}}}
+            - {name: SULLA_AGENTS_URL, value: http://sulla-agents:8789}
+            - {name: SULLA_AGENTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/agents-workflows-service-token}
           volumeMounts: [{name: secrets, mountPath: /run/sulla-secrets, readOnly: true}, {name: docker, mountPath: /var/run/docker.sock}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 5}
       volumes:

@@ -208,9 +208,8 @@ services:
       SULLA_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_tools
       SULLA_REDIS_URL: redis://redis:6379
       SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
-      SULLA_DESKTOP_EXECUTOR_URL: ${SULLA_DESKTOP_EXECUTOR_URL:?Tools executor URL is required}
-      SULLA_DESKTOP_EXECUTOR_TOKEN: ${SULLA_DESKTOP_EXECUTOR_TOKEN:?Tools executor token is required}
-    extra_hosts: ["host.docker.internal:host-gateway"]
+      SULLA_DESKTOP_EXECUTOR_URL: ${SULLA_DESKTOP_EXECUTOR_URL:-}
+      SULLA_DESKTOP_EXECUTOR_TOKEN: ${SULLA_DESKTOP_EXECUTOR_TOKEN:-}
     healthcheck:
       test: ["CMD", wget, -qO-, http://127.0.0.1:3000/healthz]
       interval: 5s
@@ -239,8 +238,10 @@ services:
       SULLA_ACCOUNTS_SERVICE_ID: agents
       SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-agents-token
       SULLA_AGENT_AUDIENCE: sulla-agents
+      SULLA_WORKFLOWS_SERVICE_TOKEN_FILE: /run/secrets/agents-workflows-token
     secrets:
       - accounts-agents-token
+      - agents-workflows-token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -277,8 +278,11 @@ services:
       SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-workflows-token
       SULLA_WORKFLOW_AUDIENCE: sulla-workflows
       SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES: ${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES}
+      SULLA_AGENTS_URL: http://agents:8789
+      SULLA_AGENTS_SERVICE_TOKEN_FILE: /run/secrets/agents-workflows-token
     secrets:
       - accounts-workflows-token
+      - agents-workflows-token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -288,6 +292,7 @@ services:
       timeout: 3s
       retries: 30
   console:
+    profiles: [standalone-console]
     image: sulla-console:${SULLA_IMAGE_TAG}
     build:
       context: ${SULLA_SOURCE_DIR}
@@ -304,14 +309,15 @@ services:
   gateway:
     image: nginx:1.29-alpine
     restart: unless-stopped
-    depends_on:
-      console: { condition: service_healthy }
     environment:
       SULLA_TLS_CERT_CONTAINER_PATH: ${SULLA_TLS_CERT_CONTAINER_PATH:-}
       SULLA_TLS_KEY_CONTAINER_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}
+      SULLA_CONSOLE_UPSTREAM: ${SULLA_CONSOLE_UPSTREAM}
+      SULLA_PUBLIC_SCHEME: ${SULLA_PUBLIC_SCHEME}
     entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
     ports:
       - "${SULLA_BIND_ADDRESS}:${SULLA_PORT}:8787"
+    extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - ${SULLA_SOURCE_DIR}/deploy/server/gateway/nginx.conf.template:/etc/sulla/nginx.conf.template:ro
       - ${SULLA_SOURCE_DIR}/deploy/server/gateway/entrypoint.sh:/etc/sulla/entrypoint.sh:ro
@@ -351,6 +357,8 @@ secrets:
     file: ${SULLA_ACCOUNTS_AGENTS_TOKEN_FILE}
   accounts-workflows-token:
     file: ${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE}
+  agents-workflows-token:
+    file: ${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE}
 
 networks:
   default:

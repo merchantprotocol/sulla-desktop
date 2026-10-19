@@ -24,6 +24,7 @@ spec:
             - {name: SULLA_ACCOUNTS_SERVICE_ID, value: agents}
             - {name: SULLA_ACCOUNTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/accounts-agents-token}
             - {name: SULLA_AGENT_AUDIENCE, value: sulla-agents}
+            - {name: SULLA_WORKFLOWS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/agents-workflows-service-token}
           volumeMounts: [{name: secrets, mountPath: /run/sulla-secrets, readOnly: true}, {name: docker, mountPath: /var/run/docker.sock}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 5}
       volumes:
