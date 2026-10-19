@@ -96,7 +96,7 @@ async function importPaths(paths:string[], destination = '', progress?:(value:{ 
     const response = await filesClient.request(`/v1/files/import?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(target) }&conflict=keep-both`, {
       method:  'PUT',
       headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
-      body:    bytes,
+      body:    bytes as unknown as BodyInit,
     });
     if (!response.ok) throw new FilesApiError((await response.json().catch(() => ({})) as { error?:string }).error ?? `Files upload failed (${ response.status })`, response.status);
     imported++;
@@ -677,7 +677,7 @@ export function initSullaFilesIpc():void {
     if (picked.canceled || !picked.filePaths[0]) return undefined;
     await getSullaFilesWatcher().prepareNativeSourceSession();
     if (process.mas && !picked.bookmarks?.[0]) throw new Error('The Mac App Store build did not return the required security-scoped file grant');
-    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
+    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) as () => void : undefined;
     const gateway = getSullaFilesSourceGateway();
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
     try {
@@ -719,7 +719,7 @@ export function initSullaFilesIpc():void {
     if (picked.canceled || !picked.filePaths[0]) return undefined;
     await getSullaFilesWatcher().prepareNativeSourceSession();
     if (process.mas && !picked.bookmarks?.[0]) throw new Error('The Mac App Store build did not return the required security-scoped file grant');
-    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) : undefined;
+    const release = picked.bookmarks?.[0] ? app.startAccessingSecurityScopedResource(picked.bookmarks[0]) as () => void : undefined;
     const gateway = getSullaFilesSourceGateway();
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
     try {
