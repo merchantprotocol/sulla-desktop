@@ -176,7 +176,7 @@
           Index: {{ indexSummary }}
         </div>
         <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
-          Search is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Unsupported and failed files cannot contribute content matches.
+          Search coverage is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.partial }} partially indexed, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Partial files can still match within the extracted portion; unsupported and failed files cannot contribute content matches.
         </div>
 
         <div class="filters">
@@ -684,7 +684,7 @@ const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me',
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
-const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
+const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.partial } partial · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
 const accountName = computed(() => snapshot.value?.collection.accountName || 'Signed-in user');
 const accountLine = computed(() => {
   const raw = snapshot.value?.collection.accountRole;

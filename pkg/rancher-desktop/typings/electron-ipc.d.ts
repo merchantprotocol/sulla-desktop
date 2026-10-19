@@ -512,7 +512,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
   'sulla-files:collections':     () => any[];
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
-  'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; unsupported:number; failed:number; complete:boolean } };
+  'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
   'sulla-files:stars':           (input: { collectionId: string }) => { fileId?: string; folderPath?: string }[];
   'sulla-files:set-star':        (input: { starred: boolean; collectionId: string; fileId?: string; folderPath?: string }) => void;

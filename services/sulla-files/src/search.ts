@@ -18,7 +18,7 @@ export interface SearchInput {
 }
 
 interface Candidate { file_id: string; path: string; mime: string; size: string; updated_at: string; created_by_id: string; content: string | null; signal: number }
-export interface IndexCoverage { total:number; pending:number; indexing:number; indexed:number; unsupported:number; failed:number; complete:boolean }
+export interface IndexCoverage { total:number; pending:number; indexing:number; indexed:number; partial:number; unsupported:number; failed:number; complete:boolean }
 export interface FileSearchResponse { results:any[]; coverage:IndexCoverage }
 
 function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:any[]):string[] {
@@ -48,16 +48,17 @@ export class FileSearch {
 
   async search(input:SearchInput, granted:CollectionSearchScope[]):Promise<FileSearchResponse> {
     const scopes = input.collectionId ? granted.filter(scope => scope.collectionId === input.collectionId) : granted;
-    if (!scopes.length) return { results: [], coverage: { total: 0, pending: 0, indexing: 0, indexed: 0, unsupported: 0, failed: 0, complete: true } };
+    if (!scopes.length) return { results: [], coverage: { total: 0, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true } };
     const coverageArgs:any[] = []; const coverageWhere = filteredWhere(input, scopes, coverageArgs);
     const coverageRow = (await this.db.query<any>(`SELECT COUNT(*)::int total,
       COUNT(*) FILTER(WHERE f.extraction_status='pending')::int pending,
       COUNT(*) FILTER(WHERE f.extraction_status='indexing')::int indexing,
       COUNT(*) FILTER(WHERE f.extraction_status='indexed')::int indexed,
+      COUNT(*) FILTER(WHERE f.extraction_status='indexed' AND right(f.extraction_reason_code,8)='_partial')::int partial,
       COUNT(*) FILTER(WHERE f.extraction_status='unsupported')::int unsupported,
       COUNT(*) FILTER(WHERE f.extraction_status='failed')::int failed
       FROM files f WHERE ${ coverageWhere.join(' AND ') }`, coverageArgs)).rows[0];
-    const coverage:IndexCoverage = { ...coverageRow, complete: coverageRow.pending === 0 && coverageRow.indexing === 0 && coverageRow.unsupported === 0 && coverageRow.failed === 0 };
+    const coverage:IndexCoverage = { ...coverageRow, complete: coverageRow.pending === 0 && coverageRow.indexing === 0 && coverageRow.partial === 0 && coverageRow.unsupported === 0 && coverageRow.failed === 0 };
     if (!input.query.trim()) return { results: [], coverage };
     const queryText = input.terms?.length ? input.terms.filter(term => /^[a-z0-9_.-]+$/i.test(term)).join(' OR ') : input.query;
     const keywordArgs:any[] = []; const keywordWhere = filteredWhere(input, scopes, keywordArgs);
