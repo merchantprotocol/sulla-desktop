@@ -92,7 +92,11 @@ export class SullaFilesRootRegistry {
     if (process.platform !== 'darwin' || typeof app.startAccessingSecurityScopedResource !== 'function') return;
     for (const root of await this.stored()) {
       if (root.id === 'default' || !root.bookmark || this.bookmarkStops.has(root.id)) continue;
-      try { this.bookmarkStops.set(root.id, app.startAccessingSecurityScopedResource(root.bookmark)) } catch { /* Status reports the inaccessible mount without probing its contents. */ }
+      try {
+        const stopAccessing = app.startAccessingSecurityScopedResource(root.bookmark);
+
+        this.bookmarkStops.set(root.id, () => stopAccessing());
+      } catch { /* Status reports the inaccessible mount without probing its contents. */ }
     }
   }
 
