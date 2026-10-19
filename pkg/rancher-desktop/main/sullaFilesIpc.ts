@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -13,6 +13,7 @@ import { getSullaFilesClient } from './sullaFilesClient';
 import { createDirectoryWithinRoot } from './sullaFilesDirectory';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesRootRegistry } from './sullaFilesRootRegistry';
+import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
@@ -23,7 +24,27 @@ import { SULLA_FILES_NATIVE_SOURCE_READY } from '@pkg/utils/sullaFilesNativeSour
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
+const MAX_NATIVE_SOURCE_BYTES = 64 * 1024 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const filesClient = getSullaFilesClient();
+
+async function boundedBytes(response:Response, limit = MAX_NATIVE_SOURCE_BYTES):Promise<Buffer> {
+  const declared = Number(response.headers.get('content-length') ?? 0);
+  if (!response.ok) throw new Error(`Files content request failed (${ response.status })`);
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > limit) throw new Error('Files content exceeds the native source size bound');
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader(); const chunks:Buffer[] = []; let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      total += value.byteLength;
+      if (total > limit) throw new Error('Files content exceeds the native source size bound');
+      chunks.push(Buffer.from(value));
+    }
+  } catch (error) { await reader.cancel().catch(() => undefined); throw error }
+  if (declared && declared !== total) throw new Error('Files content length changed during native publication');
+  return Buffer.concat(chunks, total);
+}
 
 async function cloudFilesAvailable():Promise<boolean> {
   try {
@@ -378,19 +399,67 @@ export function initSullaFilesIpc():void {
     };
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return undefined;
-    const { getSullaFilesSourceGateway } = await import('./sullaFilesSourceGateway');
+    await getSullaFilesWatcher().prepareNativeSourceSession();
     const release = process.platform === 'darwin' && picked.bookmarks?.[0]
       ? app.startAccessingSecurityScopedResource(picked.bookmarks[0])
       : undefined;
     const gateway = getSullaFilesSourceGateway();
     const handle = await gateway.registerExactFile(picked.filePaths[0], release);
-    const capability = gateway.issueCapability(handle, 'sulla-files', ['read', 'write']);
-    return { handle, capability, serviceId: 'sulla-files' as const };
+    try {
+      const snapshot = await gateway.read(handle);
+      const operationId = randomUUID();
+      const file = await getSullaFilesWatcher().ingestNativeSource({
+        operationId,
+        handle,
+        sourceRevision: snapshot.revision,
+        contentHash: snapshot.contentHash,
+        name: path.basename(picked.filePaths[0]),
+        bytes: snapshot.bytes,
+      });
+      return {
+        handle,
+        operationId,
+        sourceRevision: snapshot.revision,
+        contentHash: snapshot.contentHash,
+        fileId: file.id,
+        versionId: file.current_version_id,
+        path: file.path,
+      };
+    } catch (error) {
+      gateway.revoke(handle);
+      throw error;
+    }
   });
-  ipcMain.handle('files-experiment:revoke-native-source', async(_event, handle:string) => {
+  ipcMain.handle('files-experiment:revoke-native-source', (_event, handle:string) => {
     if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
-    const { getSullaFilesSourceGateway } = await import('./sullaFilesSourceGateway');
     getSullaFilesSourceGateway().revoke(handle);
+  });
+  ipcMain.handle('files-experiment:publish-native-source', async(_event, input:{ handle:string; sourceRevision:string; fileId:string; versionId:string }) => {
+    if (!SULLA_FILES_NATIVE_SOURCE_READY || process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(input.handle) || !/^[a-f0-9]{64}$/i.test(input.sourceRevision) ||
+        !UUID.test(input.fileId) || !UUID.test(input.versionId)) throw new Error('Native Files publication input is invalid');
+    const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/download?versionId=${ encodeURIComponent(input.versionId) }`);
+    const bytes = await boundedBytes(response);
+    const contentHash = createHash('sha256').update(bytes).digest('hex');
+    const operationId = randomUUID();
+    const watcher = getSullaFilesWatcher();
+    await watcher.planNativePublication({
+      operationId,
+      handle: input.handle,
+      sourceRevision: input.sourceRevision,
+      contentHash,
+      fileId: input.fileId,
+      baseVersionId: input.versionId,
+    });
+    try {
+      const result = await getSullaFilesSourceGateway().write(input.handle, input.sourceRevision, bytes);
+      if (result.contentHash !== contentHash) throw new Error('Native source publication returned an unexpected content hash');
+      await watcher.finishNativePublication(operationId, { nextSourceRevision: result.revision });
+      return { operationId, sourceRevision: result.revision, contentHash: result.contentHash };
+    } catch (error) {
+      await watcher.finishNativePublication(operationId, { error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+      throw error;
+    }
   });
   ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string; collectionId?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
 }

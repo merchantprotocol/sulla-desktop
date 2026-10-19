@@ -50,6 +50,14 @@ export interface SullaFilesRootStatus {
   lastSyncAt?: string;
 }
 
+export interface NativeSourceFileResult {
+  id: string;
+  current_version_id: string;
+  path: string;
+  mime: string;
+  size: number;
+}
+
 export interface RecentSullaFile {
   id:               string;
   path:             string;
@@ -199,6 +207,12 @@ class SullaFilesWatcher {
     return this.localRequest(endpoint, init);
   }
 
+  async prepareNativeSourceSession():Promise<void> {
+    // This also advances the gateway unlock epoch only after Files and the
+    // application vault have both proved they are unlocked.
+    await this.ensureUnlocked();
+  }
+
   private async localPrincipalId():Promise<string> {
     const response = await this.rawLocalRequest('/v1/local/identity');
     if (!response.ok) throw new Error('Files service identity is unavailable');
@@ -345,6 +359,61 @@ class SullaFilesWatcher {
     const response = await this.request(`/v1/local/recent?limit=100&path=${ encodeURIComponent(relativePath) }`);
     if (!response.ok) return undefined;
     return (await response.json() as RecentSullaFile[])[0];
+  }
+
+  async ingestNativeSource(input:{
+    operationId: string;
+    handle: string;
+    sourceRevision: string;
+    contentHash: string;
+    name: string;
+    mime?: string;
+    bytes: Buffer;
+    fileId?: string;
+    baseVersionId?: string;
+  }):Promise<NativeSourceFileResult> {
+    const collectionResponse = await this.request('/v1/local/native-sources/collection');
+    if (!collectionResponse.ok) throw new Error(`Files collection request failed (${ collectionResponse.status })`);
+    const collection = await collectionResponse.json() as { collectionId?:unknown };
+    if (typeof collection.collectionId !== 'string' || !collection.collectionId) throw new Error('Files returned an invalid native source collection');
+    const name = path.basename(input.name).replaceAll('/', '_');
+    if (!name || name === '.' || name === '..') throw new Error('Native source name is invalid');
+    const query = new URLSearchParams({ collectionId: collection.collectionId, path: `Native Sources/${ input.operationId }/${ name }` });
+    if (input.fileId) query.set('fileId', input.fileId);
+    const headers:Record<string, string> = {
+      'content-type':                    input.mime ?? 'application/octet-stream',
+      'x-sulla-operation-id':            input.operationId,
+      'x-sulla-source-handle':           input.handle,
+      'x-sulla-source-revision':         input.sourceRevision,
+      'x-sulla-source-hash':             input.contentHash,
+    };
+    if (input.baseVersionId) headers['x-sulla-files-base-version'] = input.baseVersionId;
+    const body = new ArrayBuffer(input.bytes.byteLength);
+    new Uint8Array(body).set(input.bytes);
+    const response = await this.request(`/v1/local/native-sources/ingest?${ query }`, { method: 'PUT', headers, body });
+    if (!response.ok) throw new Error(`Native source ingestion failed (${ response.status }): ${ await response.text() }`);
+    return await response.json() as NativeSourceFileResult;
+  }
+
+  async planNativePublication(input:{ operationId:string; handle:string; sourceRevision:string; contentHash:string; fileId:string; baseVersionId:string }):Promise<void> {
+    const response = await this.request('/v1/local/native-sources/publications', {
+      method: 'POST',
+      headers: {
+        'x-sulla-operation-id':    input.operationId,
+        'x-sulla-source-handle':   input.handle,
+        'x-sulla-source-revision': input.sourceRevision,
+        'x-sulla-source-hash':     input.contentHash,
+      },
+      body: JSON.stringify({ fileId: input.fileId, baseVersionId: input.baseVersionId }),
+    });
+    if (!response.ok) throw new Error(`Native source publication planning failed (${ response.status }): ${ await response.text() }`);
+  }
+
+  async finishNativePublication(operationId:string, result:{ nextSourceRevision?:string; error?:string }):Promise<void> {
+    const response = await this.request(`/v1/local/native-sources/publications/${ encodeURIComponent(operationId) }/finish`, {
+      method: 'POST', body: JSON.stringify(result),
+    });
+    if (!response.ok) throw new Error(`Native source publication finalization failed (${ response.status }): ${ await response.text() }`);
   }
 
   async folderForCollection(collectionId?:string):Promise<string> {

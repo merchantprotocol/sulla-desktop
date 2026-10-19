@@ -5,21 +5,24 @@ This is a feasibility slice for a real Linux FUSE mount backed by the authentica
 ## Native source boundary increment
 
 The repository also contains an experimental native source broker in
-`pkg/rancher-desktop/main/sullaFilesSourceGateway.ts` and its container-side
-client in `src/nativeSourceClient.ts`. The native process registers one exact
-regular file and returns an opaque random handle. The HTTP surface accepts the
-handle only; callers cannot submit or discover a host path. Reads include a
-content-bound revision, and writes require that exact revision. Unknown and
-revoked handles fail closed. If the source changed first, the proposed bytes
-are retained behind a second opaque conflict handle without replacing the
-source.
+`pkg/rancher-desktop/main/sullaFilesSourceGateway.ts`. Electron registers one
+exact regular file only after a native chooser, pins its descriptor/device/inode,
+and returns an opaque random handle. Host paths and source capabilities never
+enter Lima or a container. Electron ingests bounded bytes through the existing
+authenticated Files API; `files_native_source_operations` durably records the
+handle, source revision, Files base/result versions, desired hash, and recovery
+state. Publication is planned before Electron reads the exact Files version and
+conditionally writes the pinned source. Lock synchronously closes descriptors
+and revokes every session.
 
-This is the first broker roundtrip, not the removal of production host bind
-mounts. The client is intentionally not connected to `LocalFilesManager` yet:
-doing so safely requires a durable recovery record that spans native
-publication and Files version ingestion. A macOS application can replace a
-file after the broker's final comparison, so this code does not claim atomic
-CAS against noncooperating applications.
+Production host-home, external-volume, and broad Darwin-temp mounts are removed
+from the staged Lima configuration. Persisted mount arrays are replaced rather
+than deep-merged, Files runs stored-only on encrypted chunks/named volumes, and
+agent file tools use guest-owned homes/workspaces. The native feature remains
+hard-disabled by `SULLA_FILES_NATIVE_SOURCE_READY=false` until a reviewed native
+host acceptance run succeeds. A macOS application can still race after the
+broker's final comparison, so this code does not claim atomic CAS against
+noncooperating applications.
 
 The minimal reviewed host acceptance step is: create one disposable synthetic
 file with a native chooser, start a reviewed Desktop build with the broker,

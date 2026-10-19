@@ -92,7 +92,7 @@ export function createApp(
       return response.status(failure.status).json({ code: failure.code, error: failure.message });
     }
   });
-  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import'].includes(request.path) ? next() : jsonParser(request, response, next));
+  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest'].includes(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
@@ -233,6 +233,60 @@ export function createApp(
     if (!config.fuseExperiment || !manager || config.mode !== 'desktop') throw new HttpError(404, 'experimental Files mount is unavailable');
     return manager;
   };
+  const nativeSourceManager = () => {
+    if (!manager || config.mode !== 'desktop') throw new HttpError(404, 'native Files sources are unavailable');
+    return manager;
+  };
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const nativeMetadata = (request:express.Request) => {
+    const operationId = request.header('x-sulla-operation-id') ?? '';
+    const handle = request.header('x-sulla-source-handle') ?? '';
+    const sourceRevision = request.header('x-sulla-source-revision')?.toLowerCase() ?? '';
+    const desiredHash = request.header('x-sulla-source-hash')?.toLowerCase() ?? '';
+    if (!UUID.test(operationId) || !/^[A-Za-z0-9_-]{43}$/.test(handle) ||
+        !/^[a-f0-9]{64}$/.test(sourceRevision) || !/^[a-f0-9]{64}$/.test(desiredHash)) {
+      throw new HttpError(400, 'valid native source operation metadata is required');
+    }
+    return { operationId, handle, sourceRevision, desiredHash };
+  };
+  app.get('/v1/local/native-sources/collection', async(_request, response, next) => { try {
+    response.json({ collectionId: await nativeSourceManager().nativeCollectionId() });
+  } catch (error) { next(error) } });
+  app.put('/v1/local/native-sources/ingest', express.raw({ type: '*/*', limit: '64mb' }), async(request, response, next) => { try {
+    const metadata = nativeMetadata(request);
+    const bytes = Buffer.from(request.body as Buffer);
+    if (createHash('sha256').update(bytes).digest('hex') !== metadata.desiredHash) throw new HttpError(409, 'native source bytes do not match their declared hash');
+    const collectionId = String(request.query.collectionId ?? '');
+    const fileId = typeof request.query.fileId === 'string' && request.query.fileId ? request.query.fileId : undefined;
+    const baseVersionId = request.header('x-sulla-files-base-version') || undefined;
+    const path = cleanPath(String(request.query.path ?? ''), false);
+    const collection = await collectionRow(collectionId);
+    if (collection.compatibility_state !== 'native') throw new HttpError(409, 'native source ingestion requires a native Files collection');
+    const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
+    const result = await nativeSourceManager().ingestNativeSource({ ...metadata, fileId, baseVersionId },
+      (client, versionId) => insertVersion(client, {
+        collectionId, fileId, versionId, path,
+        mime: request.header('content-type') ?? 'application/octet-stream', bytes, actor,
+        createdByType: 'user', createdById: config.userId, message: 'Imported from an explicitly selected native source', baseVersionId: baseVersionId ?? null,
+      }));
+    response.status(201).json(result);
+  } catch (error) { next(error) } });
+  app.post('/v1/local/native-sources/publications', async(request, response, next) => { try {
+    const metadata = nativeMetadata(request);
+    const fileId = String(request.body.fileId ?? '');
+    const baseVersionId = String(request.body.baseVersionId ?? '');
+    if (!UUID.test(fileId) || !UUID.test(baseVersionId)) throw new HttpError(400, 'valid Files publication identity is required');
+    const file = await fileRow(fileId);
+    if (file.current_version_id !== baseVersionId) throw new HttpError(409, 'Files base version changed before native publication');
+    await nativeSourceManager().planNativePublication({ ...metadata, fileId, baseVersionId });
+    response.status(201).json({ operationId: metadata.operationId });
+  } catch (error) { next(error) } });
+  app.post('/v1/local/native-sources/publications/:id/finish', async(request, response, next) => { try {
+    const nextRevision = typeof request.body.nextSourceRevision === 'string' ? request.body.nextSourceRevision.toLowerCase() : undefined;
+    if (nextRevision !== undefined && !/^[a-f0-9]{64}$/.test(nextRevision)) throw new HttpError(400, 'next source revision is invalid');
+    await nativeSourceManager().finishNativePublication(request.params.id, nextRevision, typeof request.body.error === 'string' ? request.body.error : undefined);
+    response.status(204).end();
+  } catch (error) { next(error) } });
   app.get('/v1/fuse/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
     if (!collectionId) throw new HttpError(400, 'collectionId is required');

@@ -8,7 +8,6 @@ const MAX_CONCURRENT_REQUESTS = 4;
 const MAX_TOTAL_INFLIGHT_BYTES = MAX_CONCURRENT_REQUESTS * MAX_SOURCE_BYTES;
 const MAX_CAPABILITY_TTL_MS = 5 * 60_000;
 const BIND_HOST = '127.0.0.1';
-const DEFAULT_PORT = 30_125;
 
 interface RegisteredSource {
   path:       string;
@@ -86,6 +85,7 @@ export class SullaFilesSourceGateway {
 
   async registerExactFile(sourcePath:string, release?:() => void):Promise<string> {
     let file:fs.promises.FileHandle | undefined;
+    const registrationEpoch = this.epoch;
     try {
       if (!this.sessionsEnabled) throw new SourceGatewayError(423, 'files_locked', 'Native Files source sessions are disabled while Files is locked');
       const selectedInfo = await fs.promises.lstat(sourcePath, { bigint: true });
@@ -102,9 +102,12 @@ export class SullaFilesSourceGateway {
         throw new SourceGatewayError(409, 'source_identity_changed', 'Selected source identity changed during registration');
       }
       const parentPath = await fs.promises.realpath(path.dirname(canonical));
+      if (!this.sessionsEnabled || this.epoch !== registrationEpoch) {
+        throw new SourceGatewayError(423, 'files_locked', 'Files locked while the native source was being registered');
+      }
       const handle = crypto.randomBytes(32).toString('base64url');
       this.sources.set(handle, {
-        path: canonical, parentPath, file, dev: descriptorInfo.dev, ino: descriptorInfo.ino, epoch: this.epoch, release,
+        path: canonical, parentPath, file, dev: descriptorInfo.dev, ino: descriptorInfo.ino, epoch: registrationEpoch, release,
       });
       file = undefined;
       return handle;
@@ -154,6 +157,10 @@ export class SullaFilesSourceGateway {
   }
 
   async read(handle:string):Promise<SullaFilesSourceSnapshot> {
+    return this.withCapacity(() => this.readPinned(handle));
+  }
+
+  private async readPinned(handle:string):Promise<SullaFilesSourceSnapshot> {
     const source = await this.requireSource(handle);
     const before = await source.file.stat({ bigint: true });
     if (!before.isFile() || before.size > BigInt(MAX_SOURCE_BYTES)) throw new SourceGatewayError(413, 'invalid_source', 'Registered source is not a bounded regular file');
@@ -173,6 +180,10 @@ export class SullaFilesSourceGateway {
   }
 
   async write(handle:string, expectedRevision:string, bytes:Buffer):Promise<SullaFilesSourceWriteResult> {
+    return this.withCapacity(() => this.writePinned(handle, expectedRevision, bytes));
+  }
+
+  private async writePinned(handle:string, expectedRevision:string, bytes:Buffer):Promise<SullaFilesSourceWriteResult> {
     if (!/^[a-f0-9]{64}$/i.test(expectedRevision)) throw new SourceGatewayError(428, 'revision_required', 'A valid source revision is required');
     if (bytes.byteLength > MAX_SOURCE_BYTES) throw new SourceGatewayError(413, 'source_too_large', 'Source write exceeds the experimental size bound');
     const source = await this.requireSource(handle);
@@ -187,7 +198,7 @@ export class SullaFilesSourceGateway {
       const staged = await fs.promises.open(stagedPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, sourceMode || 0o600);
       ownsStage = true;
       try { await staged.writeFile(bytes); await staged.sync() } finally { await staged.close() }
-      const current = await this.read(handle);
+      const current = await this.readPinned(handle);
       if (!safeEqual(current.revision.toLowerCase(), expectedRevision.toLowerCase())) {
         const conflictHandle = await this.preserveConflict(source, stagedPath);
         ownsStage = false;
@@ -195,21 +206,23 @@ export class SullaFilesSourceGateway {
       }
       await fs.promises.link(source.path, recoveryPath);
       ownsRecovery = true;
-      const verified = await this.read(handle);
+      const verified = await this.readPinned(handle);
       if (!safeEqual(verified.revision.toLowerCase(), expectedRevision.toLowerCase())) {
         const conflictHandle = await this.preserveConflict(source, stagedPath);
         ownsStage = false;
         throw new SourceGatewayError(409, 'source_changed', 'Registered source changed while the conditional write was staged', conflictHandle);
       }
+      this.assertActive(handle, source);
       await fs.promises.rename(stagedPath, source.path);
       ownsStage = false;
       await syncParent(source.parentPath);
+      this.assertActive(handle, source);
       const replacement = await this.openPinnedSource(source.path);
       await source.file.close();
       source.file = replacement.file;
       source.dev = replacement.info.dev;
       source.ino = replacement.info.ino;
-      const result = await this.read(handle);
+      const result = await this.readPinned(handle);
       const desiredHash = crypto.createHash('sha256').update(bytes).digest('hex');
       if (!safeEqual(result.contentHash, desiredHash)) throw new Error('Published source does not match the staged bytes');
       await fs.promises.unlink(recoveryPath);
@@ -225,7 +238,7 @@ export class SullaFilesSourceGateway {
         throw error;
       }
       if (ownsRecovery) {
-        const current = await this.read(handle).catch(() => undefined);
+        const current = await this.readPinned(handle).catch(() => undefined);
         const desiredHash = crypto.createHash('sha256').update(bytes).digest('hex');
         if (current?.contentHash === desiredHash) {
           await fs.promises.rename(recoveryPath, source.path).then(async() => {
@@ -282,16 +295,29 @@ export class SullaFilesSourceGateway {
     return source;
   }
 
+  private assertActive(handle:string, source:RegisteredSource):void {
+    if (!this.sessionsEnabled || source.epoch !== this.epoch || this.sources.get(handle) !== source) {
+      throw new SourceGatewayError(423, 'files_locked', 'Native source session was revoked during publication');
+    }
+  }
+
   private async preserveConflict(source:RegisteredSource, stagedPath:string):Promise<string> {
+    if (!this.sessionsEnabled || source.epoch !== this.epoch) throw new SourceGatewayError(423, 'files_locked', 'Files locked before conflict preservation');
     const conflictPath = path.join(source.parentPath, `.sulla-source-conflict-${ crypto.randomUUID() }`);
     await fs.promises.rename(stagedPath, conflictPath);
     await syncParent(source.parentPath);
     const pinned = await this.openPinnedSource(conflictPath);
-    const conflictHandle = crypto.randomBytes(32).toString('base64url');
-    this.sources.set(conflictHandle, {
-      path: conflictPath, parentPath: source.parentPath, file: pinned.file, dev: pinned.info.dev, ino: pinned.info.ino, epoch: this.epoch,
-    });
-    return conflictHandle;
+    try {
+      if (!this.sessionsEnabled || source.epoch !== this.epoch) throw new SourceGatewayError(423, 'files_locked', 'Files locked while conflict preservation was completing');
+      const conflictHandle = crypto.randomBytes(32).toString('base64url');
+      this.sources.set(conflictHandle, {
+        path: conflictPath, parentPath: source.parentPath, file: pinned.file, dev: pinned.info.dev, ino: pinned.info.ino, epoch: this.epoch,
+      });
+      return conflictHandle;
+    } catch (error) {
+      await pinned.file.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   private async openPinnedSource(sourcePath:string):Promise<{
@@ -339,6 +365,11 @@ export class SullaFilesSourceGateway {
     this.reservedBytes = Math.max(0, this.reservedBytes - MAX_SOURCE_BYTES);
   }
 
+  private async withCapacity<T>(operation:()=>Promise<T>):Promise<T> {
+    if (!this.reserveRequest()) throw new SourceGatewayError(503, 'gateway_busy', 'Native Files source gateway request limits are reached');
+    try { return await operation() } finally { this.releaseRequest() }
+  }
+
   private async route(request:http.IncomingMessage, response:http.ServerResponse):Promise<void> {
     const match = request.url?.match(/^\/v1\/sources\/([A-Za-z0-9_-]+)$/);
     if (!match) throw new SourceGatewayError(404, 'not_found', 'Route not found');
@@ -347,7 +378,8 @@ export class SullaFilesSourceGateway {
     this.requireCapability(request, handle, permission);
     await this.requireSource(handle);
     if (request.method === 'GET') {
-      const snapshot = await this.read(handle);
+      // The HTTP request already owns one capacity reservation.
+      const snapshot = await this.readPinned(handle);
       response.writeHead(200, {
         'cache-control':       'private, no-store',
         'content-length':      String(snapshot.bytes.byteLength),
@@ -361,7 +393,7 @@ export class SullaFilesSourceGateway {
     if (request.method === 'PUT') {
       const expectedRevision = request.headers['if-match']?.match(/^"([a-f0-9]{64})"$/i)?.[1] ?? '';
       const bytes = await this.readBody(request);
-      const result = await this.write(handle, expectedRevision, bytes);
+      const result = await this.writePinned(handle, expectedRevision, bytes);
       this.sendJson(response, 200, result);
       return;
     }
@@ -398,10 +430,9 @@ export class SullaFilesSourceGateway {
 
 let sourceGateway:SullaFilesSourceGateway | undefined;
 
-export async function startSullaFilesSourceGateway():Promise<SullaFilesSourceGateway> {
+export function startSullaFilesSourceGateway():SullaFilesSourceGateway {
   if (sourceGateway) return sourceGateway;
   const gateway = new SullaFilesSourceGateway();
-  await gateway.start(DEFAULT_PORT);
   sourceGateway = gateway;
   return gateway;
 }

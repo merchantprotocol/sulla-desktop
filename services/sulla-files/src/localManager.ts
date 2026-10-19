@@ -60,6 +60,23 @@ interface PathOperationReceipt {
   fingerprint?: { dev: string; ino: string; size: number; mtimeMs: number };
 }
 
+export interface NativeSourceOperationInput {
+  operationId: string;
+  handle: string;
+  sourceRevision: string;
+  fileId?: string;
+  baseVersionId?: string;
+  desiredHash: string;
+}
+
+export interface NativeSourceIngestResult {
+  id: string;
+  current_version_id: string;
+  path: string;
+  mime: string;
+  size: number;
+}
+
 function mime(path:string):string {
   const extension = extname(path).toLowerCase();
   return ({
@@ -159,10 +176,18 @@ export class LocalFilesManager {
 
   async initialize(beforeScan?:()=>Promise<void>):Promise<void> {
     this.stopped = false;
-    if (!this.config.filesRoot) return;
-    for (const root of this.roots) await mkdir(root.path, { recursive: true, mode: 0o700 });
     await mkdir(this.config.dataRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.config.chunkRoot, { recursive: true, mode: 0o700 });
+    if (!this.config.filesRoot) {
+      this.collectionId = await this.ensureCollection({
+        id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+      });
+      await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW()");
+      await this.reconcileNativeSourceOperations();
+      await beforeScan?.();
+      return;
+    }
+    for (const root of this.roots) await mkdir(root.path, { recursive: true, mode: 0o700 });
     for (const root of this.roots) await assertSeparateStorageRoots(root.path, this.config.dataRoot, this.config.chunkRoot);
     for (const root of this.roots) {
       const collectionId = await this.ensureCollection(root);
@@ -176,6 +201,7 @@ export class LocalFilesManager {
     }
     await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW() WHERE NOT(id=ANY($1::text[]))", [this.roots.map(root => root.id)]);
     await this.recoverPathOperations();
+    await this.reconcileNativeSourceOperations();
     await beforeScan?.();
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
     if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
@@ -193,6 +219,108 @@ export class LocalFilesManager {
   status():RuntimeState {
     const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
     return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
+  }
+
+  async nativeCollectionId():Promise<string> {
+    this.collectionId ??= await this.ensureCollection({
+      id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+    });
+    return this.collectionId;
+  }
+
+  async ingestNativeSource(
+    input:NativeSourceOperationInput,
+    ingest:(client:pg.PoolClient, versionId:string)=>Promise<NativeSourceIngestResult>,
+  ):Promise<NativeSourceIngestResult> {
+    const versionId = randomUUID();
+    return this.serial(async() => {
+      const existing = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+      if (existing) {
+        if (existing.direction !== 'ingest' || existing.source_handle !== input.handle || existing.source_revision !== input.sourceRevision ||
+            existing.files_base_version_id !== (input.baseVersionId ?? null) || existing.desired_hash !== input.desiredHash) {
+          throw Object.assign(new Error('Native source operation id was reused with different immutable inputs'), { status: 409 });
+        }
+        if (existing.state === 'completed' && existing.file_id && existing.files_version_id) {
+          const file = (await this.db.query('SELECT * FROM files WHERE id=$1 AND current_version_id=$2', [existing.file_id, existing.files_version_id])).rows[0];
+          if (file) return file;
+        }
+      } else {
+        await this.db.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,file_id,files_base_version_id,files_version_id,desired_hash)
+          VALUES($1,$2,'ingest','planned',$3,$4,$5,$6,$7)`,
+        [input.operationId, input.handle, input.sourceRevision, input.fileId ?? null, input.baseVersionId ?? null, versionId, input.desiredHash]);
+      }
+      const operation = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+      if (operation.state !== 'planned') {
+        throw Object.assign(new Error('Native source ingestion requires reconciliation before it can be retried'), { status: 409 });
+      }
+      const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ input.handle }`]);
+        if (input.fileId) {
+          const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
+          if (file?.current_version_id !== (input.baseVersionId ?? null)) throw Object.assign(new Error('Files base version changed before native source ingestion'), { status: 409 });
+        }
+        const result = await ingest(client, operation.files_version_id);
+        const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',file_id=$2,files_version_id=$3,last_error=NULL,updated_at=NOW()
+          WHERE operation_id=$1 AND state='planned'`, [input.operationId, result.id, result.current_version_id]);
+        if (completed.rowCount !== 1) throw Object.assign(new Error('Native source ingestion operation changed while it was committing'), { status: 409 });
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        await this.db.query('UPDATE files_native_source_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [input.operationId, (error instanceof Error ? error.message : String(error)).slice(0, 2000)]).catch(() => undefined);
+        throw error;
+      } finally { client.release() }
+    });
+  }
+
+  async planNativePublication(input:NativeSourceOperationInput & { fileId:string; baseVersionId:string }):Promise<void> {
+    await this.db.query(`INSERT INTO files_native_source_operations
+      (operation_id,source_handle,direction,state,source_revision,file_id,files_base_version_id,files_version_id,desired_hash)
+      VALUES($1,$2,'publish','publishing',$3,$4,$5,$5,$6)
+      ON CONFLICT(operation_id) DO NOTHING`,
+    [input.operationId, input.handle, input.sourceRevision, input.fileId, input.baseVersionId, input.desiredHash]);
+    const row = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+    const matches = row?.direction === 'publish' && row.source_handle === input.handle && row.source_revision === input.sourceRevision &&
+      row.file_id === input.fileId && row.files_base_version_id === input.baseVersionId && row.desired_hash === input.desiredHash;
+    if (!matches) {
+      throw Object.assign(new Error('Native source publication id was reused with different immutable inputs'), { status: 409 });
+    }
+  }
+
+  async finishNativePublication(operationId:string, nextSourceRevision?:string, error?:string):Promise<void> {
+    const operation = (await this.db.query(`SELECT o.*,f.current_version_id FROM files_native_source_operations o
+      LEFT JOIN files f ON f.id=o.file_id WHERE o.operation_id=$1`, [operationId])).rows[0];
+    if (!operation || operation.direction !== 'publish') throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+    if (operation.state === 'completed' && nextSourceRevision === operation.next_source_revision) return;
+    if (operation.state === 'recovery-required' && !nextSourceRevision) return;
+    if (nextSourceRevision && operation.current_version_id !== operation.files_base_version_id) {
+      await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
+        last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW() WHERE operation_id=$1`,
+      [operationId, nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
+      throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
+    }
+    const result = nextSourceRevision
+      ? await this.db.query(`UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
+          WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, nextSourceRevision])
+      : await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
+          WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
+    if (result.rowCount !== 1) throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+  }
+
+  private async reconcileNativeSourceOperations():Promise<void> {
+    await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error=NULL,updated_at=NOW()
+      FROM files f WHERE o.direction='ingest' AND o.state='planned' AND o.file_id=f.id AND o.files_version_id=f.current_version_id`);
+    // An ingest transaction commits the Files version and operation receipt
+    // together. A remaining planned row is therefore safe to retry with the
+    // same immutable inputs. Publication crosses the native filesystem and
+    // must be reconciled because its outcome cannot be inferred from SQL.
+    await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',
+      recovery=jsonb_build_object('action','compare-source-to-files-version'),
+      last_error=COALESCE(last_error,'Native source session ended before the operation outcome was acknowledged'),updated_at=NOW()
+      WHERE direction='publish' AND state='publishing'`);
   }
 
   async listRoots():Promise<FileRootStatus[]> {
