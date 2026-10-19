@@ -8,4 +8,12 @@ chown -R "$run_as" /var/lib/sulla-files
 if [ -d /backup ]; then
   chown -R "$run_as" /backup
 fi
+if [ -n "${SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE:-}" ]; then
+  mkdir -p /run/sulla-files-secrets
+  chmod 0700 /run/sulla-files-secrets
+  cp "$SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE" /run/sulla-files-secrets/accounts-token
+  chown -R "$run_as" /run/sulla-files-secrets
+  chmod 0600 /run/sulla-files-secrets/accounts-token
+  export SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE=/run/sulla-files-secrets/accounts-token
+fi
 exec su-exec "$run_as" "$@"

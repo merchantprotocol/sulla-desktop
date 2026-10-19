@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - storage.yaml
   - postgres.yaml
+  - sulla-console.yaml
   - sulla-vault.yaml
   - sulla-files.yaml
   - sulla-projects.yaml

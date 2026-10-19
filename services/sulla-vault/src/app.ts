@@ -623,7 +623,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     response.json({ bootstrapped: ((await db.query('SELECT 1 FROM users LIMIT 1')).rowCount ?? 0) > 0 });
   });
 
-  app.get('/console', async(_request, response) => {
+  const sendConsole = async(_request: express.Request, response: express.Response) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [resolve(here, '../console/index.html'), resolve(here, '../../console/index.html')]) {
@@ -633,14 +633,21 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       } catch { /* source tree vs image */ }
     }
     response.type('html').send(CONSOLE_HTML);
-  });
+  };
+  app.get('/ui', (_request, response) => response.redirect(308, '/ui/'));
+  app.get('/ui/', sendConsole);
+  app.get('/console', (_request, response) => response.redirect(308, '/ui/'));
+  app.use('/ui', (request, response, next) => {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
+    next();
+  }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
   app.use('/console', (request, response, next) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
     next();
   }, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../console')));
   app.get('/', (_request, response) => {
     if (config.mode !== 'server') return response.status(404).json({ error: 'not_found' });
-    return response.redirect(302, '/console');
+    return response.redirect(302, '/ui/');
   });
 
   // Desktop bootstrap is deliberately limited to the local, single-user
@@ -820,6 +827,15 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   });
 
   app.use('/v1', authenticate(config, db));
+
+  app.get('/v1/unlock-material', async(request: AuthenticatedRequest, response) => {
+    const account = await db.query(`SELECT id,email,public_key,encrypted_private_key,encrypted_user_key,kdf
+      FROM users WHERE id=$1 AND disabled_at IS NULL`, [userId(request)]);
+    if (!account.rows[0]) return response.status(401).json({ error:'invalid_account' });
+    const row = account.rows[0];
+    response.json({ id:row.id, email:row.email, publicKey:row.public_key,
+      encryptedPrivateKey:row.encrypted_private_key, encryptedUserKey:row.encrypted_user_key, kdf:row.kdf });
+  });
 
   app.get('/v1/items', async(request: AuthenticatedRequest, response) => {
     const actorId = userId(request);

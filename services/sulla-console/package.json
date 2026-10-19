@@ -1,0 +1,9 @@
+{
+  "name": "@sulla/console-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node ../../resources/sulla-console/server.mjs"
+  }
+}

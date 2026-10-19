@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import express from 'express';
 
+import { resolveFilesUiSession } from './accountsAuth.js';
 import { prepareCollectionMembership, resolveCollectionGrants, ROLE_LEVEL, searchableScopes, type CollectionMembership } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
@@ -106,7 +107,9 @@ export function createApp(
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
-  if (config.mode === 'server' || config.fuseExperiment) app.use('/files', serverUi());
+  if (config.mode === 'server' || config.fuseExperiment) app.use('/ui', serverUi());
+  if (config.mode === 'server') app.get('/files', (_request, response) => response.redirect(308, '/ui/'));
+  if (config.mode === 'server') app.use('/files', serverUi());
   if (config.fuseExperiment) app.use('/files-proof', serverUi());
   app.post('/v1/bootstrap/challenge', bootstrapJsonParser, async(request, response) => {
     if (config.mode !== 'desktop' || !bootstrapAuthority) return response.sendStatus(404);
@@ -126,12 +129,26 @@ export function createApp(
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
-    try { request.filesIdentity = verifyFilesIdentity(bearer(request), config.capabilitySigningKey, config.serverJwtSecret) } catch { response.status(401).json({ error: 'unauthorized' }); return }
+    const token = bearer(request);
+    try { request.filesIdentity = verifyFilesIdentity(token, config.capabilitySigningKey, config.accounts ? undefined : config.serverJwtSecret) } catch {
+      if (config.mode !== 'server' || !config.accounts || !identityDb) { response.status(401).json({ error: 'unauthorized' }); return }
+      resolveFilesUiSession(config, token).then(async context => {
+        const mapped = await identityDb.query(`SELECT ai.user_id FROM accounts_identities ai
+          JOIN org_members om ON om.user_id=ai.user_id AND om.org_id=$3 AND om.status='confirmed'
+          JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
+          WHERE ai.issuer=$1 AND ai.subject=$2`, [context.issuer, context.subject, context.organizationId]);
+        if (!mapped.rows[0]?.user_id) return response.status(403).json({ error:'organization access denied' });
+        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, groupIds:context.groups };
+        next();
+      }).catch((error:unknown) => response.status(Number((error as { status?:number }).status) || 401).json({ error:'unauthorized' }));
+      return;
+    }
     if (request.filesIdentity.kind === 'capability' && request.filesIdentity.scopes?.includes('files/fuse') &&
         !request.filesIdentity.scopes.some(scope => scope === '*' || scope === 'files/*') && !request.path.startsWith('/v1/fuse/')) {
       response.status(403).json({ error: 'FUSE capability is restricted to mount operations' }); return;
     }
     if (config.mode !== 'server') return next();
+    if (config.accounts) return next();
     if (!identityDb) return response.status(503).json({ error: 'organization identity database is not configured' });
     identityDb.query('SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL', [request.filesIdentity.userId])
       .then(result => result.rowCount ? next() : response.status(401).json({ error: 'session is no longer active' }))
