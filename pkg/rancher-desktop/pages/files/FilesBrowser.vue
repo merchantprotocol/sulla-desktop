@@ -60,6 +60,46 @@
           v-html="icons.folderLine"
         /><span>{{ folder.split('/').at(-1) }}</span></a>
       </template>
+      <div class="sep" />
+      <section
+        class="favorites"
+        :class="{ 'drop-target': favoriteDropActive }"
+        aria-label="Favorite folders"
+        @dragenter="onFavoriteDragEnter"
+        @dragover="onFavoriteDragOver"
+        @dragleave="onFavoriteDragLeave"
+        @drop="onFavoriteDrop"
+      >
+        <div class="grp favorites-heading">
+          Favorites <span>Drop folders here</span>
+        </div>
+        <div
+          v-for="folder in folderFavorites"
+          :key="folder.path"
+          class="favorite-row"
+          :class="{ unavailable: !folder.available }"
+        >
+          <button
+            class="favorite-link"
+            type="button"
+            :class="{ on: section === 'files' && currentPath === folder.path }"
+            :disabled="busy || loading || !folder.available"
+            :title="folder.available ? folder.path : `${folder.path} is unavailable`"
+            @click="openPath(folder.path)"
+          ><span
+            class="sv"
+            v-html="icons.folderLine"
+          /><span>{{ folder.name }}</span><small v-if="!folder.available">Unavailable</small></button>
+          <button
+            class="favorite-remove"
+            type="button"
+            :disabled="busy || loading"
+            :aria-label="`Remove ${folder.path} from Favorites`"
+            title="Remove from Favorites"
+            @click="setFolderFavorite(folder.path, false)"
+          >×</button>
+        </div>
+      </section>
       <div
         class="quota"
         :class="{ nobar: !quotaBytes }"
@@ -894,7 +934,7 @@ const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
-const dragging = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const dragging = ref(false); const favoriteDropActive = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>([]);
 const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
@@ -906,6 +946,20 @@ const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
 const storagePercent = computed(() => quotaBytes.value ? Math.min(100, Math.max(1, totalBytes.value / quotaBytes.value * 100)) : 0);
 const storageWhere = computed(() => snapshot.value?.status.serverConfigured ? 'on server' : 'on this Mac');
 const sharedFolders = computed(() => snapshot.value?.collection.sharedFolders ?? []);
+const folderFavorites = computed(() => {
+  const folders = new Set((snapshot.value?.folders ?? []).map(folder => typeof folder === 'string' ? folder : folder.path));
+
+  return [...starred.value]
+    .filter(key => key.startsWith('folder:'))
+    .map(key => key.slice('folder:'.length))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(path => ({
+      path,
+      name: path.split('/').at(-1) ?? path,
+      available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
+    }));
+});
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1300,7 +1354,7 @@ function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
   dragSourceCollectionId=collectionId;
   dragSourceCapability=missingFolders.length ? 'unavailable' : props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
-  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.effectAllowed = 'all';
   event.dataTransfer.setData('application/x-sulla-files', JSON.stringify(dragTargets.value));
   if (!missingFolders.length) invalidateDragPreparation();
 }
@@ -1357,9 +1411,43 @@ function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTim
 function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
 function updateDragPointer(event:DragEvent) { dragPointer.value = { x: event.clientX, y: event.clientY } }
 function onSurfaceDragOver(event:DragEvent) { updateDragPointer(event); const surface = mainSurface.value; if (!surface) return; const rect = surface.getBoundingClientRect(); if (event.clientY < rect.top + 64) surface.scrollTop -= 18; else if (event.clientY > rect.bottom - 64) surface.scrollTop += 18 }
+function canFavoriteDrag() {
+  return !busy.value && !loading.value && Boolean(snapshot.value?.collection.id) && dragSourceCollectionId === snapshot.value?.collection.id && draggedKeys.value.size > 0 && dragTargets.value.length > 0 && dragTargets.value.every(target => target.folder && Boolean(target.folderPath));
+}
+function onFavoriteDragEnter(event:DragEvent) {
+  event.preventDefault(); event.stopPropagation(); cancelHoverOpen();
+  favoriteDropActive.value = canFavoriteDrag();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = favoriteDropActive.value ? 'link' : 'none';
+}
+function onFavoriteDragOver(event:DragEvent) {
+  event.preventDefault(); event.stopPropagation(); cancelHoverOpen();
+  favoriteDropActive.value = canFavoriteDrag();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = favoriteDropActive.value ? 'link' : 'none';
+}
+function onFavoriteDragLeave(event:DragEvent) {
+  event.stopPropagation();
+  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) favoriteDropActive.value = false;
+}
+async function onFavoriteDrop(event:DragEvent) {
+  event.preventDefault(); event.stopPropagation(); cancelHoverOpen();
+  const collectionId = snapshot.value?.collection.id;
+  const paths = canFavoriteDrag() ? [...new Set(dragTargets.value.map(target => target.folderPath!).filter(Boolean))] : [];
+  clearInternalDrag();
+  if (!collectionId || !paths.length || busy.value || loading.value) return;
+  const additions = paths.filter(path => !starred.value.has(`folder:${ path }`));
+  if (!additions.length) return;
+  await runMutation(async() => {
+    for (const folderPath of additions) await props.dataSource.setStar(collectionId, { folderPath }, true);
+  });
+}
+async function setFolderFavorite(path:string, favorite:boolean) {
+  const collectionId = snapshot.value?.collection.id;
+  if (!collectionId || busy.value || loading.value || starred.value.has(`folder:${ path }`) === favorite) return;
+  await runMutation(() => props.dataSource.setStar(collectionId, { folderPath: path }, favorite));
+}
 function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
 async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability) }
-function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = '' }
+function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -1935,6 +2023,22 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 .nav a .cnt.warn { background: var(--warn-soft); color: var(--warn); }
 .nav .sep { height: 1px; background: var(--line); margin: 10px 8px; }
 .nav .grp { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 8px 10px 4px; }
+.nav .favorites { min-height: 44px; padding: 3px; border: 1px dashed transparent; border-radius: 10px; transition: background .15s, border-color .15s; }
+.nav .favorites.drop-target { background: var(--accent-soft); border-color: var(--accent-line); }
+.nav .favorites-heading { display: flex; align-items: center; justify-content: space-between; }
+.nav .favorites-heading span { font-size: 9px; font-weight: 500; letter-spacing: 0; text-transform: none; opacity: .75; }
+.nav .favorite-row { display: flex; align-items: center; min-width: 0; }
+.nav .favorite-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 7px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); text-align: left; }
+.nav .favorite-link:hover:not(:disabled) { background: var(--ink-05); color: var(--text); }
+.nav .favorite-link.on { background: var(--accent-soft); color: var(--accent-2); font-weight: 600; }
+.nav .favorite-link .sv { display: grid; width: 16px; height: 16px; flex: none; opacity: .8; }
+.nav .favorite-link .sv :deep(svg) { width: 16px; height: 16px; }
+.nav .favorite-link > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav .favorite-link small { margin-left: auto; color: var(--dim); font-size: 9px; }
+.nav .favorite-row.unavailable .favorite-link { opacity: .62; }
+.nav .favorite-remove { width: 24px; height: 28px; flex: none; border: 0; border-radius: 6px; background: transparent; color: var(--dim); font-size: 18px; line-height: 1; opacity: 0; }
+.nav .favorite-row:hover .favorite-remove, .nav .favorite-remove:focus-visible { opacity: 1; }
+.nav .favorite-remove:hover:not(:disabled) { background: var(--ink-05); color: var(--text); }
 .nav .quota { padding: 10px 10px 6px; font-size: 11px; color: var(--muted); }
 .nav .quota .bar { height: 4px; border-radius: 2px; background: var(--paper-2); overflow: hidden; margin: 6px 0 4px; }
 .nav .quota .bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
