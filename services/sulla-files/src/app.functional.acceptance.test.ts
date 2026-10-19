@@ -131,6 +131,14 @@ test('real handlers provision collections and preserve authenticated content acr
     const uploaded = await upload.json();
     assert.equal(uploaded.path, 'Proof/acceptance.txt');
 
+    // Pre-migration files have implicit parents without file_folders rows.
+    await db.query('DELETE FROM file_folders WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof']);
+    const ancestorUpload = await fetch(`${ baseUrl }/v1/files/upload?collectionId=${ collectionId }&path=Proof`, {
+      method: 'PUT', headers: { ...auth, 'content-type': 'text/plain' }, body: Buffer.from('must not replace a directory'),
+    });
+    assert.equal(ancestorUpload.status, 409);
+    assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof'])).rows[0].count, 0);
+
     await waitForIndex(uploaded.id, uploaded.current_version_id);
     let indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
       FROM files f JOIN file_search_chunks c ON c.file_id=f.id JOIN file_index_jobs j ON j.version_id=c.version_id
