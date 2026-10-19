@@ -30,6 +30,21 @@ export function isTransientDbError(error: unknown): boolean {
   return typeof e.message === 'string' && /Connection terminated|connection.*(?:closed|ended)|timeout exceeded when trying to connect/i.test(e.message);
 }
 
+/** One short line for an error; never the full pg client/pool object. */
+export function describeDbError(error: unknown): string {
+  const e = error as { code?: string; message?: string } | null;
+  return [e?.code, e?.message?.split('\n')[0]].filter(Boolean).join(' ') || 'unknown error';
+}
+
+let lastOutageLog = 0;
+/** Log "database unavailable" at most once per 30s regardless of request volume. */
+export function warnDatabaseUnavailable(error: unknown): void {
+  const now = Date.now();
+  if (now - lastOutageLog < 30_000) return;
+  lastOutageLog = now;
+  console.warn(`sulla-vault: Postgres unavailable, requests return 503 until it recovers (${ describeDbError(error) })`);
+}
+
 const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
 /** Retry an operation until Postgres is reachable, with capped exponential backoff. */
@@ -40,8 +55,10 @@ export async function untilDatabaseReady<T>(label: string, operation: () => Prom
     } catch (error) {
       if (!isTransientDbError(error)) throw error;
       const delay = Math.min(500 * 2 ** Math.min(attempt - 1, 4), 5000);
-      const detail = (error as { code?: string; message?: string }).code ?? (error as Error).message;
-      console.warn(`sulla-vault: waiting for Postgres during ${ label } (attempt ${ attempt }, ${ detail }); retrying in ${ delay }ms`);
+      // First miss, then roughly once a minute: an outage is one line, not a flood.
+      if (attempt === 1 || attempt % 12 === 0) {
+        console.warn(`sulla-vault: waiting for Postgres during ${ label } (attempt ${ attempt }, ${ describeDbError(error) }); retrying every ${ delay / 1000 }s`);
+      }
       await sleep(delay);
     }
   }
@@ -54,7 +71,7 @@ export async function untilDatabaseReady<T>(label: string, operation: () => Prom
  */
 function survivePoolErrors(pool: pg.Pool, label: string): pg.Pool {
   pool.on('error', (error) => {
-    console.warn(`sulla-vault: ${ label } pool client error (will reconnect): ${ (error as { code?: string }).code ?? '' } ${ error.message }`);
+    warnDatabaseUnavailable(error);
   });
   return pool;
 }
