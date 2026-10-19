@@ -89,6 +89,7 @@ export default defineComponent({
       routineConcurrencyTotalLimit: DEFAULT_WORKER_CONCURRENCY as number | string,
       // Heartbeat settings
       heartbeatEnabled:      true,
+      fallbackEnabled:       true,
       heartbeatDelayMinutes: 15,
       heartbeatPrompt:       '',
       heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
@@ -258,6 +259,7 @@ export default defineComponent({
     this.remoteRetryCount = await SullaSettingsModel.get('remoteRetryCount', 3);
     this.remoteTimeoutSeconds = Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60));
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
+    this.fallbackEnabled = Boolean(await SullaSettingsModel.get('fallbackEnabled', true));
     // The phone and other windows can flip these switches while this window
     // stays open; re-read them whenever the window regains focus.
     window.addEventListener('focus', this.refreshSwitches);
@@ -274,8 +276,12 @@ export default defineComponent({
     // Build available providers list from ModelProviderService
     try {
       const providers = await ipcRenderer.invoke('model-provider:get-providers');
+      // Keep every provider already chosen in a slot selectable, so an
+      // unreported connection state (e.g. vault metadata not ready) can't empty
+      // the pickers and strand the user without a choice.
+      const chosen = [this.primaryProvider, this.secondaryProvider, this.subconsciousProvider];
       this.availableProviders = providers
-        .filter((p: { id: string; name: string; connected?: boolean }) => p.connected !== false)
+        .filter((p: { id: string; name: string; connected?: boolean }) => p.connected !== false || chosen.includes(p.id))
         .map((p: { id: string; name: string; connected?: boolean }) => ({
           id: p.id, name: p.name,
         }));
@@ -996,7 +1002,7 @@ export default defineComponent({
 
     // On/off switches save the moment they are flipped and are never part of
     // the Save batch, so a stale form can't switch them back on.
-    async persistSwitch(key: 'heartbeatEnabled', event: Event) {
+    async persistSwitch(key: 'heartbeatEnabled' | 'fallbackEnabled', event: Event) {
       const input = event.target as HTMLInputElement;
       const enabled = input.checked;
       try {
@@ -1010,6 +1016,7 @@ export default defineComponent({
 
     async refreshSwitches() {
       this.heartbeatEnabled = Boolean(await SullaSettingsModel.get('heartbeatEnabled', true));
+      this.fallbackEnabled = Boolean(await SullaSettingsModel.get('fallbackEnabled', true));
     },
 
     async onPrimaryModelChange(event: Event) {
@@ -1281,8 +1288,15 @@ export default defineComponent({
           <div class="setting-group">
             <label class="setting-label">Secondary Provider (Fallback)</label>
             <div class="noir-switch-copy">
-              <span><b>Fallback routing is on</b><small>Takes over automatically when the primary provider fails.</small></span>
-              <span class="noir-readonly-switch"><i /></span>
+              <span><b>Fallback routing is {{ fallbackEnabled ? 'on' : 'off' }}</b><small>Takes over automatically when the primary provider fails.</small></span>
+              <label class="switch">
+                <input
+                  :checked="fallbackEnabled"
+                  type="checkbox"
+                  @change="persistSwitch('fallbackEnabled', $event)"
+                >
+                <span class="slider" />
+              </label>
             </div>
             <select
               v-model="secondaryProvider"

@@ -1235,7 +1235,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Fallback to secondary provider. Health check failures are logged, but
       // the call is still attempted because provider health probes often test
       // a different endpoint than chat completion.
-      if (recovery.fallbackAllowed) {
+      if (recovery.fallbackAllowed && await SullaSettingsModel.get('fallbackEnabled', true)) {
         try {
           throwIfAborted(abortSignal);
           const secondary = await getSecondaryService();
