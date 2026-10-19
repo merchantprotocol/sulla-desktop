@@ -26,7 +26,9 @@ const revocations = new RedisRevocationStore(redis);
 const requests = new RequestStore(redis, pool);
 const desktop: DesktopExecutor = config.relayUrl && config.relayToken
   ? new RelayDesktopExecutor({ relayUrl: config.relayUrl, serviceToken: config.relayToken, deviceId: config.relayDeviceId || undefined })
-  : new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken);
+  : config.desktopExecutorUrl && config.desktopExecutorToken
+    ? new HttpDesktopExecutor(config.desktopExecutorUrl, config.desktopExecutorToken)
+    : { execute: async() => ({ success: false, error: { code: 'executor_unconfigured', message: 'This tool requires a configured Desktop executor or relay' } }) };
 
 function normalizedAddress(value: string | undefined): string {
   return String(value ?? '').replace(/^::ffff:/, '');
