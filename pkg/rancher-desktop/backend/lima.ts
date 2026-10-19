@@ -62,12 +62,14 @@ import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
+import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
 import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
+import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { executable } from '@pkg/utils/resources';
@@ -2987,6 +2989,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       } else {
         await this.reconcileSullaDockerEnvironment(generation);
         markSullaDockerServicesStarted();
+        getSullaFilesMountManager().configureGuest(this);
       }
       this.assertManagedServicesGeneration(generation);
       await instantiateSullaStart(() => this.assertManagedServicesGeneration(generation));
@@ -3626,7 +3629,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
         SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
-        ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+        ...(sullaFilesNativeSourceRolloutRequested()
           ? {
             SULLA_FILES_FUSE_EXPERIMENT: '1',
           }
@@ -3659,6 +3662,51 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         interval: '5s', timeout: '3s', retries: 10,
       },
     };
+
+    if (sullaFilesNativeSourceRolloutRequested()) {
+      const fuseImage = resolveSullaServiceImage(
+        'sulla-files-fuse', process.cwd(), Electron.app.getVersion(), process.env.SULLA_FILES_FUSE_IMAGE,
+      );
+      const resolvedFuseImage = fuseImage.build ? fuseImage.image : `\${SULLA_FILES_FUSE_IMAGE:-${ fuseImage.image }}`;
+      if (shouldRefreshSullaServiceImage(fuseImage, process.env.SULLA_FILES_FUSE_IMAGE)) {
+        this.#managedSullaRefreshImages.set('sulla_files_fuse', fuseImage.image);
+      }
+      compose.services.sulla_files_fuse = {
+        ...fuseImage,
+        image:          resolvedFuseImage,
+        container_name: 'sulla_files_fuse',
+        environment: {
+          SULLA_FILES_FUSE_URL:             'https://sulla_files:8792',
+          SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
+          SULLA_FILES_FUSE_COLLECTION_FILE: '/run/sulla-files-fuse/collection',
+          SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla-files',
+          SULLA_FILES_FUSE_UID:              '1000',
+          SULLA_FILES_FUSE_GID:              '1000',
+          SSL_CERT_FILE:                     '/run/sulla-files-ca/tls.crt',
+        },
+        volumes: [
+          '/var/lib/sulla/files-fuse:/run/sulla-files-fuse:ro',
+          '/mnt/sulla-files:/mnt/sulla-files:rshared',
+          filesTlsBind(true),
+        ],
+        devices:      ['/dev/fuse:/dev/fuse'],
+        cap_drop:     ['ALL'],
+        cap_add:      ['SYS_ADMIN'],
+        security_opt: ['no-new-privileges:true'],
+        read_only:    true,
+        tmpfs:        ['/tmp:rw,noexec,nosuid,nodev,size=16m'],
+        pids_limit:   64,
+        mem_limit:    '256m',
+        cpus:         0.5,
+        restart:      'no',
+      };
+      await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '/var/lib/sulla/files-fuse');
+      await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '-o', '1000', '-g', '1000', '/mnt/sulla-files');
+      await this.execCommand({ root: true }, 'mountpoint', '-q', '/mnt/sulla-files').catch(async() => {
+        await this.execCommand({ root: true }, 'mount', '--bind', '/mnt/sulla-files', '/mnt/sulla-files');
+      });
+      await this.execCommand({ root: true }, 'mount', '--make-shared', '/mnt/sulla-files');
+    }
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
@@ -4026,6 +4074,8 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
     // case.
 
     this.invalidateManagedServicesGeneration();
+    await getSullaFilesMountManager().stop().catch(error => console.warn('[SullaFiles] guest mount shutdown failed:', error));
+    getSullaFilesMountManager().clearGuest(this);
     if (this.currentAction === Action.STARTING && this.#backendStartSettled) {
       await this.#backendStartSettled;
       if (this.currentAction === Action.STARTING) this.currentAction = Action.NONE;

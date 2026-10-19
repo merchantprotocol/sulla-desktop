@@ -283,21 +283,6 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
-  const { SULLA_FILES_NATIVE_SOURCE_READY } = await import('@pkg/utils/sullaFilesNativeSource');
-  if (SULLA_FILES_NATIVE_SOURCE_READY && process.env.SULLA_FILES_FUSE_EXPERIMENT === '1') {
-    lifecycle.registerOnce('sulla-files-source-gateway', ['database-manager'],
-      async() => {
-        const { startSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
-        await startSullaFilesSourceGateway();
-        console.log('[Background] Experimental native Files source gateway initialized');
-      },
-      async() => {
-        const { stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
-        await stopSullaFilesSourceGateway();
-      },
-    );
-  }
-
   lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();
@@ -373,7 +358,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const unlocked = await vaultKeyService.initialize();
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
-      if (unlocked) await onVaultUnlocked();
+      // Files starts in its own lifecycle stage after the vault is ready.
     },
     async() => {
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
@@ -383,6 +368,21 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       getVaultKeyService().lock();
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
       await getSullaFilesWatcher().lockService().catch(() => undefined);
+    },
+  );
+
+  lifecycle.registerOnce('sulla-files-runtime', ['vault'],
+    async() => {
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      const watcher = getSullaFilesWatcher();
+      await watcher.initialize();
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+      if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
+      console.log('[Background] Sulla Files runtime initialized');
+    },
+    async() => {
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      await getSullaFilesWatcher().shutdown();
     },
   );
 

@@ -97,6 +97,10 @@ export function createApp(
     if (request.path === '/healthz') return next();
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
     try { request.filesIdentity = verifyFilesIdentity(bearer(request), config.capabilitySigningKey, config.serverJwtSecret) } catch { response.status(401).json({ error: 'unauthorized' }); return }
+    if (request.filesIdentity.kind === 'capability' && request.filesIdentity.scopes?.includes('files/fuse') &&
+        !request.filesIdentity.scopes.some(scope => scope === '*' || scope === 'files/*') && !request.path.startsWith('/v1/fuse/')) {
+      response.status(403).json({ error: 'FUSE capability is restricted to mount operations' }); return;
+    }
     if (config.mode !== 'server') return next();
     if (!identityDb) return response.status(503).json({ error: 'organization identity database is not configured' });
     identityDb.query('SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL', [request.filesIdentity.userId])
