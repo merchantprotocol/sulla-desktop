@@ -135,10 +135,16 @@ exact retained-artifact and chunk GC follow. Full completion returns
 `currentTombstone:null`, and the receipt state. Incomplete cleanup returns HTTP
 202 `status:'recovery-required'`, `metadataPurged:true`, and truthful
 `chunks`/`retainedArtifacts` states; it never claims preserved bytes were purged.
-Remote purge uses the same journal holds/invalidation and writes a durable audit
-receipt before moving a verified local inode. A crash after metadata commit leaves
-that exact stage discoverable by startup recovery; raw recursive deletion is not
-used.
+Remote purge uses `files_path_operations` as its sole recovery authority. It
+durably records the exact collection/file/version/revision, watched hash,
+fingerprint, source and private stage before moving bytes. The metadata deletion
+transaction changes that same intent to `db-committed`; startup restores the
+verified stage for any earlier state and permits GC only after the committed
+state is corroborated by the exact purge tombstone and absence of live file/path
+metadata. The final directory entry is identity-checked again while the verified
+file remains pinned. A crash at any boundary therefore leaves either a guarded
+rollback or a committed, discoverable GC stage; raw recursive deletion and a
+parallel audit cleanup queue are not used.
 
 ### Full14 continuation — separate open scope
 - Folder Replace: extend `folderOperationBatches.ts` to snapshot/authorize both

@@ -18,7 +18,7 @@ import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
 import type { IndexingQueue } from './indexing.js';
 import type { OriginalRevealTarget } from './originalReveal.js';
-import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
+import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -49,8 +49,14 @@ interface DiskScan { paths: string[]; complete: boolean; errors: string[] }
 interface PathOperationRow {
   operation_id: string;
   state: 'planned' | 'publishing' | 'db-committed';
-  plan: PathOperationPlanEntry[];
+  plan: PathOperationPlanEntry[] | RemotePurgePlan;
   receipts: PathOperationReceipt[];
+}
+interface RemotePurgePlan {
+  kind:'remote-purge-v1'; rootId:string; collectionId:string; fileId:string;
+  sourcePath:string; stagePath:string; versionId:string; revision:string;
+  contentHash:string; fingerprint:{dev:string;ino:string;size:number;mtimeMs:number};
+  lifecycleGeneration:number;
 }
 interface PathOperationReceipt {
   fileId: string;
@@ -102,7 +108,7 @@ function collectionIdFor(userId:string, rootId = 'default'):string {
   return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
 }
 
-function serializeFingerprint(value:PublicationReceipt['fingerprint']):PathOperationReceipt['fingerprint'] {
+function serializeFingerprint(value:PublicationReceipt['fingerprint']):NonNullable<PathOperationReceipt['fingerprint']> {
   return { dev: value.dev.toString(), ino: value.ino.toString(), size: value.size, mtimeMs: value.mtimeMs };
 }
 
@@ -561,6 +567,7 @@ export class LocalFilesManager {
       )).rows as PathOperationRow[];
       for (const row of rows) {
         try {
+          if ((row.plan as RemotePurgePlan)?.kind==='remote-purge-v1') { await this.recoverRemotePurgeOperation(row as any); continue }
           if ((row.plan as any)?.version===2) { await this.nativeJournal.recover(row); continue }
           const plan = Array.isArray(row.plan) ? row.plan : [];
           if (!plan.length) throw new Error('Path operation has no recoverable plan');
@@ -574,7 +581,6 @@ export class LocalFilesManager {
           throw new Error(`Files path operation ${ row.operation_id } requires preserved-artifact reconciliation: ${ message }`);
         }
       }
-      await this.recoverRemotePurgeGc();
       const disposalRows=(await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('completed','undone','rolled-back')
         AND plan#>>'{disposal,undoInvalidatedAt}' IS NOT NULL AND plan#>>'{disposal,artifactsDisposedAt}' IS NULL ORDER BY created_at`)).rows;
       for (const disposal of disposalRows) {
@@ -584,20 +590,32 @@ export class LocalFilesManager {
     });
   }
 
-  private async recoverRemotePurgeGc():Promise<void> {
-    const rows=(await this.db.query(`SELECT id,details FROM audit_log WHERE action='remote-purge-retained' AND details->>'state'='pending' ORDER BY at`)).rows;
-    for (const row of rows) {
-      const detail=row.details; const mutations=this.rootMutations.get(detail.rootId);
-      if (!mutations) throw new Error(`Remote purge artifact ${row.id} root is unavailable; preserved`);
-      const expected=deserializeFingerprint(detail.fingerprint);
-      try {
-        await mutations.disposeRetainedFile(detail.stage,expected,p=>this.verifyOperationPinned(p,detail.contentHash));
-        await this.db.query(`UPDATE audit_log SET details=jsonb_set(details,'{state}',to_jsonb('complete'::text),TRUE) WHERE id=$1`,[row.id]);
-      } catch(error:any) {
-        await this.db.query(`UPDATE audit_log SET details=jsonb_set(details,'{lastError}',to_jsonb($2::text),TRUE) WHERE id=$1`,[row.id,String(error?.message??error).slice(0,1000)]).catch(()=>undefined);
-        throw error;
+  private async recoverRemotePurgeOperation(input:PathOperationRow):Promise<void> {
+    const row=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[input.operation_id])).rows[0];
+    if (!row) throw new Error('Remote purge journal is missing; retained bytes were preserved');
+    if (row.state==='completed' || row.state==='rolled-back') return;
+    if (!['planned','publishing','db-committed'].includes(row.state) || row.plan?.kind!=='remote-purge-v1') throw new Error('Remote purge journal state is invalid; retained bytes were preserved');
+    const plan=row.plan as RemotePurgePlan; const mutations=this.rootMutations.get(plan.rootId);
+    if (!mutations) throw new Error(`Remote purge root ${plan.rootId} is unavailable; retained bytes were preserved`);
+    const verify=(p:PinnedRegularFile)=>this.verifyOperationPinned(p,plan.contentHash);
+    const expected=deserializeFingerprint(plan.fingerprint);
+    if (row.state==='db-committed') {
+      if ((await this.db.query('SELECT 1 FROM files WHERE id=$1 OR (collection_id=$2 AND path=$3) LIMIT 1',[plan.fileId,plan.collectionId,plan.sourcePath])).rowCount) {
+        throw new Error('Remote purge metadata is still live; retained bytes were preserved');
       }
+      const tombstone=(await this.db.query('SELECT collection_id,path,lifecycle_generation FROM file_purge_tombstones WHERE file_id=$1',[plan.fileId])).rows[0];
+      if (!tombstone || tombstone.collection_id!==plan.collectionId || tombstone.path!==plan.sourcePath || Number(tombstone.lifecycle_generation)<plan.lifecycleGeneration) {
+        throw new Error('Remote purge commit proof is missing or changed; retained bytes were preserved');
+      }
+      if (await mutations.exists(plan.stagePath)) await mutations.disposeRetainedFile(plan.stagePath,expected,verify);
+      await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='db-committed'",[row.operation_id]);
+      return;
     }
+    const sourceExists=await mutations.exists(plan.sourcePath); const stageExists=await mutations.exists(plan.stagePath);
+    if (sourceExists && stageExists) throw new Error('Remote purge source and retained stage both exist; both were preserved');
+    if (!sourceExists && !stageExists) throw new Error('Remote purge source and retained stage are both missing');
+    if (stageExists) await mutations.recoverEviction({source:plan.sourcePath,quarantine:plan.stagePath,fingerprint:expected},verify);
+    await this.db.query("UPDATE files_path_operations SET state='rolled-back',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state IN('planned','publishing')",[row.operation_id]);
   }
 
   private async finishCommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
@@ -915,21 +933,43 @@ export class LocalFilesManager {
       const existing=(await this.db.query(`SELECT f.path,f.current_version_id,f.operation_revision,w.root_id,w.content_hash,w.size,w.mtime_ms
         FROM files f LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id WHERE f.id=$1 AND f.collection_id=$2`,[entry.file.id,collectionId])).rows[0];
       const root=this.rootForCollection(collectionId); const mutations=this.rootMutations.get(existing?.root_id??root.id);
-      let eviction:EvictionReceipt|undefined; let gcAuditId:string|undefined;
+      let remoteOperationId:string|undefined; let remotePlan:RemotePurgePlan|undefined;
       if (existing?.path && existing.content_hash) {
         if (!mutations) throw new Error('Remote purge root is unavailable; local bytes were preserved');
-        const stage=`.sulla-trash/.purged/${entry.file.id}/${existing.current_version_id}`;
-        eviction=await mutations.evictVerified({source:existing.path,quarantine:stage,verify:p=>this.verifyOperationPinned(p,existing.content_hash)});
-        const audit=await this.db.query(`INSERT INTO audit_log(who_type,who_id,action,details) VALUES('agent-or-device',$1,'remote-purge-retained',$2) RETURNING id`,
-          [this.config.userId,{state:'pending',rootId:existing.root_id,stage,contentHash:existing.content_hash,fingerprint:serializeFingerprint(eviction.fingerprint),fileId:entry.file.id,versionId:existing.current_version_id}]);
-        gcAuditId=audit.rows[0].id;
+        const pinned=await mutations.pinVerified(existing.path,p=>this.verifyOperationPinned(p,existing.content_hash));
+        const expected:FileFingerprint=pinned.fingerprint;
+        try {
+          if (expected.size!==Number(existing.size) || expected.mtimeMs!==Number(existing.mtime_ms)) throw new Error('Remote purge cannot prove current watched-file ownership; local bytes were preserved');
+        } finally { await pinned.close() }
+        remoteOperationId=randomUUID();
+        remotePlan={kind:'remote-purge-v1',rootId:existing.root_id,collectionId,fileId:entry.file.id,sourcePath:existing.path,
+          stagePath:`.sulla-trash/.operations/${remoteOperationId}/remote-purge`,versionId:existing.current_version_id,
+          revision:String(existing.operation_revision),contentHash:existing.content_hash,fingerprint:serializeFingerprint(expected),
+          lifecycleGeneration:Number(entry.file.lifecycle_generation??0)};
+        await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,'trash','planned',$2)`,[remoteOperationId,remotePlan]);
+        await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1",[remoteOperationId]);
+        let eviction:EvictionReceipt;
+        try { eviction=await mutations.evictVerified({source:remotePlan.sourcePath,quarantine:remotePlan.stagePath,verify:p=>this.verifyOperationPinned(p,remotePlan!.contentHash)}) }
+        catch(error) {
+          try { await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'publishing',plan:remotePlan,receipts:[]}) }
+          catch(recoveryError:any) {
+            await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1',[remoteOperationId,String(recoveryError?.message??recoveryError).slice(0,2000)]).catch(()=>undefined);
+            throw recoveryError;
+          }
+          throw error;
+        }
+        if (!sameFingerprint(eviction.fingerprint,expected)) {
+          await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'publishing',plan:remotePlan,receipts:[]});
+          throw new Error('Remote purge source identity changed before eviction; bytes were restored');
+        }
       } else if (existing?.path) throw new Error('Remote purge cannot prove ownership of local bytes; they were preserved');
-      const client = await this.db.connect(); let committed=false; await client.query('BEGIN');
+      const client = await this.db.connect(); await client.query('BEGIN');
       try {
         await client.query("SET LOCAL sulla.trusted_replication='on'");
         if (existing && !(await client.query('SELECT 1 FROM files WHERE id=$1 AND collection_id=$2 AND path=$3 AND current_version_id=$4 AND operation_revision=$5 FOR UPDATE',[entry.file.id,collectionId,existing.path,existing.current_version_id,existing.operation_revision])).rowCount) throw new Error('Remote purge target changed; retained bytes were preserved');
-        const receipt=(await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash'
-          AND ($2::text IS NULL OR after_state->>'versionId'=$2) ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[entry.file.id,existing?.current_version_id??null])).rows[0];
+        if (remoteOperationId && !(await client.query("SELECT 1 FROM files_path_operations WHERE operation_id=$1 AND state='publishing' AND plan->>'fileId'=$2 AND plan->>'versionId'=$3 AND plan->>'revision'=$4 FOR UPDATE",[remoteOperationId,entry.file.id,existing.current_version_id,String(existing.operation_revision)])).rowCount) throw new Error('Remote purge journal changed; retained bytes were preserved');
+        const receipt=existing?(await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash'
+          AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[entry.file.id,existing.current_version_id])).rows[0]:null;
         if (receipt?.state==='completed') {
           const invalidation={undoInvalidatedAt:new Date().toISOString(),invalidatedBy:'remote-authority',reason:'replicated-disposal'};
           const receiptPlan=receipt.folder_plan??{}; receiptPlan.lifecycle={...(receiptPlan.lifecycle??{}),disposal:invalidation};
@@ -940,7 +980,7 @@ export class LocalFilesManager {
         await client.query(`INSERT INTO file_purge_tombstones(collection_id,file_id,path,lifecycle_generation,audience,purged_at)
           VALUES($1,$2,$3,$4,'{"users":[],"groups":[]}'::jsonb,COALESCE($5,NOW()))
           ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),purged_at=EXCLUDED.purged_at`,
-        [collectionId, entry.file.id, entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
+        [collectionId, entry.file.id, existing?.path??entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
         await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [entry.file.id]);
         await client.query('DELETE FROM file_share_links WHERE file_id=$1', [entry.file.id]);
         await client.query(`UPDATE files SET record_lock_type='none',retention_mode='none',retain_until=NULL,retention_event_type=NULL,retention_event_at=NULL,
@@ -949,22 +989,21 @@ export class LocalFilesManager {
         await client.query('DELETE FROM journal WHERE file_id=$1', [entry.file.id]);
         await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
         await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
-        await client.query('COMMIT'); committed=true;
-        if (eviction) {
-          await mutations!.disposeRetainedFile(eviction.quarantine,eviction.fingerprint,p=>this.verifyOperationPinned(p,existing.content_hash));
-          await this.db.query(`UPDATE audit_log SET details=jsonb_set(details,'{state}',to_jsonb('complete'::text),TRUE) WHERE id=$1`,[gcAuditId]);
-        }
+        if (remoteOperationId && (await client.query("UPDATE files_path_operations SET state='db-committed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='publishing'",[remoteOperationId])).rowCount!==1) throw new Error('Remote purge journal commit proof could not be recorded');
+        await client.query('COMMIT');
+        if (remoteOperationId && remotePlan) await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'db-committed',plan:remotePlan,receipts:[]});
         if (receipt?.state==='completed') {
           const disposed=await this.nativeJournal.dispose(receipt.id);
           if (disposed.state==='recovery-required') throw new Error(disposed.error??'Remote purge retained artifacts require recovery');
         }
       } catch (error) {
-        if (!committed) {
-          await client.query('ROLLBACK');
-          if (eviction && existing?.path) {
-            const recovered=await mutations!.recoverEviction(eviction,p=>this.verifyOperationPinned(p,existing.content_hash)).then(()=>true,()=>false);
-            if (recovered && gcAuditId) await this.db.query(`UPDATE audit_log SET details=jsonb_set(details,'{state}',to_jsonb('rolled-back'::text),TRUE) WHERE id=$1`,[gcAuditId]).catch(()=>undefined);
-          }
+        await client.query('ROLLBACK').catch(()=>undefined);
+        if (remoteOperationId) {
+          const durable=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[remoteOperationId])).rows[0];
+          if (durable && ['planned','publishing','db-committed'].includes(durable.state)) await this.recoverRemotePurgeOperation(durable).catch(async recoveryError=>{
+            await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1',[remoteOperationId,String((recoveryError as any)?.message??recoveryError).slice(0,2000)]).catch(()=>undefined);
+            throw recoveryError;
+          });
         }
         throw error;
       } finally { client.release() }
