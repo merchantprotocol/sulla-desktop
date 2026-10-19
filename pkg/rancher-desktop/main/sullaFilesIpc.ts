@@ -325,9 +325,8 @@ export function initSullaFilesIpc():void {
       return files.map(file => reference(file, { id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id }));
     } catch (error) {
       const status = error instanceof FilesApiError ? error.status : 'request-failed';
-      const cause = error instanceof Error ? error.message : 'Unknown Files request failure';
 
-      console.warn(`[SullaFiles] Chat inventory is temporarily unavailable (status=${ status }): ${ cause }`);
+      console.warn(`[SullaFiles] Chat inventory is temporarily unavailable (status=${ status })`);
       return [];
     }
   });

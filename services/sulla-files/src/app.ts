@@ -360,6 +360,7 @@ export function createApp(
   });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
     try {
+      if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) throw new HttpError(400, 'valid JSON body required');
       const runIds = Array.isArray(request.body.runIds) ? [...new Set(request.body.runIds.filter((value:unknown):value is string => typeof value === 'string' && value.length > 0))].slice(0, 100) : [];
       if (!runIds.length) return response.json([]);
       const actor = identity(request); const threadId = typeof request.body.threadId === 'string' ? request.body.threadId : '';
@@ -379,10 +380,12 @@ export function createApp(
         ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId]);
       response.json(rows.rows.filter(row => !isProtectedPath(row.path)));
     } catch (error:any) {
+      const databaseCode = typeof error?.code === 'string' && ['22P02', '23503', '23505', '42P01', '42703'].includes(error.code) ? error.code : undefined;
+
       console.error('[SullaFiles] agent inventory query failed', {
-        name: error instanceof Error ? error.name : 'Error',
-        code: typeof error?.code === 'string' ? error.code : undefined,
-        message: error instanceof Error ? error.message.replace(/[\r\n\t]/g, ' ').slice(0, 500) : 'Unknown query failure',
+        category:     error instanceof HttpError && error.status < 500 ? 'invalid-request' : 'internal-error',
+        status:       error instanceof HttpError ? error.status : 500,
+        databaseCode,
       });
       next(error);
     }
