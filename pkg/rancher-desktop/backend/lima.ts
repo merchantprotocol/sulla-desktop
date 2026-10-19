@@ -3654,6 +3654,13 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         SULLA_FILES_TLS_PRIVATE_KEY_PATH:  '/run/sulla-files-tls/tls.key',
         SULLA_FILES_CASE_INSENSITIVE_ROOT: process.platform === 'darwin' ? '1' : '0',
         SULLA_FILES_ROOTS_JSON:            JSON.stringify(configuredFileRoots.map(({ hostPath: _hostPath, ...root }) => root)),
+        ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+          ? {
+            SULLA_FILES_FUSE_EXPERIMENT:     '1',
+            SULLA_FILES_NATIVE_SOURCE_URL:   'http://host.lima.internal:30125',
+            SULLA_FILES_NATIVE_SOURCE_TOKEN: sullaServicePassword,
+          }
+          : {}),
         ...(vaultIdentities ? {
           SULLA_FILES_VAULT_AUTHORITY_URL:        'https://sulla_vault:8787',
           SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID: 'sulla-files',
@@ -3666,6 +3673,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
       ports: ['127.0.0.1:30124:8792'],
+      ...(process.env.SULLA_FILES_FUSE_EXPERIMENT === '1'
+        ? {
+          extra_hosts: ['host.lima.internal:192.168.5.2'],
+        }
+        : {}),
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         `${ filesUserRoot.activePath }:/data/files`,

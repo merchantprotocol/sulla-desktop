@@ -38,6 +38,8 @@ export interface Config {
   modelDir:             string;
   fileRoots?:           FileRootConfig[];
   fuseExperiment?:      boolean;
+  nativeSourceUrl?:     string;
+  nativeSourceToken?:   string;
 }
 
 export interface FileRootConfig {
@@ -123,5 +125,7 @@ export function loadConfig():Config {
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
     fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
     fuseExperiment:   process.env.SULLA_FILES_FUSE_EXPERIMENT === '1',
+    nativeSourceUrl:  process.env.SULLA_FILES_NATIVE_SOURCE_URL,
+    nativeSourceToken: process.env.SULLA_FILES_NATIVE_SOURCE_TOKEN,
   };
 }

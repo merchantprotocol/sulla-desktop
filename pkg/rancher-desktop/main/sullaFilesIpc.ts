@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { BrowserWindow, dialog, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
@@ -366,6 +366,28 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:pick-upload-references', async(event) => {
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     return pickAndImportChatFiles(owner);
+  });
+  ipcMain.handle('files-experiment:pick-native-source', async(event) => {
+    if (process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1') throw new Error('Experimental native Files sources are disabled');
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options:Electron.OpenDialogOptions = {
+      title: 'Choose one synthetic file for the Files source experiment',
+      properties: ['openFile'],
+      securityScopedBookmarks: process.platform === 'darwin',
+    };
+    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths[0]) return undefined;
+    const { getSullaFilesSourceGateway } = await import('./sullaFilesSourceGateway');
+    const release = process.platform === 'darwin' && picked.bookmarks?.[0]
+      ? app.startAccessingSecurityScopedResource(picked.bookmarks[0])
+      : undefined;
+    const handle = await getSullaFilesSourceGateway().registerExactFile(picked.filePaths[0], release);
+    return { handle };
+  });
+  ipcMain.handle('files-experiment:revoke-native-source', async(_event, handle:string) => {
+    if (process.env.SULLA_FILES_FUSE_EXPERIMENT !== '1' || !/^[A-Za-z0-9_-]{43}$/.exec(handle)) throw new Error('Experimental native Files source handle is invalid');
+    const { getSullaFilesSourceGateway } = await import('./sullaFilesSourceGateway');
+    getSullaFilesSourceGateway().revoke(handle);
   });
   ipcMain.handle('files-ui:upload-paths', (event, input:{ paths:string[]; destination?:string; collectionId?:string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
 }

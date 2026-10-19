@@ -2,6 +2,32 @@
 
 This is a feasibility slice for a real Linux FUSE mount backed by the authenticated Sulla Files service. It is off unless the service starts with `SULLA_FILES_FUSE_EXPERIMENT=1`. The bearer capability is read from `SULLA_FILES_FUSE_TOKEN`; it is never accepted on the command line.
 
+## Native source boundary increment
+
+The repository also contains an experimental native source broker in
+`pkg/rancher-desktop/main/sullaFilesSourceGateway.ts` and its container-side
+client in `src/nativeSourceClient.ts`. The native process registers one exact
+regular file and returns an opaque random handle. The HTTP surface accepts the
+handle only; callers cannot submit or discover a host path. Reads include a
+content-bound revision, and writes require that exact revision. Unknown and
+revoked handles fail closed. If the source changed first, the proposed bytes
+are retained behind a second opaque conflict handle without replacing the
+source.
+
+This is the first broker roundtrip, not the removal of production host bind
+mounts. The client is intentionally not connected to `LocalFilesManager` yet:
+doing so safely requires a durable recovery record that spans native
+publication and Files version ingestion. A macOS application can replace a
+file after the broker's final comparison, so this code does not claim atomic
+CAS against noncooperating applications.
+
+The minimal reviewed host acceptance step is: create one disposable synthetic
+file with a native chooser, start a reviewed Desktop build with the broker,
+register that exact file, and route one FUSE edit plus one Finder/TextEdit edit
+through the opaque handle while checking source bytes, Files versions, and the
+conflict handle. No personal folder, Vault, wallet, or existing Files data is
+part of that run.
+
 The proof boundary is narrow. Existing tracked regular files support list, stat, read, truncate, positional write, flush, fsync, and close. Each write sends both the Files version in `If-Match` and the tracked source SHA-256. The service stages and fsyncs the replacement, keeps the prior source inode in a private recovery path, syncs the affected directories, replaces the source path, ingests the result into Files, and only then acknowledges success. A stale source detected before publication leaves the source untouched and retains the agent bytes as a visible conflicted copy. If verification or ingestion fails after publication, the service keeps both versions and refuses success; it does not risk overwriting the current path with an automatic rollback. A service outage returns `EIO` from flush/fsync and is never reported as a durable save.
 
 Creation, deletion, directory mutation, rename, hard/symbolic links, xattrs, locks, mmap, and executable workloads fail closed. Temp-file-plus-rename editor saves are therefore unsupported in this slice. Use in-place tools such as `python` opening an existing file with `r+b`, or shell redirection to an existing file.

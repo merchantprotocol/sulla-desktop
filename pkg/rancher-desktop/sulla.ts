@@ -281,6 +281,20 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
+  if (process.env.SULLA_FILES_FUSE_EXPERIMENT === '1') {
+    lifecycle.registerOnce('sulla-files-source-gateway', ['database-manager'],
+      async() => {
+        const { startSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
+        await startSullaFilesSourceGateway(await SullaSettingsModel.getServicePassword());
+        console.log('[Background] Experimental native Files source gateway initialized');
+      },
+      async() => {
+        const { stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
+        await stopSullaFilesSourceGateway();
+      },
+    );
+  }
+
   lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
     async() => {
       await getWorkflowSchedulerService().initialize();

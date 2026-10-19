@@ -537,6 +537,8 @@ export interface IpcMainInvokeEvents {
   'sulla-files:unshare-file':    (input: { fileId: string; shareId: string }) => void;
   'sulla-files:members':         (input: { orgId: string }) => { members: any[]; groups: any[] };
   'sulla-files:keep':            (input: { fileId: string; collectionId: string; path?: string }) => any;
+  'files-experiment:pick-native-source': () => { handle:string } | undefined;
+  'files-experiment:revoke-native-source': (handle:string) => void;
 
   'filesystem-get-root':        () => string;
   'filesystem-get-git-changes': (path: string) => Promise<{ status: string, file: string }[]>;
