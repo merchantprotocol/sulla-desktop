@@ -167,23 +167,30 @@ class ModelProviderService {
     const allIntegrations = Object.values(integrations);
     console.log(`[ModelProviderService] getAvailableProviders: ${ allIntegrations.length } total integrations loaded`);
 
-    for (const integration of allIntegrations) {
-      if (integration.category !== 'AI Infrastructure') continue;
-      if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
-
+    const candidates = allIntegrations.filter(i => i.category === 'AI Infrastructure' && !EXCLUDED_PROVIDER_IDS.includes(i.id));
+    // Vault-metadata lookups run in parallel so opening the window is fast.
+    const results = await Promise.allSettled(candidates.map(async(integration) => {
       let connected = false;
       try {
-        // All providers (including Claude Code) check the vault for connected accounts
         connected = await integrationService.isAnyAccountConnected(integration.id);
-      } catch { /* not ready */ }
+      } catch (err) {
+        console.warn(`[ModelProviderService] connection check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
+      }
       // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
       // enough to show the provider; spawn-time errors give the exact login step.
       if (!connected && (integration.id === 'opencode' || integration.id === 'cursor')) {
-        connected = (await getCliStatus(integration.id)).installed;
+        try {
+          connected = (await getCliStatus(integration.id)).installed;
+        } catch (err) {
+          console.warn(`[ModelProviderService] CLI status check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
+        }
       }
 
-      providers.push({ id: integration.id, name: integration.name, connected });
-    }
+      return { id: integration.id, name: integration.name, connected } as ProviderInfo;
+    }));
+    results.forEach((r, i) => {
+      providers.push(r.status === 'fulfilled' ? r.value : { id: candidates[i].id, name: candidates[i].name, connected: false });
+    });
 
     console.log(`[ModelProviderService] getAvailableProviders: returning ${ providers.length } providers`);
 
@@ -501,6 +508,17 @@ class ModelProviderService {
 
     ipcMain.handle('model-provider:get-providers', async() => {
       return this.getAvailableProviders();
+    });
+
+    // Metadata-only account list / active-account switch for the settings
+    // window (the vault:* channels are restricted to the main-agent window).
+    ipcMain.handle('model-provider:get-accounts', async(_event: unknown, providerId: string) => {
+      const accounts = await getIntegrationService().getAccounts(String(providerId));
+      return accounts.map(a => ({ accountId: a.account_id, label: a.label || a.account_id, active: !!a.active, connected: !!a.connected }));
+    });
+
+    ipcMain.handle('model-provider:set-active-account', async(_event: unknown, providerId: string, accountId: string) => {
+      await getIntegrationService().setActiveAccount(String(providerId), String(accountId));
     });
 
     ipcMain.handle('model-provider:get-models', async(_event: unknown, providerId: string) => {
