@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../packages/vault-crypto/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../packages/vault-crypto/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3824,11 +3824,11 @@
     }
   }
   async function openConsole() {
-    $2("auth").hidden = true;
-    $2("shell").hidden = false;
     $2("session-email").textContent = state.email;
     armIdle();
     if (await loadAll()) showPage("audit");
+    $2("auth").hidden = true;
+    $2("shell").hidden = false;
   }
   async function loadAll() {
     const orgs = await api("/v1/orgs");
@@ -4207,7 +4207,18 @@
   }
   document.querySelectorAll("[data-auth]").forEach((b2) => b2.onclick = () => setAuthMode(b2.dataset.auth));
   $2("auth-form").addEventListener("submit", (e) => void onAuth(e));
-  $2("lock").onclick = () => lock();
+  $2("lock").onclick = () => {
+    const token = state.token;
+    const org = accountsOrganizationId;
+    const shared = accountsSession;
+    lock();
+    if (shared) {
+      accountsSession = true;
+      accountsOrganizationId = org;
+      state.token = token;
+      void prepareAccountsSession().catch(() => lock("Session unavailable. Return to the main menu."));
+    }
+  };
   document.querySelectorAll("[data-page]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.page));
   document.querySelectorAll("[data-go]").forEach((b2) => b2.onclick = () => showPage(b2.dataset.go));
   $2("collection-search").addEventListener("input", renderCollections);
