@@ -279,6 +279,7 @@ export interface FilesDataSource {
   unlockRecord?(fileId:string): Promise<void>;
   disposalReview?(fileId:string, decision:'approve' | 'reject' | 'extend', extendedUntil?:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
+  purgeTrash?(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
   updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;

@@ -240,6 +240,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
   disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
+  purgeTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-purge', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
   keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
   makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }

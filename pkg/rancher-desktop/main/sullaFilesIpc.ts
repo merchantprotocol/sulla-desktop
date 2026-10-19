@@ -252,6 +252,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:trash', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`, { method: 'DELETE' }));
   ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId:string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:trash-restore', (_event, input:{ fileId:string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: '{}' }));
+  ipcMain.handle('sulla-files:trash-purge', (_event, input:{ fileId:string }) => json(`/v1/trash/${ encodeURIComponent(input.fileId) }/purge`, { method: 'DELETE' }));
   ipcMain.handle('sulla-files:restore-version', (_event, input:{ fileId:string; versionId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/restore`, { method: 'POST', body: JSON.stringify({ versionId: input.versionId }) }));
   ipcMain.handle('sulla-files:lifecycle', (_event, input:{ fileId:string; settings:Record<string, unknown> }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/lifecycle`, { method: 'PATCH', body: JSON.stringify(input.settings) }));
   ipcMain.handle('sulla-files:checkout', (_event, input:{ fileId:string; force?:boolean }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/checkout`, { method: input.force ? 'DELETE' : 'POST', body: input.force ? JSON.stringify({ force: true }) : undefined }));

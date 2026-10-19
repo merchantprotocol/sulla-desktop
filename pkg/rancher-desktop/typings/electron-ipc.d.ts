@@ -539,6 +539,7 @@ export interface IpcMainInvokeEvents {
   'sulla-files:trash-list':      (input: { collectionId: string }) => any[];
   'sulla-files:trash':           (input: { fileId: string }) => void;
   'sulla-files:trash-restore':   (input: { fileId: string }) => { ok: boolean; versionId: string };
+  'sulla-files:trash-purge':     (input: { fileId: string }) => void;
   'sulla-files:upload':          (input: { collectionId: string; path: string; mime?: string; data: Uint8Array }) => any;
   'sulla-files:shares':          (input: { collectionId: string }) => any[];
   'sulla-files:share':           (input: { collectionId: string; folderPath: string; principalType: 'user' | 'group'; principalId: string; role: 'view' | 'edit' }) => any;
