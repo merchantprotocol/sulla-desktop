@@ -14,6 +14,11 @@ import {
   verifyLoginHash,
 } from './auth.js';
 import { AccountsIdentityError, resolveAccountsContext } from './accountsIdentity.js';
+import {
+  AccountsOnboardingError,
+  accountsOnboardingStatus,
+  initializeAccountsOnboarding,
+} from './accountsOnboarding.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
@@ -826,6 +831,36 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     });
   });
 
+  const accountsContext = async(request: express.Request) => {
+    if (config.mode !== 'server' || !config.accounts) {
+      throw new AccountsIdentityError(403, 'Accounts integration is not configured');
+    }
+    const bearerToken = request.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    if (!bearerToken) throw new AccountsIdentityError(401, 'Accounts authentication is required');
+    const context = await resolveAccountsContext(config, { bearerToken });
+    requiredUuid(context.organizationId, 'Accounts organization id');
+    return context;
+  };
+
+  app.get('/v1/accounts/onboarding', async(request, response) => {
+    const context = await accountsContext(request);
+    response.json({ status: await accountsOnboardingStatus(db, context) });
+  });
+
+  app.post('/v1/accounts/onboarding', async(request, response) => {
+    const context = await accountsContext(request);
+    const result = await initializeAccountsOnboarding(db, config.jwtSecret, context, {
+      loginHash:            request.body.loginHash === undefined ? undefined : requiredString(request.body.loginHash, 'loginHash'),
+      publicKey:            request.body.publicKey === undefined ? undefined : requiredString(request.body.publicKey, 'publicKey'),
+      encryptedPrivateKey: request.body.encryptedPrivateKey === undefined ? undefined : requiredObject(request.body.encryptedPrivateKey, 'encryptedPrivateKey'),
+      encryptedUserKey:    request.body.encryptedUserKey === undefined ? undefined : requiredObject(request.body.encryptedUserKey, 'encryptedUserKey'),
+      kdf:                 request.body.kdf === undefined ? undefined : requiredObject(request.body.kdf, 'kdf'),
+      encryptedOrgName:    request.body.encryptedOrgName === undefined ? undefined : requiredObject(request.body.encryptedOrgName, 'encryptedOrgName'),
+      wrappedOrgKey:       request.body.wrappedOrgKey === undefined ? undefined : requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey'),
+    });
+    response.status(result.created ? 201 : 200).json(result);
+  });
+
   app.use('/v1', authenticate(config, db));
 
   app.get('/v1/unlock-material', async(request: AuthenticatedRequest, response) => {
@@ -1155,7 +1190,14 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const client = await db.connect();
     try {
       await client.query('BEGIN');
-      await requireOrgManager(client, actorId, orgId);
+      const actorRole = await requireOrgManager(client, actorId, orgId);
+      const pending = await client.query<{ role: string }>(
+        `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2 AND status = 'pending'`,
+        [orgId, request.params.memberId],
+      );
+      if (pending.rows[0]?.role === 'owner' && actorRole !== 'owner') {
+        throw new AccessDenied('Only owners can confirm another owner');
+      }
       const result = await client.query(
         `UPDATE org_members SET wrapped_org_key = $1, status = 'confirmed', updated_at = now()
           WHERE org_id = $2 AND user_id = $3 AND status = 'pending'
@@ -1599,6 +1641,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     if (error instanceof AccountsIdentityError) {
       response.status(error.status).json({ error: error.status === 401 ? 'invalid_accounts_token' : 'accounts_access_denied' });
+      return;
+    }
+    if (error instanceof AccountsOnboardingError) {
+      response.status(error.status).json({ error: error.message });
       return;
     }
     if (error instanceof HttpError) {
