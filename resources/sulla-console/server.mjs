@@ -62,14 +62,21 @@ createServer(async(request, response) => {
     response.end();
     return;
   }
-  if (url.pathname.startsWith('/accounts-api/')) {
+  if (url.pathname.startsWith('/accounts-api/v1/web/')) {
     proxy(request, response, targets.accounts, `/${url.pathname.slice('/accounts-api/'.length)}`);
+    return;
+  }
+  if (url.pathname.startsWith('/auth/realms/sulla/') || url.pathname.startsWith('/auth/resources/')) {
+    proxy(request, response, process.env.SULLA_CONSOLE_IDENTITY_URL ?? targets.accounts, url.pathname);
     return;
   }
   const serviceMatch = url.pathname.match(/^\/services\/(accounts|vault|files|projects|agents|workflows)\/(api\/)?(.*)$/);
   if (serviceMatch) {
     const [, service, api, rest] = serviceMatch;
-    proxy(request, response, targets[service], api ? `/v1/${rest}` : `/ui/${rest}`);
+    if ((service === 'accounts' && api) || (service === 'files' && api && /^(?:healthz$|v1\/(?:local|desktop|bootstrap|admin)(?:\/|$))/.test(rest))) {
+      response.writeHead(404).end(); return;
+    }
+    proxy(request, response, targets[service], api ? (service === 'files' ? `/${rest}` : `/v1/${rest}`) : `/ui/${rest}`);
     return;
   }
   if (!url.pathname.startsWith('/console/')) {

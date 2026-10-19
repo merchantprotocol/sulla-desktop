@@ -1038,11 +1038,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (!authorization || !authorityId) {
       throw new HttpError(400, 'Accounts authorization and authority id are required');
     }
-    const context = await resolveAccountsContext(config, {
-      bearerToken: authorization,
-      authorityId: requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id'),
-      organizationId: orgId,
-    });
+    const context = await resolveAccountsContext(config, { bearerToken: authorization });
+    if (context.authorityId !== requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id') || context.organizationId !== orgId) {
+      throw new AccessDenied('Accounts identity does not match this organization');
+    }
     const linked = await db.query(
       `INSERT INTO accounts_identities(issuer, subject, user_id) VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING

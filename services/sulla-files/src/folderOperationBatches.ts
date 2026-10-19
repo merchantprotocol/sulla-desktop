@@ -143,9 +143,10 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
             const after=(await client.query('UPDATE file_folders SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *',[folder.id,recovery+path.slice(target.length)])).rows[0];
             displacedFolders.push({before,after:state(after),deleted:false});
           }
+          const targetLength=target.length;
           const grants={
-            folderShares:folderShares.map(grant=>({id:grant.id,beforePath:grant.folder_path,afterPath:recovery+grant.folder_path.slice(target.length)})),
-            publicLinks:publicLinks.map(link=>({id:link.id,beforePath:link.folder_path,afterPath:recovery+link.folder_path.slice(target.length)})),
+            folderShares:folderShares.map(grant=>({id:grant.id,beforePath:grant.folder_path,afterPath:recovery+grant.folder_path.slice(targetLength)})),
+            publicLinks:publicLinks.map(link=>({id:link.id,beforePath:link.folder_path,afterPath:recovery+link.folder_path.slice(targetLength)})),
             fileIds:destinationFileIds,fileSharesSignature,fileLinksSignature,
           };
           for (const grant of grants.folderShares) await client.query('UPDATE folder_shares SET folder_path=$2,updated_at=NOW() WHERE id=$1',[grant.id,grant.afterPath]);
