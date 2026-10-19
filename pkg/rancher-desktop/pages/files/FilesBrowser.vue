@@ -1,9 +1,10 @@
 <template>
   <div
+    ref="browserSurface"
     class="files-browser"
     :class="{ dragging }"
-    @dragenter.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
-    @dragover.prevent="dataSource.capabilities.nativeFilesystem && (dragging = true)"
+    @dragenter.prevent="onBrowserDragEnter"
+    @dragover.prevent="onBrowserDragOver"
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
@@ -18,7 +19,7 @@
       </div>
       <label v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="root-picker">
         <span>Tracked folder</span>
-        <select :value="snapshot?.collection.id" @change="onCollectionChange">
+        <select :value="snapshot?.collection.id" :disabled="busy || loading" @change="onCollectionChange">
           <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
         </select>
       </label>
@@ -27,6 +28,8 @@
         :key="entry.id"
         href="#"
         :class="{ on: section === entry.id }"
+        @dragover.prevent="entry.id === 'files' && onNavigationDragOver('', $event)"
+        @drop.prevent="entry.id === 'files' && onNavigationDrop('', $event)"
         @click.prevent="selectSection(entry.id)"
       ><span
         class="sv"
@@ -46,6 +49,8 @@
           :key="folder"
           href="#"
           :class="{ on: section === 'files' && currentPath === folder }"
+          @dragover.prevent="onNavigationDragOver(folder, $event)"
+          @drop.prevent="onNavigationDrop(folder, $event)"
           @click.prevent="openPath(folder)"
         ><span
           class="sv"
@@ -87,13 +92,23 @@
       </div>
     </nav>
 
-    <main v-if="!selected" class="main">
+    <main
+      v-if="!selected"
+      ref="mainSurface"
+      class="main"
+      tabindex="-1"
+      @auxclick="onMouseNavigation"
+      @contextmenu.self.prevent="openBackgroundActions"
+    >
       <div class="top">
         <div class="crumbs">
           <template v-if="crumbs.length">
             <a
               class="c"
               href="#"
+              data-drop-path=""
+              @dragover.prevent="onNavigationDragOver('', $event)"
+              @drop.prevent="onNavigationDrop('', $event)"
               @click.prevent="openRoot"
             >{{ rootLabel }}</a>
             <template
@@ -104,6 +119,9 @@
                 v-else
                 class="c"
                 href="#"
+                :data-drop-path="crumb.path"
+                @dragover.prevent="onNavigationDragOver(crumb.path, $event)"
+                @drop.prevent="onNavigationDrop(crumb.path, $event)"
                 @click.prevent="openPath(crumb.path)"
               >{{ crumb.label }}</a>
             </template>
@@ -123,6 +141,7 @@
             v-if="dataSource.capabilities.nativeFilesystem"
             class="btn"
             type="button"
+            :disabled="busy || loading || section !== 'files'"
             @click="newFolder"
           >
             <span
@@ -147,9 +166,40 @@
       <div v-if="section === 'sharedByMe'" class="content">
         <SharedByMe :data-source="dataSource" />
       </div>
-      <div v-else class="content">
+      <div v-else class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
         <div class="toolbar">
-          <h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
+          <div v-if="section === 'files'" class="history-controls">
+            <button
+              class="folder-up"
+              type="button"
+              aria-label="Back"
+              title="Back"
+              :disabled="busy || loading || !canGoBack"
+              @click="goBack"
+            ><span v-html="icons.arrowLeft" /></button>
+            <button
+              class="folder-up forward"
+              type="button"
+              aria-label="Forward"
+              title="Forward"
+              :disabled="busy || loading || !canGoForward"
+              @click="goForward"
+            ><span v-html="icons.arrowLeft" /></button>
+          <button
+            v-if="currentPath"
+            class="folder-up"
+            type="button"
+            :aria-label="`Back to ${parentFolderLabel}`"
+            :title="`Back to ${parentFolderLabel}`"
+            :disabled="busy || loading"
+            :data-drop-path="parentPath"
+            @dragover.prevent="onNavigationDragOver(parentPath, $event)"
+            @drop.prevent="onNavigationDrop(parentPath, $event)"
+            @click="openParent"
+          >
+            <span v-html="icons.arrowLeft" />
+          </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
+          </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
             <button
               v-if="snapshot?.collection.memberCount !== undefined"
@@ -210,10 +260,12 @@
             v-if="section === 'trash'"
             class="pill idle"
           >{{ retentionLabel }}</span>
+          <button v-if="section === 'trash'" class="btn sm danger" type="button" :disabled="busy || !canEmptyTrash || !trashFiles.length" @click="emptyTrash">Empty Trash</button>
           <div class="view">
             <label class="sel"><span>Sort</span> {{ sortLabel }}<select
               v-model="sort"
               aria-label="Sort"
+              @change="saveFolderPreferences"
             ><option value="name">Name</option><option value="modified">Modified</option><option value="size">Size</option><option value="type">Type</option></select></label>
             <div
               class="seg"
@@ -245,16 +297,21 @@
 
         <div class="selection-slot" :aria-hidden="!selectedEntries.length"><div v-show="selectedEntries.length" class="selection-bar">
           <b>{{ selectedEntries.length }} selected</b>
-          <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
-          <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
-          <button class="btn sm" type="button" :disabled="busy" @click="copySelected">Copy</button>
+          <template v-if="section !== 'trash'">
+            <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
+            <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
+            <button class="btn sm" type="button" :disabled="busy" @click="copyToClipboard('copy')">Copy</button>
+            <button class="btn sm" type="button" :disabled="busy" @click="copyToClipboard('cut')">Cut</button>
+            <button class="btn sm" type="button" :disabled="busy || !canPaste" @click="pasteClipboard">Paste</button>
+          </template>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
-          <button v-if="section === 'trash'" class="btn sm" type="button" :disabled="busy" @click="restoreSelected">Restore</button><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+          <template v-if="section === 'trash'"><button class="btn sm" type="button" :disabled="busy" @click="restoreSelected">Restore</button><button class="btn sm danger" type="button" :disabled="busy || !dataSource.purgeTrash" @click="purgeSelected">Delete permanently</button></template><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
         </div>
         </div>
         <div v-if="operationError" class="operation-error" role="alert">
           {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
         </div>
+        <div v-if="busy" class="operation-panel" role="status">Working…</div>
 
         <div
           v-if="loading"
@@ -290,6 +347,7 @@
         <div
           v-else-if="visibleEntries.length === 0"
           class="state-panel"
+          @click.self="clearSelection"
         >
           <span
             class="state-icon"
@@ -308,7 +366,12 @@
 
         <div
           v-else-if="view === 'list'"
+          ref="listSurface"
           class="card files"
+          @pointerdown="startMarquee"
+          @click.self="clearSelection"
+          @contextmenu.self.prevent="openBackgroundActions"
+          @dragover="onSurfaceDragOver"
         >
           <table class="tbl">
             <thead>
@@ -324,10 +387,12 @@
                     @click="toggleAll"
                   />
                 </th>
-                <th>Name</th><th class="col-owner">
+                <th :style="columnStyle('name')" @click="setSort('name')">Name <span class="sort-arrow">{{ sortIndicator('name') }}</span><i class="resize-handle" @pointerdown.stop.prevent="startColumnResize('name', $event)" /></th><th class="col-owner" :style="columnStyle('owner')">
                   Owner
-                </th><th>Modified</th><th class="r col-size">
+                  <i class="resize-handle" @pointerdown.stop.prevent="startColumnResize('owner', $event)" />
+                </th><th :style="columnStyle('modified')" @click="setSort('modified')">Modified <span class="sort-arrow">{{ sortIndicator('modified') }}</span><i class="resize-handle" @pointerdown.stop.prevent="startColumnResize('modified', $event)" /></th><th class="r col-size" :style="columnStyle('size')" @click="setSort('size')">
                   Size
+                  <span class="sort-arrow">{{ sortIndicator('size') }}</span><i class="resize-handle" @pointerdown.stop.prevent="startColumnResize('size', $event)" />
                 </th><th style="width:44px;text-align:center">
                   Sync
                 </th><th style="width:150px" />
@@ -347,10 +412,18 @@
                   v-for="entry in group.entries"
                   :key="entry.key"
                   class="row"
-                  :class="{ 'is-sel': selectedKeys.has(entry.key), agent: entry.agent }"
+                  :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
+                  :draggable="section === 'files' && !busy && editingKey !== entry.key"
+                  :data-entry-key="entry.key"
                   @click="focusEntry(entry, $event)"
                   @dblclick="activate(entry)"
                   @contextmenu.prevent.stop="openActions(entry, $event)"
+                  @dragstart="onEntryDragStart(entry, $event)"
+                  @dragenter="onFolderDragEnter(entry, $event)"
+                  @dragover="onFolderDragOver(entry, $event)"
+                  @dragleave="onFolderDragLeave(entry, $event)"
+                  @drop="onFolderDrop(entry, $event)"
+                  @dragend="clearInternalDrag"
                   tabindex="0"
                   :aria-selected="selectedKeys.has(entry.key)"
                   @keydown="onEntryKeydown(entry, $event)"
@@ -374,7 +447,18 @@
                         :class="entry.kindClass"
                         v-html="entry.icon"
                       /><div class="t">
-                        <b>{{ entry.name }}</b><small>{{ entry.subtitle }}</small>
+                        <input
+                          v-if="editingKey === entry.key"
+                          :ref="element => setRenameInput(element, entry)"
+                          v-model="renameValue"
+                          class="inline-rename"
+                          aria-label="Rename item"
+                          @click.stop
+                          @dblclick.stop
+                          @keydown.enter.prevent="commitRename(entry)"
+                          @keydown.escape.prevent="cancelRename"
+                          @blur="commitRename(entry)"
+                        ><b v-else>{{ entry.name }}</b><small>{{ entry.subtitle }}</small>
                       </div>
                     </div>
                   </td>
@@ -461,16 +545,29 @@
 
         <div
           v-else
+          ref="gridSurface"
           class="gridv"
+          @pointerdown="startMarquee"
+          @click.self="clearSelection"
+          @contextmenu.self.prevent="openBackgroundActions"
+          @dragover="onSurfaceDragOver"
         >
           <div
             v-for="entry in visibleEntries"
             :key="entry.key"
             class="tile"
-            :class="{ 'is-sel': selectedKeys.has(entry.key) }"
+            :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
+            :draggable="section === 'files' && !busy && editingKey !== entry.key"
+            :data-entry-key="entry.key"
             @click="focusEntry(entry, $event)"
             @dblclick="activate(entry)"
             @contextmenu.prevent.stop="openActions(entry, $event)"
+            @dragstart="onEntryDragStart(entry, $event)"
+            @dragenter="onFolderDragEnter(entry, $event)"
+            @dragover="onFolderDragOver(entry, $event)"
+            @dragleave="onFolderDragLeave(entry, $event)"
+            @drop="onFolderDrop(entry, $event)"
+            @dragend="clearInternalDrag"
                   tabindex="0"
                   :aria-selected="selectedKeys.has(entry.key)"
                   @keydown="onEntryKeydown(entry, $event)"
@@ -491,24 +588,51 @@
             </div>
             <button class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
             <div class="bd">
-              <b>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
+              <input
+                v-if="editingKey === entry.key"
+                :ref="element => setRenameInput(element, entry)"
+                v-model="renameValue"
+                class="inline-rename"
+                aria-label="Rename item"
+                @click.stop
+                @dblclick.stop
+                @keydown.enter.prevent="commitRename(entry)"
+                @keydown.escape.prevent="cancelRename"
+                @blur="commitRename(entry)"
+              ><b v-else>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
         </div>
         <Teleport to="body">
           <div v-if="actionTarget" ref="actionMenu" class="action-menu" role="menu" :aria-label="`Actions for ${actionTarget.name}`" :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }" @keydown="onMenuKeydown" @contextmenu.prevent @click.stop @dblclick.stop>
             <b>{{ actionTarget.name }}</b>
-            <button v-if="actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
+            <button v-if="section !== 'trash' && actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
+            <button v-else-if="section !== 'trash'" role="menuitem" type="button" @click="runTargetAction('native-open')">Open</button>
+            <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
             <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
             <template v-if="section !== 'trash'">
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('rename')">Rename</button>
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('move')">Move</button>
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('copy')">Copy</button>
+              <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('cut')">Cut</button>
               <button v-if="!actionTarget.folder" role="menuitem" type="button" :disabled="busy" @click="runTargetAction('download')">Download</button>
               <button v-if="!actionTarget.folder && dataSource.capabilities.onlineOnly && (entrySync(actionTarget) === 'online-only' ? dataSource.keepOnMac : dataSource.makeOnlineOnly)" role="menuitem" type="button" :disabled="busy" @click="runTargetAction(entrySync(actionTarget) === 'online-only' ? 'keep-local' : 'online-only')">{{ entrySync(actionTarget) === 'online-only' ? 'Keep on this computer' : 'Make online only' }}</button>
               <button v-if="dataSource.capabilities.trash" role="menuitem" type="button" class="danger" :disabled="busy" @click="runTargetAction('trash')">Move to Trash</button>
             </template>
+            <template v-else>
+              <button role="menuitem" type="button" :disabled="busy || actionTarget.folder" @click="runTargetAction('restore')">Restore</button>
+              <button role="menuitem" type="button" class="danger" :disabled="busy || actionTarget.folder || !dataSource.purgeTrash" @click="runTargetAction('purge')">Delete permanently</button>
+            </template>
+          </div>
+        </Teleport>
+        <Teleport to="body">
+          <div v-if="backgroundMenu" ref="backgroundActionMenu" class="action-menu" role="menu" aria-label="Folder actions" :style="{ left: `${backgroundMenu.x}px`, top: `${backgroundMenu.y}px` }" @keydown="onMenuKeydown" @click.stop @contextmenu.prevent>
+            <b>{{ pageTitle }}</b>
+            <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
+            <button role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFolder(); closeBackgroundActions()">New folder</button>
+            <button role="menuitem" type="button" @click="setSort('name'); closeBackgroundActions()">Sort by name</button>
+            <button role="menuitem" type="button" @click="refresh(true); closeBackgroundActions()">Refresh</button>
           </div>
         </Teleport>
 
@@ -550,6 +674,24 @@
     >
       <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
     </div>
+    <Teleport to="body">
+      <div v-if="quickLookEntry" ref="quickLookDialog" class="quick-look" role="dialog" aria-modal="true" :aria-label="`Quick Look: ${quickLookEntry.name}`" @click.self="closeQuickLook">
+        <button class="quick-look-close" type="button" aria-label="Close Quick Look" @click="closeQuickLook" v-html="icons.close" />
+        <button class="quick-look-nav previous" type="button" aria-label="Previous item" :disabled="quickLookIndex <= 0" @click="stepQuickLook(-1)">‹</button>
+        <div class="quick-look-card">
+          <div v-if="quickLookLoading" class="state-panel"><span class="loader" /><strong>Loading preview</strong></div>
+          <img v-else-if="quickLookUrl && quickLookEntry.mime.startsWith('image/')" :src="quickLookUrl" :alt="quickLookEntry.name">
+          <video v-else-if="quickLookUrl && quickLookEntry.mime.startsWith('video/')" :src="quickLookUrl" controls autoplay />
+          <audio v-else-if="quickLookUrl && quickLookEntry.mime.startsWith('audio/')" :src="quickLookUrl" controls autoplay />
+          <iframe v-else-if="quickLookUrl && quickLookEntry.mime === 'application/pdf'" :src="quickLookUrl" :title="quickLookEntry.name" sandbox="" />
+          <div v-else class="quick-look-fallback"><span class="fi" :class="quickLookEntry.kindClass" v-html="quickLookEntry.icon" /><p>Preview isn’t available for this item.</p></div>
+          <footer><b>{{ quickLookEntry.name }}</b><span>{{ formatBytes(quickLookEntry.size) }} · {{ formatDate(quickLookEntry.updatedAt, true) }}</span></footer>
+        </div>
+        <button class="quick-look-nav next" type="button" aria-label="Next item" :disabled="quickLookIndex >= quickLookEntries.length - 1" @click="stepQuickLook(1)">›</button>
+      </div>
+    </Teleport>
+    <div v-if="marquee" class="marquee" :style="marqueeStyle" />
+    <div v-if="draggedKeys.size > 1" class="drag-count" :style="{ left: `${dragPointer.x + 14}px`, top: `${dragPointer.y + 14}px` }">{{ draggedKeys.size }}</div>
     <div
       v-if="uploadProgress"
       class="upl"
@@ -602,16 +744,19 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import SharedByMe from './SharedByMe.vue';
+import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
 import type { FilesDataSource, FilesIndexCoverage, FilesItem, FilesSnapshot } from './types';
+import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
+interface OperationItem { fileId?:string; folderPath?:string; targetPath:string; expectedVersionId?:string }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
 const icons = {
@@ -624,6 +769,7 @@ const icons = {
   agent:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.2" fill="currentColor" stroke="none"/></svg>',
   trash:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
   search:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>',
+  arrowLeft:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   plus:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   upload:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M4 19h16"/></svg>',
   share:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/></svg>',
@@ -645,16 +791,32 @@ const icons = {
   code:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></svg>',
 };
 
+const explorer = useFilesExplorerInteractions(props.tabId);
+const { backStack, forwardStack, clipboard } = explorer;
+const canGoBack = computed(() => backStack.value.length > 0); const canGoForward = computed(() => forwardStack.value.length > 0);
 const snapshot = ref<FilesSnapshot | null>(null); const loading = ref(true); const busy = ref(false); const error = ref('');
-const section = ref<Section>('files'); const currentPath = ref(''); const query = ref(''); const sort = ref('modified'); const view = ref<ViewMode>((localStorage.getItem('sulla:files-view') as ViewMode) || 'list');
+const section = ref<Section>('files'); const currentPath = ref(''); const query = ref(''); const sort = ref('modified'); const sortDirection = ref<'asc' | 'desc'>('desc'); const columns = ref<ExplorerColumns>({ name: 360, owner: 190, modified: 160, size: 110 }); const view = ref<ViewMode>('list');
 const activeFilters = ref<Record<'type' | 'person' | 'date' | 'folder', string>>({ type: '', person: '', date: '', folder: '' });
 const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTMLInputElement | null>(null);
 const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
+const draggedKeys = ref(new Set<string>()); const dropTargetKey = ref('');
+const dragTargets = ref<ExplorerTarget[]>([]); const dragPointer = ref({ x: 0, y: 0 }); let hoverOpenTimer:ReturnType<typeof setTimeout> | undefined;
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
+const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
+const editingKey = ref(''); const renameValue = ref(''); let renameCommitting = false;
+const mainSurface = ref<HTMLElement | null>(null); const listSurface = ref<HTMLElement | null>(null); const gridSurface = ref<HTMLElement | null>(null);
+const browserSurface = ref<HTMLElement | null>(null);
+const marquee = ref<{ left:number; top:number; width:number; height:number; additive:boolean } | null>(null);
+let stopPointerGesture:(() => void) | undefined;
+let suppressGestureClick = false;
+let gestureClickTimer:ReturnType<typeof setTimeout> | undefined;
+let refreshGeneration = 0;
+const quickLookEntry = ref<DisplayEntry | null>(null); const quickLookUrl = ref(''); const quickLookLoading = ref(false); let quickLookGeneration = 0;
+const quickLookDialog = ref<HTMLElement | null>(null); let quickLookTrigger:HTMLElement | null = null;
 const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
@@ -689,6 +851,8 @@ const syncLine = computed(() => {
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
 const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
+const parentFolderLabel = computed(() => currentPath.value.split('/').filter(Boolean).at(-2) ?? rootLabel.value);
+const parentPath = computed(() => currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
 const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.partial } partial · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
@@ -776,7 +940,7 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
   for (const file of files) {
     if (!flat && !file.path.startsWith(prefix)) continue;
     const relative = flat ? file.path : file.path.slice(prefix.length); const parts = relative.split('/');
-    if (!flat && parts.length > 1) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
+    if (!flat && (parts.length > 1 || file.mime === 'inode/directory')) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
   }
   for (const name of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`))));
   if (section.value === 'starred') {
@@ -787,7 +951,14 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     }
   }
   const filtered = entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date));
-  return filtered.sort((a, b) => { if (a.folder !== b.folder) return a.folder ? -1 : 1; if (a.agent !== b.agent) return a.agent ? 1 : -1; if (sort.value === 'modified') return Date.parse(b.updatedAt || '0') - Date.parse(a.updatedAt || '0'); if (sort.value === 'size') return b.size - a.size; if (sort.value === 'type') return a.mime.localeCompare(b.mime); return a.name.localeCompare(b.name, undefined, { numeric: true }) });
+  return filtered.sort((a, b) => {
+    if (a.folder !== b.folder) return a.folder ? -1 : 1;
+    if (a.agent !== b.agent) return a.agent ? 1 : -1;
+    let result = sort.value === 'modified' ? Date.parse(a.updatedAt || '0') - Date.parse(b.updatedAt || '0') : sort.value === 'size' ? a.size - b.size : sort.value === 'type' ? a.mime.localeCompare(b.mime) : a.name.localeCompare(b.name, undefined, { numeric: true });
+
+    if (sort.value === 'owner') result = ownerName(a).localeCompare(ownerName(b));
+    return sortDirection.value === 'asc' ? result : -result;
+  });
 });
 const groups = computed(() => [
   { label: 'Folders', entries: visibleEntries.value.filter(entry => entry.folder) },
@@ -796,33 +967,82 @@ const groups = computed(() => [
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
 const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
+const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.collectionId === snapshot.value.collection.id && clipboard.value.targets.length));
+const canEmptyTrash = computed(() => Boolean(props.dataSource.purgeTrash));
+const quickLookEntries = computed(() => visibleEntries.value.filter(entry => !entry.folder));
+const quickLookIndex = computed(() => quickLookEntry.value ? quickLookEntries.value.findIndex(entry => entry.key === quickLookEntry.value?.key) : -1);
+const marqueeStyle = computed(() => marquee.value ? { left: `${ marquee.value.left }px`, top: `${ marquee.value.top }px`, width: `${ marquee.value.width }px`, height: `${ marquee.value.height }px` } : {});
 
-async function refresh(silent = false) { if (!silent) loading.value = true; try { snapshot.value = await props.dataSource.load(); const stars = await props.dataSource.listStars(snapshot.value.collection.id); starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key))) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { loading.value = false } }
+async function refresh(silent = false, afterMutation = false) {
+  if (busy.value && !afterMutation) return;
+  const generation = ++refreshGeneration; const source = props.dataSource;
+  const isCurrent = () => mounted && generation === refreshGeneration && source === props.dataSource;
+  if (!silent) loading.value = true;
+  try {
+    const loaded = await source.load();
+    if (!isCurrent()) return;
+    const stars = await source.listStars(loaded.collection.id);
+    if (!isCurrent()) return;
+    snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
+    selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key)));
+  } catch (cause) { if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { if (isCurrent()) loading.value = false }
+}
+async function runMutation(operation:() => Promise<void>, reload = true) {
+  if (busy.value || loading.value || error.value || !snapshot.value) return false;
+  busy.value = true; refreshGeneration++; operationError.value = ''; stopPointerGesture?.();
+  try { await operation(); return true }
+  catch (cause) { if (mounted) operationError.value = cause instanceof Error ? cause.message : String(cause); return false }
+  finally { if (reload && mounted) await refresh(true, true); busy.value = false }
+}
 async function selectCollection(collectionId:string) {
-  if (!props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
-  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; selectedKeys.value = new Set();
+  if (busy.value || loading.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
+  clearInternalDrag(); cancelRename(); closeQuickLook(); clipboard.value = null;
+  stopPointerGesture?.(); closeActions(false); closeBackgroundActions(); query.value = ''; searchGeneration++;
+  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
   await refresh();
+  explorer.clearForCollection(collectionId); loadFolderPreferences();
 }
 function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
-async function upload() { busy.value = true; try { const count = await props.dataSource.chooseUpload(currentPath.value); if (count) setTimeout(() => refresh(true), 700); } finally { busy.value = false } }
-async function reindex(entry:FilesItem) { busy.value = true; operationError.value = ''; try { await props.dataSource.reindex(entry.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function newFolder() { const name = window.prompt('Name this folder'); if (!name?.trim()) return; await props.dataSource.createFolder([currentPath.value, name.trim()].filter(Boolean).join('/')); await refresh(true) }
+async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
+async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
+async function newFolder() {
+  if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.capabilities.nativeFilesystem) return;
+  const name = window.prompt('Name this folder')?.trim(); if (!name) return;
+  if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
+  const path = joinPath(currentPath.value, name); await runMutation(() => props.dataSource.createFolder(path));
+}
 function shareEntry(entry:DisplayEntry | null) {
-  if (!entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
+  if (busy.value || !entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
   const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
   shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId, assetKind: entry.agent ? 'artifact' : capture ? 'capture' : 'file' };
 }
 function shareSelectedFile() { shareEntry(selectedFileForShare.value ?? null) }
 function shareCurrentFolder() {
-  if (!snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
+  if (busy.value || !snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
   shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
 }
-async function togglePause() { if (!snapshot.value) return; snapshot.value.status = await props.dataSource.setPaused(syncState.value !== 'paused') }
-function selectSection(next:Section) { closeActions(false); selectionAnchor.value = null; section.value = next; currentPath.value = ''; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set() }
-function openRoot() { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = ''; selected.value = null; selectedKeys.value = new Set() }
-function openPath(next:string) { closeActions(false); selectionAnchor.value = null; section.value = 'files'; currentPath.value = next; selected.value = null; selectedKeys.value = new Set() }
+async function togglePause() { const paused = syncState.value !== 'paused'; await runMutation(async() => { await props.dataSource.setPaused(paused) }) }
+function currentLocation():ExplorerLocation { return { collectionId: snapshot.value?.collection.id ?? '', section: section.value, path: currentPath.value } }
+function applyLocation(location:ExplorerLocation) {
+  if (busy.value || loading.value) return;
+  stopPointerGesture?.(); cancelRename(); closeQuickLook();
+  if (location.collectionId && location.collectionId !== snapshot.value?.collection.id && props.dataSource.selectCollection) props.dataSource.selectCollection(location.collectionId);
+  closeActions(false); closeBackgroundActions(); selectionAnchor.value = null; section.value = location.section as Section; currentPath.value = location.path; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set(); loadFolderPreferences();
+}
+function navigate(location:ExplorerLocation, track = true) { if (busy.value || loading.value) return; const current = currentLocation(); if (track) explorer.visit(current, location); applyLocation(location) }
+function selectSection(next:Section) { navigate({ ...currentLocation(), section: next, path: '' }) }
+function openRoot() { navigate({ ...currentLocation(), section: 'files', path: '' }) }
+function openPath(next:string) { navigate({ ...currentLocation(), section: 'files', path: next }) }
+function openParent() { openPath(parentPath.value) }
+function goBack() { if (busy.value || loading.value) return; const location = explorer.back(currentLocation()); if (location) applyLocation(location) }
+function goForward() { if (busy.value || loading.value) return; const location = explorer.forward(currentLocation()); if (location) applyLocation(location) }
+function onMouseNavigation(event:MouseEvent) { if (event.button === 3) { event.preventDefault(); goBack() } else if (event.button === 4) { event.preventDefault(); goForward() } }
 function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  if (busy.value) return;
   closeActions(false);
+  closeBackgroundActions();
+  if (event instanceof MouseEvent) (event.currentTarget as HTMLElement | null)?.focus();
   if (event.shiftKey && selectionAnchor.value) {
     const entries = groups.value.flatMap(group => group.entries);
     const start = entries.findIndex(item => item.key === selectionAnchor.value); const end = entries.findIndex(item => item.key === entry.key);
@@ -833,20 +1053,80 @@ function focusEntry(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
 }
 function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   if (event.target !== event.currentTarget) return;
-  if (event.key === 'Enter') { event.preventDefault(); activate(entry) }
-  else if (event.key === ' ') { event.preventDefault(); if (event.shiftKey) focusEntry(entry, event); else { selectionAnchor.value = entry.key; toggleSelected(entry.key) } }
+  event.stopPropagation();
+  if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const entries = visibleEntries.value; const index = entries.findIndex(item => item.key === entry.key);
+  if (isMac && event.metaKey && event.key === 'ArrowDown') { event.preventDefault(); activate(entry); return }
+  if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowUp') { event.preventDefault(); openParent(); return }
+  if (quickLookEntry.value) { onKeydown(event); return }
+  if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(event.key)) {
+    event.preventDefault(); const delta = ['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1; const next = entries[Math.max(0, Math.min(entries.length - 1, index + delta))];
+    if (next) { focusEntry(next, event); nextTick(() => browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(next.key) }"]`)?.focus()) }
+  } else if (event.key === ' ' && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openQuickLook(entry) }
+  else if ((isMac && event.key === 'Enter') || (!isMac && event.key === 'F2')) { event.preventDefault(); beginRename(entry) }
+  else if ((!isMac && event.key === 'Enter') || (isMac && event.metaKey && event.key === 'ArrowDown')) { event.preventDefault(); activate(entry) }
+  else if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowUp') { event.preventDefault(); openParent() }
+  else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); selectedKeys.value = new Set(entries.map(item => item.key)) }
+  else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c') { event.preventDefault(); copyToClipboard('copy') }
+  else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'x') { event.preventDefault(); copyToClipboard('cut') }
+  else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v' && canPaste.value) { event.preventDefault(); pasteClipboard() }
+  else if ((event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) && section.value !== 'trash') { event.preventDefault(); trashSelected() }
+  else if (event.key === 'Escape') { event.preventDefault(); clearSelection() }
   else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); openActions(entry, event) }
 }
-async function showDetails(entry:DisplayEntry) { closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
+async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else selectEntry(entry); }
+async function activate(entry:DisplayEntry) { if (entry.folder) openPath(entry.path); else if (section.value === 'trash') selectEntry(entry); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
-function selectEntry(entry:DisplayEntry) { if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
-async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await props.dataSource.openFile(fileId); }
+function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
+async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
+function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
+function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.nativeFilesystem) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
-async function onDrop(event:DragEvent) { dragging.value = false; if (!props.dataSource.capabilities.nativeFilesystem) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return } const paths = [...(event.dataTransfer?.files ?? [])].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value)); if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return } busy.value = true; try { await props.dataSource.uploadPaths(paths, currentPath.value); setTimeout(() => refresh(true), 700) } finally { busy.value = false } }
+async function onDrop(event:DragEvent) {
+  dragging.value = false;
+  if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
+  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return }
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
+  const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
+  if (!paths.length) { operationError.value = 'This Desktop build cannot read dropped file paths. Use Choose files instead.'; return }
+  const destination = currentPath.value; await runMutation(async() => { await props.dataSource.uploadPaths(paths, destination) });
+}
+function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (section.value !== 'files' || busy.value || !event.dataTransfer) { event.preventDefault(); return }
+  const selected = selectedEntries.value;
+  const requested = selectedKeys.value.has(entry.key) && selected.length ? selected : [entry];
+  const selectedFolders = requested.filter(item => item.folder).map(item => item.path);
+  const entries = requested.filter(item => item.folder || !selectedFolders.some(folder => item.path.startsWith(`${ folder }/`)));
+  draggedKeys.value = new Set(entries.map(item => item.key));
+  dragTargets.value = entries.map(toTarget);
+  if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('application/x-sulla-files', JSON.stringify(dragTargets.value));
+}
+function canDropOnFolder(entry:DisplayEntry) { return entry.folder && draggedKeys.value.size > 0 && !busy.value }
+function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); dropTargetKey.value = entry.key; scheduleHoverOpen(entry) } }
+function onFolderDragOver(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; dropTargetKey.value = entry.key; updateDragPointer(event) } }
+function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTargetKey.value === entry.key && !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) { dropTargetKey.value = ''; cancelHoverOpen() } }
+async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
+  if (!canDropOnFolder(entry)) return;
+  event.preventDefault(); event.stopPropagation();
+  const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(entry.path, target.name) }));
+  clearInternalDrag();
+  if (targets.length) await perform('move', targets);
+}
+function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), path: entry.path, name: entry.name, folder: entry.folder } }
+function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTimer = setTimeout(() => { if (dropTargetKey.value === entry.key && dragTargets.value.length) openPath(entry.path) }, 750) }
+function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
+function updateDragPointer(event:DragEvent) { dragPointer.value = { x: event.clientX, y: event.clientY } }
+function onSurfaceDragOver(event:DragEvent) { updateDragPointer(event); const surface = mainSurface.value; if (!surface) return; const rect = surface.getBoundingClientRect(); if (event.clientY < rect.top + 64) surface.scrollTop -= 18; else if (event.clientY > rect.bottom - 64) surface.scrollTop += 18 }
+function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
+async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(path, target.name) })); clearInternalDrag(); await perform('move', targets) }
+function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dropTargetKey.value = '' }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -865,9 +1145,10 @@ function syncText(entry:FilesItem) { return ({ synced: 'On this computer', synci
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
-async function toggleStar(id:string) { if (!snapshot.value) return; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); try { await props.dataSource.setStar(snapshot.value.collection.id, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } }
+async function toggleStar(id:string) { if (!snapshot.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
 function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
 async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  closeBackgroundActions();
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   menuTrigger = event.currentTarget as HTMLElement; const rect = menuTrigger.getBoundingClientRect();
   menuPosition.value = event instanceof MouseEvent && event.type === 'contextmenu' ? { x: event.clientX, y: event.clientY } : { x: rect.left, y: rect.bottom };
@@ -876,40 +1157,167 @@ async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent)
   menuPosition.value = { x: Math.max(4, Math.min(menuPosition.value.x, window.innerWidth - bounds.width - 4)), y: Math.max(4, Math.min(menuPosition.value.y, window.innerHeight - bounds.height - 4)) };
   menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
 }
-function dismissActions(event:PointerEvent) { if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false) }
+function dismissActions(event:PointerEvent) { if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false); if (backgroundMenu.value && !backgroundActionMenu.value?.contains(event.target as Node)) closeBackgroundActions() }
 function onMenuKeydown(event:KeyboardEvent) {
-  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeActions(); return }
-  const buttons = [...(actionMenu.value?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+  event.stopPropagation();
+  const menu = event.currentTarget as HTMLElement;
+  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); if (menu === actionMenu.value) closeActions(); else { closeBackgroundActions(); mainSurface.value?.focus() } return }
+  const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
   const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length; buttons[next].focus() }
 }
+function closeBackgroundActions() { backgroundMenu.value = null }
+async function openBackgroundActions(event:MouseEvent) { clearSelection(); closeActions(false); backgroundMenu.value = { x: event.clientX, y: event.clientY }; await nextTick(); const menu = backgroundActionMenu.value; if (!menu || !backgroundMenu.value) return; const rect = menu.getBoundingClientRect(); backgroundMenu.value = { x: Math.max(4, Math.min(backgroundMenu.value.x, window.innerWidth - rect.width - 4)), y: Math.max(4, Math.min(backgroundMenu.value.y, window.innerHeight - rect.height - 4)) }; menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus() }
+function onSurfaceContextMenu(event:MouseEvent) { if ((event.target as HTMLElement).closest('[data-entry-key],button,input,select,a,[role="menu"]')) return; event.preventDefault(); openBackgroundActions(event) }
+function clearSelection() { selectedKeys.value = new Set(); selectionAnchor.value = null }
+
+function setSort(key:string) { if (sort.value === key) sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'; else { sort.value = key; sortDirection.value = key === 'name' ? 'asc' : 'desc' } saveFolderPreferences() }
+function sortIndicator(key:string) { return sort.value === key ? (sortDirection.value === 'asc' ? '↑' : '↓') : '' }
+function columnStyle(key:keyof ExplorerColumns) { return { width: `${ columns.value[key] }px`, minWidth: `${ columns.value[key] }px` } }
+function preferenceContext() { return { collectionId: snapshot.value?.collection.id ?? 'pending', path: section.value === 'files' ? currentPath.value : `@${ section.value }` } }
+function loadFolderPreferences() { const context = preferenceContext(); const stored = explorer.loadFolderPreferences(context.collectionId, context.path); sort.value = stored.sort; sortDirection.value = stored.direction; columns.value = stored.columns; view.value = stored.view }
+function saveFolderPreferences() { if (!snapshot.value) return; const context = preferenceContext(); explorer.saveFolderPreferences(context.collectionId, context.path, { sort: sort.value, direction: sortDirection.value, columns: columns.value, view: view.value }) }
+function captureGestureClick(event:MouseEvent) {
+  if (!suppressGestureClick) return;
+  event.preventDefault(); event.stopImmediatePropagation(); suppressGestureClick = false;
+}
+function trackPointer(event:PointerEvent, move:(event:PointerEvent) => void, finish:(cancelled:boolean) => void, didDrag:() => boolean) {
+  const onMove = (next:PointerEvent) => { if (next.pointerId === event.pointerId) move(next) };
+  const stop = (cancelled = true) => {
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel); window.removeEventListener('blur', onBlur);
+    stopPointerGesture = undefined;
+    if (!cancelled && didDrag()) { suppressGestureClick = true; if (gestureClickTimer) clearTimeout(gestureClickTimer); gestureClickTimer = setTimeout(() => { suppressGestureClick = false }, 0) }
+    finish(cancelled);
+  };
+  const onUp = (next:PointerEvent) => { if (next.pointerId === event.pointerId) stop(false) };
+  const onCancel = (next:PointerEvent) => { if (next.pointerId === event.pointerId) stop() };
+  const onBlur = () => stop();
+  stopPointerGesture = () => stop();
+  window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel); window.addEventListener('blur', onBlur);
+}
+function startColumnResize(key:keyof ExplorerColumns, event:PointerEvent) {
+  if (event.button !== 0) return;
+  stopPointerGesture?.();
+  const startX = event.clientX; const startWidth = columns.value[key];
+  trackPointer(event, next => { columns.value = { ...columns.value, [key]: Math.max(72, Math.min(720, startWidth + next.clientX - startX)) } }, cancelled => { if (cancelled) columns.value = { ...columns.value, [key]: startWidth }; else saveFolderPreferences() }, () => true);
+}
+
+function startMarquee(event:PointerEvent) {
+  if (event.button !== 0 || busy.value || (event.target as HTMLElement).closest('button,input,a,select,thead,[data-entry-key]')) return;
+  stopPointerGesture?.(); mainSurface.value?.focus();
+  const originX = event.clientX; const originY = event.clientY; const additive = event.metaKey || event.ctrlKey; const existing = new Set(selectedKeys.value);
+  let moved = false;
+  const move = (next:PointerEvent) => {
+    if (!moved && Math.hypot(next.clientX - originX, next.clientY - originY) < 4) return;
+    moved = true;
+    const left = Math.min(originX, next.clientX); const top = Math.min(originY, next.clientY); const right = Math.max(originX, next.clientX); const bottom = Math.max(originY, next.clientY);
+    marquee.value = { left, top, width: right - left, height: bottom - top, additive };
+    const hits = visibleEntries.value.filter(entry => { const node = browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(entry.key) }"]`); if (!node) return false; const rect = node.getBoundingClientRect(); return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom }).map(entry => entry.key);
+    selectedKeys.value = new Set([...(additive ? existing : []), ...hits]);
+  };
+  trackPointer(event, move, cancelled => { marquee.value = null; if (cancelled) selectedKeys.value = existing; else if (!moved && !additive) clearSelection() }, () => moved || additive); event.preventDefault();
+}
+
+async function openQuickLook(entry = selectedEntries.value.find(item => !item.folder)) {
+  if (!entry || entry.folder) return;
+  if (!quickLookEntry.value) quickLookTrigger = document.activeElement as HTMLElement | null;
+  quickLookEntry.value = entry; quickLookUrl.value = ''; quickLookLoading.value = true; const generation = ++quickLookGeneration;
+  await nextTick(); if (generation !== quickLookGeneration) return; quickLookDialog.value?.querySelector<HTMLButtonElement>('button')?.focus();
+  try { const url = await props.dataSource.mediaUrl(entry.id, entry.currentVersionId); if (generation === quickLookGeneration) quickLookUrl.value = url } catch { if (generation === quickLookGeneration) quickLookUrl.value = '' } finally { if (generation === quickLookGeneration) quickLookLoading.value = false }
+}
+function closeQuickLook() { const wasOpen = Boolean(quickLookEntry.value); quickLookGeneration++; quickLookEntry.value = null; quickLookUrl.value = ''; quickLookLoading.value = false; if (wasOpen) quickLookTrigger?.focus(); quickLookTrigger = null }
+function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quickLookIndex.value + delta]; if (entry) openQuickLook(entry) }
 
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
-function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(destination, entry.name) })) }
-async function perform(action:'move' | 'copy', items:{ fileId?:string; folderPath?:string; targetPath:string }[]) { if (!snapshot.value) return; busy.value = true; operationError.value = ''; try { await props.dataSource.operate(action, snapshot.value.collection.id, items); selectedKeys.value = new Set(); actionTarget.value = null; await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); await refresh(true) } finally { busy.value = false } }
-async function renameSelected() { const entry = selectedEntries.value[0]; if (!entry || selectedEntries.value.length !== 1) return; const name = window.prompt('New name', entry.name)?.trim(); if (!name || name.includes('/')) { if (name) operationError.value = 'Names cannot contain “/”.'; return } const parent = entry.path.split('/').slice(0, -1).join('/'); await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id }), targetPath: joinPath(parent, name) }]) }
-async function moveSelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
-async function copySelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Copy to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('copy', operationItems(entries, destination)) }
-async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
-async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length) return; busy.value = true; operationError.value = ''; try { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set(); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function runTargetAction(action:'open' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'download' | 'online-only' | 'keep-local' | 'trash') {
-  const target = actionTarget.value; if (!target) return; closeActions();
+function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), targetPath: joinPath(destination, entry.name) })) }
+async function perform(action:'move' | 'copy', items:OperationItem[]) {
+  if (busy.value || !snapshot.value || !items.length) return false;
+  if (items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
+  const collectionId = snapshot.value.collection.id;
+  return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
+}
+function beginRename(entry = selectedEntries.value[0]) { if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
+function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
+function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
+async function commitRename(entry:DisplayEntry) {
+  if (renameCommitting || editingKey.value !== entry.key) return;
+  const name = renameValue.value.trim();
+  if (!name || name === entry.name) { cancelRename(); return }
+  if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Names can’t contain “/” or be “.” or “..”.'; return }
+  renameCommitting = true; const parent = entry.path.split('/').slice(0, -1).join('/'); const success = await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), targetPath: joinPath(parent, name) }]);
+  if (success) cancelRename(); else renameCommitting = false;
+}
+function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
+async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
+function copyToClipboard(mode:'copy' | 'cut') { if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
+async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) }))); if (success && value.mode === 'cut') clipboard.value = null }
+function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
+async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
+async function trashSelected() {
+  if (busy.value || section.value === 'trash' || !props.dataSource.capabilities.trash) return;
+  const files = new Map<string, FilesItem>();
+  for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) }
+  if (!files.size) return;
+  await runMutation(async() => { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); closeActions(false) });
+}
+async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length || section.value !== 'trash') return; await runMutation(async() => { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set() }) }
+async function purgeEntries(entries:DisplayEntry[], all = false) {
+  if (busy.value || loading.value || section.value !== 'trash' || !props.dataSource.purgeTrash) return;
+  const purge = props.dataSource.purgeTrash.bind(props.dataSource);
+  const files = entries.filter(entry => !entry.folder); if (!files.length) return;
+  const warning = all ? 'Permanently delete every eligible item? Retention, record locks, and unapproved disposal still block deletion.' : `Permanently delete ${ files.length } eligible item${ files.length === 1 ? '' : 's' }? Protected items will remain.`;
+  if (!window.confirm(warning)) return;
+  await runMutation(async() => {
+    let completed = 0; const failures:string[] = [];
+    for (const file of files) { try { await purge(file.id); completed++ } catch (cause) { failures.push(file.name + ': ' + (cause instanceof Error ? cause.message : String(cause))) } }
+    if (failures.length) operationError.value = completed + ' deleted; ' + failures.length + ' retained. ' + failures.join(' · ');
+    selectedKeys.value = new Set();
+  });
+}
+function purgeSelected() { return purgeEntries(selectedEntries.value) }
+function emptyTrash() { return purgeEntries(trashFiles.value.map(toDisplay), true) }
+async function runTargetAction(action:'open' | 'native-open' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
+  const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
+  if (action === 'native-open') { await activate(target); return }
+  if (action === 'reference') { try { const params = new URLSearchParams({ version: target.currentVersionId, path: target.path, name: target.name }); await navigator.clipboard.writeText(`sulla-file://${ target.id }?${ params }`) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } return }
   if (action === 'details') { await showDetails(target); return }
   if (action === 'share') {
     if (target.folder && snapshot.value) shareTarget.value = { id: target.id, name: target.name, folder: true, path: target.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
     else shareEntry(target);
     return;
   }
-  if (action === 'rename' || action === 'online-only' || action === 'keep-local') selectedKeys.value = new Set([target.key]);
-  if (action === 'rename') await renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy') await copySelected(); else if (action === 'download') await downloadSelected();
-  else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; busy.value = true; operationError.value = ''; try { await operation.call(props.dataSource, target.id); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+  if (['rename', 'online-only', 'keep-local', 'restore', 'purge'].includes(action)) selectedKeys.value = new Set([target.key]);
+  if (action === 'rename') renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy' || action === 'cut') copyToClipboard(action); else if (action === 'download') await downloadSelected();
+  else if (action === 'restore') await restoreSelected(); else if (action === 'purge') await purgeSelected();
+  else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; await runMutation(() => operation.call(props.dataSource, target.id)) }
   else await trashSelected();
 }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
-function closeMenuOnResize() { closeActions(false) }
-function onKeydown(event:KeyboardEvent) { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() } }
+function closeMenuOnResize() { closeActions(false); closeBackgroundActions(); stopPointerGesture?.() }
+function onKeydown(event:KeyboardEvent) {
+  if (!quickLookDialog.value?.contains(event.target as Node) && !browserSurface.value?.contains(event.target as Node) && !actionMenu.value?.contains(event.target as Node) && !backgroundActionMenu.value?.contains(event.target as Node)) return;
+  const target = event.target as HTMLElement | null; const editable = target?.matches('input,textarea,select,[contenteditable="true"]'); const modifier = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
+  if (editable) { if (event.key === 'Escape') (target as HTMLElement).blur(); return }
+  if (quickLookEntry.value) {
+    if (event.key === 'Tab') { const controls = [...(quickLookDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),video,audio,iframe') ?? [])]; const index = controls.indexOf(document.activeElement as HTMLElement); if (controls.length) { event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus() } }
+    else if (event.key === 'Escape' || (event.key === ' ' && !target?.closest('button,video,audio'))) { event.preventDefault(); closeQuickLook() }
+    else if (!target?.closest('video,audio') && event.key === 'ArrowLeft') { event.preventDefault(); stepQuickLook(-1) }
+    else if (!target?.closest('video,audio') && event.key === 'ArrowRight') { event.preventDefault(); stepQuickLook(1) }
+    return;
+  }
+  if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
+  if (selected.value || shareTarget.value || folderDetails.value || target?.closest('button,a,dialog')) return;
+  if (event.key === 'Escape') { cancelRename(); closeActions(false); closeBackgroundActions(); clearSelection(); return }
+  if (modifier && key === 'k') { event.preventDefault(); searchInput.value?.focus(); return }
+  if (modifier && key === 'a' && !selected.value) { event.preventDefault(); selectedKeys.value = new Set(visibleEntries.value.map(entry => entry.key)); return }
+  if (modifier && key === 'c' && selectedEntries.value.length) { event.preventDefault(); copyToClipboard('copy'); return }
+  if (modifier && key === 'x' && selectedEntries.value.length) { event.preventDefault(); copyToClipboard('cut'); return }
+  if (modifier && key === 'v' && canPaste.value) { event.preventDefault(); pasteClipboard(); return }
+  if (modifier && event.key === 'ArrowUp' && section.value === 'files') { event.preventDefault(); openParent(); return }
+  if ((event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) && selectedEntries.value.length && section.value !== 'trash') { event.preventDefault(); trashSelected(); return }
+  if (event.key === ' ' && selectedEntries.value.some(entry => !entry.folder)) { event.preventDefault(); openQuickLook(); return }
+}
 function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
@@ -924,17 +1332,18 @@ function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
 
-watch(view, value => localStorage.setItem('sulla:files-view', value));
+watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let mounted = false;
-watch([query, section], ([value, requestedSection]) => {
+watch([query, section, busy], ([value, requestedSection, mutating]) => {
   const generation = ++searchGeneration;
   if (searchTimer) clearTimeout(searchTimer);
   searchResults.value = null;
   searchCoverage.value = null;
-  if (!value.trim() || requestedSection === 'trash') return;
-  const isCurrent = () => mounted && generation === searchGeneration && query.value === value && section.value === requestedSection;
+  if (mutating || !value.trim() || requestedSection === 'trash') return;
+  const collectionId = snapshot.value?.collection.id;
+  const isCurrent = () => mounted && !busy.value && collectionId === snapshot.value?.collection.id && generation === searchGeneration && query.value === value && section.value === requestedSection;
   searchTimer = setTimeout(async() => {
     try {
       const result = await props.dataSource.search(value.trim());
@@ -944,12 +1353,14 @@ watch([query, section], ([value, requestedSection]) => {
     }
   }, 220);
 });
-function consumeNavigation() { if (!mounted || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
+function consumeNavigation() { if (!mounted || busy.value || loading.value || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
+watch(busy, value => { if (!value) consumeNavigation() });
 watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { trackUpload(progress); uploadProgress.value = progress; if (progress.done) setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; consumeNavigation(); refreshTimer = setInterval(async() => { await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) clearTimeout(searchTimer); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
+onMounted(async() => { mounted = true; window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
@@ -1015,11 +1426,43 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
 .operation-error.index-complete { border-color:color-mix(in srgb, var(--ok) 35%, transparent); background:var(--ok-soft); color:var(--ok); }
 .operation-error .btn { margin-left:auto; }
+.operation-panel { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:10px 12px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
+.operation-panel>div { min-width:180px; flex:1; display:grid; gap:3px; }
+.operation-panel b, .operation-panel span { display:block; }
+.operation-panel span { color:var(--muted); font-size:11.5px; }
+.operation-panel progress { width:min(360px,100%); height:5px; accent-color:var(--accent); }
+.collision-panel { border-color:color-mix(in srgb, var(--warn) 40%, transparent); background:var(--warn-soft); }
+.collision-panel label { display:flex; align-items:center; gap:5px; white-space:nowrap; color:var(--muted); font-size:11.5px; }
 .action-menu { --text:#1a2332; --line-2:rgba(26,35,50,.14); --card-solid:#fff; --ink-05:rgba(26,35,50,.05); --bad:#d9403a; --shadow-lg:0 12px 36px rgba(26,35,50,.2); font:13px system-ui,sans-serif; color:var(--text); box-sizing:border-box; max-width:calc(100vw - 8px); max-height:calc(100vh - 8px); overflow:auto; position:fixed; z-index:1000; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
 .action-menu b { display:block; padding:7px 9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .action-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; }
 .action-menu button:hover { background:var(--ink-05); }
 .action-menu button.danger { color:var(--bad); }
+.history-controls { min-width:0; display:flex; align-items:center; gap:6px; }
+.history-controls h1 { margin-left:2px; }
+.folder-up.forward span { display:inline-flex; transform:rotate(180deg); }
+.folder-up:disabled { opacity:.35; cursor:default; }
+.row.is-cut, .tile.is-cut { opacity:.48; }
+.inline-rename { width:100%; min-width:80px; padding:2px 5px; border:1px solid var(--accent); border-radius:4px; outline:2px solid var(--accent-soft); background:var(--card-solid); }
+.tbl th { position:relative; user-select:none; }
+.sort-arrow { color:var(--accent); font-size:11px; }
+.resize-handle { position:absolute; z-index:2; top:0; right:-4px; width:8px; height:100%; cursor:col-resize; }
+.marquee { position:fixed; z-index:900; pointer-events:none; border:1px solid var(--accent); background:var(--accent-soft); }
+.drag-count { position:fixed; z-index:1200; display:grid; place-items:center; min-width:24px; height:24px; padding:0 7px; border-radius:999px; background:var(--accent); color:#fff; box-shadow:var(--shadow-sm); font-weight:700; pointer-events:none; }
+.quick-look { position:fixed; z-index:1400; inset:0; display:grid; grid-template-columns:minmax(44px,1fr) minmax(320px,900px) minmax(44px,1fr); place-items:center; padding:48px; background:rgba(10,16,25,.76); backdrop-filter:blur(18px); font:13px var(--sans, system-ui); color:#fff; }
+.quick-look-close { position:absolute; top:18px; right:18px; width:36px; height:36px; display:grid; place-items:center; border:0; border-radius:999px; background:rgba(255,255,255,.14); color:#fff; }
+.quick-look-close :deep(svg) { width:20px; height:20px; }
+.quick-look-card { grid-column:2; width:100%; max-height:calc(100vh - 96px); display:flex; flex-direction:column; overflow:hidden; border:1px solid rgba(255,255,255,.18); border-radius:14px; background:#101722; box-shadow:0 30px 100px rgba(0,0,0,.5); }
+.quick-look-card img, .quick-look-card video, .quick-look-card iframe { width:100%; min-height:280px; max-height:calc(100vh - 180px); object-fit:contain; border:0; background:#0a1018; }
+.quick-look-card audio { width:calc(100% - 48px); margin:80px 24px; }
+.quick-look-card footer { display:flex; justify-content:space-between; gap:20px; padding:13px 16px; color:rgba(255,255,255,.7); }
+.quick-look-card footer b { color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.quick-look-fallback { min-height:340px; display:grid; place-items:center; align-content:center; gap:18px; color:rgba(255,255,255,.65); }
+.quick-look-fallback .fi { width:84px; height:84px; }
+.quick-look-nav { width:44px; height:64px; border:0; border-radius:10px; background:rgba(255,255,255,.1); color:#fff; font-size:38px; }
+.quick-look-nav:disabled { opacity:.2; }
+.quick-look-nav.previous { grid-column:1; justify-self:end; margin-right:18px; }
+.quick-look-nav.next { grid-column:3; justify-self:start; margin-left:18px; }
 
 .files-browser *, .files-browser *::before, .files-browser *::after { box-sizing: border-box; }
 .files-browser a { color: inherit; text-decoration: none; }
@@ -1112,6 +1555,10 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .content { padding: 20px 28px 60px; }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .toolbar h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0; font-family: var(--sans); color: var(--text); }
+.folder-up { width: 30px; height: 30px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid var(--line-2); border-radius: 8px; background: var(--card-solid); color: var(--muted); }
+.folder-up:hover { border-color: var(--accent-line); color: var(--accent-2); }
+.folder-up span { display: grid; width: 18px; height: 18px; }
+.folder-up span :deep(svg) { width: 18px; height: 18px; }
 .toolbar .meta { color: var(--dim); font-size: 12px; }
 .toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .filters { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -1133,8 +1580,12 @@ onBeforeUnmount(() => { mounted = false; searchGeneration++; if (searchTimer) cl
 .files .tbl th:last-child, .files .tbl td:last-child { padding-right: 14px; }
 .muted { color: var(--muted); }
 .files tr.row { cursor: default; }
+.files tr.row[draggable="true"] { cursor: grab; }
+.files tr.row.is-dragging { opacity: .45; }
 .files tr.row:hover td { background: color-mix(in srgb, var(--accent) 4.5%, transparent); }
 .files tr.row.is-sel td { background: var(--accent-soft); }
+.files tr.row.drop-target td { background: var(--accent-soft); }
+.files tr.row.drop-target td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .tbl tr.sechead td { padding: 10px 16px 4px; border-bottom: 0; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
 .tbl tr.sechead:not(:first-child) td { padding-top: 14px; }
@@ -1179,6 +1630,9 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 /* Grid view */
 .gridv { display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 14px; }
 .tile { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; cursor: default; }
+.tile[draggable="true"] { cursor: grab; }
+.tile.is-dragging { opacity: .45; }
+.tile.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
 .tile:hover, .tile.is-sel { border-color: var(--accent-line); box-shadow: var(--shadow); }
 .tile .th { height: 116px; background: var(--paper-2); display: grid; place-items: center; position: relative; overflow: hidden; }
 .tile .th .fi { width: 44px; height: 44px; border-radius: 10px; }
