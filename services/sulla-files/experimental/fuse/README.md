@@ -23,3 +23,5 @@ With the service web bundle built, the authentic `FilesBrowser` UI is at `http:/
 ```js
 window.postMessage({ type: 'sulla:files-session', token: SYNTHETIC_TOKEN, orgId: 'synthetic-proof', email: 'Synthetic proof' }, location.origin)
 ```
+
+For a reusable isolated demonstration, build the service TypeScript and web bundle, then run `node experimental/fuse/live-proof.mjs`. It creates a temporary Postgres cluster, synthetic source tree, authenticated Files runtime, and FUSE mount. The printed `/proof-control/` URL embeds the short-lived capability only in its same-origin HTML response and provides controls for an ordinary FUSE file-descriptor edit, an external source edit, reset, and status. Stop it with `SIGINT` or `SIGTERM`; the runtime unmounts FUSE and removes its synthetic files and database.
