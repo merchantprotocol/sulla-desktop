@@ -19,7 +19,7 @@ app.get('/healthz', async(_request, response) => {
   try { await pool.query('SELECT 1'); response.json({ ok: true, service: 'agents' }) }
   catch { response.status(503).json({ ok: false, service: 'agents' }) }
 });
-app.get('/ui', (_request, response) => response.redirect(308, '/ui/'));
+app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
 app.use('/ui', (_request, response, next) => {
   response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
 });

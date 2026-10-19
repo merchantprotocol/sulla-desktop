@@ -642,7 +642,7 @@ async function catchUp(identity: RequestIdentity, dryRun = false, lookbackDays =
 }
 
 app.get('/healthz', (_request, response) => response.json({ ok: true, service: 'workflows' }));
-app.get('/ui', (_request, response) => response.redirect(308, '/ui/'));
+app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
 app.use('/ui', (_request, response, next) => {
   response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
 });
