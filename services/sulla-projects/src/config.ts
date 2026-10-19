@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync } from 'node:fs';
 
 export interface ProjectsConfig {
   port: number;
@@ -42,6 +42,10 @@ export function loadConfig(): ProjectsConfig {
   const humanToken = process.env.SULLA_PROJECTS_HUMAN_TOKEN?.trim();
   const accountsUrl = process.env.SULLA_PROJECTS_ACCOUNTS_URL?.trim();
   const serviceTokenFile = process.env.SULLA_PROJECTS_ACCOUNTS_SERVICE_TOKEN_FILE?.trim();
+  if (serviceTokenFile) {
+    const metadata = lstatSync(serviceTokenFile);
+    if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) throw new Error('Accounts service credential must be a private regular file');
+  }
   const accountsServiceToken = serviceTokenFile ? readFileSync(serviceTokenFile, 'utf8').trim() : undefined;
   if (Boolean(accountsUrl) !== Boolean(accountsServiceToken)) throw new Error('Accounts URL and service token file must be configured together');
   if (accountsUrl) {

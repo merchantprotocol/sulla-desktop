@@ -10,7 +10,7 @@
   function notice(message = '') { $('notice').textContent = message; }
   function lock(message = 'Your session is locked. Sign in through the main console.') {
     clearTimeout(expiryTimer); state.token = ''; state.organizationId = ''; state.generation++; state.navigation++; state.project = null; state.projects = []; state.tasks = []; state.epics = []; state.lanes = [];
-    $('editor').close(); $('project-nav').replaceChildren(); $('content').replaceChildren(el('p', message, 'empty')); $('session').textContent = message;
+    $('editor').close(); state.editing = null; $('fields').replaceChildren(); $('comments').replaceChildren(); $('form-error').textContent = ''; $('search').value = ''; $('epic-filter').replaceChildren(); $('project-nav').replaceChildren(); $('content').replaceChildren(el('p', message, 'empty')); $('session').textContent = message;
     $('add').disabled = true; $('edit-project').hidden = true; $('add-epic').hidden = true; $('manage-epics').hidden = true; $('view').hidden = true; $('epic-filter').hidden = true;
     $('title').textContent = 'Projects';
   }
