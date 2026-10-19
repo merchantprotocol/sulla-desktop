@@ -1,11 +1,8 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
 import paths from '@pkg/utils/paths';
 
-const execFileAsync = promisify(execFile);
 
 // Use a CJS-safe dev walk-up start. Packaged builds resolve via
 // process.resourcesPath before this fallback; tests run through ts-jest's CJS
@@ -319,10 +316,6 @@ export function resolveSullaUserRulesDir(): string {
   return path.join(resolveSullaRulesDir(), 'user');
 }
 
-const BOOTSTRAP_REPOS: { dir: () => string; repo: string }[] = [
-  { dir: resolveSullaResourcesDir, repo: 'https://github.com/merchantprotocol/sulla-resources.git' },
-];
-
 /**
  * Default GLOBAL rule files, seeded into rules/global/ on first boot. These
  * are PRODUCT content (identical for every install — not user data, so they
@@ -504,27 +497,7 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(logsDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
 
-  // Clone default repos only if missing — preserve any existing local state.
-  for (const { dir, repo } of BOOTSTRAP_REPOS) {
-    const target = dir();
-    if (fs.existsSync(path.join(target, '.git'))) {
-      continue;
-    }
-    // Clear any non-git contents so clone can succeed
-    if (fs.existsSync(target)) {
-      console.log(`[Sulla] Clearing non-repo directory ${ target } before clone`);
-      fs.rmSync(target, { recursive: true, force: true });
-    }
-    try {
-      console.log(`[Sulla] Cloning ${ repo } into ${ target }`);
-      await execFileAsync('git', ['clone', repo, target]);
-      console.log(`[Sulla] Cloned ${ repo } successfully`);
-    } catch (err) {
-      console.error(`[Sulla] Failed to clone ${ repo }:`, err);
-    }
-  }
-
-  // Ensure workflow subfolders exist (after clone so they don't block it)
+  // Ensure workflow subfolders exist
   fs.mkdirSync(resolveSullaWorkflowsDraftDir(), { recursive: true });
   fs.mkdirSync(resolveSullaWorkflowsProductionDir(), { recursive: true });
   fs.mkdirSync(resolveSullaWorkflowsArchiveDir(), { recursive: true });

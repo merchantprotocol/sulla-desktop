@@ -1,6 +1,9 @@
 /**
- * Integration catalog backed by integration_definitions. Two app-native CLI
- * engines remain code-defined; every YAML-backed integration is loaded from Postgres.
+ * Integration catalog. Every built-in integration (model providers, CLI
+ * engines, SaaS integrations) is hard-coded in ./native and always present.
+ * Postgres (integration_definitions) only adds marketplace installs and
+ * user-edited definitions on top; those win by slug. Nothing is read from
+ * folders on disk.
  */
 
 import { loadCatalogWithDatabase } from './loader';
@@ -10,16 +13,9 @@ import type { Integration } from './types';
 
 export type { Integration } from './types';
 
-// CLI engines ship with the app rather than the separately versioned
-// integration resource pack. Keep these native cards visible even when the
-// YAML catalog is present; YAML definitions win as soon as they are shipped.
-const bundledCliEngines = Object.fromEntries(
-  ['opencode', 'cursor']
-    .filter(id => nativeIntegrations[id])
-    .map(id => [id, nativeIntegrations[id]]),
-);
+const builtinIntegrations: Record<string, Integration> = { ...nativeIntegrations };
 
-export const integrations: Record<string, Integration> = { ...bundledCliEngines };
+export const integrations: Record<string, Integration> = { ...builtinIntegrations };
 
 /** Access the raw manifests (for uninstall, bundled-artifact fan-out, UI). */
 export const integrationManifests: Record<string, import('./schema').IntegrationManifest> = {};
@@ -30,7 +26,7 @@ export const integrationSources: Record<string, import('./loader').ManifestSourc
 /** Refresh the long-lived exported objects after DB startup or an install. */
 export async function refreshIntegrationCatalog(): Promise<void> {
   const next = await loadCatalogWithDatabase();
-  const nextIntegrations = { ...bundledCliEngines, ...next.integrations };
+  const nextIntegrations = { ...builtinIntegrations, ...next.integrations };
   for (const key of Object.keys(integrations)) delete integrations[key];
   Object.assign(integrations, nextIntegrations);
   for (const key of Object.keys(integrationManifests)) delete integrationManifests[key];

@@ -1,3 +1,4 @@
+import { nativeAdditionalIntegrations } from './additional';
 import { nativeAiInfrastructureIntegrations } from './ai_infrastructure';
 import { nativeAiMlIntegrations } from './ai_ml';
 import { nativeAnalyticsIntegrations } from './analytics';
@@ -42,4 +43,6 @@ export const nativeIntegrations: Record<string, Integration> = {
   ...nativeDatabaseIntegrations,
   ...nativePaidAdsIntegrations,
   ...nativeSecurityIntegrations,
+  // Newer / missing definitions; spread last so they win by id.
+  ...nativeAdditionalIntegrations,
 };
