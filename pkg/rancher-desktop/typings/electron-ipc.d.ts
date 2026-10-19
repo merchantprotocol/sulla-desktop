@@ -484,11 +484,6 @@ export interface IpcMainInvokeEvents {
     keepOnComputer: boolean;
     authenticatedRemote: boolean;
     verifiedRecovery: boolean;
-    canEdit?: boolean;
-    canManage?: boolean;
-    canViewDraft?: boolean;
-    canPublish?: boolean;
-    lifecycle?: import('@pkg/rancher-desktop/pages/files/types').FilesLifecyclePermissions;
     onlineOnlyReason: string;
   };
   'files-ui:residency-status': (input: { fileId: string }) => { desiredState: 'local' | 'online-only'; state: string; lastError: string | null };

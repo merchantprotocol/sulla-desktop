@@ -1,5 +1,5 @@
 import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
-import { fileAccessList, fileShare, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
+import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -13,11 +13,6 @@ interface RemoteCapabilities {
   authenticatedRemote: boolean;
   verifiedRecovery: boolean;
   onlineOnlyReason?: string;
-  lifecycle?: FilesDataSource['capabilities']['lifecycle'];
-  canEdit?: boolean;
-  canManage?: boolean;
-  canViewDraft?: boolean;
-  canPublish?: boolean;
 }
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
@@ -43,7 +38,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
     authenticatedRemote:false,
     verifiedRecovery:false,
     nativeFilesystem:true,
-    lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
   };
 
   onlineOnlyReason = '';
@@ -65,7 +59,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
       keepOnComputer:     false,
       authenticatedRemote:false,
       verifiedRecovery:   false,
-      lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
     });
     this.onlineOnlyReason = '';
     this.capabilitiesListeners.forEach(listener => listener());
@@ -81,15 +74,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
           keepOnComputer: capabilities.keepOnComputer && primaryRoot,
           authenticatedRemote: capabilities.authenticatedRemote && primaryRoot,
           verifiedRecovery: capabilities.verifiedRecovery && primaryRoot,
-          lifecycle: capabilities.lifecycle ?? {
-            updateLifecycle: capabilities.canManage === true,
-            checkout: capabilities.canEdit === true,
-            checkin: capabilities.canEdit === true,
-            publish: capabilities.canPublish === true,
-            retention: capabilities.canManage === true,
-            record: capabilities.canManage === true,
-            disposal: capabilities.canManage === true,
-          },
         });
         this.onlineOnlyReason = capabilities.onlineOnlyReason ?? '';
         this.capabilitiesListeners.forEach(listener => listener());
@@ -103,7 +87,6 @@ export class DesktopFilesDataSource implements FilesDataSource {
           keepOnComputer:     false,
           authenticatedRemote:false,
           verifiedRecovery:   false,
-          lifecycle: { updateLifecycle:false, checkout:false, checkin:false, publish:false, retention:false, record:false, disposal:false },
         });
         this.onlineOnlyReason = 'Cloud and remote Files capabilities are unavailable.';
         this.capabilitiesListeners.forEach(listener => listener());
@@ -190,7 +173,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
 
-  detail(fileId:string):Promise<FilesDetail> { return ipcRenderer.invoke('sulla-files:metadata', { fileId }) }
+  async detail(fileId:string):Promise<FilesDetail> {
+    const result = await ipcRenderer.invoke('sulla-files:metadata', { fileId }) as FilesApiRecord;
+
+    return filesDetail(result);
+  }
   mediaUrl(fileId:string, versionId?:string):Promise<string> { return ipcRenderer.invoke('files-ui:media-url', { fileId, versionId }) }
 
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {

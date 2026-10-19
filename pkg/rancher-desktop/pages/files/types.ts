@@ -13,6 +13,14 @@ export interface FilesRetentionPolicy {
   eventOccurredAt?: string | null;
   durationDays?: number | null;
   reason?: string | null;
+  active?: boolean;
+}
+
+export interface FilesItemCapabilities {
+  canEdit: boolean;
+  canManage: boolean;
+  canViewDraft: boolean;
+  canPublish: boolean;
 }
 
 export interface FilesVersioningSettings {
@@ -79,6 +87,30 @@ export interface FilesItem {
   retention?: FilesRetentionPolicy;
   record?: FilesRecordStatus;
   disposal?: FilesDisposalStatus;
+  capabilities?: FilesItemCapabilities;
+}
+
+export function filesItemHasActiveProtection(item:Pick<FilesItem, 'retention' | 'record' | 'disposal'>, now = Date.now()):boolean {
+  if (item.retention?.active !== undefined) return item.retention.active;
+  if (item.record?.status === 'ordinary' || item.record?.status === 'policy') return true;
+  const extension = Date.parse(item.disposal?.extendedUntil ?? '');
+
+  if (Number.isFinite(extension) && extension > now) return true;
+  if (item.retention?.mode === 'retain-until') {
+    const retainUntil = Date.parse(item.retention.retainUntil ?? '');
+
+    return Number.isFinite(retainUntil) && retainUntil > now;
+  }
+  if (item.retention?.mode === 'event') {
+    const durationDays = item.retention.durationDays;
+
+    if (!item.retention.eventOccurredAt || typeof durationDays !== 'number' || !Number.isSafeInteger(durationDays) || durationDays < 0) return true;
+    const occurredAt = Date.parse(item.retention.eventOccurredAt);
+
+    return !Number.isFinite(occurredAt) || occurredAt + durationDays * 86_400_000 > now;
+  }
+
+  return false;
 }
 
 export interface FilesVersion {
@@ -124,6 +156,8 @@ export interface FilesPreview {
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
 export interface FilesDetail {
+  item?: FilesItem;
+  capabilities?: FilesItemCapabilities;
   provenance: { type:string; id:string };
   version: FilesVersion;
   recording?: { version_id:string; language?:string; transcript:RecordingSegment[]; chapters:RecordingChapter[]; duration_seconds?:number; generator?:string; generated_at?:string };
@@ -144,17 +178,6 @@ export interface FilesCapabilities {
   authenticatedRemote?: boolean;
   verifiedRecovery?: boolean;
   nativeFilesystem: boolean;
-  lifecycle?: FilesLifecyclePermissions;
-}
-
-export interface FilesLifecyclePermissions {
-  updateLifecycle: boolean;
-  checkout: boolean;
-  checkin: boolean;
-  publish: boolean;
-  retention: boolean;
-  record: boolean;
-  disposal: boolean;
 }
 
 export type ShareAccessMode = 'view' | 'download';

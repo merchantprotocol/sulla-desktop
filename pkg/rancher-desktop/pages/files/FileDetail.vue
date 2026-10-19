@@ -49,7 +49,7 @@
             <div class="tabs"><button v-for="tab in sideTabs" :key="tab" type="button" :class="{ on: sideTab === tab }" @click="sideTab = tab">{{ tab }}<span v-if="tab === 'Versions'" class="tag">{{ versions.length || item.versionCount }}</span></button></div>
             <div v-if="loading" class="pane state">Loading file details…</div>
             <div v-else-if="sideTab === 'Details'" class="pane">
-              <section v-if="permissions?.updateLifecycle && item.versioning" class="lifecycle-settings" aria-labelledby="lifecycle-settings-title">
+              <section v-if="permissions.canManage && item.versioning" class="lifecycle-settings" aria-labelledby="lifecycle-settings-title">
                 <div class="section-heading"><h4 id="lifecycle-settings-title">Versioning settings</h4><span class="pill idle">Service controlled</span></div>
                 <form @submit.prevent="saveLifecycleSettings">
                   <label class="check"><input v-model="lifecycleForm.enabled" type="checkbox"> Enable versioning</label>
@@ -58,7 +58,7 @@
                   <label class="check"><input v-model="lifecycleForm.requireCheckout" type="checkbox" :disabled="!lifecycleForm.enabled"> Require checkout</label>
                   <button class="btn sm" type="submit" :disabled="busy">Save settings</button>
                 </form>
-                <div v-if="permissions?.record && item.record?.status === 'none'" class="irreversible-control">
+                <div v-if="permissions.canManage && item.record?.status === 'none'" class="irreversible-control">
                   <label class="check"><input v-model="policyLockConfirmed" type="checkbox"> I understand a policy record lock is irreversible for this file.</label>
                   <button class="btn sm danger" type="button" :disabled="busy || !policyLockConfirmed" @click="lockRecord('policy')">Apply policy lock</button>
                 </div>
@@ -70,11 +70,11 @@
                   <template v-if="actionForm === 'retention'">
                     <label>Mode<select v-model="retentionForm.mode"><option value="none">No retention policy</option><option value="date">Retain until date</option><option value="event">Retain until event</option></select></label>
                     <label v-if="retentionForm.mode === 'date'">Retain until<input v-model="retentionForm.date" type="date" required><small v-if="retentionError" class="field-error">{{ retentionError }}</small></label>
-                    <template v-if="retentionForm.mode === 'event'"><label>Event name<input v-model="retentionForm.eventType" required maxlength="120"></label><label>Duration (days)<input v-model.number="retentionForm.durationDays" type="number" min="0" step="1" required></label><label class="check"><input v-model="retentionForm.eventOccurred" type="checkbox"> Event has occurred</label><label v-if="retentionForm.eventOccurred">Occurred at<input v-model="retentionForm.eventOccurredAt" type="datetime-local" required></label></template>
+                    <template v-if="retentionForm.mode === 'event'"><label>Event name<input v-model="retentionForm.eventType" required maxlength="120"></label><label>Duration (days)<input v-model.number="retentionForm.durationDays" type="number" min="0" max="2147483647" step="1" required></label><label class="check"><input v-model="retentionForm.eventOccurred" type="checkbox"> Event has occurred</label><label v-if="retentionForm.eventOccurred">Occurred at<input v-model="retentionForm.eventOccurredAt" type="datetime-local" required></label></template>
                   </template>
                   <label v-else>Comment<input v-model="actionComment" :placeholder="actionForm === 'publish' ? 'Optional publication comment' : 'Describe this version'"></label>
-                  <label v-if="actionForm === 'publish'" class="check"><input v-model="irreversibleConfirmation" type="checkbox"> I understand publishing makes this version visible as the approved version.</label>
-                  <button class="btn sm primary" type="submit" :disabled="busy || (actionForm === 'publish' && !irreversibleConfirmation)">{{ actionForm === 'retention' ? 'Save retention' : actionForm === 'publish' ? 'Publish version' : 'Check in version' }}</button>
+                  <p v-if="actionForm === 'publish'" class="note">This becomes the approved version. You can publish a newer version later.</p>
+                  <button class="btn sm primary" type="submit" :disabled="busy">{{ actionForm === 'retention' ? 'Save retention' : actionForm === 'publish' ? 'Publish version' : 'Check in version' }}</button>
                 </form>
               </section>
               <section v-if="canPurge" class="lifecycle-form purge-form" aria-labelledby="purge-title">
@@ -83,7 +83,7 @@
                 <label class="check"><input v-model="purgeConfirmed" type="checkbox"> I understand this permanently deletes the trashed file and cannot be undone.</label>
                 <button class="btn sm danger" type="button" :disabled="busy || !purgeConfirmed" @click="purgeTrash">Permanently delete</button>
               </section>
-              <dl class="kv"><dt>Type</dt><dd>{{ item.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(item.size) }}</dd><dt v-if="detail?.recording?.duration_seconds">Length</dt><dd v-if="detail?.recording?.duration_seconds">{{ duration(detail.recording.duration_seconds) }}</dd><dt>Location</dt><dd>My Files › {{ pathCrumbs.join(' › ') }}</dd><dt>Owner</dt><dd>{{ owner }}</dd><dt>Modified</dt><dd>{{ formatDate(item.updatedAt) }}</dd><dt v-if="item.publicationState">Publication</dt><dd v-if="item.publicationState"><span class="pill" :class="item.publicationState === 'published' ? 'ok' : 'draft'">{{ item.publicationState }}</span><span v-if="item.publishedVersionId" class="muted"> · {{ item.publishedVersionId === item.currentVersionId ? 'current version is published' : 'published version remains available' }}</span></dd><dt v-if="item.checkout">Checkout</dt><dd v-if="item.checkout">{{ item.checkout.userId }} · {{ formatDate(item.checkout.at) }}<button v-if="canCheckout" class="link" type="button" :disabled="busy" @click="releaseCheckout">Release</button></dd><dt v-if="item.retention">Retention</dt><dd v-if="item.retention"><span class="pill idle">{{ item.retention.mode }}</span><span v-if="item.retention.retainUntil"> · until {{ shortDate(item.retention.retainUntil) }}</span><button v-if="canManageLifecycle" class="link" type="button" :disabled="busy" @click="changeRetention">Change</button></dd><dt v-if="item.record">Record</dt><dd v-if="item.record"><span class="pill idle">{{ item.record.status }}</span><span v-if="item.record.lockedBy"> · locked by {{ item.record.lockedBy }}</span><button v-if="canManageLifecycle && item.record.status === 'none'" class="link" type="button" :disabled="busy" @click="lockRecord('ordinary')">Lock</button><button v-else-if="canManageLifecycle && item.record.status === 'ordinary'" class="link" type="button" :disabled="busy" @click="unlockRecord">Unlock</button></dd><dt v-if="item.disposal">Disposal</dt><dd v-if="item.disposal"><span class="pill" :class="item.disposal.status === 'pending' ? 'idle' : item.disposal.status === 'approved' ? 'ok' : 'draft'">{{ item.disposal.status }}</span><button v-if="canManageLifecycle && item.disposal.status === 'pending'" class="link" type="button" :disabled="busy" @click="reviewDisposal('reject')">Keep</button><button v-if="canManageLifecycle && item.disposal.status === 'pending'" class="link" type="button" :disabled="busy" @click="reviewDisposal('approve')">Approve disposal</button></dd><dt>Index</dt><dd><b>{{ item.indexStatus }}</b> · {{ item.indexReason }} <button v-if="['failed', 'unsupported'].includes(item.indexStatus)" class="link" type="button" :disabled="busy" @click="reindex">Re-index</button></dd><dt>Sync</dt><dd>{{ syncLabel }} <button v-if="item.syncState === 'online-only' && dataSource.capabilities.onlineOnly && dataSource.keepOnMac" class="link" type="button" :disabled="busy" @click="keepOnMac">Keep on this computer</button><button v-else-if="dataSource.capabilities.onlineOnly && dataSource.makeOnlineOnly" class="link" type="button" :disabled="busy" @click="makeOnlineOnly">Make online only</button></dd><dt>Public link</dt><dd><template v-if="activeLink"><span class="pill ok">On</span> {{ activeLink.viewCount }} views<template v-if="activeLink.expiresAt"> · expires {{ shortDate(activeLink.expiresAt) }}</template></template><span v-else>Off</span></dd></dl>
+              <dl class="kv"><dt>Type</dt><dd>{{ item.mime }}</dd><dt>Size</dt><dd>{{ formatBytes(item.size) }}</dd><dt v-if="detail?.recording?.duration_seconds">Length</dt><dd v-if="detail?.recording?.duration_seconds">{{ duration(detail.recording.duration_seconds) }}</dd><dt>Location</dt><dd>My Files › {{ pathCrumbs.join(' › ') }}</dd><dt>Owner</dt><dd>{{ owner }}</dd><dt>Modified</dt><dd>{{ formatDate(item.updatedAt) }}</dd><dt v-if="item.publicationState">Publication</dt><dd v-if="item.publicationState"><span class="pill" :class="item.publicationState === 'published' ? 'ok' : 'draft'">{{ item.publicationState }}</span><span v-if="item.publishedVersionId" class="muted"> · {{ item.publishedVersionId === item.currentVersionId ? 'current version is published' : 'published version remains available' }}</span></dd><dt v-if="item.checkout">Checkout</dt><dd v-if="item.checkout">{{ item.checkout.userId }} · {{ formatDate(item.checkout.at) }}<button v-if="canCheckout" class="link" type="button" :disabled="busy" @click="releaseCheckout">Release</button></dd><dt v-if="item.retention">Retention</dt><dd v-if="item.retention"><span class="pill idle">{{ item.retention.mode }}</span><span v-if="item.retention.retainUntil"> · until {{ shortDate(item.retention.retainUntil) }}</span><button v-if="canManageLifecycle" class="link" type="button" :disabled="busy" @click="changeRetention">Change</button></dd><dt v-if="item.record">Record</dt><dd v-if="item.record"><span class="pill idle">{{ item.record.status }}</span><span v-if="item.record.lockedBy"> · locked by {{ item.record.lockedBy }}</span><button v-if="canManageLifecycle && item.record.status === 'none'" class="link" type="button" :disabled="busy" @click="lockRecord('ordinary')">Lock</button><button v-else-if="canManageLifecycle && item.record.status === 'ordinary'" class="link" type="button" :disabled="busy" @click="unlockRecord">Unlock</button></dd><dt v-if="item.disposal">Disposal</dt><dd v-if="item.disposal"><span class="pill" :class="item.disposal.status === 'pending' ? 'idle' : item.disposal.status === 'approved' ? 'ok' : 'draft'">{{ item.disposal.status }}</span><template v-if="canManageLifecycle && item.disposal.status === 'pending'"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('reject')">Keep</button><button class="link" type="button" :disabled="busy" @click="reviewDisposal('approve')">Approve disposal</button><label class="inline-date">Extend until<input v-model="disposalExtendedUntil" type="date"><button class="link" type="button" :disabled="busy" @click="reviewDisposal('extend', disposalExtendedUntil)">Extend</button></label></template></dd><dt>Index</dt><dd><b>{{ item.indexStatus }}</b> · {{ item.indexReason }} <button v-if="['failed', 'unsupported'].includes(item.indexStatus)" class="link" type="button" :disabled="busy" @click="reindex">Re-index</button></dd><dt>Sync</dt><dd>{{ syncLabel }} <button v-if="item.syncState === 'online-only' && dataSource.capabilities.onlineOnly && dataSource.keepOnMac" class="link" type="button" :disabled="busy" @click="keepOnMac">Keep on this computer</button><button v-else-if="dataSource.capabilities.onlineOnly && dataSource.makeOnlineOnly" class="link" type="button" :disabled="busy" @click="makeOnlineOnly">Make online only</button></dd><dt>Public link</dt><dd><template v-if="activeLink"><span class="pill ok">On</span> {{ activeLink.viewCount }} views<template v-if="activeLink.expiresAt"> · expires {{ shortDate(activeLink.expiresAt) }}</template></template><span v-else>Off</span></dd></dl>
               <div class="section"><h4>Made by</h4><div class="provenance"><span class="agent">S</span><div><b>{{ provenanceTitle }}</b><small>{{ provenanceDetail }}</small></div></div></div>
               <div v-if="detail?.links.length" class="section"><h4>Linked files</h4><div class="links"><button v-for="link in detail.links" :key="`${link.id}-${link.direction}`" type="button" @click="emit('open-linked', link.id)"><span class="file-glyph small" v-html="fileIcon(link.mime)" /><span>{{ link.path.split('/').at(-1) }}</span><small>{{ link.direction === 'incoming' ? 'links here' : link.kind.replaceAll('_', ' ') }}</small></button></div></div>
             </div>
@@ -111,34 +111,48 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 
+import { filesItemHasActiveProtection } from './types';
+
 import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesVersion, ShareActivity, ShareLink } from './types';
 
 const props = defineProps<{ item:FilesItem; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
 const emit = defineEmits<{ close:[]; share:[]; restored:[]; 'open-linked':[fileId:string] }>();
+const item = reactive<FilesItem>({ ...props.item });
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
-const name = computed(() => props.item.path.split('/').at(-1) || props.item.path); const pathCrumbs = computed(() => props.item.path.split('/').slice(0, -1));
+const name = computed(() => item.path.split('/').at(-1) || item.path); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
 const transcript = computed(() => detail.value?.recording?.transcript || []); const chapters = computed(() => detail.value?.recording?.chapters || []);
-const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === props.item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => props.item.ownerDisplayName || props.collection.accountName || props.item.createdById || 'Unknown owner');
-const permissions = computed(() => props.dataSource.capabilities.lifecycle); const canPublish = computed(() => Boolean(props.dataSource.publishVersion && permissions.value?.publish && props.item.publicationState)); const canCheckout = computed(() => Boolean(props.dataSource.checkout && permissions.value?.checkout)); const canCheckin = computed(() => Boolean(props.dataSource.checkin && permissions.value?.checkin && props.item.versioning?.enabled)); const canManageLifecycle = computed(() => Boolean(permissions.value?.retention || permissions.value?.record || permissions.value?.disposal)); const canPurge = computed(() => Boolean(props.item.deletedAt && props.dataSource.purgeTrash && permissions.value?.disposal && itemDisposalApproved.value && !itemHasActiveRetention.value && !itemIsLocked.value)); const itemDisposalApproved = computed(() => props.item.disposal?.status === 'approved'); const itemHasActiveRetention = computed(() => Boolean(props.item.retention && props.item.retention.mode !== 'none')); const itemIsLocked = computed(() => props.item.record?.status === 'ordinary' || props.item.record?.status === 'policy');
-const syncLabel = computed(() => props.item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
-const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(props.item.size) } · ${ props.item.mime }`);
-const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(props.item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(props.item.mime));
+const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => item.ownerDisplayName || props.collection.accountName || item.createdById || 'Unknown owner');
+const deniedPermissions = Object.freeze({ canEdit: false, canManage: false, canViewDraft: false, canPublish: false });
+const permissions = computed(() => detail.value?.capabilities ?? item.capabilities ?? deniedPermissions);
+const canPublish = computed(() => Boolean(props.dataSource.publishVersion && permissions.value.canPublish && item.publicationState));
+const canCheckout = computed(() => Boolean(props.dataSource.checkout && permissions.value.canEdit));
+const canCheckin = computed(() => Boolean(props.dataSource.checkin && permissions.value.canEdit && permissions.value.canViewDraft && item.versioning?.enabled));
+const canManageLifecycle = computed(() => permissions.value.canManage);
+const itemDisposalApproved = computed(() => item.disposal?.status === 'approved');
+const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
+const canPurge = computed(() => Boolean(item.deletedAt && props.dataSource.purgeTrash && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
+const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
+const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
+const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
-const provenanceTitle = computed(() => props.item.createdByType === 'agent-run' ? `Sulla · ${ props.item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || props.item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || props.item.createdById }.`);
+const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
 const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
-  const [metadata, history] = await Promise.allSettled([props.dataSource.detail(props.item.id), props.dataSource.history(props.item.id)]);
-  if (metadata.status === 'fulfilled') detail.value = metadata.value;
+  const [metadata, history] = await Promise.allSettled([props.dataSource.detail(item.id), props.dataSource.history(item.id)]);
+  if (metadata.status === 'fulfilled') {
+    detail.value = metadata.value;
+    if (metadata.value.item) Object.assign(item, metadata.value.item);
+  }
   else error.value = metadata.reason instanceof Error ? metadata.reason.message : String(metadata.reason);
   if (history.status === 'fulfilled') versions.value = history.value;
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
-    supportsMedia.value ? props.dataSource.mediaUrl(props.item.id, props.item.currentVersionId) : Promise.resolve(''),
+    supportsMedia.value ? props.dataSource.mediaUrl(item.id, item.currentVersionId) : Promise.resolve(''),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
@@ -146,32 +160,119 @@ onMounted(async() => {
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(props.item.id, name.value, props.item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function restore(id:string) { busy.value = true; try { await props.dataSource.restoreVersion(props.item.id, id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const irreversibleConfirmation = ref(false); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
-const lifecycleForm = reactive({ enabled: props.item.versioning?.enabled ?? false, majorMinor: props.item.versioning?.majorMinor ?? false, requireApproval: props.item.versioning?.requireApproval ?? false, requireCheckout: props.item.versioning?.requireCheckout ?? false });
-const retentionForm = reactive({ mode: (props.item.retention?.mode === 'retain-until' ? 'date' : props.item.retention?.mode === 'event' ? 'event' : 'none') as 'none'|'date'|'event', date: props.item.retention?.retainUntil?.slice(0, 10) || '', eventType: props.item.retention?.eventType || '', durationDays: props.item.retention?.durationDays ?? 0, eventOccurred: Boolean(props.item.retention?.eventOccurredAt), eventOccurredAt: props.item.retention?.eventOccurredAt?.slice(0, 16) || '' });
-function openPublish(id:string) { actionForm.value = 'publish'; actionVersionId.value = id; actionComment.value = ''; irreversibleConfirmation.value = false; sideTab.value = 'Details' }
-function openCheckin(kind:'major'|'minor') { actionForm.value = 'checkin'; actionKind.value = kind; actionVersionId.value = props.item.currentVersionId; actionComment.value = ''; sideTab.value = 'Details' }
-function closeActionForm() { actionForm.value = undefined; retentionError.value = ''; irreversibleConfirmation.value = false }
-async function submitActionForm() { if (!actionForm.value) return; if (actionForm.value === 'publish') { if (!props.dataSource.publishVersion || !irreversibleConfirmation.value) return; await runLifecycle(() => props.dataSource.publishVersion!(props.item.id, actionVersionId.value, props.item.draftVersionId, actionComment.value.trim() || undefined)); closeActionForm(); return } if (actionForm.value === 'checkin') { if (!props.dataSource.checkin) return; await runLifecycle(() => props.dataSource.checkin!(props.item.id, actionVersionId.value, actionKind.value, actionComment.value.trim(), false)); closeActionForm(); return } if (!props.dataSource.updateRetention) return; retentionError.value = ''; let policy:FilesRetentionPolicy; if (retentionForm.mode === 'none') policy = { mode: 'none' }; else if (retentionForm.mode === 'date') { const parsed = new Date(`${ retentionForm.date }T23:59:59Z`); if (!retentionForm.date || Number.isNaN(parsed.getTime())) { retentionError.value = 'Enter a valid retention date.'; return } policy = { mode: 'retain-until', retainUntil: parsed.toISOString() }; } else { if (!retentionForm.eventType.trim() || !Number.isInteger(retentionForm.durationDays) || retentionForm.durationDays < 0) { retentionError.value = 'Enter an event name and a whole-number duration.'; return } policy = { mode: 'event', eventType: retentionForm.eventType.trim(), durationDays: retentionForm.durationDays, eventOccurredAt: retentionForm.eventOccurred ? new Date(retentionForm.eventOccurredAt).toISOString() : null }; } await runLifecycle(() => props.dataSource.updateRetention!(props.item.id, policy)); closeActionForm() }
+async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
+type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
+const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });
+const retentionForm = reactive({ mode: (item.retention?.mode === 'retain-until' ? 'date' : item.retention?.mode === 'event' ? 'event' : 'none') as 'none'|'date'|'event', date: item.retention?.retainUntil?.slice(0, 10) || '', eventType: item.retention?.eventType || '', durationDays: item.retention?.durationDays ?? 0, eventOccurred: Boolean(item.retention?.eventOccurredAt), eventOccurredAt: item.retention?.eventOccurredAt?.slice(0, 16) || '' });
+function openPublish(id:string) { actionForm.value = 'publish'; actionVersionId.value = id; actionComment.value = ''; sideTab.value = 'Details' }
+function openCheckin(kind:'major'|'minor') { actionForm.value = 'checkin'; actionKind.value = kind; actionVersionId.value = item.currentVersionId; actionComment.value = ''; sideTab.value = 'Details' }
+function closeActionForm() { actionForm.value = undefined; retentionError.value = '' }
+function parseDateOnly(value:string):Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) return undefined;
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day, 23, 59, 59));
+
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? parsed : undefined;
+}
+function parseLocalDateTime(value:string):Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+
+  if (!match) return undefined;
+  const [, rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond = '0'] = match;
+  const expected = [rawYear, rawMonth, rawDay, rawHour, rawMinute, rawSecond].map(Number);
+  const parsed = new Date(value);
+
+  if (!Number.isFinite(parsed.getTime())) return undefined;
+  const actual = [parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate(), parsed.getHours(), parsed.getMinutes(), parsed.getSeconds()];
+
+  return actual.every((part, index) => part === expected[index]) ? parsed : undefined;
+}
+async function submitActionForm() {
+  if (!actionForm.value) return;
+  error.value = '';
+  retentionError.value = '';
+  if (actionForm.value === 'publish') {
+    if (!props.dataSource.publishVersion || !actionVersionId.value) return;
+    if (await runLifecycle(() => props.dataSource.publishVersion!(item.id, actionVersionId.value, item.draftVersionId, actionComment.value.trim() || undefined))) closeActionForm();
+    return;
+  }
+  if (actionForm.value === 'checkin') {
+    if (!props.dataSource.checkin || !actionVersionId.value) return;
+    if (await runLifecycle(() => props.dataSource.checkin!(item.id, actionVersionId.value, actionKind.value, actionComment.value.trim(), false))) closeActionForm();
+    return;
+  }
+  if (!props.dataSource.updateRetention) return;
+  let policy:FilesRetentionPolicy;
+
+  if (retentionForm.mode === 'none') policy = { mode: 'none' };
+  else if (retentionForm.mode === 'date') {
+    const parsed = parseDateOnly(retentionForm.date);
+
+    if (!parsed) { retentionError.value = 'Enter a valid retention date.'; return }
+    policy = { mode: 'retain-until', retainUntil: parsed.toISOString() };
+  } else {
+    const durationDays = Number(retentionForm.durationDays);
+    const occurredAt = retentionForm.eventOccurred ? parseLocalDateTime(retentionForm.eventOccurredAt) : undefined;
+
+    if (!retentionForm.eventType.trim() || !Number.isSafeInteger(durationDays) || durationDays < 0 || durationDays > 2_147_483_647) { retentionError.value = 'Enter an event name and a non-negative whole-number duration.'; return }
+    if (retentionForm.eventOccurred && !occurredAt) { retentionError.value = 'Enter a valid event occurrence date and time.'; return }
+    policy = { mode: 'event', eventType: retentionForm.eventType.trim(), durationDays, eventOccurredAt: occurredAt?.toISOString() ?? null };
+  }
+  if (await runLifecycle(() => props.dataSource.updateRetention!(item.id, policy))) closeActionForm();
+}
 async function publish(id:string) { openPublish(id) }
-async function publishCurrent() { openPublish(props.item.currentVersionId) }
+async function publishCurrent() { openPublish(item.currentVersionId) }
 async function checkin(kind:'major'|'minor') { openCheckin(kind) }
-async function restoreTrash() { if (!props.dataSource.restoreTrash) return; await runLifecycle(() => props.dataSource.restoreTrash!(props.item.id)) }
-async function purgeTrash() { if (!props.dataSource.purgeTrash || !canPurge.value || !purgeConfirmed.value) return; await runLifecycle(() => props.dataSource.purgeTrash!(props.item.id)); purgeConfirmed.value = false }
-async function checkout() { if (!props.dataSource.checkout) return; await runLifecycle(() => props.dataSource.checkout!(props.item.id)) }
-async function releaseCheckout() { if (!props.dataSource.checkout) return; await runLifecycle(() => props.dataSource.checkout!(props.item.id, true)) }
-async function changeRetention() { if (!permissions.value?.retention) return; actionForm.value = 'retention'; retentionError.value = ''; sideTab.value = 'Details' }
-async function saveLifecycleSettings() { if (!props.dataSource.updateLifecycle || !permissions.value?.updateLifecycle) return; await runLifecycle(() => props.dataSource.updateLifecycle!(props.item.id, { ...lifecycleForm })) }
-async function lockRecord(status:'ordinary'|'policy') { if (!props.dataSource.recordLock) return; await runLifecycle(() => props.dataSource.recordLock!(props.item.id, status)) }
-async function unlockRecord() { if (!props.dataSource.unlockRecord) return; await runLifecycle(() => props.dataSource.unlockRecord!(props.item.id)) }
-async function reviewDisposal(decision:'approve'|'reject'|'extend', extendedUntil?:string) { if (!props.dataSource.disposalReview || !permissions.value?.disposal) return; if (decision === 'extend' && (!extendedUntil || Number.isNaN(new Date(`${ extendedUntil }T23:59:59Z`).getTime()))) { error.value = 'Enter a valid extension date.'; return } await runLifecycle(() => props.dataSource.disposalReview!(props.item.id, decision, decision === 'extend' ? new Date(`${ extendedUntil }T23:59:59Z`).toISOString() : undefined)); disposalExtendedUntil.value = '' }
-async function runLifecycle(action:() => Promise<void>) { busy.value = true; try { await action(); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function reindex() { busy.value = true; try { await props.dataSource.reindex(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function restoreTrash() { if (!props.dataSource.restoreTrash) return; if (await runLifecycle(() => props.dataSource.restoreTrash!(item.id), false)) emit('restored') }
+async function purgeTrash() { if (!props.dataSource.purgeTrash || !canPurge.value || !purgeConfirmed.value) return; if (await runLifecycle(() => props.dataSource.purgeTrash!(item.id), false)) { purgeConfirmed.value = false; emit('restored') } }
+async function checkout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id)) }
+async function releaseCheckout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id, true)) }
+async function changeRetention() { if (!permissions.value.canManage) return; actionForm.value = 'retention'; retentionError.value = ''; error.value = ''; sideTab.value = 'Details' }
+async function saveLifecycleSettings() { if (!props.dataSource.updateLifecycle || !permissions.value.canManage) return; await runLifecycle(() => props.dataSource.updateLifecycle!(item.id, { ...lifecycleForm })) }
+async function lockRecord(status:'ordinary'|'policy') { if (!props.dataSource.recordLock || !permissions.value.canManage) return; if (await runLifecycle(() => props.dataSource.recordLock!(item.id, status))) policyLockConfirmed.value = false }
+async function unlockRecord() { if (!props.dataSource.unlockRecord || !permissions.value.canManage) return; await runLifecycle(() => props.dataSource.unlockRecord!(item.id)) }
+async function reviewDisposal(decision:'approve'|'reject'|'extend', extendedUntil?:string) {
+  if (!props.dataSource.disposalReview || !permissions.value.canManage) return;
+  error.value = '';
+  const extension = decision === 'extend' && extendedUntil ? parseDateOnly(extendedUntil) : undefined;
+
+  if (decision === 'extend' && (!extension || extension.getTime() <= Date.now())) { error.value = 'Enter a valid future extension date.'; return }
+  if (await runLifecycle(() => props.dataSource.disposalReview!(item.id, decision, extension?.toISOString()))) disposalExtendedUntil.value = '';
+}
+async function refreshLifecycleState():Promise<void> {
+  const [metadata, history] = await Promise.all([props.dataSource.detail(item.id), props.dataSource.history(item.id)]);
+
+  detail.value = metadata;
+  versions.value = history;
+  if (metadata.item) Object.assign(item, metadata.item);
+  Object.assign(lifecycleForm, {
+    enabled:         item.versioning?.enabled ?? false,
+    majorMinor:      item.versioning?.majorMinor ?? false,
+    requireApproval: item.versioning?.requireApproval ?? false,
+    requireCheckout: item.versioning?.requireCheckout ?? false,
+  });
+}
+async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<boolean> {
+  busy.value = true;
+  error.value = '';
+  try {
+    await action();
+    if (refresh) await refreshLifecycleState();
+    return true;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+    return false;
+  } finally {
+    busy.value = false;
+  }
+}
+async function reindex() { busy.value = true; try { await props.dataSource.reindex(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function revoke() { if (!activeLink.value || !props.dataSource.revokePublicLink) return; busy.value = true; try { await props.dataSource.revokePublicLink(activeLink.value.id); activeLink.value.revokedAt = new Date().toISOString() } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function keepOnMac() { if (!props.dataSource.keepOnMac) return; busy.value = true; try { await props.dataSource.keepOnMac(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; busy.value = true; try { await props.dataSource.makeOnlineOnly(props.item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function keepOnMac() { if (!props.dataSource.keepOnMac) return; busy.value = true; try { await props.dataSource.keepOnMac(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; busy.value = true; try { await props.dataSource.makeOnlineOnly(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function copyLink() { if (!activeLink.value) return; try { await navigator.clipboard.writeText(activeLink.value.url); copied.value = true; setTimeout(() => { copied.value = false }, 1500) } catch { error.value = 'The link could not be copied.' } }
 function seek(seconds:number) { const media = video.value || audio.value; if (media) { media.currentTime = seconds; media.play().catch(() => undefined) } mediaTab.value = 'Preview' }
 function duration(seconds:number) { const value = Math.max(0, Math.round(Number(seconds) || 0)); return `${ Math.floor(value / 60) }:${ String(value % 60).padStart(2, '0') }` }
