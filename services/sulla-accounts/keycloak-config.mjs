@@ -59,7 +59,7 @@ export function buildKeycloakConfig(environment) {
   const clientAttributes = { 'sulla.reconciliation.version': '1' };
 
   return {
-    realm: { realm: environment.realm, enabled: true, registrationAllowed: false, resetPasswordAllowed: true },
+    realm: { realm: environment.realm, enabled: true, registrationAllowed: false, resetPasswordAllowed: true, loginTheme: 'sulla' },
     membershipScope,
     resourceScopes,
     nativeClient: {

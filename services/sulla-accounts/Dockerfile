@@ -29,8 +29,11 @@ RUN apt-get update \
     && mkdir -p /opt/keycloak \
     && tar -xzf /tmp/keycloak.tar.gz --strip-components=1 -C /opt/keycloak \
     && rm /tmp/keycloak.tar.gz \
-    && mkdir -p /licenses/keycloak \
-    && /opt/keycloak/bin/kc.sh build --db=postgres --health-enabled=true --http-relative-path=/auth
+    && mkdir -p /licenses/keycloak
+
+COPY services/sulla-accounts/keycloak-theme/sulla /opt/keycloak/themes/sulla
+
+RUN /opt/keycloak/bin/kc.sh build --db=postgres --health-enabled=true --http-relative-path=/auth
 
 COPY services/sulla-accounts/package.json ./package.json
 COPY services/sulla-accounts/package-lock.json ./package-lock.json

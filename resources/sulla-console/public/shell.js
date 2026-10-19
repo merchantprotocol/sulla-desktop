@@ -72,7 +72,7 @@ function wipeFrame(reason){
 }
 function lockAll(reason){wipeFrame(reason);for(const service of [...sessions.keys()])forgetSession(service)}
 function returnTarget(){return `${location.pathname}${location.search}`}
-function showGate(message='Accounts protects every service with one session.'){
+function showGate(message='Sign in to continue.',redirect=false){
   advanceAuth();
   lockAll('authentication-required');
   account=null;organizationId='';identityKey='';
@@ -81,6 +81,7 @@ function showGate(message='Accounts protects every service with one session.'){
   document.getElementById('auth-message').textContent=message;
   const gateSignin=document.getElementById('gate-signin');
   gateSignin.hidden=false;gateSignin.href=`/accounts-api/v1/web/login?returnTo=${encodeURIComponent(returnTarget())}`;
+  if(redirect)window.location.assign(gateSignin.href);
 }
 function showShell(){gate.hidden=true;shell.hidden=false}
 function startAccountLoad(){
@@ -89,11 +90,11 @@ function startAccountLoad(){
   const load=(async()=>{
     const response=await fetch('/accounts-api/v1/web/session',{credentials:'include',cache:'no-store',signal:fence.signal});
     assertFence(fence);
-    if(!response.ok){const error=new Error('Sign in through Accounts first.');error.authenticationRequired=response.status===401||response.status===403;throw error}
+    if(!response.ok){const error=new Error('Sign in to continue.');error.authenticationRequired=response.status===401||response.status===403;throw error}
     const next=await response.json();
     assertFence(fence);
     const selected=next.organizations?.find(item=>item.id===organizationId)??next.organizations?.[0];
-    if(!selected?.id)throw new Error('Your Accounts session does not have an organization.');
+    if(!selected?.id)throw new Error('Your session does not have an organization.');
     const nextIdentity=JSON.stringify(next.identity??null);
     if((organizationId&&organizationId!==selected.id)||(identityKey&&identityKey!==nextIdentity))lockAll(organizationId!==selected.id?'organization-change':'identity-change');
     organizationId=selected.id;identityKey=nextIdentity;account=next;
@@ -114,7 +115,7 @@ async function loadAccountSession(fence){
 }
 async function verifyAccount(){
   const fence=createFence();
-  try{await loadAccountSession(fence)}catch(error){if(fence.current()&&!isAbort(error))showGate(error instanceof Error?error.message:'Your Accounts session ended.')}finally{fence.release()}
+  try{await loadAccountSession(fence)}catch(error){if(fence.current()&&!isAbort(error))showGate(error instanceof Error?error.message:'Your session ended.')}finally{fence.release()}
 }
 async function verifyExpiredAccount(){
   const fence=createFence();
@@ -124,21 +125,21 @@ async function verifyExpiredAccount(){
     setStatus('Session expired. Reopen the section.','error');
   }catch(error){
     if(!fence.current()||isAbort(error))return;
-    if(error?.authenticationRequired)showGate('Your Accounts session ended. Sign in again to continue.');
-    else setStatus('Service session expired. Accounts could not be verified.','error');
+    if(error?.authenticationRequired)showGate('Your session ended. Taking you to sign in…',true);
+    else setStatus('Your sign-in could not be verified.','error');
   }finally{fence.release()}
 }
 async function mintSession(route,fence){
   await loadAccountSession(fence);
   assertFence(fence);
   const csrf=decodeURIComponent(cookie('sulla-console-csrf'));
-  if(!csrf){const error=new Error('Sign in through Accounts first.');error.authenticationRequired=true;throw error}
+  if(!csrf){const error=new Error('Sign in to continue.');error.authenticationRequired=true;throw error}
   const response=await fetch('/accounts-api/v1/web/ui-sessions',{method:'POST',credentials:'include',cache:'no-store',signal:fence.signal,headers:{'Content-Type':'application/json','X-Sulla-CSRF':csrf},body:JSON.stringify({service:route.service,audience:route.audience,organizationId})});
   assertFence(fence);
-  if(!response.ok){const error=new Error(response.status===401?'Sign in through Accounts first.':'This account cannot open that service.');error.authenticationRequired=response.status===401;throw error}
+  if(!response.ok){const error=new Error(response.status===401?'Sign in to continue.':'You do not have access to this service.');error.authenticationRequired=response.status===401;throw error}
   const session=await response.json();
   assertFence(fence);
-  if(session.service!==route.service||session.audience!==route.audience||session.organizationId!==organizationId||typeof session.token!=='string'||!Number.isFinite(Date.parse(session.expiresAt)))throw new Error('Accounts returned an invalid service session.');
+  if(session.service!==route.service||session.audience!==route.audience||session.organizationId!==organizationId||typeof session.token!=='string'||!Number.isFinite(Date.parse(session.expiresAt)))throw new Error('The sign-in service returned an invalid session.');
   sessions.set(route.service,session);
   window.clearTimeout(refreshTimers.get(route.service));
   const refreshIn=Math.max(10_000,Date.parse(session.expiresAt)-Date.now()-60_000);
@@ -156,7 +157,7 @@ async function deliverSession(route){
   }catch(error){
     if(!fence.current()||isAbort(error))return;
     forgetSession(route.service);
-    if(error?.authenticationRequired){showGate('Your Accounts session ended. Sign in again to continue.');return}
+    if(error?.authenticationRequired){showGate('Your session ended. Taking you to sign in…',true);return}
     wipeFrame('authentication-failed');empty.hidden=false;setStatus(error instanceof Error?error.message:'Session unavailable','error')
   }finally{fence.release()}
 }
@@ -199,7 +200,7 @@ window.addEventListener('message',event=>{
   if(message.type==='sulla.service.expired'){
     forgetSession(active.route.service);wipeFrame('session-expired');
     history.replaceState({sullaConsoleDepth:0,area:null},'',urlForArea(null));
-    empty.hidden=false;setStatus('Verifying Accounts session…','idle');void verifyExpiredAccount();return;
+    empty.hidden=false;setStatus('Verifying session…','idle');void verifyExpiredAccount();return;
   }
   if(message.type==='sulla.console.open'){
     if(active.route.service==='accounts'&&message.target==='projects')navigate('projects');
@@ -245,5 +246,5 @@ history.replaceState({sullaConsoleDepth:0,area:areaFromLocation()},'',location.h
 document.getElementById('signin').href=`/accounts-api/v1/web/login?returnTo=${encodeURIComponent(returnTarget())}`;
 {
   const fence=createFence();
-  void loadAccountSession(fence).then(()=>openArea(areaFromLocation())).catch(error=>{if(fence.current()&&!isAbort(error))showGate(error instanceof Error?error.message:'Sign in through Accounts first.')}).finally(()=>fence.release());
+  void loadAccountSession(fence).then(()=>openArea(areaFromLocation())).catch(error=>{if(fence.current()&&!isAbort(error))showGate(error instanceof Error?error.message:'Sign in to continue.',Boolean(error?.authenticationRequired))}).finally(()=>fence.release());
 }

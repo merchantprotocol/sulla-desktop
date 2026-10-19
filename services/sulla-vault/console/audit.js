@@ -35,7 +35,7 @@
     $('page').textContent = 'Page 1';
     $('previous').disabled = true;
     $('next').disabled = true;
-    $('events').innerHTML = '<tr><td colspan="6">Waiting for Accounts authorization…</td></tr>';
+    $('events').innerHTML = '<tr><td colspan="6">Waiting for secure authorization…</td></tr>';
     $('detail').innerHTML = '<p class="muted">Select an event to see its metadata.</p>';
     populateSelect('action', [], 'All actions');
     populateSelect('person', [], 'Everyone');
@@ -80,12 +80,12 @@
     if (generation !== state.loadGeneration) return;
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) {
-        const message = response.status === 401 ? 'Your Accounts session expired.' : 'This account cannot view the audit log.';
+        const message = response.status === 401 ? 'Your session expired.' : 'You do not have access to the audit log.';
         lock(message);
         window.parent.postMessage({ type:'sulla.service.expired', version:1, service }, window.location.origin);
         return;
       }
-      throw new Error(response.status === 401 ? 'Your Accounts session expired.' : response.status === 403 ? 'This account cannot view the audit log.' : 'Audit events are unavailable.');
+      throw new Error(response.status === 401 ? 'Your session expired.' : response.status === 403 ? 'You do not have access to the audit log.' : 'Audit events are unavailable.');
     }
     let result;
     try {
@@ -117,7 +117,7 @@
     $('detail').innerHTML = `<span class="result${event.blocked ? ' bad' : ''}">${event.blocked ? 'Blocked' : 'Allowed'}</span><h2>${escapeHtml(actionLabel(event.action))}</h2>${event.blocked ? `<p class="why">${escapeHtml(event.reason || 'The request was denied before a secret was unlocked.')}</p>` : ''}${rows.map(([key,value]) => `<div class="kv"><span>${escapeHtml(key)}</span><span>${escapeHtml(value)}</span></div>`).join('')}<p class="security">✓ This record contains authorization metadata only. No secret value or decryption key is loaded by this page.</p>`;
   }
 
-  function lock(message = 'Open Audit Log from the main console to authorize it with Accounts.') {
+  function lock(message = 'Open Audit Log from the main console to authorize this view.') {
     clearProtectedData();
     state.token = ''; state.organizationId = ''; $('content').hidden = true; $('signed-out').hidden = false; $('signed-out').querySelector('p').textContent = message;
   }

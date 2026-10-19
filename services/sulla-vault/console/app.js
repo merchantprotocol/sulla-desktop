@@ -3815,11 +3815,11 @@
       $2("auth-submit").textContent = accountsSubmitLabel();
     } else if (setup) {
       $2("auth-title").textContent = result.status === "initialize-owner" ? "Create your organization Vault" : "Create your Vault identity";
-      $2("auth-lead").textContent = result.status === "initialize-owner" ? "Choose a Vault master password. Encryption keys are created here in your browser and the Vault organization uses the exact organization ID verified by Accounts." : "Choose a Vault master password. Your keys are created here in your browser; an owner must confirm your public key before organization access is granted.";
+      $2("auth-lead").textContent = result.status === "initialize-owner" ? "Choose a Vault master password. Encryption keys are created here in your browser for your organization." : "Choose a Vault master password. Your keys are created here in your browser; an owner must confirm your public key before organization access is granted.";
       $2("auth-submit").textContent = accountsSubmitLabel();
     } else {
       $2("auth-title").textContent = "Unlock Vault";
-      $2("auth-lead").textContent = "Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.";
+      $2("auth-lead").textContent = "Enter your Vault master password to unlock encryption keys in this browser.";
       $2("auth-submit").textContent = "Unlock Vault";
     }
   }
@@ -3844,7 +3844,7 @@
     }
     document.querySelectorAll("[data-page]").forEach((x2) => x2.disabled = false);
     const org = orgs.orgs.find((candidate) => !accountsSession || candidate.id === accountsOrganizationId);
-    if (!org) throw new Error("Accounts organization does not match this Vault membership");
+    if (!org) throw new Error("Your signed-in organization does not match this Vault membership");
     state.org = org;
     state.orgKey = await unwrapOrgKeyForMember(org.wrapped_org_key, state.user.publicKey, state.privateKey);
     org.name = await decryptText(org.encrypted_name, state.orgKey, "sulla:org-name:v1");

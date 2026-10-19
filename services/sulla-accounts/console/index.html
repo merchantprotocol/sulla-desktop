@@ -4,27 +4,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Sulla Accounts</title>
+  <title>Sulla Console</title>
   <link rel="stylesheet" href="./accounts.css">
 </head>
 <body>
   <header class="return-row"><a href="/console" target="_top" aria-label="Back to main menu">← Back to main menu</a></header>
   <main>
     <header class="page-head">
-      <div><p class="eyebrow" id="page-eyebrow">Sulla Accounts</p><h1 id="page-title">People</h1><p id="page-description">People, roles, and access to this organization.</p></div>
+      <div><p class="eyebrow" id="page-eyebrow">Sulla Server</p><h1 id="page-title">People</h1><p id="page-description">People, roles, and access to this organization.</p></div>
       <label class="organization-picker">Organization<select id="organization-select" aria-label="Organization"></select></label>
     </header>
 
     <section id="notice" class="notice" hidden role="status"></section>
     <section id="signed-out" class="panel empty" hidden>
       <span class="empty-mark" aria-hidden="true">S</span>
-      <h2>Sign in required</h2><p>Sign in through Accounts to open this part of the console.</p>
+      <h2>Sign in required</h2><p>Sign in to open this part of the console.</p>
       <a class="button primary" href="/accounts-api/v1/web/login?returnTo=%2Fconsole">Sign in</a>
     </section>
 
     <section id="overview-view" class="view" hidden>
       <article class="hero panel">
-        <div><p class="eyebrow">Organization</p><h2 id="overview-org">Your server</h2><p id="overview-welcome">Your people and services are connected through one Accounts session.</p></div>
+        <div><p class="eyebrow">Organization</p><h2 id="overview-org">Your server</h2><p id="overview-welcome">Your people and services are connected through one secure session.</p></div>
         <span class="identity-chip"><span class="status-dot"></span><span id="overview-user">Signed in</span></span>
       </article>
       <div class="metric-grid" aria-label="Organization summary">
