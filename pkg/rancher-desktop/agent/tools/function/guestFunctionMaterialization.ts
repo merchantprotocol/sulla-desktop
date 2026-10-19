@@ -5,7 +5,7 @@ import yaml from 'yaml';
 import type { FunctionDefinition, StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import { runCommand } from '@pkg/agent/tools/util/CommandRunner';
 
-const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime/functions';
+const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime/functions/invocations';
 
 const MATERIALIZE_SCRIPT = String.raw`
 const fs=require('fs'),path=require('path');

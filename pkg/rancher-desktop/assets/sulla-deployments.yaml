@@ -155,7 +155,7 @@ spec:
     nodePort: 30117
   type: NodePort
 ---
-# Python runtime — loads Python functions from ~/sulla/functions/ and invokes them.
+# Python runtime — loads functions from the guest-owned runtime volume.
 # Pulls secrets just-in-time from SULLA_HOST_URL via a capability token.
 apiVersion: apps/v1
 kind: Deployment
@@ -223,11 +223,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "{{sullaFunctionsDir}}"
+          path: "/mnt/data/sulla/runtime/functions/catalog"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "{{sullaRuntimeTempDir}}"
+          path: "/mnt/data/sulla/runtime/functions/invocations"
           type: DirectoryOrCreate
       - name: python-runtime-cache
         hostPath:
@@ -313,11 +313,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "{{sullaFunctionsDir}}"
+          path: "/mnt/data/sulla/runtime/functions/catalog"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "{{sullaRuntimeTempDir}}"
+          path: "/mnt/data/sulla/runtime/functions/invocations"
           type: DirectoryOrCreate
 ---
 apiVersion: v1
@@ -401,11 +401,11 @@ spec:
       volumes:
       - name: sulla-functions
         hostPath:
-          path: "{{sullaFunctionsDir}}"
+          path: "/mnt/data/sulla/runtime/functions/catalog"
           type: DirectoryOrCreate
       - name: sulla-runtime-temp
         hostPath:
-          path: "{{sullaRuntimeTempDir}}"
+          path: "/mnt/data/sulla/runtime/functions/invocations"
           type: DirectoryOrCreate
       - name: node-runtime-cache
         hostPath:

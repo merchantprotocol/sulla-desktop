@@ -1,15 +1,21 @@
 import * as childProcess from 'node:child_process';
 import crypto from 'node:crypto';
-import * as fs from 'node:fs';
-import os from 'node:os';
 import * as path from 'node:path';
 
 import Electron from 'electron';
 
-import { createIsolatedCheckout, isolatedCheckoutPrefix } from './AgentContainerCheckout';
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
+import {
+  chownGuestPath,
+  createGuestRuntimeDirectory,
+  GUEST_AGENT_DOCS_ROOT,
+  GUEST_AGENT_WORKSPACES_ROOT,
+  removeGuestPathAtomic,
+  seedDirectoryIntoGuest,
+  seedGitWorktreeIntoGuest,
+} from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
 import { getWebSocketClientService } from './WebSocketClientService';
@@ -258,15 +264,23 @@ async function cleanupContainerResources(
   containerId: string | undefined,
   secretDir: string | undefined,
   providerFiles?: ContainerProviderFileTransport,
+  guestPaths: string[] = [],
 ): Promise<void> {
   const failures: unknown[] = [];
+  let containerRemoved = !containerId;
   if (containerId) {
     await cleanupOwner.run(`container:${ containerId }`, async() => {
       await runtime.remove(containerId);
       providerFiles?.dispose();
-    }).catch(error => failures.push(error));
+      for (const guestPath of guestPaths) removeGuestPathAtomic(guestPath);
+    }).then(() => { containerRemoved = true }).catch(error => failures.push(error));
   } else if (providerFiles) {
     try { providerFiles.dispose() } catch (error) { failures.push(error) }
+  }
+  if (containerRemoved) {
+    for (const guestPath of guestPaths) {
+      try { removeGuestPathAtomic(guestPath) } catch (error) { failures.push(error) }
+    }
   }
   if (secretDir) {
     await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir)).catch(error => failures.push(error));
@@ -284,26 +298,10 @@ async function replaceContainerSecret(secretDir: string, name: string, value: st
   );
 }
 
-/** Seed an isolated persistent clone; never mount shared Git metadata writable. */
+/** Seed an isolated guest-owned clone; never mount host files or shared Git metadata. */
 async function prepareCheckout(source: string | undefined, jobKey: string): Promise<string | undefined> {
   if (!source) return undefined;
-  const worktreeRoot = path.join(os.homedir(), 'Sites', 'worktrees');
-  const resolved = fs.realpathSync(source);
-  if (!resolved.startsWith(`${ worktreeRoot }${ path.sep }`) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error('Container workspacePath must be an existing worktree under ~/Sites/worktrees');
-  }
-  const top = (await limactl(['git', '-C', resolved, 'rev-parse', '--show-toplevel'])).stdout.trim();
-  if (fs.realpathSync(top) !== resolved) throw new Error('container workspacePath must be a Git worktree root');
-  const commonGitDir = (await limactl(['git', '-C', resolved, 'rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
-  const repository = path.basename(path.dirname(commonGitDir));
-  const branch = await limactl(['git', '-C', resolved, 'symbolic-ref', '--short', 'HEAD'])
-    .then(result => result.stdout.trim())
-    .catch(async() => `detached-${ (await limactl(['git', '-C', resolved, 'rev-parse', '--short', 'HEAD'])).stdout.trim() }`);
-  return await createIsolatedCheckout(
-    worktreeRoot,
-    isolatedCheckoutPrefix(repository, branch, jobKey),
-    checkout => limactl(['git', 'clone', '--local', '--no-hardlinks', resolved, checkout]).then(() => undefined),
-  );
+  return await seedGitWorktreeIntoGuest(source, jobKey);
 }
 
 interface ContainerProviderTransportOptions {
@@ -482,6 +480,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let secretDir: string | undefined;
   let containerId: string | undefined;
   let unregisterRuntime: (() => void) | undefined;
+  const guestRuntimePaths: string[] = [];
   const providerBridges = new Map<ProviderName, Promise<ProviderCliBridgeLease>>();
   const providerBridgeRefs = new Set<string>();
   let toolSession: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
@@ -523,11 +522,14 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
-    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
-    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
-    await fs.promises.chmod(workspacePath, 0o700);
+    const workspacePath = checkout ?? createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    guestRuntimePaths.push(workspacePath);
+    const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
+    guestRuntimePaths.push(docsPath);
+    chownGuestPath(workspacePath, CONTAINER_UID, CONTAINER_GID);
+    chownGuestPath(docsPath, CONTAINER_UID, CONTAINER_GID);
     const providerWorkspace = workspacePath;
-    providerFiles = new ContainerProviderFileTransport(path.join(paths.sullaHome, 'workspaces', 'provider-transport'));
+    providerFiles = new ContainerProviderFileTransport();
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
       SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
     });
@@ -550,7 +552,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         SULLA_AGENT_PROVIDER: run.provider,
         SULLA_AGENT_MODEL:    run.model ?? '',
       },
-      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, providerFiles.bindMount, `${ resolveSullaDocsDir() }:/opt/sulla-docs:ro`],
+      binds:       [`${ secretDir }:/run/secrets/sulla-agent:rw`, `${ workspacePath }:${ workspacePath }:rw`, providerFiles.bindMount, `${ docsPath }:/opt/sulla-docs:ro`],
       network:     'sulla_default',
       workingDir:  providerWorkspace,
       user:        `${ CONTAINER_UID }:${ CONTAINER_GID }`,
@@ -706,7 +708,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         }
         providerBridgeRefs.clear();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-        await cleanupContainerResources(runtime, containerId, secretDir, providerFiles);
+        await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, guestRuntimePaths);
       });
       return closePromise;
     };
@@ -739,7 +741,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       await bridge.value.close().catch(() => {});
     }
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-    await cleanupContainerResources(runtime, containerId, secretDir, providerFiles).catch(cleanupError => {
+    await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, guestRuntimePaths).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     throw error;
@@ -756,6 +758,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
   let containerId: string | undefined;
   let unregisterRuntime: (() => void) | undefined;
+  const guestRuntimePaths: string[] = [];
   try {
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
@@ -787,10 +790,12 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     );
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
-    const workspacePath = checkout ?? path.join(os.homedir(), 'sulla', 'workspaces', 'agents', jobKey);
-    await fs.promises.mkdir(workspacePath, { recursive: true, mode: 0o700 });
-    await fs.promises.chmod(workspacePath, 0o700);
-    const docsPath = resolveSullaDocsDir();
+    const workspacePath = checkout ?? createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    guestRuntimePaths.push(workspacePath);
+    const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
+    guestRuntimePaths.push(docsPath);
+    chownGuestPath(workspacePath, CONTAINER_UID, CONTAINER_GID);
+    chownGuestPath(docsPath, CONTAINER_UID, CONTAINER_GID);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets);
     containerId = await runtime.create({
       name:   containerName,
@@ -885,13 +890,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         unregisterRuntime = undefined;
         session.revoke();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-        if (secretDir) {
-          try {
-            await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir!));
-          } catch (cleanupError) {
-            reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
-            return;
-          }
+        try {
+          await cleanupContainerResources(runtime, startedContainerId, secretDir, undefined, guestRuntimePaths);
+        } catch (cleanupError) {
+          reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
+          return;
         }
         emitProvider('', 'streaming_complete').catch(() => {});
         emitProvider('', 'thinking_complete').catch(() => {});
@@ -993,7 +996,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     unregisterRuntime?.();
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-    await cleanupContainerResources(runtime, containerId, secretDir).catch(cleanupError => {
+    await cleanupContainerResources(runtime, containerId, secretDir, undefined, guestRuntimePaths).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     throw error;
