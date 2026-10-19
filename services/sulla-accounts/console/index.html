@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sulla Accounts</title>
+  <link rel="stylesheet" href="./accounts.css">
+</head>
+<body>
+  <header class="return-row"><a href="/console" target="_top" aria-label="Back to main menu">← Back to main menu</a></header>
+  <main>
+    <header class="page-head">
+      <div><p class="eyebrow">Identity authority</p><h1>Accounts</h1><p>People, organizations, memberships, and roles for this Sulla server.</p></div>
+      <div class="session"><span class="status-dot"></span><span id="session-label">Checking session…</span></div>
+    </header>
+
+    <nav class="tabs" aria-label="Accounts sections">
+      <button class="active" data-view="users">Users</button>
+      <button data-view="organizations">Organizations</button>
+    </nav>
+
+    <section id="notice" class="notice" hidden role="status"></section>
+    <section id="signed-out" class="panel empty" hidden>
+      <h2>Sign in required</h2><p>Sign in through the main console to manage Accounts.</p>
+      <a class="button primary" href="/accounts-api/v1/web/login?returnTo=%2Fconsole">Sign in</a>
+    </section>
+
+    <section id="users-view">
+      <div class="toolbar">
+        <label>Organization<select id="organization-select"></select></label>
+        <button id="show-new-user" class="button primary">Add user</button>
+      </div>
+      <div class="panel table-wrap">
+        <table><thead><tr><th>User</th><th>Status</th><th>Roles</th><th>Groups</th><th></th></tr></thead><tbody id="users"></tbody></table>
+        <div id="users-empty" class="empty" hidden>No users are assigned to this organization.</div>
+      </div>
+      <form id="new-user" class="panel form-grid" hidden>
+        <div class="form-head"><div><p class="eyebrow">New identity</p><h2>Add user</h2></div><button type="button" class="quiet" data-close="new-user">Cancel</button></div>
+        <label>Username<input name="username" required maxlength="254" autocomplete="off"></label>
+        <label>Email<input name="email" type="email" maxlength="254" autocomplete="off"></label>
+        <label>First name<input name="firstName" maxlength="120" autocomplete="off"></label>
+        <label>Last name<input name="lastName" maxlength="120" autocomplete="off"></label>
+        <label class="wide">Temporary password<input name="temporaryPassword" type="password" minlength="12" required autocomplete="new-password"><small>User must replace it after sign-in.</small></label>
+        <fieldset class="wide"><legend>Roles</legend><label><input type="checkbox" name="roles" value="member" checked> Member</label><label><input type="checkbox" name="roles" value="editor"> Editor</label><label><input type="checkbox" name="roles" value="admin"> Admin</label></fieldset>
+        <div class="wide actions"><button class="button primary" type="submit">Create user</button></div>
+      </form>
+    </section>
+
+    <section id="organizations-view" hidden>
+      <div class="toolbar"><div><p class="eyebrow">Membership boundaries</p><h2>Your organizations</h2></div><button id="show-new-org" class="button primary">New organization</button></div>
+      <div id="organizations" class="org-grid"></div>
+      <form id="new-org" class="panel form-grid" hidden>
+        <div class="form-head"><div><p class="eyebrow">New boundary</p><h2>Create organization</h2></div><button type="button" class="quiet" data-close="new-org">Cancel</button></div>
+        <label>Name<input name="name" required maxlength="120"></label>
+        <label>Slug<input name="slug" required maxlength="63" pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"></label>
+        <div class="wide actions"><button class="button primary" type="submit">Create organization</button></div>
+      </form>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>

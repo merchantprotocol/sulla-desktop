@@ -17,6 +17,7 @@ const config: AccountsConfig = {
   serviceTokens: new Map(),
   keycloakIssuer: 'https://authority.example/auth/realms/sulla',
   keycloakResourceAudiences: new Set(),
+  secureCookies: false,
   trustedProxy: false,
 };
 

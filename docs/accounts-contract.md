@@ -42,6 +42,8 @@ desktop mode.
 | `SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID` | server | Stable UUID for this hosted authority, advertised publicly and forwarded to domain services |
 | `SULLA_ACCOUNTS_KEYCLOAK_NATIVE_CLIENT_ID` | server | Public PKCE client advertised to Desktop; stable value `sulla-desktop` |
 | `SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID` | server | Separate confidential hosted web client; stable value `sulla-web` |
+| `SULLA_ACCOUNTS_WEB_CALLBACK_URL` | server | Exact same-origin hosted callback, normally `${PUBLIC_URL}/accounts-api/v1/web/callback` behind the primary console gateway |
+| `SULLA_ACCOUNTS_CONSOLE_MAIN_URL` | server | Exact same-origin main-menu URL used after login and by the Accounts UI |
 | `SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE` | server | Dedicated audience required by the public membership resolver; stable value `sulla-membership` |
 | `SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES` | server | Comma-separated target audiences minted by Keycloak and accepted only when explicitly granted to a service |
 | `SULLA_ACCOUNTS_TRUSTED_PROXY` | no | `1` only behind the packaged reverse proxy |
@@ -151,6 +153,40 @@ The base login token carries only the explicit `sulla-membership` audience. Each
 audience is attached to a separate optional client scope named `sulla-audience-<audience>`;
 clients request only the scope needed for that operation. No client receives every resource
 audience by default. Client ids, issuer ids, and resource audiences are never interchangeable.
+
+## Hosted console session and service UI tokens
+
+The hosted browser signs in through `GET /v1/web/login` and the confidential `sulla-web`
+authorization-code flow. OAuth state is bound to the initiating browser by a separate five-minute
+HttpOnly, SameSite cookie whose digest is stored with the transaction. The callback consumes state
+only when that binding, PKCE verifier, nonce, issuer, client audience, membership audience, and
+subject all validate. Malformed or cross-origin return paths fall back to the configured console URL.
+
+The browser session cookie `sulla-console` is opaque, HttpOnly, SameSite=Lax, and never enters
+JavaScript. The readable `sulla-console-csrf` cookie must exactly match `X-Sulla-CSRF` on every
+mutation. `GET /v1/web/session` returns only identity metadata, current organization memberships,
+and an RFC3339 expiry. Logout revokes the database session, which immediately invalidates its child
+service UI sessions.
+
+The shell requests an audience-bound token with `POST /v1/web/ui-sessions` and
+`{service,audience,organizationId}`. Accounts rechecks the enabled hosted identity and current
+membership, then returns a 256-bit opaque token with a five-minute RFC3339 `expiresAt`. Only the
+SHA-256 digest is stored. The shell keeps the token in memory and delivers it through the strict
+`sulla.service.session` version 1 postMessage protocol. Services authenticate themselves and call
+`POST /v1/private/ui-sessions/resolve` with `{token,audience,requiredRoles}`. Accounts binds the
+calling service id, configured grant, issuer, subject, authority, organization, audience, expiry,
+enabled user, and current membership before returning context. Tokens never appear in URLs,
+cookies, local/session storage, logs, or HTML.
+
+Exact audiences are `sulla-accounts`, `sulla-vault`, `sulla-files`, `sulla-projects`,
+`sulla-agents`, and `sulla-workflows` for the matching service ids.
+
+The Accounts container serves its owned Users & Organizations UI at `/ui/`. Organization admins
+can create a new hosted user and change only that organization's membership roles/groups. Global
+identity disable and temporary-password reset remain on the file-secret-authenticated platform
+admin API; those operations revoke every browser/UI session for the subject. All user directories
+are membership-filtered, and serialized final-admin checks prevent concurrent removal, demotion,
+or disablement of the last organization administrator.
 
 `POST /v1/authority/membership/resolve` is public in the network sense and requires
 `Authorization: Bearer <hosted-access-token>`; it accepts `{ "organizationId": "uuid" }`.

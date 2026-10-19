@@ -263,6 +263,9 @@ if [ "$mode" = server ]; then
   keycloak_admin_username_path="$(copy_secret SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE keycloak-admin.username)"
   keycloak_admin_password_path="$(copy_secret SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE keycloak-admin.password)"
   web_client_secret_path="$(copy_secret SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE keycloak-web-client.secret)"
+  export SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE="$keycloak_admin_username_path"
+  export SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE="$keycloak_admin_password_path"
+  export SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE="$web_client_secret_path"
   keycloak_db_username="$(read_secret "$keycloak_db_username_path")"
   keycloak_db_password="$(read_secret "$keycloak_db_password_path")"
   keycloak_admin_username="$(read_secret "$keycloak_admin_username_path")"
@@ -278,7 +281,7 @@ if [ "$mode" = server ]; then
   web_client_id="${SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID:-sulla-web}"
   require_value SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS
   membership_audience="${SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE:-sulla-membership}"
-  resource_audiences="${SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES:-sulla-projects,sulla-files,sulla-vault,sulla-workflows}"
+  resource_audiences="${SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES:-sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows}"
 
   export KC_DB=postgres
   export KC_DB_URL="$SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL"
