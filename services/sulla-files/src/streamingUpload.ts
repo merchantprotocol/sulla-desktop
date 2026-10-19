@@ -30,6 +30,7 @@ interface StreamingUploadInput {
   actor:         FilesIdentity;
   body:          Readable;
   intentDb:      pg.Pool;
+  message?:      string;
 }
 
 async function assertManifestMetadata(client:pg.PoolClient, hash:string, chunkIds:string[], totalSize:number):Promise<void> {
@@ -108,7 +109,7 @@ export async function insertStreamingUpload(
   const file = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size)
     VALUES($1,$2,'user',$3,$4,$5) RETURNING *`, [input.collectionId, input.path, input.actor.userId, input.mime, totalSize])).rows[0];
   const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-    VALUES($1,$2,NULL,$3,$4,'user',$5,'Imported from Mac',$6,NULL) RETURNING *`, [file.id, input.collectionId, manifestHash, totalSize, input.actor.userId, input.actor.deviceId || 'server-web'])).rows[0];
+    VALUES($1,$2,NULL,$3,$4,'user',$5,$6,$7,NULL) RETURNING *`, [file.id, input.collectionId, manifestHash, totalSize, input.actor.userId, input.message ?? 'Imported into Files', input.actor.deviceId || 'server-web'])).rows[0];
   await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
   await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
   await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]);

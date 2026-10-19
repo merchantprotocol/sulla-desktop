@@ -29,6 +29,8 @@ export interface FilesItem {
   ownerAvatarUrl?: string;
   syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
   conflictDevices?: number;
+  conflictSourceFileId?: string;
+  conflictSourceVersionId?: string;
   indexStatus: FilesIndexState;
   indexReasonCode?: string;
   indexReason: string;
@@ -51,6 +53,7 @@ export interface FilesVersion {
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
   availableCollections?: { id:string; name:string }[];
+  folders?: string[];
   files: FilesItem[];
   status: {
     state: FilesSyncState;
@@ -203,7 +206,9 @@ export interface FilesDataSource {
   listNativeSources?():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>;
   recoverNativeSource?(fileId:string):Promise<boolean>;
   uploadPaths(paths:string[], destination?:string): Promise<number>;
+  uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
@@ -214,6 +219,7 @@ export interface FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
+  keepConflictCopies?(file:FilesItem): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;

@@ -10,6 +10,7 @@ import { copyLockedFile } from './fileOperations.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { Store } from './store.js';
+import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
@@ -280,6 +281,8 @@ export class LocalFilesManager {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
+        if (!input.collectionId) throw Object.assign(new Error('Native source collection is required'), { status: 400 });
+        await lockStoredNamespace(client, input.collectionId);
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ input.handle }`]);
         if (input.fileId) {
           const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
@@ -423,14 +426,18 @@ export class LocalFilesManager {
   }
 
   async finishNativePublicationConflict(operationId:string, input:{ conflictFileId:string; currentSourceRevision:string; currentSourceHash:string; currentFilesVersionId:string }):Promise<void> {
-    const verified = await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
+    const verified = await this.db.query(`WITH verified AS (UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
       recovery=jsonb_build_object('action','visible-conflict','conflictFileId',$2::text),updated_at=NOW()
       FROM files_native_sources n,files f,files_native_sources c
       WHERE o.operation_id=$1 AND o.direction='publish' AND o.state IN('publishing','recovery-required')
         AND n.source_handle=o.source_handle AND n.file_id=o.file_id AND n.source_revision=$3 AND n.source_hash=$4
         AND f.id=o.file_id AND f.current_version_id=$5
         AND c.file_id=$2 AND c.source_hash=o.desired_hash
-      RETURNING o.operation_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
+      RETURNING o.file_id,o.desired_hash)
+      INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash)
+      SELECT $2,file_id,desired_hash FROM verified
+      ON CONFLICT(file_id) DO UPDATE SET source_file_id=EXCLUDED.source_file_id,content_hash=EXCLUDED.content_hash
+      RETURNING file_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
     if (verified.rowCount !== 1) throw Object.assign(new Error('Native conflict recovery did not match both source and Files outcomes'), { status: 409 });
   }
 
@@ -492,6 +499,7 @@ export class LocalFilesManager {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
+        await lockStoredNamespace(client, current.collectionId);
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ current.sourceHandle }`]);
         const locked = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
         const source = (await client.query('SELECT source_revision,source_hash,state FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [fileId])).rows[0];
@@ -794,7 +802,9 @@ export class LocalFilesManager {
     const client = await this.db.connect(); let transaction = false; let intentCreated = false; let commitAttempted = false; let clientReleased = false;
     try {
       await client.query('BEGIN'); transaction = true;
+      await lockStoredNamespace(client, collectionId);
       const lockedRows:any[][] = [];
+      const storedFolders:{ sourcePath:string; targetPath:string }[] = [];
       for (const item of items) {
         const snapshots = new Map(item.fileSnapshots.map(file => [file.id, file]));
         const rows = await client.query(`SELECT f.*,f.id::text,w.path AS watched_path,w.content_hash,w.size AS watched_size,w.mtime_ms,f.current_version_id::text
@@ -805,8 +815,14 @@ export class LocalFilesManager {
         if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.watched_path || snapshot.currentVersionId !== row.current_version_id })) throw Object.assign(new Error('A selected file changed or became protected while this operation was starting. Refresh Files and try again.'), { status: 409 });
         for (const row of rows.rows) {
           const nextPath = `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`;
-          const collision = await client.query('SELECT 1 FROM files WHERE collection_id=$1 AND path=$2 AND id<>$3 AND deleted_at IS NULL', [collectionId, nextPath, row.id]);
-          if (collision.rowCount) throw Object.assign(new Error(`An item already exists at ${ nextPath }`), { status: 409 });
+          await assertStoredFilePath(client, collectionId, nextPath);
+        }
+        if (item.folder) {
+          const folders = await client.query(`SELECT path FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path FOR UPDATE`, [collectionId, item.sourcePath]);
+          for (const folder of folders.rows) storedFolders.push({ sourcePath: folder.path, targetPath: `${ item.targetPath }${ folder.path.slice(item.sourcePath.length) }` });
+          await assertStoredFolderPath(client, collectionId, item.targetPath);
+          const occupied = await client.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 LIMIT 1', [collectionId, item.targetPath]);
+          if (occupied.rowCount) throw Object.assign(new Error(`A folder already exists at ${ item.targetPath }`), { status: 409 });
         }
         lockedRows.push(rows.rows);
       }
@@ -891,6 +907,17 @@ export class LocalFilesManager {
           for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
           for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [collectionId, item.sourcePath, item.targetPath]);
         }
+      }
+      if (action === 'copy') {
+        for (const folder of storedFolders) await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+      } else {
+        for (const folder of [...storedFolders].sort((left, right) => right.sourcePath.length - left.sourcePath.length)) {
+          await client.query('UPDATE file_folders SET path=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId, folder.sourcePath, folder.targetPath]);
+        }
+        for (const folder of storedFolders) await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+      }
+      for (const [index, item] of items.entries()) {
+        for (const row of lockedRows[index]) await ensureStoredFileParents(client, collectionId, `${ item.targetPath }${ row.watched_path.slice(item.sourcePath.length) }`, actor);
       }
       await client.query("UPDATE files_path_operations SET state='db-committed',updated_at=NOW() WHERE operation_id=$1", [operationId]);
       commitAttempted = true;
@@ -1150,10 +1177,13 @@ export class LocalFilesManager {
     }
     const client = await this.db.connect(); await client.query('BEGIN');
     try {
+      await lockStoredNamespace(client, collectionId);
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
       for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
       let fileId = old?.file_id ?? renameFrom?.file_id ?? existing?.id; let parent:string | null = null;
+      await assertStoredFilePath(client, collectionId, filePath, fileId);
       if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query("UPDATE files SET path=$2,mime=$3,size=$4,search_text=NULL,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, filePath, mime(filePath), total]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, filePath, this.config.userId, mime(filePath), total])).rows[0].id }
+      await ensureStoredFileParents(client, collectionId, filePath, { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability' });
       const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
         VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ filePath }` : 'Watched folder change', this.config.deviceId])).rows[0];
       await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);
