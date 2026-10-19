@@ -30,7 +30,7 @@ spec:
             - {name: SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID, value: sulla-web}
             - {name: SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS, value: __SULLA_ACCOUNTS_REDIRECT_URIS__}
             - {name: SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE, value: sulla-membership}
-            - {name: SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES, value: sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows}
+            - {name: SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES, value: sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows}
             - {name: SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL, value: jdbc:postgresql://postgres:5432/keycloak}
             - {name: SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE, value: /run/sulla-secrets/postgres-username}
             - {name: SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE, value: /run/sulla-secrets/postgres-password}

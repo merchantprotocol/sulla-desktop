@@ -13,6 +13,7 @@ http {
   proxy_read_timeout 300s;
   proxy_send_timeout 300s;
   map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+  map $http_x_forwarded_proto $sulla_forwarded_proto { default $http_x_forwarded_proto; '' $scheme; }
 
   server {
     listen 8787${TLS_DIRECTIVES};
@@ -22,9 +23,10 @@ http {
     add_header Referrer-Policy no-referrer always;
     add_header X-Frame-Options SAMEORIGIN always;
 
-    resolver 127.0.0.11 ipv6=off valid=10s;
+    resolver ${DNS_RESOLVER} ipv6=off valid=10s;
     set $console_upstream http://console:8786;
     set $accounts_upstream http://accounts:3020;
+    set $identity_upstream http://accounts:8080;
     set $vault_upstream http://vault:8787;
     set $files_upstream http://files:8792;
     set $projects_upstream http://projects:8793;
@@ -33,8 +35,8 @@ http {
 
     location /accounts-api/v1/web/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
     location /accounts-api/ { return 404; }
-    location ^~ /auth/realms/sulla/ { proxy_pass http://accounts:8080; include /tmp/sulla-proxy-params.conf; }
-    location ^~ /auth/resources/ { proxy_pass http://accounts:8080; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/realms/sulla/ { proxy_pass $identity_upstream; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/resources/ { proxy_pass $identity_upstream; include /tmp/sulla-proxy-params.conf; }
     location ^~ /auth/ { return 404; }
     location /services/accounts/ { rewrite ^/services/accounts/(.*)$ /ui/$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/vault/api/ { rewrite ^/services/vault/api/(.*)$ /v1/$1 break; proxy_pass $vault_upstream; include /tmp/sulla-proxy-params.conf; }
@@ -55,9 +57,9 @@ http {
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
-      proxy_set_header Host $host;
-      proxy_set_header X-Forwarded-Host $host;
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Proto $sulla_forwarded_proto;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
   }

@@ -20,10 +20,7 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_POSTGRES_PASSWORD:?missing PostgreSQL password}"
 : "${SULLA_VAULT_JWT_SECRET:?missing JWT secret}"
 : "${SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN:?missing bootstrap token}"
-: "${SULLA_FILES_CAPABILITY_SIGNING_KEY:?missing Files capability signing key}"
 : "${SULLA_PROJECTS_DATABASE_PASSWORD:?missing Projects database password}"
-: "${SULLA_PROJECTS_JWT_SECRET:?missing Projects JWT secret}"
-: "${SULLA_PROJECTS_JWT_ISSUER:?missing Projects JWT issuer}"
 : "${SULLA_PROJECTS_JWT_AUDIENCE:?missing Projects JWT audience}"
 : "${SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID:?missing Accounts Keycloak authority id}"
 : "${SULLA_ACCOUNTS_WEB_REDIRECT_URIS:?missing Accounts web redirect URIs}"
@@ -32,6 +29,11 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_WORKFLOWS_IMAGE:?missing pinned Workflows image}"
 : "${SULLA_TOOLS_IMAGE:?missing pinned Tools image}"
 : "${SULLA_AGENT_API_TOKEN:?missing Agents API token}"
+: "${SULLA_AGENT_IMAGE:?missing pinned agent runner image}"
+: "${SULLA_DOCKER_NETWORK:?missing workload Docker network}"
+: "${SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES:?missing workflow runner scope allowlist}"
+: "${SULLA_DESKTOP_EXECUTOR_URL:?missing Tools Desktop executor URL}"
+: "${SULLA_DESKTOP_EXECUTOR_TOKEN:?missing Tools Desktop executor token}"
 : "${SULLA_ACCOUNTS_SESSION_SECRET_FILE:?missing Accounts session secret file}"
 : "${SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE:?missing Accounts encryption key file}"
 : "${SULLA_ACCOUNTS_ADMIN_SECRET_FILE:?missing Accounts admin secret file}"
@@ -84,11 +86,8 @@ done
   --from-literal=projects-migration-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_projects" \
   --from-literal=projects-database-url="postgresql://sulla_projects_service:${SULLA_PROJECTS_DATABASE_PASSWORD}@postgres:5432/sulla_projects" \
   --from-literal=projects-database-password="$SULLA_PROJECTS_DATABASE_PASSWORD" \
-  --from-literal=projects-jwt-secret="$SULLA_PROJECTS_JWT_SECRET" \
-  --from-literal=projects-jwt-issuer="$SULLA_PROJECTS_JWT_ISSUER" \
   --from-literal=projects-jwt-audience="$SULLA_PROJECTS_JWT_AUDIENCE" \
   --from-literal=jwt-secret="$SULLA_VAULT_JWT_SECRET" \
-  --from-literal=files-capability-signing-key="$SULLA_FILES_CAPABILITY_SIGNING_KEY" \
   --from-literal=files-master-key="$SULLA_FILES_MASTER_KEY" \
   --from-literal=bootstrap-token="$SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN" \
   --from-literal=accounts-session="$(cat "$SULLA_ACCOUNTS_SESSION_SECRET_FILE")" \
@@ -107,13 +106,19 @@ done
   --from-literal=workflows-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_workflows" \
   --from-literal=tools-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_tools" \
   --from-literal=agent-api-token="$SULLA_AGENT_API_TOKEN" \
+  --from-literal=agent-runner-image="$SULLA_AGENT_IMAGE" \
+  --from-literal=docker-network="$SULLA_DOCKER_NETWORK" \
+  --from-literal=workflow-allowed-runner-scopes="$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" \
+  --from-literal=desktop-executor-url="$SULLA_DESKTOP_EXECUTOR_URL" \
+  --from-literal=desktop-executor-token="$SULLA_DESKTOP_EXECUTOR_TOKEN" \
   --from-literal=workflows-runner-image="${SULLA_WORKFLOW_RUNNER_IMAGE:-ghcr.io/merchantprotocol/sulla-workflows:sha-${SULLA_SOURCE_SHA:0:12}}" \
   --dry-run=client -o yaml | \
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
 
 "${KUBECTL[@]}" --namespace "$NAMESPACE" create configmap sulla-gateway \
-  --from-file=nginx.conf="$SCRIPT_DIR/gateway/nginx.kubernetes.conf.template" \
+  --from-file=nginx.conf.template="$SCRIPT_DIR/gateway/nginx.kubernetes.conf.template" \
+  --from-file=entrypoint.sh="$SCRIPT_DIR/gateway/entrypoint.sh" \
   --dry-run=client -o yaml | \
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
