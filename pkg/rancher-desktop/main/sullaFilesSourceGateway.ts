@@ -200,7 +200,7 @@ export class SullaFilesSourceGateway {
     const stagedPath = path.join(source.parentPath, `.sulla-source-${ operationId }.staged`);
     const recoveryPath = path.join(source.parentPath, `.sulla-source-${ operationId }.recovery`);
     const originalInfo = await fs.promises.lstat(source.path, { bigint: true });
-    const sourceMode = Number(originalInfo.mode & 0o777n);
+    const sourceMode = Number(originalInfo.mode & BigInt(0o777));
     let ownsStage = false;
     let ownsRecovery = false;
     try {
