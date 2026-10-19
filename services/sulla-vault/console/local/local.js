@@ -23,7 +23,15 @@
   const policy = item => ({ ...defaultPolicy(), ...(item?.agentPolicy || {}) });
   const entries = value => value.split(',').map(entry => entry.trim()).filter(Boolean);
   const sites = value => entries(value).map(entry => entry.toLowerCase());
-  const initials = item => (item?.name || item?.integration?.integrationId || '--').split(/\s+/).slice(0, 2).map(part => part[0] || '').join('').toUpperCase();
+  // Two-letter tile initials as in the approved design: GitHub → GH, HubSpot → HS, Stripe secret key → ST.
+  const initials = item => {
+    const word = (item?.name || item?.integration?.integrationId || '').match(/[\p{L}\p{N}]+/u)?.[0] || '--';
+    const inner = word.slice(1).match(/\p{Lu}/u)?.[0];
+    return (word[0] + (inner || word[1] || '')).toUpperCase();
+  };
+  // Stable per-item tile tint (vault.css .tile, .tile.c2 … .tile.c5).
+  const tileTint = item => { let hash = 0; for (const character of String(item?.id || item?.name || '')) hash = (hash * 31 + character.codePointAt(0)) >>> 0; return hash % 5 ? ` c${ hash % 5 + 1 }` : ''; };
+  const levelBars = '<span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>';
   const lockIcon = '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>';
   const agentIcon = '<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="12" rx="3"></rect><path d="M9 4v3m6-3v3M8 12h.01M12 12h.01M16 12h.01M9 16h6"></path></svg>';
   const typeLabel = type => ({ login: 'Login', apiKey: 'API key', card: 'Card', note: 'Secure note', identity: 'Identity' })[type] || type || 'Item';
@@ -107,13 +115,13 @@
     for (const item of visible) {
       const itemPolicy = policy(item);
       const row = document.createElement('button'); row.type = 'button'; row.className = `item-row${selectedId === item.id ? ' selected' : ''}`;
-      const tile = document.createElement('span'); tile.className = 'tile'; tile.textContent = initials(item);
+      const tile = document.createElement('span'); tile.className = `tile${tileTint(item)}`; tile.textContent = initials(item);
       const meta = document.createElement('span'); meta.className = 'meta';
       const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name || 'Untitled';
       const sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = [item.username, item.uris?.[0]?.uri, typeLabel(item.type)].filter(Boolean).join(' · ');
       meta.append(name, sub);
       const summary = document.createElement('span'); summary.className = 'policy-summary';
-      const level = document.createElement('span'); level.className = `lvl ${itemPolicy.level === 'full' ? 'l3' : itemPolicy.level === 'autofill' ? 'l2' : itemPolicy.mode === 'agents' ? 'l1' : ''}`; level.textContent = itemPolicy.mode === 'agents' ? itemPolicy.level.toUpperCase() : 'NONE';
+      const level = document.createElement('span'); level.className = `lvl ${itemPolicy.level === 'full' ? 'l3' : itemPolicy.level === 'autofill' ? 'l2' : itemPolicy.mode === 'agents' ? 'l1' : ''}`; level.innerHTML = levelBars; level.append(itemPolicy.mode === 'agents' ? String(itemPolicy.level).toUpperCase() : 'NONE');
       const who = document.createElement('span'); who.className = `who ${itemPolicy.mode === 'agents' ? 'agents' : 'personal'}`; who.innerHTML = `${itemPolicy.mode === 'agents' ? agentIcon : lockIcon}${itemPolicy.mode === 'agents' ? 'Agents can use' : 'Only me'}`;
       summary.append(level, who); row.append(tile, meta, summary);
       row.onclick = () => { void selectItem(item.id); };
@@ -148,7 +156,7 @@
       const item = { ...revealed.item, id: revealed.id, revision: revealed.revision };
       editingItem = JSON.parse(JSON.stringify(item));
       const itemPolicy = policy(item);
-      byId('detail-tile').textContent = initials(item); byId('detail-name').textContent = item.name || 'Untitled';
+      byId('detail-tile').textContent = initials(item); byId('detail-tile').className = `tile xl${tileTint(item)}`; byId('detail-name').textContent = item.name || 'Untitled';
       byId('detail-meta').textContent = `${typeLabel(item.type)} · edited ${dateText(items.find(value => value.id === id)?.updatedAt)}`;
       const fields = byId('detail-fields'); fields.replaceChildren();
       if (item.username) fields.append(detailField('Username', item.username));
