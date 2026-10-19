@@ -22,7 +22,14 @@ spec:
             - {name: SULLA_VAULT_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: database-url}}}
             - {name: SULLA_VAULT_JWT_SECRET, valueFrom: {secretKeyRef: {name: sulla-server, key: jwt-secret}}}
             - {name: SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN, valueFrom: {secretKeyRef: {name: sulla-server, key: bootstrap-token}}}
+            - {name: SULLA_VAULT_ACCOUNTS_URL, value: http://sulla-accounts:3020}
+            - {name: SULLA_VAULT_ACCOUNTS_SERVICE_ID, value: sulla-vault}
+            - {name: SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/accounts-vault-token}
+            - {name: SULLA_VAULT_ACCOUNTS_AUDIENCE, value: sulla-vault}
+            - {name: SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES, value: member}
+          volumeMounts: [{name: secrets, mountPath: /run/sulla-secrets, readOnly: true}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+      volumes: [{name: secrets, secret: {secretName: sulla-server, defaultMode: 0600}}]
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata: {name: sulla-db-init, namespace: sulla}
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: postgres:16.14-alpine
+          env:
+            - {name: PGPASSWORD, valueFrom: {secretKeyRef: {name: sulla-server, key: postgres-password}}}
+          command: [sh, -ec]
+          args:
+            - >-
+              until pg_isready -h postgres -U sulla -d postgres; do sleep 2; done;
+              for database in sulla_files sulla_projects sulla_accounts keycloak sulla_agents sulla_workflows sulla_tools; do
+              if [ "$(psql -h postgres -U sulla -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$$database'")" != 1 ]; then
+              createdb -h postgres -U sulla -O sulla "$$database"; fi; done

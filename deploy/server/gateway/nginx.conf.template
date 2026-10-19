@@ -31,12 +31,17 @@ http {
     set $agents_upstream http://agents:8789;
     set $workflows_upstream http://workflows:8788;
 
-    location /accounts-api/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /accounts-api/v1/web/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
+    location /accounts-api/ { return 404; }
+    location ^~ /auth/realms/sulla/ { proxy_pass http://accounts:8080; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/resources/ { proxy_pass http://accounts:8080; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /auth/ { return 404; }
     location /services/accounts/ { rewrite ^/services/accounts/(.*)$ /ui/$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/vault/api/ { rewrite ^/services/vault/api/(.*)$ /v1/$1 break; proxy_pass $vault_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/vault/ { rewrite ^/services/vault/(.*)$ /ui/$1 break; proxy_pass $vault_upstream; include /tmp/sulla-proxy-params.conf; }
     location ~ ^/services/files/api/(?:healthz$|v1/(?:local|desktop|bootstrap|admin)(?:/|$)) { return 404; }
-    location /services/files/api/ { rewrite ^/services/files/api/(.*)$ /$1 break; proxy_pass $files_upstream; proxy_buffering off; proxy_request_buffering off; proxy_cache off; include /tmp/sulla-proxy-params.conf; }
+    location /services/files/api/v1/ { rewrite ^/services/files/api/v1/(.*)$ /v1/$1 break; proxy_pass $files_upstream; proxy_buffering off; proxy_request_buffering off; proxy_cache off; include /tmp/sulla-proxy-params.conf; }
+    location /services/files/api/ { return 404; }
     location /services/files/ { rewrite ^/services/files/(.*)$ /ui/$1 break; proxy_pass $files_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/projects/api/ { rewrite ^/services/projects/api/(.*)$ /v1/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/projects/ { rewrite ^/services/projects/(.*)$ /ui/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
