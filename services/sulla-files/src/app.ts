@@ -927,22 +927,28 @@ export function createApp(
   } catch (error) { next(error) } });
   app.post('/v1/trash/:id/restore', async(request:RequestWithIdentity, response, next) => { try {
     const kind=request.body?.kind??'file'; const tombstone=request.body?.currentTombstone;
+    const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
+    if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
+    if (kind==='folder' && receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
     if (kind==='folder') {
-      response.json(await restoreTrashedFolder(db,request.params.id,String(tombstone?.receiptId??tombstone?.id??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request)));
+      response.json(await restoreTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request)));
       return;
     }
     if (kind!=='file') throw new HttpError(400,'kind must be file or folder');
     response.json(await restoreTrashedFile(db,request.params.id,identity(request),operationAccess(request),{
       expectedVersionId:String(tombstone?.id??request.body?.expectedVersionId??'')||undefined,
       expectedRevision:request.body?.expectedRevision===undefined?undefined:String(request.body.expectedRevision),
-      receiptId:typeof tombstone?.receiptId==='string'?tombstone.receiptId:undefined,
+      receiptId,
     }));
   } catch (error) { next(error) } });
   app.delete('/v1/trash/:id/purge', async(request:RequestWithIdentity,response,next) => {
     if (request.body?.kind!=='folder') return next();
     try {
       const tombstone=request.body?.currentTombstone;
-      const result=await purgeTrashedFolder(db,request.params.id,String(tombstone?.receiptId??tombstone?.id??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request),{
+      const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
+      if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
+      if (receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
+      const result=await purgeTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request),{
         invalidateUndo:request.body?.invalidateUndo===true,
         ...(manager?{dispose:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
         drainChunks:()=>drainPendingChunkGc(db,(collectionId,chunkId)=>store.delete(collectionId,chunkId)),

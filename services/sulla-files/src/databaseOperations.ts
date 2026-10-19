@@ -455,6 +455,7 @@ export async function restoreTrashedFile(db:pg.Pool, fileId:string, actor:FilesI
     if (!tombstone) throw fail(409, 'The current version is not a trash tombstone');
     const native=Boolean((await client.query('SELECT 1 FROM file_roots WHERE collection_id=$1 LIMIT 1',[file.collection_id])).rowCount);
     const receiptRow=request.receiptId?(await client.query(`SELECT * FROM files_database_operation_receipts WHERE id=$1 AND file_id=$2 AND action='trash' FOR UPDATE`,[request.receiptId,file.id])).rows[0]:null;
+    if (request.receiptId && !receiptRow) throw fail(409,'The selected Trash receipt does not match this file');
     if (receiptRow) {
       if (receiptRow.after_state?.versionId!==tombstone.id) throw fail(409,'The selected Trash receipt is not the current tombstone');
       const updated=await restoreTrashReceipt(client,receiptRow,actor,access,true);
