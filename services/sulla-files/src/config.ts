@@ -36,6 +36,47 @@ export interface Config {
   cloudUrl:             string;
   paused:               boolean;
   modelDir:             string;
+  fileRoots:            FileRootConfig[];
+}
+
+export interface FileRootConfig {
+  id: string;
+  name: string;
+  path: string;
+  syncMode: 'local' | 'server';
+  paused: boolean;
+  exclusions: string[];
+  primary: boolean;
+}
+
+function fileRoots(filesRoot:string | undefined):FileRootConfig[] {
+  if (!filesRoot) return [];
+  const fallback:FileRootConfig = { id: 'default', name: 'Sulla Files', path: filesRoot, syncMode: 'server', paused: false, exclusions: [], primary: true };
+  const raw = process.env.SULLA_FILES_ROOTS_JSON;
+  if (!raw) return [fallback];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('root configuration must be an array');
+    const roots = parsed.map((item:any):FileRootConfig => ({
+      id:         String(item.id ?? ''),
+      name:       String(item.name ?? ''),
+      path:       resolve(String(item.path ?? '')),
+      syncMode:   item.syncMode === 'server' ? 'server' : 'local',
+      paused:     item.paused === true,
+      exclusions: Array.isArray(item.exclusions) ? item.exclusions.filter((value:unknown):value is string => typeof value === 'string') : [],
+      primary:    item.id === 'default',
+    }));
+    if (!roots.some(root => root.id === 'default')) roots.unshift(fallback);
+    if (roots.some(root => !/^[a-z0-9][a-z0-9-]{0,63}$/.test(root.id) || !root.name || !root.path)) throw new Error('root configuration contains invalid fields');
+    if (new Set(roots.map(root => root.id)).size !== roots.length || new Set(roots.map(root => root.path)).size !== roots.length) throw new Error('root configuration contains duplicates');
+    for (const [index, root] of roots.entries()) for (const other of roots.slice(index + 1)) {
+      const prefix = (value:string) => value.endsWith('/') ? value : `${ value }/`;
+      if (root.path === other.path || root.path.startsWith(prefix(other.path)) || other.path.startsWith(prefix(root.path))) throw new Error('root configuration paths overlap');
+    }
+    return roots;
+  } catch (error) {
+    throw new Error(`SULLA_FILES_ROOTS_JSON is invalid: ${ error instanceof Error ? error.message : String(error) }`);
+  }
 }
 export function loadConfig():Config {
   const databaseUrl = process.env.SULLA_FILES_DATABASE_URL;
@@ -47,6 +88,7 @@ export function loadConfig():Config {
   if (Buffer.byteLength(capabilitySigningKey) < 32) throw new Error('SULLA_FILES_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
   const mode = process.env.SULLA_FILES_MODE === 'server' ? 'server' : 'desktop';
 
+  const filesRoot = mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined;
   return {
     port:             Number(process.env.SULLA_FILES_PORT ?? 8792),
     databaseUrl,
@@ -57,7 +99,7 @@ export function loadConfig():Config {
     vaultAuthorityCaPath: process.env.SULLA_FILES_VAULT_AUTHORITY_CA_PATH,
     chunkRoot:        resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'),
     dataRoot:         resolve(process.env.SULLA_FILES_DATA_ROOT ?? '/var/lib/sulla-files'),
-    filesRoot:        mode === 'desktop' ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files') : undefined,
+    filesRoot,
     caseInsensitiveRoot: process.env.SULLA_FILES_CASE_INSENSITIVE_ROOT === '1',
     backupTarget:     process.env.SULLA_FILES_BACKUP_TARGET ? resolve(process.env.SULLA_FILES_BACKUP_TARGET) : undefined,
     capabilitySigningKey,
@@ -76,5 +118,6 @@ export function loadConfig():Config {
     cloudUrl:         (process.env.SULLA_CLOUD_API_URL ?? 'https://sulla-workers.merchantprotocol.workers.dev').replace(/\/+$/, ''),
     paused:           process.env.SULLA_FILES_PAUSED === '1',
     modelDir:         resolve(process.env.SULLA_FILES_EMBEDDING_MODEL_DIR ?? '/app/models/potion-retrieval-32M'),
+    fileRoots:        mode === 'desktop' ? fileRoots(filesRoot) : [],
   };
 }
