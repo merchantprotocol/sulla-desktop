@@ -18,7 +18,7 @@
       :paging="true"
       :rows-per-page="10"
       :has-advanced-filtering="false"
-      :loading="containers === null"
+      :loading="containers === null && !errorMessage"
       group-by="projectGroup"
       :group-sort="['projectGroup']"
     >
@@ -302,10 +302,11 @@ export default defineComponent({
       description: '',
     });
 
-    ipcRenderer.on('settings-read', (event, settings) => {
+    this.onSettingsRead = (event, settings) => {
       this.settings = settings;
       this.subscribe().catch(console.error);
-    });
+    };
+    ipcRenderer.on('settings-read', this.onSettingsRead);
 
     ipcRenderer.send('settings-read');
 
@@ -315,7 +316,8 @@ export default defineComponent({
   },
   beforeUnmount() {
     ipcRenderer.removeListener('settings-update', this.updateSettings);
-    this.$store.dispatch('container-engine/unsubscribe').catch(console.error);
+    ipcRenderer.removeListener('settings-read', this.onSettingsRead);
+    this.$store.dispatch('container-engine/unsubscribe', 'containers-list').catch(console.error);
     clearTimeout(this.subscribeTimer);
   },
   methods: {
@@ -323,12 +325,13 @@ export default defineComponent({
       clearTimeout(this.subscribeTimer);
       try {
         if (!window.ddClient || !this.isK8sReady || !this.settings) {
-          setTimeout(() => this.subscribe(), 1_000);
+          this.subscribeTimer = setTimeout(() => this.subscribe(), 1_000);
           return;
         }
         await this.$store.dispatch('container-engine/subscribe', {
           type:      'containers',
           client:    window.ddClient,
+          owner:     'containers-list',
         });
       } catch (error) {
         console.error('There was a problem subscribing to container events:', { error });
@@ -362,6 +365,7 @@ export default defineComponent({
           type:      'containers',
           client:    window.ddClient,
           namespace: value,
+          owner:     'containers-list',
         });
       }
     },
