@@ -22,7 +22,9 @@ import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchComman
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { bindLeaseToProcess, createLimaClaudeAuth, releaseLease } from './limaClaudeBridge';
 import { redisClient } from '../database/RedisClient';
+import type { ProviderCliBridgeLease } from '../../vault-broker';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
@@ -241,10 +243,19 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Resolve Claude credentials: integration vault first, SullaSettingsModel
-   * fallback. Shared by runClaude and prewarm so both resolve identically.
+   * Resolve how the VM's `claude` authenticates. With the container-owned
+   * Vault the secret never leaves the vault, so the process gets a bridge
+   * capability + base URL (and a lease the caller must bind to the process).
+   * Otherwise: integration vault first, SullaSettingsModel fallback. Shared by
+   * runClaude and prewarm so both resolve identically.
    */
-  private async resolveClaudeCreds(): Promise<{ oauthToken: string; apiKey: string }> {
+  private async resolveClaudeCreds(
+    convId: string,
+    state?: BaseThreadState,
+  ): Promise<{ oauthToken: string; apiKey: string; baseUrl?: string; lease?: ProviderCliBridgeLease }> {
+    const bridged = await createLimaClaudeAuth({ conversationId: convId, state });
+    if (bridged) return bridged;
+
     let oauthToken = '';
     let apiKey = '';
     try {
@@ -358,6 +369,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private buildSpawnArgs(p: {
     oauthToken:        string;
     apiKey:            string;
+    /** Host broker bridge base URL (container Vault mode); credentials above are then opaque capabilities. */
+    baseUrl?:          string;
     existingSession?:  string;
     mcpConfigPath:     string | null;
     toolSessionId?:    string;
@@ -386,6 +399,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.toolSessionId) envAssignments.push(`SULLA_TOOL_SESSION=${ shq(p.toolSessionId) }`);
     if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
     if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
+    if (p.baseUrl) envAssignments.push(`ANTHROPIC_BASE_URL=${ shq(p.baseUrl) }`);
 
     const claudeArgs = [
       'claude',
@@ -472,6 +486,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * claudeCodeSpeculativeBoot setting is on.
    */
   async prewarm(state: BaseThreadState): Promise<void> {
+    // Broker bridge minted for this boot; bound to the process once spawned,
+    // released here if anything throws first.
+    let prewarmLease: ProviderCliBridgeLease | undefined;
     try {
       const transport = getProviderExecutionTransport();
       if (transport.runtime === 'lima' && process.platform === 'win32') return;
@@ -509,9 +526,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
         toolSessionId:     mcpSession?.id,
       });
       const providerConfig = requireBrokeredContainerAuth(transportContext);
-      const { oauthToken, apiKey } = transportContext.runtime === 'lima'
-        ? await this.resolveClaudeCreds()
-        : { oauthToken: '', apiKey: '' };
+      const { oauthToken, apiKey, baseUrl, lease } = transportContext.runtime === 'lima'
+        ? await this.resolveClaudeCreds(convId, state)
+        : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
+      prewarmLease = lease;
       if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) return;
       const toolConfig = mcpSession && transportContext.runtime === 'container'
         ? requireContainerToolConfig(transportContext)
@@ -539,7 +557,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const systemPromptPath = systemPromptFile.path;
       const disallowedTools = disallowedToolsFor(state.metadata as any);
       const pidFile = newRemotePidFile();
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath, pidFile });
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath, pidFile });
       const providerCommand = this.buildProviderCommand({
         existingSession,
         mcpConfigPath,
@@ -558,6 +576,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
           : {}),
       });
       proc.once('exit', () => systemPromptFile.dispose());
+      bindLeaseToProcess(proc, prewarmLease);
+      prewarmLease = undefined;
 
       const record: PrewarmRecord = {
         proc,
@@ -595,6 +615,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       log.log(`[ClaudeCodeService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
     } catch (err) {
       log.log(`[ClaudeCodeService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
+    } finally {
+      releaseLease(prewarmLease);
     }
   }
 
@@ -1245,11 +1267,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       })
       : initialTransportContext);
     const providerConfig = requireBrokeredContainerAuth(transportContext);
-    const { oauthToken, apiKey } = transportContext.runtime === 'lima'
-      ? await this.resolveClaudeCreds()
-      : { oauthToken: '', apiKey: '' };
+    // An adopted process already carries its own auth; only a fresh spawn needs one.
+    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'lima' && !adopted
+      ? await this.resolveClaudeCreds(convId, options.state)
+      : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
-    if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) {
+    if (transportContext.runtime === 'lima' && !adopted && !oauthToken && !apiKey) {
+      releaseLease(authLease);
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
     const toolConfig = mcpSession && transportContext.runtime === 'container'
@@ -1288,7 +1312,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
     const systemPromptPath = systemPromptFile?.path ?? null;
     const pidFile = adopted ? adopted.pidFile : newRemotePidFile();
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath, pidFile });
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath, pidFile });
     const providerCommand = this.buildProviderCommand({
       existingSession,
       mcpConfigPath,
@@ -1311,6 +1335,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     if (options.signal?.aborted) {
       cleanupMcp();
+      releaseLease(authLease);
       if (adopted) this.disposePrewarmRecord(adopted, convId);
       if (systemPromptPath) {
         systemPromptFile?.dispose();
@@ -1342,6 +1367,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           : {}),
       });
       proc.once('exit', () => systemPromptFile?.dispose());
+      bindLeaseToProcess(proc, authLease);
       // Warm mode with no prewarm available: still track this fresh process so
       // it can be parked for reuse after the turn.
       if (warm) {
