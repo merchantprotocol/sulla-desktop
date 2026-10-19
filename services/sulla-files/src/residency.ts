@@ -109,6 +109,7 @@ export class FileResidencyManager {
 
   async makeOnlineOnly(fileId:string, signal = new AbortController().signal):Promise<void> {
     return this.mutations.runExclusive([fileId], async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const operationId = randomUUID();
       const descriptor = await this.loadCurrent(fileId);
       await this.begin(fileId, descriptor.versionId, operationId, 'online-only', 'evicting');
@@ -145,6 +146,7 @@ export class FileResidencyManager {
 
   async keepOnComputer(fileId:string, signal = new AbortController().signal):Promise<void> {
     return this.mutations.runExclusive([fileId], async() => {
+      await FilesMutationCoordinator.requireAtomicRename();
       const operationId = randomUUID();
       const descriptor = await this.loadCurrent(fileId);
       await this.begin(fileId, descriptor.versionId, operationId, 'local', 'hydrating');

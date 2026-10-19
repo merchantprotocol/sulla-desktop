@@ -136,6 +136,7 @@ export interface FilesSnapshot {
   availableCollections?: { id:string; name:string }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
+  trash?: FilesTrashItem[];
   status: {
     state: FilesSyncState;
     pendingFiles: number;
@@ -162,6 +163,35 @@ export type FilesRevealResult =
 
 export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
 export interface FilesFolderState { folderId:string; path:string; revision:string }
+export type FilesTrashUndoState = 'available' | 'invalidated' | 'recovery-required' | 'unavailable';
+export interface FilesTrashUndo { state:FilesTrashUndoState; expiresAt?:string }
+export type FilesTrashTombstone =
+  | { kind:'version'; id:string; receiptId?:string; operationId?:string; undo:FilesTrashUndo }
+  | { kind:'receipt'; id:string; receiptId:string; operationId?:string; undo:FilesTrashUndo };
+export interface FilesTrashFile extends FilesItem {
+  kind:'file';
+  revision:string;
+  currentTombstone:Extract<FilesTrashTombstone, { kind:'version' }>;
+}
+export interface FilesTrashFolder {
+  kind:'folder';
+  id:string;
+  path:string;
+  revision:string;
+  deletedAt:string;
+  currentTombstone:Extract<FilesTrashTombstone, { kind:'receipt' }>;
+  capabilities?:FilesItemCapabilities;
+}
+export type FilesTrashItem = FilesTrashFile | FilesTrashFolder;
+export type FilesTrashRestoreResult = {
+  status:'restored'; kind:FilesTrashItem['kind']; id:string; path:string; revision:string;
+  currentTombstone:null; receiptId:string | null; versionId?:string;
+};
+export type FilesTrashPurgeResult =
+  | { status:'purged'; metadataPurged:true; chunks:'complete'; retainedArtifacts:'none' | 'complete'; undo:'invalidated' | 'unavailable'; receiptId:string | null }
+  | { status:'recovery-required'; metadataPurged:true; chunks:'pending' | 'complete'; retainedArtifacts:'preserved' | 'complete'; undo:'invalidated' | 'unavailable'; receiptId:string | null; reason?:string }
+  | { status:'purged'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'complete'; retainedArtifacts:'none' | 'complete'; undo:'invalidated'; receiptId:string }
+  | { status:'recovery-required'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'pending' | 'complete'; retainedArtifacts:'preserved' | 'complete'; undo:'invalidated'; receiptId:string; reason?:string };
 export interface FilesOperationState { collectionId?:string; fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
 export interface FilesOperationItem {
   itemId:string;
@@ -365,8 +395,12 @@ export interface FilesDataSource {
   recordLock?(fileId:string, status:'ordinary' | 'policy'): Promise<void>;
   unlockRecord?(fileId:string): Promise<void>;
   disposalReview?(fileId:string, decision:'approve' | 'reject' | 'extend', extendedUntil?:string): Promise<void>;
-  restoreTrash(fileId:string): Promise<void>;
+  /** Legacy completion-only route. Receipt-aware UI must use restoreTrashItem. */
+  restoreTrash?(fileId:string): Promise<void>;
+  restoreTrashItem?(item:FilesTrashItem): Promise<FilesTrashRestoreResult>;
+  /** Legacy no-CAS route. Receipt-aware UI must use purgeTrashItem. */
   purgeTrash?(fileId:string): Promise<void>;
+  purgeTrashItem?(item:FilesTrashItem): Promise<FilesTrashPurgeResult>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
   updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;
