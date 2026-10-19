@@ -60,7 +60,6 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
     if (input.action!=='trash') {
       if (!target || target===source || target.startsWith(source+'/') || source.startsWith(target+'/')) throw fail('Folder destination overlaps its source');
       await access.path(client,input.collectionId,target);
-      await permissionBoundary(client,input.collectionId,source,target);
       const targetOccupied=await occupied(target);
       if (targetOccupied) {
         if (input.collisionPolicy==='skip') skipped=true;
@@ -82,7 +81,8 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
           const recovery=target.slice(0,slash+1)+'.replaced-'+receiptId+'-'+target.slice(slash+1);
           if (await occupied(recovery)) throw fail('Replace recovery sibling is occupied');
           await access.path(client,input.collectionId,recovery);
-          await permissionBoundary(client,input.collectionId,target,recovery);
+          // The complete destination grant subtree moves with its identities to
+          // this same-parent recovery sibling; inherited outer grants do not change.
           const destinationPaths=new Set<string>([target,...destinationFolders.map(f=>f.path),...destinationNativeFolders]);
           for (const file of destinationFiles) {
             let path=file.path.slice(0,file.path.lastIndexOf('/'));
@@ -120,8 +120,10 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
           throw Object.assign(fail('Folder destination is occupied; choose Replace, Keep Both or Skip','destination-conflict'),{...(tree.snapshot?{destination:tree.snapshot}:{})});
         }
       } else if (input.collisionPolicy==='replace') throw fail('The Replace destination no longer exists; refresh Files','destination-conflict');
-      await access.path(client,input.collectionId,target);
-      await permissionBoundary(client,input.collectionId,source,target);
+      if (!skipped) {
+        await access.path(client,input.collectionId,target);
+        await permissionBoundary(client,input.collectionId,source,target);
+      }
     }
     const row=(await client.query(`INSERT INTO files_database_operation_receipts(id,actor_user_id,actor_scope,idempotency_key,request,collection_id,action,state,before_state,after_state,displaced_before,displaced_after)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$9::jsonb,$10::jsonb,$11::jsonb) RETURNING *`,[receiptId,actor.userId,scope(actor),input.idempotencyKey,input,input.collectionId,input.action,skipped?'skipped':'completed',JSON.stringify(explicit?state(explicit):null),
