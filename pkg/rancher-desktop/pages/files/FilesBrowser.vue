@@ -18,7 +18,7 @@
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
       <label v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="root-picker">
-        <span>Tracked folder</span>
+        <span>Files collection</span>
         <select :value="snapshot?.collection.id" :disabled="busy || loading" @change="onCollectionChange">
           <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
         </select>
@@ -138,7 +138,7 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
-            v-if="dataSource.capabilities.nativeFilesystem"
+            v-if="dataSource.capabilities.nativeFilesystem || dataSource.capabilities.durableOperations"
             class="btn"
             type="button"
             :disabled="busy || loading || section !== 'files'"
@@ -311,7 +311,32 @@
         <div v-if="operationError" class="operation-error" role="alert">
           {{ operationError }} <button class="btn sm ghost" type="button" @click="operationError = ''">Dismiss</button>
         </div>
-        <div v-if="busy" class="operation-panel" role="status">Working…</div>
+        <div v-if="clipboard && snapshot && clipboard.collectionId !== snapshot.collection.id" class="operation-panel" role="status">Clipboard kept from another collection. Cross-collection paste is unavailable; return to the source collection to paste.</div>
+        <div v-if="operationNotice" class="operation-panel" role="status">{{ operationNotice }}</div>
+        <div v-if="queueError" class="operation-error" role="alert">{{ queueError }} <button class="btn sm" :disabled="busy" @click="recoverOperation">Check operation</button></div>
+        <div v-if="operationReceipt" class="operation-panel operation-queue" aria-label="File operations">
+          <div>
+            <label>Recent operations <select :value="operationReceipt.operationId" :disabled="busy" @change="showOperation(($event.target as HTMLSelectElement).value)"><option v-for="receipt in operationHistory" :key="receipt.operationId" :value="receipt.operationId">{{ receipt.items[0]?.action }} · {{ receipt.items.length }} items · {{ receipt.state }}</option></select></label>
+            <b>Operation {{ operationReceipt.state }}</b>
+            <span>{{ operationReceipt.items.filter(item => item.state === 'completed').length }} completed · {{ operationReceipt.items.filter(item => item.state === 'skipped').length }} skipped · {{ operationReceipt.items.filter(item => item.state === 'failed').length }} failed</span>
+            <progress :value="operationReceipt.items.filter(item => item.state !== 'pending').length" :max="operationReceipt.items.length" aria-label="Items resolved" />
+            <ul><li v-for="item in operationReceipt.items" :key="item.itemId">
+              <span>{{ item.after?.path || item.before?.path || item.action }} — {{ item.state }}<template v-if="item.error">: {{ item.error.message }}</template></span>
+              <button v-if="item.retryable && item.error?.code !== 'destination-conflict' && dataSource.retryOperation" class="btn sm" :disabled="busy" @click="retryReceipt(item.itemId)">Retry item</button>
+            </li></ul>
+          </div>
+          <button v-if="operationReceipt.state === 'pending' && dataSource.cancelOperation" class="btn sm" :disabled="operationReceipt.cancelRequested" @click="operations.cancel(operationReceipt.operationId)">{{ operationReceipt.cancelRequested ? 'Cancellation requested' : 'Cancel remaining' }}</button>
+          <button v-if="operationReceipt.retryable && dataSource.retryOperation" class="btn sm" :disabled="busy" @click="retryReceipt()">Retry remaining</button>
+          <button v-if="undoReceipt && dataSource.undoOperation" class="btn sm" :disabled="!canUndo" @click="undoLastOperation">Undo</button>
+        </div>
+        <div v-if="collisionItem && dataSource.retryOperation" class="operation-panel collision-panel" role="dialog" aria-label="File name conflict">
+          <div><b>A destination already exists</b><span>{{ collisionItem.error?.destination?.path || collisionItem.error?.message }}</span></div>
+          <label><input v-model="applyCollisionToAll" type="checkbox">Apply to all current conflicts</label>
+          <button class="btn sm" :disabled="busy" @click="resolveCollision('keep-both')">Keep Both</button>
+          <button class="btn sm" :disabled="busy" @click="resolveCollision('skip')">Skip</button>
+          <button class="btn sm danger" :disabled="busy || collisionItem.action === 'create-folder' || !collisionItem.error?.destination || collisionItem.error.destination.deleted" @click="resolveCollision('replace')">Replace</button>
+        </div>
+        <div v-if="busy && !operationReceipt" class="operation-panel" role="status">Working…</div>
 
         <div
           v-if="loading"
@@ -608,6 +633,7 @@
             <b>{{ actionTarget.name }}</b>
             <button v-if="section !== 'trash' && actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
             <button v-else-if="section !== 'trash'" role="menuitem" type="button" @click="runTargetAction('native-open')">Open</button>
+            <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal downloaded copy</button>
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
             <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
@@ -745,10 +771,11 @@ import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
+import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
-import type { FilesDataSource, FilesIndexCoverage, FilesItem, FilesSnapshot } from './types';
+import type { FilesCollisionPolicy, FilesDataSource, FilesIndexCoverage, FilesItem, FilesOperationItem, FilesOperationReceipt, FilesSnapshot } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
@@ -756,7 +783,7 @@ const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
-interface OperationItem { fileId?:string; folderPath?:string; targetPath:string; expectedVersionId?:string }
+interface OperationItem { fileId?:string; folderPath?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 
 // Icon set copied from the approved Files mockup (mockups/files/01-files.html).
 const icons = {
@@ -792,6 +819,14 @@ const icons = {
 };
 
 const explorer = useFilesExplorerInteractions(props.tabId);
+const operations = useFilesOperationQueue(props.dataSource, props.tabId);
+const { error: queueError, pendingRequest } = operations;
+const operationHistory = computed(() => operations.receipts.value.filter(receipt => receipt.collectionId === snapshot.value?.collection.id));
+const operationReceipt = computed(() => operationHistory.value[0] ?? null);
+const undoReceipt = computed(() => [...operationHistory.value].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).find(receipt => receipt.undoSupported && receipt.state !== 'pending'));
+const collisionItem = computed(() => operationReceipt.value?.items.find(item => item.state === 'failed' && item.error?.code === 'destination-conflict'));
+const applyCollisionToAll = ref(false);
+const canUndo = computed(() => !busy.value && !loading.value && !operations.receipts.value.some(receipt => receipt.state === 'pending') && Boolean(props.dataSource.undoOperation && undoReceipt.value?.collectionId === snapshot.value?.collection.id));
 const { backStack, forwardStack, clipboard } = explorer;
 const canGoBack = computed(() => backStack.value.length > 0); const canGoForward = computed(() => forwardStack.value.length > 0);
 const snapshot = ref<FilesSnapshot | null>(null); const loading = ref(true); const busy = ref(false); const error = ref('');
@@ -807,6 +842,7 @@ const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
+const operationNotice = ref('');
 const editingKey = ref(''); const renameValue = ref(''); let renameCommitting = false;
 const mainSurface = ref<HTMLElement | null>(null); const listSurface = ref<HTMLElement | null>(null); const gridSurface = ref<HTMLElement | null>(null);
 const browserSurface = ref<HTMLElement | null>(null);
@@ -942,6 +978,9 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     const relative = flat ? file.path : file.path.slice(prefix.length); const parts = relative.split('/');
     if (!flat && (parts.length > 1 || file.mime === 'inode/directory')) folders.add(parts[0]); else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
   }
+  if (!flat && section.value === 'files') for (const path of snapshot.value?.folders ?? []) {
+    if (path.startsWith(prefix) && path.length > prefix.length) folders.add(path.slice(prefix.length).split('/')[0]);
+  }
   for (const name of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`))));
   if (section.value === 'starred') {
     for (const key of starred.value) {
@@ -984,6 +1023,8 @@ async function refresh(silent = false, afterMutation = false) {
     const stars = await source.listStars(loaded.collection.id);
     if (!isCurrent()) return;
     snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
+    await operations.restore(loaded.collection.id);
+    if (!isCurrent()) return;
     selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key)));
   } catch (cause) { if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause) }
   finally { if (isCurrent()) loading.value = false }
@@ -997,7 +1038,7 @@ async function runMutation(operation:() => Promise<void>, reload = true) {
 }
 async function selectCollection(collectionId:string) {
   if (busy.value || loading.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
-  clearInternalDrag(); cancelRename(); closeQuickLook(); clipboard.value = null;
+  clearInternalDrag(); cancelRename(); closeQuickLook();
   stopPointerGesture?.(); closeActions(false); closeBackgroundActions(); query.value = ''; searchGeneration++;
   props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
   await refresh();
@@ -1007,10 +1048,12 @@ function onCollectionChange(event:Event) { selectCollection((event.target as HTM
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
 async function newFolder() {
-  if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.capabilities.nativeFilesystem) return;
+  if (busy.value || loading.value || section.value !== 'files' || (!props.dataSource.capabilities.nativeFilesystem && !operations.supported())) return;
   const name = window.prompt('Name this folder')?.trim(); if (!name) return;
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
-  const path = joinPath(currentPath.value, name); await runMutation(() => props.dataSource.createFolder(path));
+  const path = joinPath(currentPath.value, name);
+  if (operations.supported()) await submitReceiptItems([{ itemId: crypto.randomUUID(), action: 'create-folder', targetPath: path }]);
+  else await runMutation(() => props.dataSource.createFolder(path));
 }
 function shareEntry(entry:DisplayEntry | null) {
   if (busy.value || !entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
@@ -1056,6 +1099,7 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   event.stopPropagation();
   if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); undoLastOperation(); return }
   const entries = visibleEntries.value; const index = entries.findIndex(item => item.key === entry.key);
   if (isMac && event.metaKey && event.key === 'ArrowDown') { event.preventDefault(); activate(entry); return }
   if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowUp') { event.preventDefault(); openParent(); return }
@@ -1089,7 +1133,7 @@ function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.curr
 async function onDrop(event:DragEvent) {
   dragging.value = false;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
-  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return }
+  if (dragTargets.value.length) { const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(currentPath.value, target.name) })); clearInternalDrag(); await perform('move', targets); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
   if (!props.dataSource.capabilities.nativeFilesystem || !props.dataSource.capabilities.upload) { operationError.value = 'Browser drag and drop is unavailable. Use Choose files instead.'; return }
   const paths = [...event.dataTransfer.files].map(file => (file as File & { path?: string }).path).filter((value):value is string => Boolean(value));
@@ -1115,17 +1159,17 @@ function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTarget
 async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
   if (!canDropOnFolder(entry)) return;
   event.preventDefault(); event.stopPropagation();
-  const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(entry.path, target.name) }));
+  const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(entry.path, target.name) }));
   clearInternalDrag();
   if (targets.length) await perform('move', targets);
 }
-function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), path: entry.path, name: entry.name, folder: entry.folder } }
+function toTarget(entry:DisplayEntry):ExplorerTarget { return { key: entry.key, ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), path: entry.path, name: entry.name, folder: entry.folder } }
 function scheduleHoverOpen(entry:DisplayEntry) { cancelHoverOpen(); hoverOpenTimer = setTimeout(() => { if (dropTargetKey.value === entry.key && dragTargets.value.length) openPath(entry.path) }, 750) }
 function cancelHoverOpen() { if (hoverOpenTimer) clearTimeout(hoverOpenTimer); hoverOpenTimer = undefined }
 function updateDragPointer(event:DragEvent) { dragPointer.value = { x: event.clientX, y: event.clientY } }
 function onSurfaceDragOver(event:DragEvent) { updateDragPointer(event); const surface = mainSurface.value; if (!surface) return; const rect = surface.getBoundingClientRect(); if (event.clientY < rect.top + 64) surface.scrollTop -= 18; else if (event.clientY > rect.bottom - 64) surface.scrollTop += 18 }
 function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
-async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(path, target.name) })); clearInternalDrag(); await perform('move', targets) }
+async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(path, target.name) })); clearInternalDrag(); await perform('move', targets) }
 function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dropTargetKey.value = '' }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
@@ -1229,13 +1273,50 @@ function closeQuickLook() { const wasOpen = Boolean(quickLookEntry.value); quick
 function stepQuickLook(delta:number) { const entry = quickLookEntries.value[quickLookIndex.value + delta]; if (entry) openQuickLook(entry) }
 
 function joinPath(folder:string, name:string) { return [folder.replace(/^\/+|\/+$/g, ''), name].filter(Boolean).join('/') }
-function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), targetPath: joinPath(destination, entry.name) })) }
+function operationItems(entries:DisplayEntry[], destination:string) { return entries.map(entry => ({ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), targetPath: joinPath(destination, entry.name) })) }
 async function perform(action:'move' | 'copy', items:OperationItem[]) {
   if (busy.value || !snapshot.value || !items.length) return false;
   if (items.some(item => item.folderPath && (item.targetPath === item.folderPath || item.targetPath.startsWith(item.folderPath + '/')))) { operationError.value = 'A folder cannot be placed inside itself.'; return false }
   const collectionId = snapshot.value.collection.id;
+  if (operations.supported() && items.every(item => item.fileId)) {
+    const requests:FilesOperationItem[] = items.map(item => ({ itemId: crypto.randomUUID(), action, fileId: item.fileId, expectedVersionId: item.expectedVersionId, expectedRevision: item.expectedRevision ?? snapshot.value!.files.find(file => file.id === item.fileId)?.operationRevision, targetPath: item.targetPath }));
+    return submitReceiptItems(requests);
+  }
+  operationNotice.value = 'This operation reports completion only. Undo, collision choices, cancellation and retry are unavailable for native or folder operations.';
   return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
 }
+async function submitReceiptItems(items:FilesOperationItem[]) {
+  if (!snapshot.value || pendingRequest.value || operations.receipts.value.some(receipt => receipt.state === 'pending')) { operationError.value = 'Resolve the pending operation before starting another.'; return false }
+  if (items.length > 250) { operationError.value = 'Select at most 250 items for one operation.'; return false }
+  if (items.some(item => item.action !== 'create-folder' && (!item.expectedVersionId || !item.expectedRevision))) { operationError.value = 'The service did not supply a revision for this item. Refresh Files before trying again.'; return false }
+  let receipt:FilesOperationReceipt | null = null;
+  operationNotice.value = '';
+  await runMutation(async() => { receipt = await operations.submit({ idempotencyKey: crypto.randomUUID(), collectionId: snapshot.value!.collection.id, items }) });
+  return Boolean(receipt && (receipt as FilesOperationReceipt).items.every(item => item.state === 'completed'));
+}
+async function undoLastOperation() {
+  if (!canUndo.value || !undoReceipt.value) return;
+  const id = undoReceipt.value.operationId;
+  await runMutation(async() => { await operations.undo(id) });
+}
+async function retryReceipt(itemId?:string) {
+  const receipt = operationReceipt.value;
+  if (!receipt || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
+  await runMutation(async() => { await operations.retry(receipt.operationId, itemId ? { items: [{ itemId }] } : undefined) });
+}
+async function resolveCollision(policy:FilesCollisionPolicy) {
+  const receipt = operationReceipt.value; const selected = collisionItem.value;
+  if (!receipt || !selected || !props.dataSource.retryOperation || receipt.collectionId !== snapshot.value?.collection.id) return;
+  const items = (applyCollisionToAll.value ? receipt.items.filter(item => item.state === 'failed' && item.error?.code === 'destination-conflict') : [selected]);
+  if (policy === 'replace' && items.some(item => item.action === 'create-folder' || !item.error?.destination || item.error.destination.deleted)) { operationError.value = 'Replace requires an authorized, current file destination for every selected conflict. Folder creation supports Keep Both or Skip.'; return }
+  await runMutation(async() => { await operations.retry(receipt.operationId, { items: items.map(item => ({ itemId: item.itemId, collisionPolicy: policy, ...(policy === 'replace' ? { expectedDestination: item.error!.destination! } : {}) })) }) });
+}
+async function recoverOperation() {
+  const request = pendingRequest.value; const receipt = operationReceipt.value;
+  if (request && request.collectionId !== snapshot.value?.collection.id) { operationError.value = 'Return to the source collection to recover its pending operation.'; return }
+  await runMutation(async() => { if (request) await operations.submit(request); else if (receipt) await operations.resume(receipt.operationId) });
+}
+async function showOperation(operationId:string) { await runMutation(async() => { await operations.resume(operationId) }) }
 function beginRename(entry = selectedEntries.value[0]) { if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
 function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
 function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
@@ -1244,20 +1325,25 @@ async function commitRename(entry:DisplayEntry) {
   const name = renameValue.value.trim();
   if (!name || name === entry.name) { cancelRename(); return }
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Names can’t contain “/” or be “.” or “..”.'; return }
-  renameCommitting = true; const parent = entry.path.split('/').slice(0, -1).join('/'); const success = await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId }), targetPath: joinPath(parent, name) }]);
+  renameCommitting = true; const parent = entry.path.split('/').slice(0, -1).join('/'); const success = await perform('move', [{ ...(entry.folder ? { folderPath: entry.path } : { fileId: entry.id, expectedVersionId: entry.currentVersionId, expectedRevision: entry.operationRevision }), targetPath: joinPath(parent, name) }]);
   if (success) cancelRename(); else renameCommitting = false;
 }
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
 async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
 function copyToClipboard(mode:'copy' | 'cut') { if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return; explorer.setClipboard(snapshot.value.collection.id, mode, selectedEntries.value.map(toTarget)) }
-async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId }), targetPath: joinPath(currentPath.value, target.name) }))); if (success && value.mode === 'cut') clipboard.value = null }
+async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !clipboard.value) return; const value = clipboard.value; const success = await perform(value.mode === 'cut' ? 'move' : 'copy', value.targets.map(target => ({ ...(target.folder ? { folderPath: target.folderPath } : { fileId: target.fileId, expectedVersionId: target.expectedVersionId, expectedRevision: target.expectedRevision }), targetPath: joinPath(currentPath.value, target.name) }))); if (success && value.mode === 'cut') clipboard.value = null }
 function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
 async function trashSelected() {
   if (busy.value || section.value === 'trash' || !props.dataSource.capabilities.trash) return;
   const files = new Map<string, FilesItem>();
+  if (selectedEntries.value.some(entry => entry.folder)) operationNotice.value = 'Trash applies to the selected folders’ files. Empty folder metadata is retained; folder Trash is unavailable.';
   for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) }
   if (!files.size) return;
+  if (operations.supported() && selectedEntries.value.every(entry => !entry.folder)) {
+    await submitReceiptItems([...files.values()].map(file => ({ itemId: crypto.randomUUID(), action: 'trash', fileId: file.id, expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision })));
+    return;
+  }
   await runMutation(async() => { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); closeActions(false) });
 }
 async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length || section.value !== 'trash') return; await runMutation(async() => { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set() }) }
@@ -1276,10 +1362,19 @@ async function purgeEntries(entries:DisplayEntry[], all = false) {
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
 function emptyTrash() { return purgeEntries(trashFiles.value.map(toDisplay), true) }
-async function runTargetAction(action:'open' | 'native-open' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
+async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
   if (action === 'native-open') { await activate(target); return }
+  if (action === 'reveal') {
+    if (!props.dataSource.capabilities.nativeReveal || !props.dataSource.revealFile) return;
+    try {
+      const result = await props.dataSource.revealFile(target.id, target.currentVersionId);
+
+      if (result.status === 'unavailable') operationError.value = result.reason;
+    } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) }
+    return;
+  }
   if (action === 'reference') { try { const params = new URLSearchParams({ version: target.currentVersionId, path: target.path, name: target.name }); await navigator.clipboard.writeText(`sulla-file://${ target.id }?${ params }`) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } return }
   if (action === 'details') { await showDetails(target); return }
   if (action === 'share') {
@@ -1310,6 +1405,7 @@ function onKeydown(event:KeyboardEvent) {
   if (selected.value || shareTarget.value || folderDetails.value || target?.closest('button,a,dialog')) return;
   if (event.key === 'Escape') { cancelRename(); closeActions(false); closeBackgroundActions(); clearSelection(); return }
   if (modifier && key === 'k') { event.preventDefault(); searchInput.value?.focus(); return }
+  if (modifier && key === 'z' && !event.shiftKey) { event.preventDefault(); undoLastOperation(); return }
   if (modifier && key === 'a' && !selected.value) { event.preventDefault(); selectedKeys.value = new Set(visibleEntries.value.map(entry => entry.key)); return }
   if (modifier && key === 'c' && selectedEntries.value.length) { event.preventDefault(); copyToClipboard('copy'); return }
   if (modifier && key === 'x' && selectedEntries.value.length) { event.preventDefault(); copyToClipboard('cut'); return }
@@ -1431,6 +1527,9 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 .operation-panel b, .operation-panel span { display:block; }
 .operation-panel span { color:var(--muted); font-size:11.5px; }
 .operation-panel progress { width:min(360px,100%); height:5px; accent-color:var(--accent); }
+.operation-queue { align-items:flex-start; flex-wrap:wrap; }
+.operation-queue ul { margin:6px 0 0; padding:0; list-style:none; max-height:180px; overflow:auto; }
+.operation-queue li { display:flex; align-items:center; gap:8px; padding:3px 0; }
 .collision-panel { border-color:color-mix(in srgb, var(--warn) 40%, transparent); background:var(--warn-soft); }
 .collision-panel label { display:flex; align-items:center; gap:5px; white-space:nowrap; color:var(--muted); font-size:11.5px; }
 .action-menu { --text:#1a2332; --line-2:rgba(26,35,50,.14); --card-solid:#fff; --ink-05:rgba(26,35,50,.05); --bad:#d9403a; --shadow-lg:0 12px 36px rgba(26,35,50,.2); font:13px system-ui,sans-serif; color:var(--text); box-sizing:border-box; max-width:calc(100vw - 8px); max-height:calc(100vh - 8px); overflow:auto; position:fixed; z-index:1000; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--card-solid); box-shadow:var(--shadow-lg); }
