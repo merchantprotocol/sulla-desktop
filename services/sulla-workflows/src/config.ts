@@ -32,7 +32,7 @@ if (localToken && Buffer.byteLength(localToken) < 32) throw new Error('SULLA_API
 const accountsUrl = mode === 'server' ? required('SULLA_ACCOUNTS_URL', process.env.SULLA_ACCOUNTS_URL) : '';
 const accountsServiceId = mode === 'server' ? required('SULLA_ACCOUNTS_SERVICE_ID', process.env.SULLA_ACCOUNTS_SERVICE_ID) : '';
 const accountsServiceToken = mode === 'server' ? secretFile('SULLA_ACCOUNTS_SERVICE_TOKEN_FILE') : '';
-const audience = mode === 'server' ? required('SULLA_WORKFLOW_AUDIENCE', process.env.SULLA_WORKFLOW_AUDIENCE) : '';
+const audience = mode === 'server' ? (process.env.SULLA_WORKFLOW_AUDIENCE?.trim() || 'sulla-workflows') : '';
 const allowedRunnerScopes = new Set((process.env.SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES ?? '').split(',').map(value => value.trim()).filter(Boolean));
 if (mode === 'server' && !allowedRunnerScopes.size) throw new Error('SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES is required in server mode');
 
@@ -54,5 +54,6 @@ export const config = {
   accountsServiceToken,
   audience,
   requiredRoles:        (process.env.SULLA_WORKFLOW_REQUIRED_ROLES ?? 'member').split(',').map(value => value.trim()).filter(Boolean),
+  uiRequiredRoles:      (process.env.SULLA_WORKFLOW_UI_REQUIRED_ROLES ?? '').split(',').map(value => value.trim()).filter(Boolean),
   allowedRunnerScopes,
 };

@@ -5,7 +5,6 @@ import { pool } from './db.js';
 
 import type { NextFunction, Request, Response as ExpressResponse } from 'express';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_ACCOUNTS_RESPONSE_BYTES = 64 * 1024;
 const MAX_IDENTITY_VALUE_LENGTH = 2_048;
 const MAX_AUTHORIZATION_VALUES = 100;
@@ -116,17 +115,15 @@ async function ownerIdentity(request: Request, token: string): Promise<RequestId
     };
   }
 
-  const authorityId = request.header('x-sulla-authority-id') ?? '';
-  const organizationId = request.header('x-sulla-organization-id') ?? '';
-  if (!token || !UUID.test(authorityId) || !UUID.test(organizationId)) throw new Error('server identity headers are required');
-  const response = await fetch(`${ config.accountsUrl }/v1/private/resolve-context`, {
+  if (!token) throw Object.assign(new Error('UI session token is required'), { status: 401 });
+  const response = await fetch(`${ config.accountsUrl }/v1/private/ui-sessions/resolve`, {
     method:  'POST',
     headers: {
       'Content-Type':          'application/json',
       'X-Sulla-Service-Id':    config.accountsServiceId,
       'X-Sulla-Service-Token': config.accountsServiceToken,
     },
-    body:     JSON.stringify({ bearerToken: token, authorityId, audience: config.audience, organizationId, requiredRoles: config.requiredRoles }),
+    body:     JSON.stringify({ token, audience: config.audience, requiredRoles: config.uiRequiredRoles }),
     redirect: 'error',
     signal:   AbortSignal.timeout(5_000),
   });
@@ -135,13 +132,14 @@ async function ownerIdentity(request: Request, token: string): Promise<RequestId
   const subject = identityString(context.subject);
   const roles = authorizationValues(context.roles);
   const groups = authorizationValues(context.groups);
-  if (!response.ok || context.authorityId !== authorityId || context.organizationId !== organizationId ||
-      context.audience !== config.audience || !issuer || !subject || !roles || !groups ||
-      config.requiredRoles.some(role => !roles.includes(role))) {
-    throw new Error('Accounts denied workflow context');
+  const expiresAt = typeof context.expiresAt === 'string' ? Date.parse(context.expiresAt) : Number.NaN;
+  if (!response.ok || context.audience !== config.audience || !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
+      !identityString(context.authorityId) || !identityString(context.organizationId) || !issuer || !subject || !roles || !groups ||
+      config.uiRequiredRoles.some(role => !roles.includes(role))) {
+    throw Object.assign(new Error('Accounts denied workflow context'), { status: response.status === 401 ? 401 : 403 });
   }
   return {
-    kind: 'owner', issuer, subject, authorityId, organizationId, roles, groups,
+    kind: 'owner', issuer, subject, authorityId: String(context.authorityId), organizationId: String(context.organizationId), roles, groups,
   };
 }
 
@@ -150,12 +148,22 @@ export function authenticateRequest(request: AuthenticatedRequest, response: Exp
   (async() => {
     request.identity = await runnerIdentity(token) ?? await ownerIdentity(request, token);
     next();
-  })().catch(() => response.status(401).json({ error: 'authentication_required' }));
+  })().catch(error => {
+    const status = Number(error?.status) === 403 ? 403 : 401;
+    response.status(status).json({ error: status === 403 ? 'authorization_denied' : 'authentication_required' });
+  });
 }
 
 export function requireOwner(request: AuthenticatedRequest, response: ExpressResponse, next: NextFunction): void {
   if (request.identity?.kind !== 'owner') { response.status(403).json({ error: 'owner_context_required' }); return }
   next();
+}
+
+export function requireMutationRole(request: AuthenticatedRequest, response: ExpressResponse, next: NextFunction): void {
+  if (request.identity?.kind === 'runner' || request.identity?.roles.some(role => ['owner', 'admin', 'editor'].includes(role))) {
+    next(); return;
+  }
+  response.status(403).json({ error: 'editor_role_required' });
 }
 
 export function identityParams(identity: RequestIdentity): [string, string, string | null, string | null] {
