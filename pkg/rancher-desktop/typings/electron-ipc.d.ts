@@ -509,7 +509,6 @@ export interface IpcMainInvokeEvents {
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
   'files-ui:create-folder': (relativePath: string) => void;
-  'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => any[];
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;

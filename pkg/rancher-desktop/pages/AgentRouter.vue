@@ -16,10 +16,8 @@
         class="agent-router-rail"
         :active="activeTabMode"
         :active-sub-tab="activeSubTab"
-        :file-tree-open="fileTreeOpen"
         :bookmarks-open="bookmarksOpen"
         @set-mode="onModeRailSelect"
-        @toggle-file-tree="onToggleFileTree"
         @toggle-bookmarks="toggleBookmarks()"
       />
 
@@ -197,7 +195,6 @@ const activeTabMode = computed(() => {
 // Track active sub-tab for highlighting the correct ModeRail icon
 // (e.g., 'library' vs 'mywork' when mode is 'routines')
 const activeSubTab  = ref<string | undefined>(undefined);
-const fileTreeOpen  = ref(false);
 
 // Listen for sub-tab changes from BrowserTab
 function onRoutinesSubTabChange(event: Event) {
@@ -245,15 +242,6 @@ function onBookmarksShortcut(event: KeyboardEvent) {
     event.preventDefault();
     toggleBookmarks();
   }
-}
-
-function onToggleFileTree() {
-  window.dispatchEvent(new CustomEvent('sulla:toggle-file-tree'));
-}
-
-function onFileTreeStateChanged(event: Event) {
-  const open = (event as CustomEvent<{ open: boolean }>).detail?.open;
-  if (typeof open === 'boolean') fileTreeOpen.value = open;
 }
 
 function onModeRailSelect(mode: string, subTab?: string) {
@@ -576,7 +564,6 @@ onMounted(async() => {
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
-  window.addEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.addEventListener('keydown', onBookmarksShortcut);
 
@@ -630,7 +617,6 @@ onUnmounted(() => {
   window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
-  window.removeEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.removeEventListener('keydown', onBookmarksShortcut);
   ipcRenderer.removeListener('route' as any, onRoute);

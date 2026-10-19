@@ -255,7 +255,6 @@
           :initial-agent-id="agentChat?.agentId"
           :agent-tab-contract-id="agentChat?.contractId"
           :agent-tab-thread-id="agentChat?.threadId"
-          @set-mode="onSetMode"
           @navigate-url="onNavigateUrl"
         />
       </div>
