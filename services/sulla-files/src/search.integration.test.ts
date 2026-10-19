@@ -66,3 +66,15 @@ test('a new version drops stale chunks and reindexes current content', { skip: !
     assert.equal((await h.search.search({ query: 'satellite antenna' }, await h.scopes('alice'))).results.length, 1);
   } finally { h.indexer.close(); await h.db.end() }
 });
+
+test('partial files keep matching content but make scoped coverage incomplete', { skip: !enabled }, async() => {
+  const h = await harness(); try {
+    const collection = await h.collection('user', 'alice'); const file = await h.version(collection, 'partial.txt', 'bounded searchable excerpt');
+    await h.db.query("UPDATE files SET extraction_reason_code='text_extracted_partial' WHERE id=$1", [file]);
+    const response = await h.search.search({ query: 'bounded searchable' }, await h.scopes('alice'));
+    assert.equal(response.results.length, 1);
+    assert.equal(response.coverage.indexed, 1);
+    assert.equal(response.coverage.partial, 1);
+    assert.equal(response.coverage.complete, false);
+  } finally { h.indexer.close(); await h.db.end() }
+});

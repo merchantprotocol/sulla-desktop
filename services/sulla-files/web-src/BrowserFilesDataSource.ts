@@ -1,8 +1,21 @@
 import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from './filesApiModels';
+import { normalizeFilesIndexCoverage } from '../../../pkg/rancher-desktop/pages/files/types';
 
 import type { FileAccessList, FilesDataSource, FileShare, FilesIndexCoverage, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare } from '../../../pkg/rancher-desktop/pages/files/types';
 
 export type ContainerCollection = FilesApiCollection;
+
+function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
+  const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true };
+
+  for (const file of files) {
+    coverage[file.indexStatus]++;
+    if (file.indexStatus === 'indexed' && file.indexReasonCode?.endsWith('_partial')) coverage.partial++;
+  }
+  coverage.complete = coverage.pending === 0 && coverage.indexing === 0 && coverage.partial === 0 && coverage.unsupported === 0 && coverage.failed === 0;
+
+  return coverage;
+}
 
 export class BrowserFilesDataSource implements FilesDataSource {
   readonly capabilities={upload:true,versionHistory:true,restoreVersions:true,trash:true,orgSharing:true,publicLinks:false,onlineOnly:false,nativeFilesystem:false};
@@ -42,7 +55,7 @@ export class BrowserFilesDataSource implements FilesDataSource {
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
     this.files=[...active,...trash].map(value=>filesItem(value));
     const shares=Array.isArray(collection.shared_folders)?collection.shared_folders:[];const files=Array.isArray(collection.shared_files)?collection.shared_files:[];const scopedRole=[...shares,...files].some((share:FilesApiRecord)=>share.role==='edit')?'file-or-folder-edit':shares.length||files.length?'file-or-folder-view':undefined;
-    const indexing={total:this.files.filter(file=>!file.deletedAt).length,pending:0,indexing:0,indexed:0,unsupported:0,failed:0,complete:true};for(const file of this.files.filter(file=>!file.deletedAt))indexing[file.indexStatus]++;indexing.complete=indexing.pending===0&&indexing.indexing===0&&indexing.unsupported===0&&indexing.failed===0;
+    const indexing=indexCoverage(this.files.filter(file=>!file.deletedAt));
     return{collection:{id:collection.id,name:collection.name,home:collection.home??'/',orgId:collection.org_id,retentionPolicy:collection.retention_policy??{trashDays:90},storageQuota:collection.storage_quota===undefined?undefined:Number(collection.storage_quota),keptBytes:collection.kept_bytes===undefined?undefined:Number(collection.kept_bytes),desktopCount:collection.desktop_count===undefined?undefined:Number(collection.desktop_count),memberCount:collection.member_count===undefined?undefined:Number(collection.member_count),accountName:collection.account_display_name??this.accountName,accountRole:collection.access_role??scopedRole,ownerUserId:collection.owner_user_id,sharedFolders:shares.map((value:FilesApiRecord)=>value.folderPath??value.folder_path)},files:this.files,status:{state:'synced',pendingFiles:0,serverConfigured:true,location:'server',serverLabel:'Sulla Server',indexing}};
   }
 
@@ -50,9 +63,9 @@ export class BrowserFilesDataSource implements FilesDataSource {
   async preview(fileId:string,versionId?:string):Promise<FilesPreview>{const generation=this.generation;const response=await this.binary(`/v1/files/${encodeURIComponent(fileId)}/preview${versionId?`?versionId=${encodeURIComponent(versionId)}`:''}`,generation);const data=new Uint8Array(await response.arrayBuffer());this.assertCurrent(generation);return{data,mime:response.headers.get('content-type')??'application/octet-stream',path:this.files.find(file=>file.id===fileId)?.path??''}}
   detail(fileId:string):Promise<any>{return this.request(`/v1/files/${encodeURIComponent(fileId)}`)}
   async mediaUrl(fileId:string,versionId?:string):Promise<string>{const generation=this.generation;const response=await this.binary(`/v1/files/${encodeURIComponent(fileId)}/preview${versionId?`?versionId=${encodeURIComponent(versionId)}`:''}`,generation);const blob=await response.blob();this.assertCurrent(generation);const mime=(blob.type||response.headers.get('content-type')||'').split(';',1)[0].toLowerCase();if(!mime.startsWith('image/')&&!mime.startsWith('audio/')&&!mime.startsWith('video/')&&mime!=='application/pdf')throw new Error('This file type cannot be previewed safely in the browser. Download it instead.');if(mime==='image/svg+xml'||mime==='text/html'||mime==='application/xhtml+xml')throw new Error('Executable document previews are blocked. Download the file instead.');const url=URL.createObjectURL(blob);this.assertCurrent(generation);this.urls.add(url);return url}
-  async search(query:string):Promise<{files:FilesItem[];coverage:FilesIndexCoverage}>{const response=await this.request<{results:{id:string}[];coverage:FilesIndexCoverage}>('/v1/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,collectionId:this.collectionId})});const byId=new Map(this.files.map(file=>[file.id,file]));return{files:response.results.map(row=>byId.get(row.id)).filter((file):file is FilesItem=>Boolean(file&&!file.deletedAt)),coverage:response.coverage}}
+  async search(query:string):Promise<{files:FilesItem[];coverage:FilesIndexCoverage}>{const response=await this.request<{results:{id:string}[];coverage:FilesIndexCoverage}>('/v1/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,collectionId:this.collectionId})});const byId=new Map(this.files.map(file=>[file.id,file]));return{files:response.results.map(row=>byId.get(row.id)).filter((file):file is FilesItem=>Boolean(file&&!file.deletedAt)),coverage:normalizeFilesIndexCoverage(response.coverage)}}
   reindex(fileId:string):Promise<void>{return this.request(`/v1/files/${encodeURIComponent(fileId)}/reindex`,{method:'POST'})}
-  setPaused(_paused:boolean):Promise<FilesSnapshot['status']>{return Promise.resolve({state:'synced',pendingFiles:0,serverConfigured:true,location:'server',serverLabel:'Sulla Server',indexing:{total:this.files.length,pending:0,indexing:0,indexed:this.files.length,unsupported:0,failed:0,complete:true}})}
+  setPaused(_paused:boolean):Promise<FilesSnapshot['status']>{return Promise.resolve({state:'synced',pendingFiles:0,serverConfigured:true,location:'server',serverLabel:'Sulla Server',indexing:indexCoverage(this.files.filter(file=>!file.deletedAt))})}
 
   async chooseUpload(targetPath=''):Promise<number>{const generation=this.generation;const collectionId=this.collectionId;if(!collectionId)throw new Error('No Files collection is selected.');const files=await new Promise<File[]>(resolve=>{const input=document.createElement('input');let settled=false;const finish=()=>{if(settled)return;settled=true;window.removeEventListener('focus',onFocus);resolve([...(input.files??[])])};const onFocus=()=>setTimeout(finish,0);input.type='file';input.multiple=true;input.onchange=finish;window.addEventListener('focus',onFocus,{once:true});input.click()});this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');for(const file of files){this.assertCurrent(generation);if(this.collectionId!==collectionId)throw new DOMException('Files collection changed','AbortError');await this.upload(file,[targetPath,file.name].filter(Boolean).join('/'),generation,collectionId)}return files.length}
   uploadPaths(_paths:string[]):Promise<number>{return Promise.reject(new Error('Use Choose files in the browser to upload.'))}

@@ -1,8 +1,8 @@
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesSnapshot, type FilesVersion, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FileAccessList, FilesDataSource, FilesDetail, FileShare, FilesIndexCoverage, FilesItem, FilesPreview, FilesSnapshot, FilesVersion, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './types';
 import type { IpcRendererEvent } from 'electron';
 
 interface RemoteCapabilities {
@@ -16,9 +16,12 @@ interface RemoteCapabilities {
 }
 
 function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
-  const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, unsupported: 0, failed: 0, complete: true };
-  for (const file of files) coverage[file.indexStatus]++;
-  coverage.complete = coverage.pending === 0 && coverage.indexing === 0 && coverage.unsupported === 0 && coverage.failed === 0;
+  const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true };
+  for (const file of files) {
+    coverage[file.indexStatus]++;
+    if (file.indexStatus === 'indexed' && file.indexReasonCode?.endsWith('_partial')) coverage.partial++;
+  }
+  coverage.complete = coverage.pending === 0 && coverage.indexing === 0 && coverage.partial === 0 && coverage.unsupported === 0 && coverage.failed === 0;
   return coverage;
 }
 
@@ -176,7 +179,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
     const response = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
     const byId = new Map(this.files.map(file => [file.id, file]));
-    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: response.coverage };
+    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
   }
 
   reindex(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:reindex', { fileId }) }

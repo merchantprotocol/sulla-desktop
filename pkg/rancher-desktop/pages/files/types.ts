@@ -1,6 +1,13 @@
 export type FilesSyncState = 'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
 export type FilesIndexState = 'pending' | 'indexing' | 'indexed' | 'unsupported' | 'failed';
-export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; unsupported:number; failed:number; complete:boolean }
+export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; partial:number; unsupported:number; failed:number; complete:boolean }
+
+export function normalizeFilesIndexCoverage(coverage:Omit<FilesIndexCoverage, 'partial'> & { partial?:number }):FilesIndexCoverage {
+  const knowsPartial = Number.isFinite(coverage.partial);
+  const partial = knowsPartial ? Number(coverage.partial) : 0;
+
+  return { ...coverage, partial, complete: coverage.complete && knowsPartial && partial === 0 };
+}
 
 export interface FilesLocation {
   kind: 'local' | 'server' | 'cloud';
