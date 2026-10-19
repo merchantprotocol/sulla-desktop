@@ -33,7 +33,7 @@ sudo SULLA_BUNDLE_DIR="$PWD/deploy/server" \
   bash deploy/server/install.sh
 ```
 
-Compose asks explicitly whether the console shell is `standalone` or `native-lima`. The standalone choice runs the console container and remains the default for ordinary servers. Inside Sulla Desktop's Lima VM, `native-lima` reuses the persistent listener that Desktop already installs at `host.docker.internal:30121`; that listener runs as the unprivileged `sulla-console` user, and Compose does not start a second console container. The installer refuses `native-lima` when that managed listener is absent.
+Compose asks explicitly whether the console shell is `standalone` or `native-lima`. The standalone choice runs the console container and remains the default for ordinary servers. Inside Sulla Desktop's Lima VM, `native-lima` reuses the persistent listener that Desktop already installs at `host.docker.internal:30121`; that listener runs as the unprivileged `sulla-console` user, and Compose does not start a second console container. The server kit does not install this listener. It refuses `native-lima` when the bundled OpenRC service is absent, starts that service when needed, waits at most 30 seconds for its health endpoint, and proves a Docker bridge container can reach it before rolling out the server stack.
 
 The installer writes the real server configuration to `/opt/sulla/server/server.env` and invokes `/opt/sulla/server/compose.yaml`. To restart that generated installation directly in the VM:
 
