@@ -644,6 +644,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   const sendVaultConsole = sendConsoleFile('index.html', CONSOLE_HTML);
   app.get(/^\/ui$/, (_request, response) => response.redirect(308, '/ui/'));
   app.get('/ui/', sendAuditConsole);
+  app.get('/ui/audit', sendAuditConsole);
   app.get('/ui/vault', (_request, response) => response.redirect(308, '/ui/vault/'));
   app.get('/ui/vault/', sendVaultConsole);
   app.get('/console', (_request, response) => response.redirect(308, '/ui/'));
@@ -850,6 +851,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   app.get('/v1/metadata/audit', async(request, response) => {
     const context = await accountsContext(request);
     const orgId = requiredUuid(context.organizationId, 'Accounts organization id');
+    const member = await db.query(
+      `SELECT 1
+         FROM accounts_identities ai
+         JOIN users u ON u.id = ai.user_id AND u.disabled_at IS NULL
+         JOIN org_members om ON om.user_id = u.id AND om.org_id = $3 AND om.status = 'confirmed'
+        WHERE ai.issuer = $1 AND ai.subject = $2
+        LIMIT 1`,
+      [context.issuer, context.subject, orgId],
+    );
+    if (!member.rowCount) {
+      throw new AccountsIdentityError(403, 'Accounts identity is not linked to this Vault organization');
+    }
     const limit = Math.trunc(Math.min(Math.max(Number(request.query.limit) || 50, 1), 200));
     const offset = Math.trunc(Math.min(Math.max(Number(request.query.offset) || 0, 0), 100_000));
     const conditions = ['a.org_id = $1'];

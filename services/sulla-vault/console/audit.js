@@ -1,7 +1,7 @@
 (() => {
   const service = 'vault';
   const api = window.location.pathname.startsWith('/services/vault/') ? '/services/vault/api/metadata/audit' : '/v1/metadata/audit';
-  const state = { token: '', organizationId: '', events: [], offset: 0 };
+  const state = { token: '', organizationId: '', events: [], offset: 0, loadGeneration: 0, loadController: null };
   const $ = id => document.getElementById(id);
   const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[character]));
   const uuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -10,6 +10,23 @@
   const actor = event => event.metadata?.agentName || event.metadata?.agentId || (event.pod_id ? 'Agent' : 'Member');
   const target = event => event.item_id ? `Item ${shortId(event.item_id)}` : event.collection_id ? `Collection ${shortId(event.collection_id)}` : 'Organization';
   const notice = message => { $('notice').textContent = message; $('notice').hidden = !message; };
+
+  function clearProtectedData() {
+    state.loadGeneration += 1;
+    state.loadController?.abort();
+    state.loadController = null;
+    state.events = [];
+    state.offset = 0;
+    $('total').textContent = '—';
+    $('agents').textContent = '—';
+    $('blocked').textContent = '—';
+    $('page').textContent = 'Page 1';
+    $('previous').disabled = true;
+    $('next').disabled = true;
+    $('events').innerHTML = '<tr><td colspan="6">Waiting for Accounts authorization…</td></tr>';
+    $('detail').innerHTML = '<p class="muted">Select an event to see its metadata.</p>';
+    notice('');
+  }
 
   function parameters() {
     const values = { person:$('person').value.trim(), collection:$('collection').value.trim(), item:$('item').value.trim() };
@@ -27,13 +44,40 @@
 
   async function load() {
     if (!state.token) return;
+    const generation = ++state.loadGeneration;
+    state.loadController?.abort();
+    const controller = new AbortController();
+    state.loadController = controller;
+    const query = parameters();
     notice(''); $('events').innerHTML = '<tr><td colspan="6">Loading events…</td></tr>';
-    const response = await fetch(`${api}?${parameters()}`, { headers:{ Authorization:`Bearer ${state.token}` }, cache:'no-store' });
+    let response;
+    try {
+      response = await fetch(`${api}?${query}`, {
+        headers:{ Authorization:`Bearer ${state.token}` }, cache:'no-store', signal:controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted || generation !== state.loadGeneration) return;
+      throw error;
+    }
+    if (generation !== state.loadGeneration) return;
     if (!response.ok) {
-      if (response.status === 401 || response.status === 403) window.parent.postMessage({ type:'sulla.service.expired', version:1, service }, window.location.origin);
+      if (response.status === 401 || response.status === 403) {
+        const message = response.status === 401 ? 'Your Accounts session expired.' : 'This account cannot view the audit log.';
+        lock(message);
+        window.parent.postMessage({ type:'sulla.service.expired', version:1, service }, window.location.origin);
+        return;
+      }
       throw new Error(response.status === 401 ? 'Your Accounts session expired.' : response.status === 403 ? 'This account cannot view the audit log.' : 'Audit events are unavailable.');
     }
-    const result = await response.json();
+    let result;
+    try {
+      result = await response.json();
+    } catch (error) {
+      if (controller.signal.aborted || generation !== state.loadGeneration) return;
+      throw error;
+    }
+    if (generation !== state.loadGeneration) return;
+    state.loadController = null;
     state.events = Array.isArray(result.events) ? result.events : [];
     $('total').textContent = String(result.summary?.total ?? 0); $('agents').textContent = String(result.summary?.agents ?? 0); $('blocked').textContent = String(result.summary?.blocked ?? 0);
     $('page').textContent = `Page ${Math.floor(state.offset / 50) + 1}`; $('previous').disabled = state.offset === 0; $('next').disabled = state.events.length < 50;
@@ -52,7 +96,8 @@
   }
 
   function lock(message = 'Open Audit Log from the main console to authorize it with Accounts.') {
-    state.token = ''; state.organizationId = ''; state.events = []; $('content').hidden = true; $('signed-out').hidden = false; $('signed-out').querySelector('p').textContent = message;
+    clearProtectedData();
+    state.token = ''; state.organizationId = ''; $('content').hidden = true; $('signed-out').hidden = false; $('signed-out').querySelector('p').textContent = message;
   }
   window.addEventListener('message', event => {
     if (event.origin !== window.location.origin || event.source !== window.parent) return;
@@ -60,7 +105,7 @@
     if (!message || message.version !== 1 || message.service !== service) return;
     if (message.type === 'sulla.service.lock') return lock();
     if (message.type !== 'sulla.service.session' || typeof message.token !== 'string' || typeof message.organizationId !== 'string') return;
-    if (state.organizationId && state.organizationId !== message.organizationId) state.events = [];
+    if (state.organizationId && state.organizationId !== message.organizationId) clearProtectedData();
     state.token = message.token; state.organizationId = message.organizationId; $('signed-out').hidden = true; $('content').hidden = false;
     void load().catch(error => notice(error instanceof Error ? error.message : 'Audit events are unavailable.'));
   });
