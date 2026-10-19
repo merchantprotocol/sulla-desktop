@@ -15,6 +15,7 @@ import Snapshots from '../pages/Snapshots.vue';
 import SudoPrompt from '../pages/SudoPrompt.vue';
 import Troubleshooting from '../pages/Troubleshooting.vue';
 import UnmetPrerequisites from '../pages/UnmetPrerequisites.vue';
+import Usage from '../pages/Usage.vue';
 import Volumes from '../pages/Volumes.vue';
 import ContainerInfo from '../pages/containers/ContainerInfo.vue';
 import ExtensionsItem from '../pages/extensions/_root/_src/_id.vue';
@@ -37,6 +38,9 @@ export default createRouter({
     },
     {
       path: '/Volumes', component: Volumes, name: 'Volumes',
+    },
+    {
+      path: '/Usage', component: Usage, name: 'Usage',
     },
     {
       path: '/volumes/files/:name', component: VolumeFiles, name: 'volumes-files-name',

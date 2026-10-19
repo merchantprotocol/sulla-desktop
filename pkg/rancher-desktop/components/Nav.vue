@@ -171,6 +171,7 @@ export default defineComponent({
       return ({
         '/Containers':      '▣',
         '/Volumes':         '◫',
+        '/Usage':           '◔',
         '/PortForwarding':  '↗',
         '/Images':          '◇',
         '/Snapshots':       '◷',
