@@ -523,8 +523,9 @@ export interface IpcMainInvokeEvents {
     folderReceipts?:boolean;
     nativeFolderReceipts?:boolean;
     folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
-    crossCollectionOperations?:'stored-same-audience-files' | 'unavailable';
+    crossCollectionOperations?:'all-authorized' | 'stored-authorized' | 'unavailable';
   };
+  'sulla-files:folder-operation-state': (input: { collectionId:string; path:string }) => import('@pkg/pages/files/types').FilesFolderSourceSnapshot;
   'sulla-files:operation-submit': (input: import('@pkg/pages/files/types').FilesOperationRequest) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-status': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-cancel': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;

@@ -162,13 +162,30 @@ export type FilesRevealResult =
   | { status:'unavailable'; code:'no-local-copy' | 'local-copy-changed'; reason:string };
 
 export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
-export interface FilesFolderState { folderId:string; path:string; revision:string }
+export type FilesCrossCollectionCapability = 'all-authorized' | 'stored-authorized' | 'unavailable';
+export interface FilesOperationCapabilities {
+  enabled:boolean;
+  reason?:string;
+  folderReceipts:boolean;
+  nativeFolderReceipts:boolean;
+  folderCollisionPolicies:FilesCollisionPolicy[];
+  crossCollectionOperations:FilesCrossCollectionCapability;
+}
+export interface FilesFolderState { collectionId?:string; folderId:string; path:string; revision:string }
+export interface FilesFolderSourceSnapshot {
+  collectionId:string;
+  path:string;
+  folderId?:string;
+  revision?:string;
+  subtreeSignature:string;
+}
 export interface FilesFolderReplacementDestination extends FilesFolderState { subtreeSignature:string }
 export function isFilesFolderState(value:unknown):value is FilesFolderState {
   if (!value || typeof value !== 'object') return false;
   const state=value as Record<string, unknown>;
 
-  return !('fileId' in state) && typeof state.folderId === 'string' && typeof state.path === 'string' && typeof state.revision === 'string';
+  return !('fileId' in state) && typeof state.folderId === 'string' && typeof state.path === 'string' && typeof state.revision === 'string' &&
+    (state.collectionId === undefined || typeof state.collectionId === 'string');
 }
 export type FilesTrashUndoState = 'available' | 'invalidated' | 'recovery-required' | 'unavailable';
 export interface FilesTrashUndo { state:FilesTrashUndoState; expiresAt?:string }
@@ -226,6 +243,7 @@ export interface FilesOperationItem {
   expectedRevision?:string;
   targetPath?:string;
   targetCollectionId?:string;
+  sourceSubtreeSignature?:string;
   collisionPolicy?:FilesCollisionPolicy;
   expectedDestination?:FilesCollisionDestination;
 }
@@ -286,7 +304,7 @@ export interface FilesCapabilities {
   folderReceipts?: boolean;
   nativeFolderReceipts?: boolean;
   folderCollisionPolicies?: FilesCollisionPolicy[];
-  crossCollectionOperations?: 'stored-same-audience-files' | 'unavailable';
+  crossCollectionOperations?: FilesCrossCollectionCapability;
 }
 
 export type ShareAccessMode = 'view' | 'download';
@@ -387,6 +405,8 @@ export interface FilesDataSource {
   undoOperation?(operationId:string):Promise<FilesOperationReceipt>;
   load(): Promise<FilesSnapshot>;
   selectCollection?(collectionId:string):void;
+  operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;
+  folderOperationState?(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot>;
   history(fileId:string, currentVersionId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
   detail(fileId:string):Promise<FilesDetail>;
