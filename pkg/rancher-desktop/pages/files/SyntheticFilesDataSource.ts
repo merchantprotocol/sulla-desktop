@@ -9,6 +9,7 @@ import type {
 
 const now = Date.now();
 const iso = (days = 0) => new Date(now + days * 86_400_000).toISOString();
+// Synthetic operation state is deliberately scoped to this browser session.
 const STORAGE_KEY = 'sulla:files:synthetic-receipt-preview:v1';
 const clone = <T>(value:T):T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -35,6 +36,7 @@ interface SyntheticState {
 /** Stateful synthetic fixtures for /files-preview. Never reads Files IPC or private files. */
 export class SyntheticFilesDataSource implements FilesDataSource {
   readonly syntheticPreview = true;
+  readonly syntheticPersistenceScope = 'session' as const;
   capabilities = {
     upload: false, versionHistory: true, restoreVersions: true, trash: true, orgSharing: true,
     publicLinks: true, onlineOnly: false, nativeFilesystem: false, durableOperations: true,
@@ -217,11 +219,17 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async retryOperation(operationId:string, retry:FilesOperationRetry = {}):Promise<FilesOperationReceipt> {
     const operation = this.operation(operationId); const ids = retry.items?.map(item => item.itemId) ?? operation.receipt.items.filter(item => item.state === 'failed' || item.state === 'cancelled').map(item => item.itemId);
 
-    for (const id of ids) {
+    if (operation.receipt.state === 'pending') throw new Error('Wait for the synthetic operation to finish before retrying it');
+    if (new Set(ids).size !== ids.length) throw new Error('A synthetic item can only be retried once per request');
+    const validated = ids.map(id => {
       const receipt = operation.receipt.items.find(item => item.itemId === id); const override = retry.items?.find(item => item.itemId === id);
 
       if (!receipt || !receipt.retryable || !['failed', 'cancelled'].includes(receipt.state)) throw new Error('Only retryable failed or cancelled synthetic items can be retried');
       if (override?.collisionPolicy === 'replace' && (!receipt.error?.destination || !override.expectedDestination || !this.sameFileState(receipt.error.destination, override.expectedDestination))) throw new Error('Replace requires the exact displayed synthetic destination snapshot');
+      return { id, receipt, override };
+    });
+
+    for (const { id, receipt, override } of validated) {
       if (override) operation.retryOverrides[id] = clone(override);
       Object.assign(receipt, { state: 'pending', error: null, retryable: false });
     }
@@ -236,7 +244,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       const mutation = operation.mutations[item.itemId];
 
       if (!mutation || !this.mutationMatches(mutation, 'after')) {
-        item.error = { status: 409, code: 'state-conflict', message: 'Synthetic undo was blocked because the current revision changed.' }; item.undoSupported = false;
+        item.error = { status: 409, code: 'state-conflict', message: 'Synthetic undo was blocked because the current revision, collection, or namespace ownership changed.' }; item.undoSupported = false;
         this.refreshReceipt(operation); this.persist();
         return clone(operation.receipt);
       }
@@ -347,8 +355,11 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     } else {
       if (!item.targetPath) throw { status: 400, code: 'invalid-operation', message: 'Synthetic folder destination is required.' };
       if (policy === 'replace') throw { status: 422, code: 'folder-replace-unavailable', message: 'Synthetic folders support Keep Both or Skip, not Replace.' };
+      const requestedTarget = this.normalizePath(item.targetPath);
+
+      if (requestedTarget === sourcePath || requestedTarget.startsWith(sourcePath + '/')) throw { status: 409, code: 'invalid-operation', message: 'A synthetic folder cannot be moved or copied into itself.' };
       const ignoredFiles = new Set(files.map(file => file.id)); const ignoredFolders = new Set(folders.map(value => value.folderId));
-      const target = this.resolveDestination(collection, this.normalizePath(item.targetPath), policy, receipt, item.action === 'move' ? ignoredFiles : new Set<string>(), item.action === 'move' ? ignoredFolders : new Set<string>());
+      const target = this.resolveDestination(collection, requestedTarget, policy, receipt, item.action === 'move' ? ignoredFiles : new Set<string>(), item.action === 'move' ? ignoredFolders : new Set<string>());
       if (!target) return;
       const mappedFiles = files.map(file => ({ file, path: target.path + file.path.slice(sourcePath.length) })); const mappedFolders = folders.map(value => ({ folder: value, path: target.path + value.path.slice(sourcePath.length) }));
       const conflict = mappedFiles.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders)) ?? mappedFolders.find(value => this.activeFileAt(collection, value.path, ignoredFiles) || this.activeFolderAt(collection, value.path, ignoredFolders));
@@ -368,15 +379,51 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   }
 
   private captureMutation(before:SyntheticCollection[], after:SyntheticCollection[]):SyntheticMutation {
-    const beforeFiles = new Map(before.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify(file)] as const))); const afterFiles = new Map(after.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify(file)] as const))); const beforeFolders = new Map(before.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify(folder)] as const))); const afterFolders = new Map(after.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify(folder)] as const)));
+    const beforeFiles = new Map(before.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify([collection.id, file])] as const))); const afterFiles = new Map(after.flatMap(collection => collection.files.map(file => [file.id, JSON.stringify([collection.id, file])] as const))); const beforeFolders = new Map(before.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify([collection.id, folder])] as const))); const afterFolders = new Map(after.flatMap(collection => collection.folders.map(folder => [folder.folderId, JSON.stringify([collection.id, folder])] as const)));
 
     return { before: clone(before), after: clone(after), fileIds: [...new Set([...beforeFiles.keys(), ...afterFiles.keys()])].filter(id => beforeFiles.get(id) !== afterFiles.get(id)), folderIds: [...new Set([...beforeFolders.keys(), ...afterFolders.keys()])].filter(id => beforeFolders.get(id) !== afterFolders.get(id)) };
   }
+  private locatedItem(collections:SyntheticCollection[], kind:'file' | 'folder', id:string) {
+    for (const collection of collections) {
+      const item = kind === 'file' ? collection.files.find(file => file.id === id) : collection.folders.find(folder => folder.folderId === id);
+
+      if (item) return { collectionId: collection.id, item };
+    }
+  }
+  private namespaceOwners(collections:SyntheticCollection[], collectionId:string, path:string, descendants:boolean) {
+    const collection = collections.find(value => value.id === collectionId);
+
+    if (!collection) return null;
+    const ownsPath = (candidate:string) => candidate === path || descendants && candidate.startsWith(path + '/');
+
+    return [
+      ...collection.files.filter(file => ownsPath(file.path)).map(file => 'file:' + file.id),
+      ...collection.folders.filter(folder => ownsPath(folder.path)).map(folder => 'folder:' + folder.folderId),
+    ].sort();
+  }
   private mutationMatches(mutation:SyntheticMutation, side:'before' | 'after') {
     const snapshot = mutation[side];
+    const matchesItem = (kind:'file' | 'folder', id:string) => {
+      const current = this.locatedItem(this.state.collections, kind, id); const saved = this.locatedItem(snapshot, kind, id);
 
-    return mutation.fileIds.every(id => JSON.stringify(this.state.collections.flatMap(collection => collection.files).find(file => file.id === id)) === JSON.stringify(snapshot.flatMap(collection => collection.files).find(file => file.id === id))) &&
-      mutation.folderIds.every(id => JSON.stringify(this.state.collections.flatMap(collection => collection.folders).find(folder => folder.folderId === id)) === JSON.stringify(snapshot.flatMap(collection => collection.folders).find(folder => folder.folderId === id)));
+      return JSON.stringify(current) === JSON.stringify(saved);
+    };
+    const guards = new Map<string, { collectionId:string; path:string; descendants:boolean }>();
+    const addGuard = (kind:'file' | 'folder', id:string) => {
+      for (const collections of [mutation.before, mutation.after]) {
+        const located = this.locatedItem(collections, kind, id);
+
+        if (!located) continue;
+        const path = located.item.path; const descendants = kind === 'folder'; const key = [located.collectionId, path, descendants ? 'tree' : 'item'].join('\0');
+
+        guards.set(key, { collectionId: located.collectionId, path, descendants });
+      }
+    };
+
+    mutation.fileIds.forEach(id => addGuard('file', id)); mutation.folderIds.forEach(id => addGuard('folder', id));
+
+    return mutation.fileIds.every(id => matchesItem('file', id)) && mutation.folderIds.every(id => matchesItem('folder', id)) &&
+      [...guards.values()].every(guard => JSON.stringify(this.namespaceOwners(this.state.collections, guard.collectionId, guard.path, guard.descendants)) === JSON.stringify(this.namespaceOwners(snapshot, guard.collectionId, guard.path, guard.descendants)));
   }
   private applyMutation(mutation:SyntheticMutation, side:'before' | 'after') {
     for (const collection of this.state.collections) { collection.files = collection.files.filter(file => !mutation.fileIds.includes(file.id)); collection.folders = collection.folders.filter(folder => !mutation.folderIds.includes(folder.folderId)) }
