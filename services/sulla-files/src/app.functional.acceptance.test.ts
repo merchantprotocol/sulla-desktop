@@ -163,7 +163,7 @@ test('real handlers provision collections and preserve authenticated content acr
 
     let searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });
     assert.equal(searched.response.status, 200);
-    assert.deepEqual(searched.body.map((file:any) => file.id), [uploaded.id]);
+    assert.deepEqual(searched.body.results.map((file:any) => file.id), [uploaded.id]);
 
     let starred = await requestJson('/v1/stars', { method: 'PUT', body: JSON.stringify({ collectionId, fileId: uploaded.id }) });
     assert.equal(starred.response.status, 204);
@@ -237,10 +237,10 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.deepEqual(indexed.rows, [{ search_text: secondBytes.toString(), version_id: changedBody.current_version_id, content: secondBytes.toString(), status: 'indexed' }]);
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });
     assert.equal(searched.response.status, 200);
-    assert.deepEqual(searched.body.map((file:any) => file.id), []);
+    assert.deepEqual(searched.body.results.map((file:any) => file.id), []);
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: secondBytes.toString(), collectionId }) });
     assert.equal(searched.response.status, 200);
-    assert.deepEqual(searched.body.map((file:any) => file.id), [uploaded.id]);
+    assert.deepEqual(searched.body.results.map((file:any) => file.id), [uploaded.id]);
 
     const concurrentUploads = await Promise.all([
       Buffer.from('parallel first upload one'), Buffer.from('parallel first upload two'),

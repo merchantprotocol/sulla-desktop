@@ -176,7 +176,7 @@
           Index: {{ indexSummary }}
         </div>
         <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
-          Search is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing and {{ searchCoverage.failed }} failed. Unsupported files are listed separately and cannot contribute content matches.
+          Search is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Unsupported and failed files cannot contribute content matches.
         </div>
 
         <div class="filters">
