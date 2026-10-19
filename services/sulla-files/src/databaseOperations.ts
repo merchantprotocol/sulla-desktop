@@ -338,7 +338,11 @@ export async function executeDatabaseOperation(db:pg.Pool, input:InternalDatabas
   return existingClient ? execute(existingClient) : transaction(db,execute);
 }
 
-export async function undoDatabaseOperation(db:pg.Pool, operationId:string, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>, existingClient?:pg.PoolClient,internal?:{folderGrantMigration?:true}):Promise<DatabaseOperationReceipt> {
+export async function undoDatabaseOperation(db:pg.Pool, operationId:string, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:(client:pg.PoolClient)=>Promise<void>, existingClient?:pg.PoolClient,internal?:{
+  folderGrantMigration?:true;
+  /** A containing folder receipt verified this signature before relocating only its recorded grants. */
+  permissionSignatureVerified?:true;
+}):Promise<DatabaseOperationReceipt> {
   if (!uuid.test(operationId)) throw fail(400, 'operationId must be a UUID');
   const collection = (await (existingClient ?? db).query('SELECT collection_id,request FROM files_database_operation_receipts WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3', [operationId,actor.userId,scope(actor)])).rows[0];
   if (collection && !existingClient) await access.prepare?.(collection.collection_id);
@@ -353,7 +357,7 @@ export async function undoDatabaseOperation(db:pg.Pool, operationId:string, acto
         {sourcePath:row.before_state?.path,targetPath:row.after_state?.path,fileIds:[row.before_state?.fileId].filter(Boolean)});
     }
     for (const id of [...new Set([row.collection_id,row.request.targetCollectionId].filter(Boolean))].sort()) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['stored-namespace:'+id]);
-    if (row.state === 'completed' && row.permission_signature && row.permission_signature !== await permissionSignature(client,row.collection_id,row.id)) throw fail(409, 'Permissions or public links changed after the operation');
+    if (!internal?.permissionSignatureVerified && row.state === 'completed' && row.permission_signature && row.permission_signature !== await permissionSignature(client,row.collection_id,row.id)) throw fail(409, 'Permissions or public links changed after the operation');
     if (row.action === 'create-folder') {
       await access.path(client, row.collection_id, row.after_state?.path ?? row.request.targetPath);
       if (row.state === 'undone') return receipt(row);

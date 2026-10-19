@@ -150,7 +150,6 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
           };
           for (const grant of grants.folderShares) await client.query('UPDATE folder_shares SET folder_path=$2,updated_at=NOW() WHERE id=$1',[grant.id,grant.afterPath]);
           for (const link of grants.publicLinks) await client.query('UPDATE file_share_links SET folder_path=$2,updated_at=NOW() WHERE id=$1',[link.id,link.afterPath]);
-          for (const child of displacedChildren) await client.query('UPDATE files_database_operation_receipts SET permission_signature=$2 WHERE id=$1',[child.operationId,await permissionSignature(client,destinationCollection,child.operationId)]);
           displaced={collectionId:destinationCollection,source:target,target:recovery,folders:displacedFolders,children:displacedChildren,grants};
         } else {
           const destination=await tree(destinationCollection,target);
@@ -216,6 +215,14 @@ export async function executeFolderBatchItem(db:pg.Pool,input:DatabaseBatchItem 
       }
       transferredGrants={folderShares,publicLinks};
     }
+    // Child receipts are created before the folder-owned grant relocation is
+    // complete. Sign them only after every owned grant change, otherwise an
+    // immediate guarded Undo mistakes this operation's own changes for an
+    // external permission change. This includes displaced Replace children:
+    // their collection-wide signature also observes transferred grants.
+    for (const child of [...children,...(displaced?.children??[])]) await client.query(
+      'UPDATE files_database_operation_receipts SET permission_signature=$2 WHERE id=$1',
+      [child.operationId,await permissionSignature(client,child.collectionId,child.operationId)]);
     const plan={ sourceCollectionId:input.collectionId,targetCollectionId:destinationCollection,source,target,folders:folderChanges,children,
       sourceSubtreeSignature:sourceTree.subtreeSignature,...(transferredGrants?{transferredGrants}:{}),...(displaced?{displaced}:{}),
       ...(input.action==='trash'?{lifecycle:await configuredReceiptLifecycle(client,input.collectionId,new Date())}:{}) };
@@ -416,23 +423,39 @@ export async function undoFolderBatchItem(db:pg.Pool,id:string,actor:FilesIdenti
       const fileLinksSignature=(await client.query("SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.id),'[]'::jsonb)::text) signature FROM file_share_links item WHERE item.file_id=ANY($1::uuid[])",[fileIds])).rows[0].signature;
       if (fileSharesSignature!==plan.displaced.grants?.fileSharesSignature || fileLinksSignature!==plan.displaced.grants?.fileLinksSignature) throw fail('Displaced folder file grants or links changed');
     }
+    const ownedGrantMigration=sourceCollection!==targetCollection && Boolean(plan.transferredGrants);
+    if (ownedGrantMigration) {
+      // Verify every child before changing the signatures they cover. The
+      // transaction is SERIALIZABLE, and only the exact recorded grants below
+      // are then restored. Child undo may skip its duplicate signature check,
+      // but still performs normal file CAS, authorization and cross-collection
+      // audience/key-boundary validation against the restored audience.
+      for (const child of [...plan.children,...(plan.displaced?.children??[])]) {
+        const receipt=(await client.query('SELECT collection_id,state,permission_signature FROM files_database_operation_receipts WHERE id=$1 FOR UPDATE',[child.operationId])).rows[0];
+        if (!receipt || receipt.state!=='completed' || !receipt.permission_signature || receipt.permission_signature!==await permissionSignature(client,receipt.collection_id,child.operationId)) {
+          throw fail('Child permissions or public links changed');
+        }
+      }
+      for (const grant of [...(plan.transferredGrants?.folderShares??[])].reverse()) {
+        if (grant.copy) await client.query('DELETE FROM folder_shares WHERE id=$1 AND collection_id=$2 AND folder_path=$3',[grant.id,targetCollection,grant.afterPath]);
+        else await client.query('UPDATE folder_shares SET collection_id=$2,folder_path=$3,updated_at=NOW() WHERE id=$1 AND collection_id=$4 AND folder_path=$5',[grant.id,sourceCollection,grant.beforePath,targetCollection,grant.afterPath]);
+      }
+      for (const link of plan.transferredGrants?.publicLinks??[]) await client.query('UPDATE file_share_links SET collection_id=$2,folder_path=$3,updated_at=NOW() WHERE id=$1 AND collection_id=$4 AND folder_path=$5',[link.id,sourceCollection,link.beforePath,targetCollection,link.afterPath]);
+    }
     // File inverses restore metadata first; the one native journal publishes
     // the complete folder inverse before this transaction can commit.
-    for (const child of [...plan.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client);
+    for (const child of [...plan.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client,
+      ownedGrantMigration?{permissionSignatureVerified:true}:undefined);
     for (const folder of [...plan.folders].reverse()) {
       await access.path(client,folder.after.collectionId??targetCollection,folder.after.path);
       await access.path(client,folder.before.collectionId??sourceCollection,folder.before.path);
       if (row.action==='copy') await client.query('DELETE FROM file_folders WHERE id=$1',[folder.after.folderId]);
       else await client.query('UPDATE file_folders SET collection_id=$2,path=$3,deleted_at=NULL,updated_at=NOW() WHERE id=$1',[folder.after.folderId,folder.before.collectionId??sourceCollection,folder.before.path]);
     }
-    for (const grant of [...(plan.transferredGrants?.folderShares??[])].reverse()) {
-      if (grant.copy) await client.query('DELETE FROM folder_shares WHERE id=$1 AND collection_id=$2 AND folder_path=$3',[grant.id,targetCollection,grant.afterPath]);
-      else await client.query('UPDATE folder_shares SET collection_id=$2,folder_path=$3,updated_at=NOW() WHERE id=$1 AND collection_id=$4 AND folder_path=$5',[grant.id,sourceCollection,grant.beforePath,targetCollection,grant.afterPath]);
-    }
-    for (const link of plan.transferredGrants?.publicLinks??[]) await client.query('UPDATE file_share_links SET collection_id=$2,folder_path=$3,updated_at=NOW() WHERE id=$1 AND collection_id=$4 AND folder_path=$5',[link.id,sourceCollection,link.beforePath,targetCollection,link.afterPath]);
     if (plan.displaced) {
       const displacedCollection=plan.displaced.collectionId??targetCollection;
-      for (const child of [...plan.displaced.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client,{folderGrantMigration:true});
+      for (const child of [...plan.displaced.children].reverse()) await undoDatabaseOperation(db,child.operationId,actor,metadataAccess(access),undefined,client,
+        {folderGrantMigration:true,...(ownedGrantMigration?{permissionSignatureVerified:true as const}:{})});
       for (const folder of [...plan.displaced.folders].reverse()) {
         await access.path(client,displacedCollection,folder.after.path);
         await access.path(client,displacedCollection,folder.before.path);
