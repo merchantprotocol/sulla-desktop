@@ -4,14 +4,13 @@ import test from 'node:test';
 import { LocalFilesManager } from './localManager.js';
 
 function managerWithQueries(queries:string[]) {
-  const db = {
-    query: (sql:string) => {
+  const query = (sql:string) => {
       queries.push(sql);
       return Promise.resolve(sql.startsWith('UPDATE file_roots')
         ? { rowCount: 1, rows: [{ collection_id: '22222222-2222-4222-8222-222222222222' }] }
         : { rowCount: 0, rows: [] });
-    },
-  };
+    };
+  const db = { query, connect: async() => ({ query, release: () => undefined }) };
 
   return new LocalFilesManager(db as any, {
     databaseUrl:          '',
@@ -39,9 +38,11 @@ test('detaching a root drops watcher custody without deleting source or creating
 
   await manager.detachRoot('photos');
 
-  assert.equal(queries.length, 2);
-  assert.match(queries[0], /^UPDATE file_roots SET enabled=FALSE/);
-  assert.equal(queries[1], 'DELETE FROM watched_folder_state WHERE root_id=$1');
+  assert.equal(queries.length, 4);
+  assert.equal(queries[0], 'BEGIN');
+  assert.match(queries[1], /^UPDATE file_roots SET enabled=FALSE/);
+  assert.equal(queries[2], 'DELETE FROM watched_folder_state WHERE root_id=$1');
+  assert.equal(queries[3], 'COMMIT');
   assert.equal(queries.some(sql => /(?:DELETE FROM files|INSERT INTO file_versions|INSERT INTO journal)/.test(sql)), false);
 });
 
