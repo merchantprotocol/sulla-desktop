@@ -1,7 +1,7 @@
 import { isLegacyInternalPath } from './legacyPreflight.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
@@ -707,17 +707,21 @@ export class LocalFilesManager {
   private async syncCollection(collectionId:string, canPush:boolean):Promise<void> {
     await this.db.query('INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [collectionId, this.config.deviceId]);
     let cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
+    const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
+    for (const entry of entries) { await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]) }
+    cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     if (canPush) {
-      const pending = (await this.db.query(`SELECT j.seq,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
+      const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
       this.pendingFiles += pending.length;
       for (const item of pending) { await this.push(item, collectionId); await this.db.query('UPDATE file_sync_cursors SET last_push_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, item.seq]) }
     }
-    cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
-    const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
-    for (const entry of entries) { await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]) }
   }
 
   private async push(item:any, collectionId = item.file.collection_id):Promise<void> {
+    if (item.op === 'lifecycle') {
+      await this.remote(`/v1/files/${ item.file.id }/lifecycle-state`, { method: 'PATCH', body: JSON.stringify({ file: item.file }) });
+      return;
+    }
     const chunks = item.manifest ? (await this.db.query('SELECT * FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [item.version.chunk_collection_id, item.manifest.chunk_ids])).rows : [];
     const payload = { collectionId, file: item.file, version: item.version, manifest: item.manifest, chunks, baseServerVersionId: item.version.base_server_version_id ?? item.version.parent_version_id };
     const prep = await this.remote('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(payload) });
@@ -755,8 +759,61 @@ export class LocalFilesManager {
   }
 
   private async pull(entry:any):Promise<void> {
-    if (entry.version.device_id === this.config.deviceId) return;
     const collectionId = entry.file.collection_id;
+    if (entry.op === 'purge') {
+      if (entry.syncAuthority?.canMaterialize !== true) return;
+      const existing = (await this.db.query('SELECT path FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId])).rows[0];
+      const root = this.rootForCollection(collectionId); let staged:string | undefined;
+      if (existing?.path) {
+        const source = this.safe(existing.path, root); staged = this.safe(`.sulla-trash/.purged/${ entry.file.id }-${ Date.now() }-${ basename(existing.path) }`, root);
+        try { await mkdir(dirname(staged), { recursive: true }); await rename(source, staged) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; staged = undefined }
+      }
+      const client = await this.db.connect(); await client.query('BEGIN');
+      try {
+        await client.query("SET LOCAL sulla.trusted_replication='on'");
+        await client.query(`INSERT INTO file_purge_tombstones(collection_id,file_id,path,lifecycle_generation,audience,purged_at)
+          VALUES($1,$2,$3,$4,'{"users":[],"groups":[]}'::jsonb,COALESCE($5,NOW()))
+          ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),purged_at=EXCLUDED.purged_at`,
+        [collectionId, entry.file.id, entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
+        await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [entry.file.id]);
+        await client.query('DELETE FROM file_share_links WHERE file_id=$1', [entry.file.id]);
+        await client.query(`UPDATE files SET record_lock_type='none',retention_mode='none',retain_until=NULL,retention_event_type=NULL,retention_event_at=NULL,
+          retention_duration_days=NULL,disposal_status='approved',draft_version_id=NULL,published_version_id=NULL,current_version_id=NULL,
+          lifecycle_generation=GREATEST(lifecycle_generation,$2) WHERE id=$1`, [entry.file.id, entry.file.lifecycle_generation ?? 0]);
+        await client.query('DELETE FROM journal WHERE file_id=$1', [entry.file.id]);
+        await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
+        await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
+        await client.query('COMMIT');
+        if (staged) await rm(staged, { force: true });
+      } catch (error) { await client.query('ROLLBACK'); if (staged && existing?.path) await rename(staged, this.safe(existing.path, root)).catch(() => undefined); throw error } finally { client.release() }
+      return;
+    }
+    if (entry.op === 'lifecycle') {
+      if (!entry.file.path) return;
+      const client = await this.db.connect(); await client.query('BEGIN');
+      try {
+      await client.query("SET LOCAL sulla.trusted_replication='on'");
+      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,lifecycle_generation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,-1) ON CONFLICT(id) DO NOTHING`, [entry.file.id, collectionId, entry.file.path,
+        entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size]);
+      await client.query(`UPDATE files SET
+        draft_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$2 AND file_id=$1) THEN $2 ELSE draft_version_id END,
+        published_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$3 AND file_id=$1) THEN $3 ELSE published_version_id END,
+        versioning_enabled=$4,major_minor_enabled=$5,require_approval=$6,require_checkout=$7,
+        checked_out_by_user_id=$8,checked_out_by_device_id=$9,checked_out_at=$10,retention_mode=$11,retain_until=$12,
+        retention_event_type=$13,retention_event_at=$14,retention_duration_days=$15,record_lock_type=$16,record_locked_at=$17,
+        record_locked_by=$18,disposal_status=$19,disposal_review_at=$20,disposal_extended_until=$21,lifecycle_generation=$22,updated_at=NOW()
+        WHERE id=$1 AND lifecycle_generation < $22`, [entry.file.id, entry.file.draft_version_id, entry.file.published_version_id, entry.file.versioning_enabled, entry.file.major_minor_enabled,
+        entry.file.require_approval, entry.file.require_checkout, entry.file.checked_out_by_user_id, entry.file.checked_out_by_device_id, entry.file.checked_out_at,
+        entry.file.retention_mode, entry.file.retain_until, entry.file.retention_event_type, entry.file.retention_event_at, entry.file.retention_duration_days,
+        entry.file.record_lock_type, entry.file.record_locked_at, entry.file.record_locked_by, entry.file.disposal_status, entry.file.disposal_review_at,
+        entry.file.disposal_extended_until, entry.file.lifecycle_generation]);
+      await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      return;
+    }
+    if (entry.version?.device_id === this.config.deviceId) return;
+    if (entry.syncAuthority?.canMaterialize !== true) return;
     const root = this.rootForCollection(collectionId);
     if (entry.version.deleted) {
       const existing = (await this.db.query('SELECT path FROM files WHERE id=$1', [entry.file.id])).rows[0];
@@ -765,6 +822,7 @@ export class LocalFilesManager {
         try { await mkdir(dirname(trash), { recursive: true }); await rename(source, trash) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
         const client = await this.db.connect(); await client.query('BEGIN');
         try {
+          await client.query("SET LOCAL sulla.trusted_replication='on'");
           await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
             VALUES($1,$2,$3,$4,NULL,0,TRUE,$5,$6,$7,$8,$9,$1) ON CONFLICT DO NOTHING`, [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id]);
           await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [entry.file.id, entry.version.id]);
@@ -773,21 +831,61 @@ export class LocalFilesManager {
       }
       return;
     }
-    const prior = (await this.db.query('SELECT path FROM files WHERE id=$1', [entry.file.id])).rows[0];
-    if (prior?.path && prior.path !== entry.file.path) {
-      try { await mkdir(dirname(this.safe(entry.file.path, root)), { recursive: true }); await rename(this.safe(prior.path, root), this.safe(entry.file.path, root)) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
-    }
-    await this.materialize(entry);
-    const info = await stat(this.safe(entry.file.path, root)); const hash = createHash('sha256');
-    for await (const part of createReadStream(this.safe(entry.file.path, root))) hash.update(part);
     const client = await this.db.connect(); await client.query('BEGIN');
     try {
+      await client.query("SET LOCAL sulla.trusted_replication='on'");
+      const prior = (await client.query('SELECT path,current_version_id,record_lock_type,lifecycle_generation FROM files WHERE id=$1 FOR UPDATE', [entry.file.id])).rows[0];
+      if (prior?.current_version_id && prior.record_lock_type !== 'none' && Number(entry.file.lifecycle_generation ?? 0) <= Number(prior.lifecycle_generation)) { await client.query('ROLLBACK'); return }
+      if (prior?.path && prior.path !== entry.file.path) {
+        try { await mkdir(dirname(this.safe(entry.file.path, root)), { recursive: true }); await rename(this.safe(prior.path, root), this.safe(entry.file.path, root)) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
+      }
+      await this.materialize(entry);
+      const info = await stat(this.safe(entry.file.path, root)); const hash = createHash('sha256');
+      for await (const part of createReadStream(this.safe(entry.file.path, root))) hash.update(part);
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [entry.manifest.hash, JSON.stringify(entry.manifest.chunk_ids), entry.manifest.total_size]);
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=NULL,updated_at=NOW()`, [entry.file.id, collectionId, entry.file.path, entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size]);
-      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1) ON CONFLICT DO NOTHING`, [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size, entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id]);
-      await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [entry.file.id, entry.version.id]);
+      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,versioning_enabled,major_minor_enabled,require_approval,require_checkout,
+        checked_out_by_user_id,checked_out_by_device_id,checked_out_at,retention_mode,retain_until,retention_event_type,retention_event_at,retention_duration_days,
+        record_lock_type,record_locked_at,record_locked_by,disposal_status,disposal_review_at,disposal_extended_until,lifecycle_generation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+        ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=NULL,
+        versioning_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.versioning_enabled ELSE files.versioning_enabled END,
+        major_minor_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.major_minor_enabled ELSE files.major_minor_enabled END,
+        require_approval=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_approval ELSE files.require_approval END,
+        require_checkout=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_checkout ELSE files.require_checkout END,
+        checked_out_by_user_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_user_id ELSE files.checked_out_by_user_id END,
+        checked_out_by_device_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_device_id ELSE files.checked_out_by_device_id END,
+        checked_out_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_at ELSE files.checked_out_at END,
+        retention_mode=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_mode ELSE files.retention_mode END,
+        retain_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retain_until ELSE files.retain_until END,
+        retention_event_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_type ELSE files.retention_event_type END,
+        retention_event_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_at ELSE files.retention_event_at END,
+        retention_duration_days=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_duration_days ELSE files.retention_duration_days END,
+        record_lock_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_lock_type ELSE files.record_lock_type END,
+        record_locked_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_at ELSE files.record_locked_at END,
+        record_locked_by=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_by ELSE files.record_locked_by END,
+        disposal_status=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_status ELSE files.disposal_status END,
+        disposal_review_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_review_at ELSE files.disposal_review_at END,
+        disposal_extended_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_extended_until ELSE files.disposal_extended_until END,
+        lifecycle_generation=GREATEST(files.lifecycle_generation,EXCLUDED.lifecycle_generation),updated_at=NOW()`,
+      [entry.file.id, collectionId, entry.file.path, entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size,
+        entry.file.versioning_enabled ?? false, entry.file.major_minor_enabled ?? false, entry.file.require_approval ?? false, entry.file.require_checkout ?? false,
+        entry.file.checked_out_by_user_id ?? null, entry.file.checked_out_by_device_id ?? null, entry.file.checked_out_at ?? null, entry.file.retention_mode ?? 'none', entry.file.retain_until ?? null,
+        entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
+        entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
+        entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
+      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
+        major_version,minor_version,version_kind,publication_status,published_at,published_by,version_comment)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(id) DO UPDATE SET
+        major_version=EXCLUDED.major_version,minor_version=EXCLUDED.minor_version,version_kind=EXCLUDED.version_kind,
+        publication_status=EXCLUDED.publication_status,published_at=EXCLUDED.published_at,published_by=EXCLUDED.published_by,
+        version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id`,
+      [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size,
+        entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id,
+        entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', entry.version.publication_status ?? 'draft',
+        entry.version.published_at ?? null, entry.version.published_by ?? null, entry.version.version_comment ?? null]);
+      await client.query(`UPDATE files SET current_version_id=$2,
+        draft_version_id=CASE WHEN $3='draft' THEN $2 ELSE draft_version_id END,
+        published_version_id=CASE WHEN $3='published' THEN $2 ELSE published_version_id END WHERE id=$1`, [entry.file.id, entry.version.id, entry.version.publication_status ?? 'draft']);
       await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, entry.file.path, entry.file.id, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
       await client.query('COMMIT'); this.indexer?.wake();

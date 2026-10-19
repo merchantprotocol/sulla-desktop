@@ -72,6 +72,49 @@ test('agent reads require use-by-agents permission, not a human view grant', asy
   });
 });
 
+test('trashed file metadata stays accessible with per-file capabilities without resolving tombstone content', async() => {
+  const trashed = {
+    id: 'trashed-file', collection_id: 'collection-a', path: 'Records/expired.txt', mime: 'text/plain', size: 17,
+    current_version_id: 'delete-tombstone', draft_version_id: 'private-draft', published_version_id: 'published-version',
+    created_by_type: 'user', created_by_id: 'owner-1', deleted_at: new Date('2026-10-18T20:00:00.000Z'),
+    retention_mode: 'none', record_lock_type: 'none', disposal_status: 'pending',
+  };
+  const contentQueries:string[] = [];
+  const query = (sql:string, params:any[] = []) => {
+    if (sql.startsWith('SELECT collection_id,chunk_id,audit_id FROM file_chunk_gc')) return { rows: [], rowCount: 0 };
+    if (sql.startsWith('SELECT * FROM collections WHERE id=$1')) return { rows: [{ id: 'collection-a', org_id: 'org-a', owner_user_id: 'owner-1', kind: 'knowledge' }], rowCount: 1 };
+    if (sql.startsWith('SELECT role FROM collection_acl')) return { rows: params[1] === 'viewer-1' ? [{ role: 'view' }] : [], rowCount: params[1] === 'viewer-1' ? 1 : 0 };
+    if (sql.includes('SELECT folder_path,role FROM folder_shares') || sql.includes('SELECT s.file_id::text, s.role FROM file_shares')) return { rows: [], rowCount: 0 };
+    if (sql === 'SELECT * FROM files WHERE id=$1') return { rows: [trashed], rowCount: 1 };
+    if (sql.startsWith('SELECT * FROM files WHERE NOT EXISTS')) return { rows: [trashed], rowCount: 1 };
+    if (sql === 'SELECT 1 FROM files_protected_files WHERE file_id=$1') return { rows: [], rowCount: 0 };
+    if (sql.includes('FROM file_versions') || sql.includes('FROM recording_metadata')) { contentQueries.push(sql); throw new Error('trashed metadata must not resolve file content'); }
+    return { rows: [], rowCount: 0 };
+  };
+  const db = { query } as any;
+  await withServer(async baseUrl => {
+    const get = (path:string, token:string) => fetch(`${ baseUrl }${ path }`, { headers: { authorization: `Bearer ${ token }` } });
+    const ownerTrash = await (await get('/v1/trash?collectionId=collection-a', ownerToken)).json() as any[];
+    assert.deepEqual(ownerTrash[0].capabilities, { canEdit: true, canManage: true, canViewDraft: true, canPublish: true });
+    const ownerDetail = await (await get('/v1/files/trashed-file', ownerToken)).json() as any;
+    assert.deepEqual(ownerDetail.capabilities, ownerTrash[0].capabilities);
+    assert.equal(ownerDetail.disposal.status, 'pending');
+    assert.equal(ownerDetail.version, null);
+
+    const viewerTrash = await (await get('/v1/trash?collectionId=collection-a', viewerToken)).json() as any[];
+    assert.deepEqual(viewerTrash[0].capabilities, { canEdit: false, canManage: false, canViewDraft: false, canPublish: false });
+
+    const detailResponse = await get('/v1/files/trashed-file', viewerToken);
+    assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json() as any;
+    assert.equal(detail.disposal.status, 'pending');
+    assert.deepEqual(detail.capabilities, viewerTrash[0].capabilities);
+    assert.equal(detail.version, null);
+    assert.equal(detail.recording, null);
+    assert.deepEqual(contentQueries, []);
+  }, { db });
+});
+
 test('search applies the same human-view and agent-use permission boundary as direct reads', async() => {
   const search = { search: (_input:any, scopes:any[]) => Promise.resolve(scopes) };
   await withServer(async baseUrl => {

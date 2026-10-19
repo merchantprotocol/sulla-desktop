@@ -3,7 +3,7 @@ import type pg from 'pg';
 
 export const ROLE_LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
 export interface CollectionGrant { role?: string; paths: { folderPath: string; role: string }[]; files: { fileId: string; role: string }[]; collection: any }
-export interface CollectionSearchScope { collectionId: string; paths: string[]; fileIds: string[] }
+export interface CollectionSearchScope { collectionId: string; paths: string[]; fileIds: string[]; draftVisible:boolean; editPaths:string[]; editFileIds:string[]; actorUserId:string }
 
 export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identityDb:pg.Pool | undefined, actor:FilesIdentity, collectionId:string):Promise<CollectionGrant> {
   const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); const collection = result.rows[0];
@@ -35,11 +35,11 @@ export async function searchableScopes(db:pg.Pool, identityDb:pg.Pool | undefine
   const requiredRole = actor.agentId || actor.jobId ? 'use-by-agents' : 'view';
   for (const collection of collections.rows) {
     const access = await resolveCollectionGrants(db, identityDb, actor, collection.id);
-    if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[requiredRole]) scopes.push({ collectionId: collection.id, paths: [], fileIds: [] });
+    if (access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[requiredRole]) scopes.push({ collectionId: collection.id, paths: [], fileIds: [], draftVisible: ROLE_LEVEL[access.role] >= ROLE_LEVEL.edit, editPaths: [], editFileIds: [], actorUserId: actor.userId });
     else {
       const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[requiredRole]).map(grant => grant.folderPath);
       const fileIds = access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[requiredRole]).map(grant => grant.fileId);
-      if (paths.length || fileIds.length) scopes.push({ collectionId: collection.id, paths, fileIds });
+      if (paths.length || fileIds.length) scopes.push({ collectionId: collection.id, paths, fileIds, draftVisible: false, editPaths: access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL.edit).map(grant => grant.folderPath), editFileIds: access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL.edit).map(grant => grant.fileId), actorUserId: actor.userId });
     }
   }
   return scopes;
