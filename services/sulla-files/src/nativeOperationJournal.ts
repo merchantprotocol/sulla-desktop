@@ -38,6 +38,11 @@ export interface NativeJournalRoot { id:string; collectionId:string; mutations:F
 const packed = (value:FileFingerprint):Fingerprint => ({ ...value,dev:String(value.dev),ino:String(value.ino) });
 const same = (a:Fingerprint,b:Fingerprint) => a.dev===b.dev && a.ino===b.ino && a.size===b.size && a.mtimeMs===b.mtimeMs;
 const failure = () => Object.assign(new Error('Native operation requires preserved-artifact reconciliation'),{ status:409,code:'recovery-required' });
+const publishedIdentity=(leaf:CrossLeaf):Fingerprint=>{
+  const identity=leaf.published??leaf.before;
+  if (!identity) throw failure();
+  return identity;
+};
 const canonical=(value:any):string=>JSON.stringify(value,(_key,item)=>item && typeof item==='object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 async function verify(pinned:PinnedRegularFile,hash:string,expected?:Fingerprint):Promise<void> {
@@ -351,10 +356,10 @@ export class NativeOperationJournal {
           if (!restored) throw failure();
           const pin=await root.mutations.pinVerified(leaf.target,p=>verify(p,restored.hash!,restored.before)); await pin.close();
         }
-        if (['publish','relocate'].includes(leaf.kind)) { const retained=await root.mutations.pinVerified(leaf.stage+'.undo',p=>verify(p,leaf.hash!,leaf.published)); await retained.close() }
+        if (['publish','relocate'].includes(leaf.kind)) { const retained=await root.mutations.pinVerified(leaf.stage+'.undo',p=>verify(p,leaf.hash!,publishedIdentity(leaf))); await retained.close() }
       } else {
         const stage=await root.mutations.pinVerified(leaf.stage,p=>verify(p,leaf.hash!,leaf.before)); await stage.close();
-        if (leaf.target) { const target=await root.mutations.pinVerified(leaf.target,p=>verify(p,leaf.hash!,leaf.published)); await target.close() }
+        if (leaf.target) { const target=await root.mutations.pinVerified(leaf.target,p=>verify(p,leaf.hash!,publishedIdentity(leaf))); await target.close() }
         if (leaf.kind==='evict' && await root.mutations.exists(leaf.source!)) throw failure();
       }
     }
@@ -421,7 +426,7 @@ export class NativeOperationJournal {
         }
       } else if (leaf.kind==='publish') {
         if (await root.mutations.exists(leaf.target!)) {
-          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published));
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,publishedIdentity(leaf)));
           try { leaf.published??=packed(target.fingerprint) } finally { await target.close() }
           await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published.dev),ino:BigInt(leaf.published.ino),size:leaf.published.size,mtimeMs:leaf.published.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
         }
@@ -430,7 +435,7 @@ export class NativeOperationJournal {
         else { const source=await root.mutations.pinVerified(leaf.source!,p=>verify(p,leaf.hash!,leaf.before)); await source.close() }
       } else {
         if (await root.mutations.exists(leaf.target!)) {
-          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published));
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,publishedIdentity(leaf)));
           try { leaf.published??=packed(target.fingerprint) } finally { await target.close() }
           await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published.dev),ino:BigInt(leaf.published.ino),size:leaf.published.size,mtimeMs:leaf.published.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
         }
@@ -472,23 +477,23 @@ export class NativeOperationJournal {
         } else await root.mutations.evictVerified({source:leaf.source!,quarantine:leaf.stage,verify:p=>verify(p,leaf.hash!,leaf.before)});
       } else if (leaf.kind==='publish') {
         if (await root.mutations.exists(leaf.target!)) {
-          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published)); await target.close();
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,publishedIdentity(leaf))); await target.close();
         } else {
           const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)});
-          if (!same(packed(published.fingerprint),leaf.published!)) throw failure();
+          if (!same(packed(published.fingerprint),publishedIdentity(leaf))) throw failure();
         }
       } else {
         if (!await root.mutations.exists(leaf.stage)) await root.mutations.evictVerified({source:leaf.source!,quarantine:leaf.stage,verify:p=>verify(p,leaf.hash!,leaf.before)});
         else if (await root.mutations.exists(leaf.source!)) {
           const replacement=plan.leaves.slice(plan.leaves.indexOf(leaf)+1).find(candidate=>candidate.rootId===leaf.rootId && candidate.kind==='publish' && candidate.target===leaf.source);
-          if (!replacement?.published) throw failure();
-          const current=await root.mutations.pinVerified(leaf.source!,p=>verify(p,replacement.hash!,replacement.published)); await current.close();
+          if (!replacement) throw failure();
+          const current=await root.mutations.pinVerified(leaf.source!,p=>verify(p,replacement.hash!,publishedIdentity(replacement))); await current.close();
         }
         if (await root.mutations.exists(leaf.target!)) {
-          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published)); await target.close();
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,publishedIdentity(leaf))); await target.close();
         } else {
           const published=await root.mutations.publishVerified({staged:leaf.stage,target:leaf.target!,verify:p=>verify(p,leaf.hash!,leaf.before)});
-          if (!same(packed(published.fingerprint),leaf.published!)) throw failure();
+          if (!same(packed(published.fingerprint),publishedIdentity(leaf))) throw failure();
         }
       }
       plan.undoProgress=0;
