@@ -1,4 +1,7 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
+
+import { authenticateAccountsSession } from './accountsAuth.js';
 
 import { getProjectsDatabase } from './database.js';
 import { getProjectsApplicationService } from './domain/ProjectsApplicationService.js';
@@ -124,11 +127,19 @@ export function createApp(config: ProjectsConfig): express.Express {
     timer.unref();
   }
   app.disable('x-powered-by');
+  app.use('/ui', (_request, response, next) => {
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    next();
+  }, express.static(fileURLToPath(new URL('../ui/', import.meta.url))));
   app.use(express.json({ limit: '1mb' }));
   app.get('/healthz', (_request, response) => response.json({ ok: true, service: 'sulla-projects' }));
   app.use('/v1', async(request: AuthenticatedRequest, _response, next) => {
     try {
-      request.projectsIdentity = authenticateProjectsRequest({
+      request.projectsIdentity = config.mode === 'server' && config.accountsUrl
+        ? await authenticateAccountsSession(config, request.header('authorization'))
+        : authenticateProjectsRequest({
         authorization: request.header('authorization'), localToken: config.localToken, humanToken: config.humanToken, mode: config.mode,
         jwtSecret: config.jwtSecret, jwtPublicKey: config.jwtPublicKey, jwtIssuer: config.jwtIssuer,
         jwtAudience: config.jwtAudience, localSubject: config.userId, localTenant: config.tenantId,
