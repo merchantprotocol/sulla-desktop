@@ -399,14 +399,33 @@ export class NativeOperationJournal {
     const roots=await this.crossRoots(plan);
     for (const leaf of [...plan.leaves].reverse().filter(item=>item.started || item.completed)) {
       const root=roots.get(leaf.rootId)!;
-      if (leaf.kind==='mkdir') await root.mutations.evictEmptyDirectory(leaf.directory!,leaf.stage+'.rollback');
-      else if (leaf.kind==='rmdir') await root.mutations.restoreEmptyDirectory(leaf.directory!,leaf.stage);
-      else if (leaf.kind==='publish') await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
-      else if (leaf.kind==='evict') await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
-      else {
-        await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published!.dev),ino:BigInt(leaf.published!.ino),size:leaf.published!.size,mtimeMs:leaf.published!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
-        await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+      if (leaf.kind==='mkdir') {
+        if (await root.mutations.exists(leaf.target!)) await root.mutations.evictEmptyDirectory(leaf.directory!,leaf.stage+'.rollback');
+      } else if (leaf.kind==='rmdir') {
+        if (!await root.mutations.exists(leaf.source!)) await root.mutations.restoreEmptyDirectory(leaf.directory!,leaf.stage);
+        else {
+          const current=await root.mutations.directory(leaf.source!);
+          if (current.dev!==leaf.directory?.dev || current.ino!==leaf.directory?.ino) throw failure();
+        }
+      } else if (leaf.kind==='publish') {
+        if (await root.mutations.exists(leaf.target!)) {
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published));
+          try { leaf.published??=packed(target.fingerprint) } finally { await target.close() }
+          await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published.dev),ino:BigInt(leaf.published.ino),size:leaf.published.size,mtimeMs:leaf.published.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+        }
+      } else if (leaf.kind==='evict') {
+        if (await root.mutations.exists(leaf.stage)) await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+        else { const source=await root.mutations.pinVerified(leaf.source!,p=>verify(p,leaf.hash!,leaf.before)); await source.close() }
+      } else {
+        if (await root.mutations.exists(leaf.target!)) {
+          const target=await root.mutations.pinVerified(leaf.target!,p=>verify(p,leaf.hash!,leaf.published));
+          try { leaf.published??=packed(target.fingerprint) } finally { await target.close() }
+          await root.mutations.rollbackPublication({staged:leaf.stage,target:leaf.target!,rollback:leaf.stage+'.rollback',fingerprint:{dev:BigInt(leaf.published.dev),ino:BigInt(leaf.published.ino),size:leaf.published.size,mtimeMs:leaf.published.mtimeMs}},p=>verify(p,leaf.hash!,leaf.published));
+        }
+        if (await root.mutations.exists(leaf.stage)) await root.mutations.recoverEviction({source:leaf.source!,quarantine:leaf.stage,fingerprint:{dev:BigInt(leaf.before!.dev),ino:BigInt(leaf.before!.ino),size:leaf.before!.size,mtimeMs:leaf.before!.mtimeMs}},p=>verify(p,leaf.hash!,leaf.before));
+        else { const source=await root.mutations.pinVerified(leaf.source!,p=>verify(p,leaf.hash!,leaf.before)); await source.close() }
       }
+      await this.save(plan.receiptId,plan);
     }
   }
 
