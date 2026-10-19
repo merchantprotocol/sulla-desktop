@@ -1,9 +1,22 @@
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+import { usesContainerVaultAuthority } from '../../../vault-broker';
+import { listProviderModelsBrokered } from '../../services/brokeredModelList';
 
 export class OpenAIModels extends SelectBoxProvider {
   readonly id = 'openai_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    if (usesContainerVaultAuthority()) {
+      // Container vault: no key in the app — list through the vault broker.
+      // OpenAI has no static catalog (never has), so a failure stays empty.
+      const { body } = await listProviderModelsBrokered<{ data?: { id: string }[] }>('openai', context.accountId);
+      if (!body || !Array.isArray(body.data)) return [];
+      return body.data
+        .filter(m => m && typeof m.id === 'string' && m.id)
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map(m => ({ value: m.id, label: m.id }));
+    }
+
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {
