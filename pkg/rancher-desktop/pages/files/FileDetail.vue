@@ -118,6 +118,7 @@ import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, Fil
 const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
 const emit = defineEmits<{ close:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
+const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
@@ -133,7 +134,7 @@ const canCheckin = computed(() => Boolean(props.dataSource.checkin && permission
 const canManageLifecycle = computed(() => permissions.value.canManage);
 const itemDisposalApproved = computed(() => item.disposal?.status === 'approved');
 const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
-const canPurge = computed(() => Boolean(props.trashItem && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
+const canPurge = computed(() => Boolean(trashItem.value && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
 const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
@@ -229,18 +230,36 @@ async function submitActionForm() {
 async function publish(id:string) { openPublish(id) }
 async function publishCurrent() { openPublish(item.currentVersionId) }
 async function checkin(kind:'major'|'minor') { openCheckin(kind) }
-async function restoreTrash() { if (!props.trashItem || !props.dataSource.restoreTrashItem) return; if (await runLifecycle(() => props.dataSource.restoreTrashItem!(props.trashItem!).then(() => undefined), false)) emit('restored') }
+async function reloadTrashStateAfterConflict(cause:unknown):Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const [loaded] = await Promise.allSettled([props.dataSource.load(), refreshLifecycleState()]);
+
+  if (loaded.status === 'fulfilled') {
+    const authoritative = loaded.value.trash?.find((candidate):candidate is FilesTrashFile => candidate.kind === 'file' && candidate.id === item.id);
+
+    trashItem.value = authoritative;
+    if (authoritative) Object.assign(item, authoritative);
+  }
+  error.value = message;
+}
+async function restoreTrash() {
+  if (!trashItem.value || !props.dataSource.restoreTrashItem) return;
+  busy.value = true; error.value = '';
+  try { await props.dataSource.restoreTrashItem(trashItem.value); emit('restored') }
+  catch (cause) { await reloadTrashStateAfterConflict(cause) }
+  finally { busy.value = false }
+}
 async function purgeTrash() {
-  if (!props.dataSource.purgeTrashItem || !props.trashItem || !canPurge.value || !purgeConfirmed.value) return;
+  if (!props.dataSource.purgeTrashItem || !trashItem.value || !canPurge.value || !purgeConfirmed.value) return;
   busy.value = true; error.value = '';
   try {
-    const result = await props.dataSource.purgeTrashItem(props.trashItem);
+    const result = await props.dataSource.purgeTrashItem(trashItem.value);
     if (result.status === 'recovery-required') {
       emit('trash-outcome', result.reason || `Metadata was removed, but cleanup still requires recovery (chunks ${ result.chunks }; retained artifacts ${ result.retainedArtifacts }).`);
       return;
     }
     purgeConfirmed.value = false; emit('restored');
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); await refreshLifecycleState().catch(() => undefined) }
+  } catch (cause) { await reloadTrashStateAfterConflict(cause) }
   finally { busy.value = false }
 }
 async function checkout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id)) }

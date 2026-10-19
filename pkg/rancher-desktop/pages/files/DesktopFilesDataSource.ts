@@ -1,4 +1,4 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -299,7 +299,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return ipcRenderer.invoke('sulla-files:trash-purge', {
       id: item.id, expectedRevision: item.revision,
       currentTombstone: { id: item.currentTombstone.id },
-      ...(item.currentTombstone.undo.state === 'available' ? { invalidateUndo: true } : {}),
+      ...(item.currentTombstone.receiptId ? { invalidateUndo: true } : {}),
     });
   }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }

@@ -1427,10 +1427,20 @@ async function restoreSelected() {
   const restore = props.dataSource.restoreTrashItem?.bind(props.dataSource);
   if (!entries.length || section.value !== 'trash' || !restore) return;
   await runMutation(async() => {
-    let restored = 0; const failures:string[] = [];
-    for (const entry of entries) {
+    let restored = 0; let pending = [...entries].sort((left, right) => Number(right.trashItem.kind === 'folder') - Number(left.trashItem.kind === 'folder')); const failures:string[] = [];
+    while (pending.length) {
+      const entry = pending.shift()!;
+
       try { await restore(entry.trashItem); restored++ }
-      catch (cause) { failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
+      catch (cause) {
+        failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`);
+        if (entry.trashItem.kind === 'folder') break;
+        continue;
+      }
+      if (entry.trashItem.kind === 'folder' && pending.length) {
+        try { pending = await authoritativeTrashEntries(pending) }
+        catch (cause) { failures.push(`Trash refresh: ${ cause instanceof Error ? cause.message : String(cause) }`); break }
+      }
     }
     operationNotice.value = restored ? `${ restored } item${ restored === 1 ? '' : 's' } restored from their exact Trash tombstone.` : '';
     operationError.value = failures.length ? `${ failures.length } item${ failures.length === 1 ? '' : 's' } not restored. ${ failures.join(' · ') }` : '';
@@ -1450,8 +1460,10 @@ async function purgeEntries(entries:DisplayEntry[], all = false) {
   const warning = all ? 'Permanently delete every eligible item? Retention, record locks, changed tombstones, and unapproved disposal will remain.' : `Permanently delete ${ items.length } eligible item${ items.length === 1 ? '' : 's' }? Protected or changed items will remain.`;
   if (!window.confirm(warning)) return;
   await runMutation(async() => {
-    let completed = 0; const recovering:string[] = []; const failures:string[] = [];
-    for (const entry of items) {
+    let completed = 0; let pending = [...items].sort((left, right) => Number(right.trashItem.kind === 'folder') - Number(left.trashItem.kind === 'folder')); const recovering:string[] = []; const failures:string[] = [];
+    while (pending.length) {
+      const entry = pending.shift()!;
+
       try {
         const result = await purge(entry.trashItem);
         if (result.status === 'purged') completed++;
@@ -1460,11 +1472,30 @@ async function purgeEntries(entries:DisplayEntry[], all = false) {
 
           recovering.push(`${ entry.name }: ${ result.reason || `metadata removed;${ chunks } retained artifacts ${ result.retainedArtifacts }` }`);
         }
-      } catch (cause) { failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`) }
+      } catch (cause) {
+        failures.push(`${ entry.name }: ${ cause instanceof Error ? cause.message : String(cause) }`);
+        if (entry.trashItem.kind === 'folder') break;
+        continue;
+      }
+      if (entry.trashItem.kind === 'folder' && pending.length) {
+        try { pending = await authoritativeTrashEntries(pending) }
+        catch (cause) { failures.push(`Trash refresh: ${ cause instanceof Error ? cause.message : String(cause) }`); break }
+      }
     }
     operationNotice.value = completed ? `${ completed } item${ completed === 1 ? '' : 's' } fully disposed.` : '';
     operationError.value = [recovering.length ? `${ recovering.length } item${ recovering.length === 1 ? '' : 's' } require cleanup recovery: ${ recovering.join(' · ') }` : '', failures.length ? `${ failures.length } item${ failures.length === 1 ? '' : 's' } retained: ${ failures.join(' · ') }` : ''].filter(Boolean).join(' ');
     selectedKeys.value = new Set();
+  });
+}
+async function authoritativeTrashEntries(pending:(DisplayEntry & { trashItem:FilesTrashItem })[]):Promise<(DisplayEntry & { trashItem:FilesTrashItem })[]> {
+  const loaded = await props.dataSource.load();
+  const authoritative = new Map((loaded.trash ?? []).map(item => [`${ item.kind }:${ item.id }`, item]));
+
+  snapshot.value = loaded;
+  return pending.flatMap((entry) => {
+    const current = authoritative.get(`${ entry.trashItem.kind }:${ entry.trashItem.id }`);
+
+    return current ? [toTrashDisplay(current) as DisplayEntry & { trashItem:FilesTrashItem }] : [];
   });
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
