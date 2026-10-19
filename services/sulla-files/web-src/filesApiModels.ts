@@ -38,6 +38,31 @@ export function filesItem(file:FilesApiFile):FilesItem {
     indexReasonCode:  file.extraction_reason_code,
     indexReason:      file.extraction_reason ?? 'Waiting for local indexing.',
     indexedAt:        file.extracted_at,
+    draftVersionId: file.draft_version_id ?? file.draftVersionId ?? null,
+    publishedVersionId: file.published_version_id ?? file.publishedVersionId ?? null,
+    publicationState: file.publication_state ?? file.publicationState,
+    versioning: file.versioning,
+    checkout: file.checkout ?? null,
+    retention: file.retention,
+    record: file.record,
+    disposal: file.disposal,
+  };
+}
+
+export function filesVersion(row:FilesApiRecord, currentVersionId?:string):FilesVersion {
+  return {
+    ...row,
+    id: row.id,
+    size: Number(row.size ?? 0),
+    deleted: Boolean(row.deleted),
+    created_by_type: row.created_by_type ?? row.createdByType ?? 'user',
+    created_by_id: row.created_by_id ?? row.createdById ?? '',
+    created_at: row.created_at ?? row.createdAt ?? new Date(0).toISOString(),
+    message: row.comment ?? row.message,
+    versionNumber: row.version_number ?? row.versionNumber,
+    versionKind: row.version_kind ?? row.versionKind,
+    publicationStatus: row.publication_status ?? row.publicationStatus,
+    current: row.id === currentVersionId,
   };
 }
 

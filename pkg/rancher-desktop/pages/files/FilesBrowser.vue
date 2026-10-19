@@ -209,7 +209,7 @@
           <span
             v-if="section === 'trash'"
             class="pill idle"
-          >Trash is kept for {{ retentionDays }} days</span>
+          >{{ retentionLabel }}</span>
           <div class="view">
             <label class="sel"><span>Sort</span> {{ sortLabel }}<select
               v-model="sort"
@@ -249,7 +249,7 @@
           <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
           <button class="btn sm" type="button" :disabled="busy" @click="copySelected">Copy</button>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
-          <button class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
+          <button v-if="section === 'trash'" class="btn sm" type="button" :disabled="busy" @click="restoreSelected">Restore</button><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
         </div>
         </div>
         <div v-if="operationError" class="operation-error" role="alert">
@@ -672,6 +672,7 @@ const storageWhere = computed(() => snapshot.value?.status.serverConfigured ? 'o
 const sharedFolders = computed(() => snapshot.value?.collection.sharedFolders ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
+const retentionLabel = computed(() => snapshot.value?.collection.retentionPolicy?.mode === 'none' ? 'No automatic disposal' : snapshot.value?.collection.retentionPolicy?.mode ? `Retention: ${ snapshot.value.collection.retentionPolicy.mode }` : `Trash is recoverable for ${ retentionDays.value } days`);
 const locationWord = computed(() => ({ local: 'local', server: 'server', cloud: 'Sulla Cloud' }[snapshot.value?.status.location ?? (snapshot.value?.status.serverConfigured ? 'server' : 'local')]));
 const brandLine = computed(() => `${ snapshot.value?.collection.accountName || 'Files' } · ${ locationWord.value }`);
 const syncLine = computed(() => {
@@ -711,7 +712,7 @@ const sections = computed(() => [
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: 0, warn: false },
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: props.dataSource.capabilities.nativeFilesystem ? 'Drop files here or choose files. They stay in ~/sulla/files.' : 'Choose files to upload. Files sync to the server and are versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: `Deleted files stay recoverable for ${ retentionDays.value } days.` }[section.value]));
+const emptyCopy = computed(() => ({ files: props.dataSource.capabilities.nativeFilesystem ? 'Drop files here or choose files. They stay in ~/sulla/files.' : 'Choose files to upload. Files sync to the server and are versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
 const uploadHeading = computed(() => props.dataSource.capabilities.nativeFilesystem ? `Drop files here to upload to ${ pageTitle.value }` : `Choose files to upload to ${ pageTitle.value }`);
 const dropCopy = computed(() => props.dataSource.capabilities.nativeFilesystem ? (snapshot.value?.status.serverConfigured ? 'Or paste a screenshot. Files sync to the server and are versioned on every change.' : 'Or paste a screenshot. Files stay on this Mac and are versioned on every change.') : 'Browser uploads use the file chooser.');
 const filters = computed(() => [
@@ -891,6 +892,7 @@ async function moveSelected() { const entries = selectedEntries.value; if (!entr
 async function copySelected() { const entries = selectedEntries.value; if (!entries.length) return; const destination = window.prompt('Copy to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('copy', operationItems(entries, destination)) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; busy.value = true; operationError.value = ''; try { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) { operationError.value = result.error; } } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function trashSelected() { const entries = selectedEntries.value; const files = new Map<string, FilesItem>(); for (const entry of entries) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) } busy.value = true; operationError.value = ''; try { for (const file of files.values()) await props.dataSource.trashFile(file.id); selectedKeys.value = new Set(); actionTarget.value = null; } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { await refresh(true); busy.value = false } }
+async function restoreSelected() { const files = selectedEntries.value.filter(entry => !entry.folder); if (!files.length) return; busy.value = true; operationError.value = ''; try { for (const file of files) await props.dataSource.restoreTrash(file.id); selectedKeys.value = new Set(); await refresh(true) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function runTargetAction(action:'open' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'download' | 'online-only' | 'keep-local' | 'trash') {
   const target = actionTarget.value; if (!target) return; closeActions();
   if (action === 'open') { activate(target); return }

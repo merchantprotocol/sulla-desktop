@@ -1,5 +1,5 @@
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesSnapshot, type FilesVersion, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
-import { fileAccessList, fileShare, filesItem, folderShare, type FilesApiCollection, type FilesApiFile } from '../../../../services/sulla-files/web-src/filesApiModels';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { fileAccessList, fileShare, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -162,9 +162,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async history(fileId:string):Promise<FilesVersion[]> {
-    const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as Omit<FilesVersion, 'current'>[];
+    const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as FilesApiRecord[];
 
-    return versions.map(version => ({ ...version, current: version.id === this.currentVersions.get(fileId) }));
+    return versions.map(version => filesVersion(version, this.currentVersions.get(fileId)));
   }
 
   async preview(fileId:string, versionId?:string):Promise<FilesPreview> {
@@ -214,6 +214,14 @@ export class DesktopFilesDataSource implements FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:set-star', { collectionId, ...target, starred }) }
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void> { return ipcRenderer.invoke('sulla-files:operate', { action, collectionId, items }) }
   restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
+  updateLifecycle(fileId:string,settings:FilesVersioningSettings):Promise<void> { return ipcRenderer.invoke('sulla-files:lifecycle', { fileId, settings }) }
+  checkout(fileId:string,force=false):Promise<void> { return ipcRenderer.invoke('sulla-files:checkout', { fileId, force }) }
+  checkin(fileId:string,versionId:string,kind:'major'|'minor',comment:string,publish:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:checkin', { fileId, versionId, kind, comment, publish }) }
+  publishVersion(fileId:string,versionId:string,expectedDraftVersionId?:string|null,comment?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:publish', { fileId, versionId, expectedDraftVersionId, comment }) }
+  updateRetention(fileId:string,policy:FilesRetentionPolicy):Promise<void> { return ipcRenderer.invoke('sulla-files:retention', { fileId, policy }) }
+  recordLock(fileId:string,status:'ordinary'|'policy'):Promise<void> { return ipcRenderer.invoke('sulla-files:record-lock', { fileId, status }) }
+  unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
+  disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
   restoreTrash(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash-restore', { fileId }) }
   trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
   keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }

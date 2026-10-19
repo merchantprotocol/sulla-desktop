@@ -2,6 +2,42 @@ export type FilesSyncState = 'synced' | 'syncing' | 'paused' | 'error' | 'confli
 export type FilesIndexState = 'pending' | 'indexing' | 'indexed' | 'unsupported' | 'failed';
 export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; partial:number; unsupported:number; failed:number; complete:boolean }
 
+export type FilesPublicationStatus = 'draft' | 'published' | 'superseded';
+export type FilesPublicationState = 'draft' | 'published';
+export type FilesRetentionMode = 'none' | 'retain-until' | 'event';
+
+export interface FilesRetentionPolicy {
+  mode: FilesRetentionMode;
+  retainUntil?: string | null;
+  eventType?: string | null;
+  eventOccurredAt?: string | null;
+  durationDays?: number | null;
+}
+
+export interface FilesVersioningSettings {
+  enabled: boolean;
+  majorMinor: boolean;
+  requireCheckout: boolean;
+}
+
+export interface FilesCheckout {
+  userId: string;
+  deviceId?: string;
+  at: string;
+}
+
+export interface FilesRecordStatus {
+  status: 'none' | 'ordinary' | 'policy';
+  lockedAt?: string | null;
+  lockedBy?: string | null;
+}
+
+export interface FilesDisposalStatus {
+  status: 'none' | 'pending' | 'approved' | 'rejected';
+  reviewAt?: string | null;
+  extendedUntil?: string | null;
+}
+
 export function normalizeFilesIndexCoverage(coverage:Omit<FilesIndexCoverage, 'partial'> & { partial?:number }):FilesIndexCoverage {
   const knowsPartial = Number.isFinite(coverage.partial);
   const partial = knowsPartial ? Number(coverage.partial) : 0;
@@ -33,6 +69,14 @@ export interface FilesItem {
   indexReasonCode?: string;
   indexReason: string;
   indexedAt?: string;
+  draftVersionId?: string | null;
+  publishedVersionId?: string | null;
+  publicationState?: FilesPublicationState;
+  versioning?: FilesVersioningSettings;
+  checkout?: FilesCheckout | null;
+  retention?: FilesRetentionPolicy;
+  record?: FilesRecordStatus;
+  disposal?: FilesDisposalStatus;
 }
 
 export interface FilesVersion {
@@ -46,6 +90,9 @@ export interface FilesVersion {
   message?: string;
   device_id?: string;
   current: boolean;
+  versionNumber?: string;
+  versionKind?: 'major' | 'minor';
+  publicationStatus?: FilesPublicationStatus;
 }
 
 export interface FilesSnapshot {
@@ -210,6 +257,14 @@ export interface FilesDataSource {
   setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void>;
   operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void>;
   restoreVersion(fileId:string, versionId:string): Promise<void>;
+  updateLifecycle?(fileId:string, settings:FilesVersioningSettings): Promise<void>;
+  checkout?(fileId:string, force?:boolean): Promise<void>;
+  checkin?(fileId:string, versionId:string, kind:'major' | 'minor', comment:string, publish:boolean): Promise<void>;
+  publishVersion?(fileId:string, versionId:string, expectedDraftVersionId?:string | null, comment?:string): Promise<void>;
+  updateRetention?(fileId:string, policy:FilesRetentionPolicy): Promise<void>;
+  recordLock?(fileId:string, status:'ordinary' | 'policy'): Promise<void>;
+  unlockRecord?(fileId:string): Promise<void>;
+  disposalReview?(fileId:string, decision:'approve' | 'reject' | 'extend', extendedUntil?:string): Promise<void>;
   restoreTrash(fileId:string): Promise<void>;
   trashFile(fileId:string): Promise<void>;
   createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
