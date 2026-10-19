@@ -1,21 +1,6 @@
 import type { Integration } from '../types';
 
 export const nativePaidAdsIntegrations: Record<string, Integration> = {
-  meta_ads: {
-    id:          'meta-ads',
-    sort:        1,
-    paid:        true,
-    beta:        false,
-    comingSoon:  false,
-    connected:   false,
-    name:        'Meta Ads',
-    description: 'Manage Facebook and Instagram ad campaigns, audiences, creatives, and performance insights via the Meta Marketing API.',
-    category:    'Paid Ads',
-    icon:        'meta_ads.svg',
-    version:     '1.0.0',
-    lastUpdated: '2026-03-07',
-    developer:   'Meta',
-  },
   google_ads: {
     id:          'google_ads',
     sort:        2,

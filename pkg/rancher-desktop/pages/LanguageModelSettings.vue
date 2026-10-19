@@ -1030,9 +1030,9 @@ export default defineComponent({
       if (document.visibilityState === 'visible') this.loadProviders();
     },
 
-    // Fetch every provider the main process knows about. Never filters on
-    // `connected` (a fail-closed snapshot when the vault is unavailable):
-    // connected ones sort first, the rest stay selectable with a hint.
+    // Fetch the providers the main process knows about and show only the
+    // CONNECTED ones (plus whichever provider a slot is currently set to, so a
+    // control is never blank). Connected ones sort first.
     async loadProviders(manual?: unknown) {
       if (this.providersLoading) return;
       this.providersLoading = true;
@@ -1044,10 +1044,12 @@ export default defineComponent({
       let suspicious = false;
       try {
         const providers = await ipcRenderer.invoke('model-provider:get-providers');
+        const chosen = [this.primaryProvider, this.secondaryProvider, this.subconsciousProvider];
         const list: { id: string; name: string; connected: boolean }[] = (Array.isArray(providers) ? providers : [])
-          .map((p: { id: string; name: string; connected?: boolean }) => ({ id: p.id, name: p.name, connected: p.connected === true }));
+          .map((p: { id: string; name: string; connected?: boolean }) => ({ id: p.id, name: p.name, connected: p.connected === true }))
+          .filter(p => p.connected || chosen.includes(p.id));
         // Keep any provider already chosen in a slot visible.
-        for (const id of [this.primaryProvider, this.secondaryProvider, this.subconsciousProvider]) {
+        for (const id of chosen) {
           if (id && id !== 'default' && !list.some(p => p.id === id)) {
             list.push({ id, name: id, connected: false });
           }
@@ -1655,7 +1657,7 @@ export default defineComponent({
               Loading providers...
             </p>
             <p v-else>
-              Providers marked "not connected" stay selectable. Open
+              Only connected providers are listed. Open
               <strong>Integrations</strong> to add credentials for Claude Code, Codex, Grok, OpenAI, etc.
             </p>
             <button type="button" class="btn role-secondary" :disabled="providersLoading" @click="loadProviders(true)">

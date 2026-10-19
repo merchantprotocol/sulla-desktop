@@ -91,17 +91,6 @@ export class DatabaseManager {
       projectsCutoverLock.release(projectsCutoverReleaseError);
     }
 
-    // Seed only the integrations that ship inside the app. Nothing from the
-    // user's ~/sulla folders is copied in at startup (Jonathon, 2026-10-15).
-    try {
-      const { importLegacyArtifacts } = await import('./legacyArtifactImporter');
-      const result = await importLegacyArtifacts();
-      console.log(`[DB] Bundled integrations: ${ result.imported } seeded, ${ result.skipped } already present`);
-      if (result.errors.length) console.warn('[DB] Bundled integration seed errors:', result.errors);
-    } catch (error) {
-      console.warn('[DB] Bundled integration seed failed:', error);
-    }
-
     try {
       const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
       await refreshIntegrationCatalog();
