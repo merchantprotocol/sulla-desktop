@@ -84,7 +84,7 @@ function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): string {
   const boundedTarget = assertGuestPath(target, roots);
   const resolved = runGuestSync([
     'sh', '-c',
-    'set -eu; resolved=$(realpath -e -- "$1"); case "$resolved" in "$2"|"$2"/*) printf "%s" "$resolved";; *) exit 73;; esac',
+    'set -eu; resolved=$(realpath "$1"); case "$resolved" in "$2"|"$2"/*) printf "%s" "$resolved";; *) exit 73;; esac',
     'sulla-guest-path', boundedTarget, roots[0],
   ]);
   return assertGuestPath(resolved, roots);
@@ -101,11 +101,11 @@ export function createGuestRuntimeDirectory(parent: string, prefix: string): str
       'umask 077',
       '[ ! -L "$5" ]',
       'sudo install -d -m 0700 -o "$3" -g "$4" "$5"',
-      '[ "$(realpath -e -- "$5")" = "$5" ]',
+      '[ "$(realpath "$5")" = "$5" ]',
       '[ "$(stat -c %u:%g "$5")" = "$3:$4" ]',
       '[ ! -L "$1" ]',
       'sudo install -d -m 0700 -o "$3" -g "$4" "$1"',
-      'parent=$(realpath -e -- "$1")',
+      'parent=$(realpath "$1")',
       'case "$parent" in "$5"|"$5"/*) ;; *) exit 73;; esac',
       '[ "$(stat -c %u:%g "$parent")" = "$3:$4" ]',
       '[ -w "$parent" ] && [ -x "$parent" ]',
@@ -124,7 +124,7 @@ export function writeGuestFileAtomic(target: string, data: string | Buffer, mode
     [
       'set -eu',
       'umask 077',
-      'parent=$(realpath -e -- "$(dirname "$1")")',
+      'parent=$(realpath "$(dirname "$1")")',
       'case "$parent" in "$4"|"$4"/*) ;; *) exit 73;; esac',
       '[ ! -L "$1" ]',
       'next="$parent/.$(basename "$1").next-$3"',
@@ -164,7 +164,7 @@ export function removeGuestPathAtomic(target: string): void {
     [
       'set -eu',
       '[ -e "$1" ] || exit 0',
-      'resolved=$(realpath -e -- "$1")',
+      'resolved=$(realpath "$1")',
       'case "$resolved" in "$3"/*) ;; *) exit 73;; esac',
       '[ "$resolved" != "$3" ]',
       'parent=$(dirname "$resolved")',
@@ -344,7 +344,7 @@ export async function seedDirectoryIntoGuest(source: string, parent: string, pre
   const target = createGuestRuntimeDirectory(parent, prefix);
   try {
     await pipeToGuest('tar', ['-C', resolved, '-cf', '-', '.'], [
-      'sh', '-c', 'set -eu; target=$(realpath -e -- "$1"); case "$target" in "$2"/*) ;; *) exit 73;; esac; tar -C "$target" -xf -',
+      'sh', '-c', 'set -eu; target=$(realpath "$1"); case "$target" in "$2"/*) ;; *) exit 73;; esac; tar -C "$target" -xf -',
       'sulla-directory-seed', target, GUEST_RUNTIME_ROOT,
     ]);
     return target;
