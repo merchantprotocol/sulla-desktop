@@ -11,7 +11,7 @@
     }
   });
 
-  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
+  // ../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs
   var import_meta = {};
   async function A(A3 = {}) {
     var I2, g2 = A3, C2 = !!globalThis.window, B2 = !!globalThis.WorkerGlobalScope, Q2 = (globalThis.process?.versions?.node && globalThis.process, import_meta.url);
@@ -209,7 +209,7 @@
   }
   var libsodium_sumo_default = A;
 
-  // ../../../../../../../mnt/data/devcache/deps/sulla-desktop-0ed85271cbb25ba4/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
+  // ../../../../../mnt/data/devcache/deps/sulla-desktop-66cd5297d4a8783c/node_modules/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs
   var r;
   var t = {};
   if (void 0 === globalThis.crypto || "function" != typeof globalThis.crypto.getRandomValues) throw new Error("globalThis.crypto.getRandomValues is not available. The ESM build of libsodium requires a secure random source (available in all browsers and Node.js 19+).");
@@ -3438,7 +3438,7 @@
   }, t.add = o, t.base64_variants = m, t.compare = l, t.from_base64 = x, t.from_hex = b, t.from_string = v, t.increment = p, t.is_zero = h, t.memcmp = i, t.memzero = y, t.output_formats = T, t.pad = u, t.unpad = d, t.ready = s, t.symbols = c, t.to_base64 = E, t.to_hex = f, t.to_string = g;
   var libsodium_wrappers_default = t;
 
-  // ../../packages/vault-crypto/src/index.ts
+  // packages/vault-crypto/src/index.ts
   var VERSION = 1;
   var KEY_BYTES = 32;
   var SALT_BYTES = 16;
@@ -3571,7 +3571,7 @@
     return decryptWithKey(encryptedCollectionKey, orgKey, "sulla:collection-key:v1");
   }
 
-  // console/app.ts
+  // services/sulla-vault/console/app.ts
   var text = new TextEncoder();
   var decoder = new TextDecoder();
   var $2 = (id) => document.getElementById(id);
@@ -3579,6 +3579,10 @@
   var initials = (value = "") => value.split(/\s+/).slice(0, 2).map((x2) => x2[0]?.toUpperCase()).join("") || "SV";
   var state = { token: "", email: "", user: null, userKey: null, privateKey: null, org: null, orgKey: null, members: [], groups: [], collections: [], selected: null, access: { members: [], groups: [] }, collectionKeys: /* @__PURE__ */ new Map(), itemNames: /* @__PURE__ */ new Map(), audit: [], auditOffset: 0, authMode: "signin", recovery: null };
   var idleTimer = 0;
+  var accountsOrganizationId = "";
+  var accountsSession = false;
+  var service = "vault";
+  var parentOrigin = window.location.origin;
   function armIdle() {
     window.clearTimeout(idleTimer);
     if (state.token) idleTimer = window.setTimeout(() => lock("Locked after 15 minutes of inactivity."), 15 * 60 * 1e3);
@@ -3593,6 +3597,8 @@
   }
   function lock(message = "") {
     clearKeys();
+    accountsSession = false;
+    accountsOrganizationId = "";
     state.org = null;
     state.user = null;
     state.members = [];
@@ -3613,7 +3619,8 @@
     if (message) $2("auth-error").textContent = message;
   }
   async function api(path, options = {}) {
-    const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...state.token ? { Authorization: `Bearer ${state.token}` } : {}, ...options.headers ?? {} } });
+    const target = window.location.pathname.startsWith("/services/vault/") && path.startsWith("/v1/") ? `/services/vault/api${path.slice(3)}` : path;
+    const response = await fetch(target, { ...options, headers: { "Content-Type": "application/json", ...state.token ? { Authorization: `Bearer ${state.token}` } : {}, ...options.headers ?? {} } });
     if (!response.ok) {
       if (response.status === 401 && state.token) lock("Your session ended. Sign in again.");
       const body = await response.json().catch(() => ({}));
@@ -3680,6 +3687,19 @@
       master.key.fill(0);
     }
   }
+  async function unlockAccountsSession(password) {
+    const user = await api("/v1/unlock-material");
+    state.email = user.email;
+    state.user = user;
+    const parameters = kdf(user.kdf);
+    const master = await deriveMasterKey(password, parameters.salt, parameters.parameters);
+    try {
+      state.userKey = await unwrapUserKey(user.encryptedUserKey, master.key);
+      state.privateKey = await unwrapUserPrivateKey(user.encryptedPrivateKey, state.userKey);
+    } finally {
+      master.key.fill(0);
+    }
+  }
   async function register(_mode, email, password) {
     const account = await makeAccount(password);
     try {
@@ -3701,13 +3721,19 @@
     button.disabled = true;
     button.textContent = "Working\u2026";
     try {
-      if (state.authMode === "signin") await establishSession(email, password);
+      if (accountsSession) await unlockAccountsSession(password);
+      else if (state.authMode === "signin") await establishSession(email, password);
       else await register(state.authMode, email, password);
       $2("auth-password").value = "";
       $2("auth-join-password").value = "";
       await openConsole();
     } catch (error) {
-      lock();
+      if (accountsSession) {
+        for (const key of [state.userKey, state.privateKey, state.orgKey, ...state.collectionKeys.values()]) key?.fill(0);
+        state.userKey = state.privateKey = state.orgKey = null;
+        state.collectionKeys.clear();
+        state.user = null;
+      } else lock();
       $2("auth-error").textContent = error instanceof Error ? error.message : "Could not unlock the vault";
     } finally {
       button.disabled = false;
@@ -3734,7 +3760,8 @@
       return false;
     }
     document.querySelectorAll("[data-page]").forEach((x2) => x2.disabled = false);
-    const org = orgs.orgs[0];
+    const org = orgs.orgs.find((candidate) => !accountsSession || candidate.id === accountsOrganizationId);
+    if (!org) throw new Error("Accounts organization does not match this Vault membership");
     state.org = org;
     state.orgKey = await unwrapOrgKeyForMember(org.wrapped_org_key, state.user.publicKey, state.privateKey);
     org.name = await decryptText(org.encrypted_name, state.orgKey, "sulla:org-name:v1");
@@ -3780,10 +3807,9 @@
     document.querySelectorAll(".page").forEach((x2) => x2.hidden = x2.id !== page);
     document.querySelectorAll("[data-page]").forEach((x2) => x2.classList.toggle("active", x2.dataset.page === page));
     document.querySelectorAll("[data-page]").forEach((x2) => x2.setAttribute("aria-current", x2.dataset.page === page ? "page" : "false"));
-    const copy = { collections: ["Shared collections", "Share passwords with a team. Choose who can see them, and whose agents can use them."], people: ["People & groups", "Invite existing accounts, assign roles and organize people into groups."], audit: ["Audit log", "Every person and agent action. Secret values are never written here."], recovery: ["Recovery", "Members choose whether organization owners can help recover their encrypted account."] };
+    const copy = { collections: ["Shared collections", "Share passwords with a team. Choose who can see them, and whose agents can use them."], audit: ["Audit log", "Every person and agent action. Secret values are never written here."], recovery: ["Recovery", "Members choose whether organization owners can help recover their encrypted account."] };
     $2("page-title").textContent = copy[page][0];
     $2("page-lead").textContent = copy[page][1];
-    if (page === "people") void run(refreshPeople);
     if (page === "audit") void run(loadAudit);
     if (page === "recovery") void run(loadRecovery);
   }
@@ -4122,6 +4148,33 @@
   };
   $2("recovery-toggle").onchange = () => void run(toggleRecovery);
   setAuthMode("signin");
+  window.addEventListener("message", (event) => {
+    if (event.origin !== parentOrigin || event.source !== window.parent) return;
+    const message = event.data;
+    if (message?.version !== 1 || message.service !== service) return;
+    if (message.type === "sulla.service.lock") {
+      lock("Vault locked.");
+      return;
+    }
+    if (message.type !== "sulla.service.session" || typeof message.token !== "string" || typeof message.organizationId !== "string") return;
+    if (accountsSession && accountsOrganizationId === message.organizationId && state.userKey) {
+      state.token = message.token;
+      armIdle();
+      return;
+    }
+    lock();
+    accountsSession = true;
+    accountsOrganizationId = message.organizationId;
+    state.token = message.token;
+    document.querySelector(".auth-tabs").hidden = true;
+    document.querySelectorAll(".join-field").forEach((x2) => x2.hidden = true);
+    $2("auth-email").closest("label").hidden = true;
+    $2("auth-email").required = false;
+    $2("auth-title").textContent = "Unlock Vault";
+    $2("auth-lead").textContent = "Your Accounts session is verified. Enter your Vault master password to unlock encryption keys in this browser.";
+    $2("auth-submit").textContent = "Unlock Vault";
+  });
+  window.parent.postMessage({ type: "sulla.service.ready", version: 1, service }, parentOrigin);
   var auditRequest = 0;
   async function run(action) {
     try {

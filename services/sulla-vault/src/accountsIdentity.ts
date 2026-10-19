@@ -67,21 +67,20 @@ function authorizationValues(value: unknown): string[] | null {
 
 export async function resolveAccountsContext(
   config: VaultConfig,
-  input: { bearerToken: string; authorityId: string; organizationId: string },
+  input: { bearerToken: string },
 ): Promise<AccountsContext> {
   const accounts = config.accounts;
   if (!accounts) throw new AccountsIdentityError(403, 'Accounts integration is not configured');
   let response: Response;
   try {
-    response = await fetch(`${ accounts.url }/v1/private/resolve-context`, {
+    response = await fetch(`${ accounts.url }/v1/private/ui-sessions/resolve`, {
       method:  'POST',
       headers: {
         'Content-Type':          'application/json',
         'X-Sulla-Service-Id':    accounts.serviceId,
         'X-Sulla-Service-Token': accounts.serviceToken,
       },
-      body: JSON.stringify({ bearerToken: input.bearerToken, authorityId: input.authorityId,
-        audience: accounts.audience, organizationId: input.organizationId, requiredRoles: accounts.requiredRoles }),
+      body: JSON.stringify({ token: input.bearerToken, audience: accounts.audience, requiredRoles: accounts.requiredRoles }),
       redirect: 'error',
       signal:   AbortSignal.timeout(5_000),
     });
@@ -92,13 +91,16 @@ export async function resolveAccountsContext(
   if (!response.ok) throw new AccountsIdentityError(response.status === 401 ? 401 : 403, 'Accounts denied this identity');
   const issuer = identityString(context.issuer);
   const subject = identityString(context.subject);
+  const authorityId = identityString(context.authorityId);
+  const organizationId = identityString(context.organizationId);
   const roles = authorizationValues(context.roles);
   const groups = authorizationValues(context.groups);
-  if (!issuer || !subject || !roles || !groups || context.authorityId !== input.authorityId ||
-      context.organizationId !== input.organizationId || context.audience !== accounts.audience ||
+  const expiresAt = typeof context.expiresAt === 'string' ? Date.parse(context.expiresAt) : Number.NaN;
+  if (!issuer || !subject || !authorityId || !organizationId || !roles || !groups ||
+      context.audience !== accounts.audience || !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
       accounts.requiredRoles.some(role => !roles.includes(role))) {
     throw new AccountsIdentityError(403, 'Accounts returned a mismatched identity context');
   }
-  return { issuer, subject, roles, groups, authorityId: input.authorityId,
-    organizationId: input.organizationId, audience: accounts.audience };
+  return { issuer, subject, roles, groups, authorityId,
+    organizationId, audience: accounts.audience };
 }

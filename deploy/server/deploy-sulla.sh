@@ -30,6 +30,7 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
 : "${SULLA_PROJECTS_IMAGE:?missing pinned Projects image}"
+: "${SULLA_CONSOLE_IMAGE:?missing pinned Console image}"
 : "${SULLA_STORAGE_CLASS:?missing storage class}"
 : "${SULLA_STORAGE_SIZE:?missing storage size}"
 : "${SULLA_FILES_STORAGE_SIZE:?missing Files storage size}"
@@ -81,16 +82,18 @@ done
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
 
-rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_projects="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_projects" "$rendered_storage"' EXIT
+rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_projects="$(mktemp)"; rendered_console="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_projects" "$rendered_console" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
 sed "s|__SULLA_FILES_IMAGE__|${SULLA_FILES_IMAGE}|g" "$K8S_DIR/sulla-files.yaml" >"$rendered_files"
 sed "s|__SULLA_PROJECTS_IMAGE__|${SULLA_PROJECTS_IMAGE}|g" "$K8S_DIR/sulla-projects.yaml" >"$rendered_projects"
+sed "s|__SULLA_CONSOLE_IMAGE__|${SULLA_CONSOLE_IMAGE}|g" "$K8S_DIR/sulla-console.yaml" >"$rendered_console"
 sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" -e "s|__SULLA_FILES_STORAGE_SIZE__|${SULLA_FILES_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/postgres.yaml"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_files"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_projects"
+"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_console"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$K8S_DIR/sulla-gateway.yaml"
 if [[ ${SULLA_INGRESS_MODE:-create} == create ]]; then
   ingress="$(mktemp)"
@@ -117,6 +120,7 @@ fi
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-vault --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-files --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-projects --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-console --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-gateway --timeout=5m
 
 printf '\nSulla services are ready:\n'

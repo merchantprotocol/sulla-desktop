@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
@@ -22,6 +23,11 @@ export interface Config {
   backupTarget?:        string;
   capabilitySigningKey: string | Buffer;
   serverJwtSecret?:     string;
+  accounts?: {
+    url:          string;
+    serviceToken: string;
+    audience:     string;
+  };
   localToken?:          string;
   bootstrapServiceId?:  string;
   bootstrapToken?:      string;
@@ -90,6 +96,22 @@ export function loadConfig():Config {
     (installationSecret ? deriveCapabilitySigningKey(installationSecret) : '');
   if (Buffer.byteLength(capabilitySigningKey) < 32) throw new Error('SULLA_FILES_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
   const mode = process.env.SULLA_FILES_MODE === 'server' ? 'server' : 'desktop';
+  const accountsUrl = process.env.SULLA_FILES_ACCOUNTS_URL?.trim();
+  const accountsTokenFile = process.env.SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE?.trim();
+  if (Boolean(accountsUrl) !== Boolean(accountsTokenFile)) throw new Error('Files Accounts URL and service token file must be configured together');
+  let accounts:Config['accounts'];
+  if (accountsUrl && accountsTokenFile) {
+    const url = new URL(accountsUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+      throw new Error('SULLA_FILES_ACCOUNTS_URL must be an HTTP(S) origin');
+    }
+    const stat = statSync(accountsTokenFile);
+    if (!stat.isFile() || (stat.mode & 0o077) !== 0) throw new Error('SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE must be private');
+    const serviceToken = readFileSync(accountsTokenFile, 'utf8').trim();
+    if (Buffer.byteLength(serviceToken) < 32) throw new Error('SULLA_FILES_ACCOUNTS_SERVICE_TOKEN_FILE must contain at least 32 bytes');
+    accounts = { url: url.origin, serviceToken, audience: process.env.SULLA_FILES_ACCOUNTS_AUDIENCE?.trim() || 'sulla-files' };
+    if (accounts.audience !== 'sulla-files') throw new Error('SULLA_FILES_ACCOUNTS_AUDIENCE must be sulla-files');
+  }
 
   const filesRoot = mode === 'desktop' && process.env.SULLA_FILES_STORED_ONLY !== '1'
     ? resolve(process.env.SULLA_FILES_FOLDER ?? '/data/files')
@@ -109,6 +131,7 @@ export function loadConfig():Config {
     backupTarget:     process.env.SULLA_FILES_BACKUP_TARGET ? resolve(process.env.SULLA_FILES_BACKUP_TARGET) : undefined,
     capabilitySigningKey,
     serverJwtSecret:  process.env.SULLA_FILES_JWT_SECRET,
+    accounts,
     localToken:       process.env.SULLA_FILES_LOCAL_TOKEN,
     bootstrapServiceId: process.env.SULLA_FILES_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-files-bootstrap',
     bootstrapToken:     process.env.SULLA_FILES_BOOTSTRAP_TOKEN,

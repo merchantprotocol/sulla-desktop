@@ -2549,6 +2549,50 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
   }
 
+  /** Install the main server console as a Lima-native listener, independent of every domain container. */
+  protected async installSullaConsole(): Promise<void> {
+    const packagedRoot = path.join(paths.resources, 'sulla-console');
+    const consoleRoot = '/opt/sulla-console';
+    try {
+      await this.execCommand({ root: true }, 'sh', '-c', `mkdir -p ${ consoleRoot }/public && adduser -S -D -H -s /sbin/nologin sulla-console 2>/dev/null || true`);
+      for (const name of ['server.mjs', 'public/index.html', 'public/shell.js', 'public/shell.css']) {
+        await this.copyFileIn(path.join(packagedRoot, name), `${ consoleRoot }/${ name }`);
+      }
+      await this.execCommand({ root: true }, 'chown', '-R', 'sulla-console:sulla-console', consoleRoot);
+      await this.execCommand({ root: true }, 'chmod', '-R', 'u=rwX,go=rX', consoleRoot);
+    const initScript = `#!/sbin/openrc-run
+name="sulla-console"
+description="Sulla main server console"
+command="/usr/bin/node"
+command_args="${ consoleRoot }/server.mjs"
+command_background="yes"
+pidfile="/run/sulla-console.pid"
+output_log="/var/log/sulla-console.log"
+error_log="/var/log/sulla-console.error.log"
+command_user="sulla-console:sulla-console"
+export SULLA_CONSOLE_HOST="0.0.0.0"
+export SULLA_CONSOLE_PORT="30121"
+export SULLA_CONSOLE_ROOT="${ consoleRoot }/public"
+depend() { need net; after logger; }
+start_pre() {
+  test -r "${ consoleRoot }/server.mjs" || return 1
+  test -r "${ consoleRoot }/public/index.html" || return 1
+  touch /var/log/sulla-console.log /var/log/sulla-console.error.log
+}
+`;
+
+    await this.writeFile('/etc/init.d/sulla-console', initScript, 0o755);
+    await this.execCommand({ root: true }, 'rc-update', 'add', 'sulla-console', 'default');
+    try {
+      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'restart');
+    } catch {
+      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'start');
+    }
+    } catch (error) {
+      console.warn('[sulla-console] install failed (non-fatal):', error);
+    }
+  }
+
   /**
    * Shell-quote a multi-line string so it survives `sh -c 'printf %s ...'`.
    * Uses single-quote wrapping with `'\''` escapes for embedded singles.
@@ -2863,6 +2907,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
             this.ensureClaudeBinaryInstalled().then(() => this.ensureCodexBinaryInstalled())),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
           this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
+          this.progressTracker.action('Installing Sulla Console', 50, this.installSullaConsole()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));

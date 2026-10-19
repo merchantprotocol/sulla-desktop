@@ -97,11 +97,8 @@ export function loadConfig(): VaultConfig {
   if (accountsConfigured && configuredAudience !== 'sulla-vault') {
     throw new Error('SULLA_VAULT_ACCOUNTS_AUDIENCE must be sulla-vault');
   }
-  const requiredRoles = (process.env.SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES ?? 'member')
+  const requiredRoles = (process.env.SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES ?? '')
     .split(',').map(value => value.trim()).filter(Boolean);
-  if (accountsConfigured && requiredRoles.length === 0) {
-    throw new Error('SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES must contain at least one role');
-  }
   const accounts = accountsConfigured ? {
     url:           accountsBaseUrl(requiredEnvironment('SULLA_VAULT_ACCOUNTS_URL')),
     serviceId:     requiredEnvironment('SULLA_VAULT_ACCOUNTS_SERVICE_ID'),
