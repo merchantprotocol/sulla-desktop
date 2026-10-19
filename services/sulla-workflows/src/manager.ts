@@ -58,10 +58,12 @@ function hashToken(token: string): string {
 }
 
 function runnerTools(nodes: any[]): string[] {
-  const allowedTools = new Set<string>(['meta/spawn_agent', 'agents/check_agent_jobs']);
+  const allowedTools = new Set<string>(config.mode === 'desktop' ? ['meta/spawn_agent', 'agents/check_agent_jobs'] : []);
   for (const node of nodes) {
     const toolName = node?.data?.config?.toolName;
-    if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) allowedTools.add(toolName);
+    if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) {
+      allowedTools.add(toolName.includes('/') ? toolName : `meta/${ toolName }`);
+    }
     if (node?.data?.subtype === 'desktop-notification') allowedTools.add('notify/notify_user');
   }
   return [...allowedTools];
@@ -106,6 +108,32 @@ function serviceHeaders(): Record<string, string> {
     'X-Sulla-Service-Id':    config.accountsServiceId,
     'X-Sulla-Service-Token': config.accountsServiceToken,
   };
+}
+
+async function agentsJson(pathname: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const raw = JSON.stringify(body);
+  const timestamp = String(Date.now());
+  const nonce = crypto.randomUUID();
+  const digest = crypto.createHash('sha256').update(raw).digest('hex');
+  const signature = crypto.createHmac('sha256', config.agentsServiceToken)
+    .update(`POST\n${ pathname }\n${ timestamp }\n${ nonce }\n${ digest }`)
+    .digest('base64url');
+  const response = await fetch(`${ config.agentsUrl }${ pathname }`, {
+    method:  'POST',
+    headers: {
+      'Content-Type':              'application/json',
+      'X-Sulla-Service-Id':        'sulla-workflows',
+      'X-Sulla-Service-Timestamp': timestamp,
+      'X-Sulla-Service-Nonce':     nonce,
+      'X-Sulla-Service-Signature': signature,
+    },
+    body: raw,
+    redirect: 'error',
+    signal:  AbortSignal.timeout(30_000),
+  });
+  const json = await boundedJson(response, 512 * 1024);
+  if (!response.ok) throw Object.assign(new Error(`Agents request failed (${ response.status })`), { status: response.status });
+  return json;
 }
 
 async function accountsJson(path: string, init: RequestInit): Promise<Record<string, unknown>> {
@@ -936,6 +964,100 @@ app.post('/internal/tools/:category/:tool', async(request, response, next) => {
   } catch (error) { next(error) }
 });
 
+app.use('/internal/agents', authenticateRequest);
+app.use('/internal/agents', (request: AuthenticatedRequest, response, next) => {
+  if (request.identity?.kind !== 'runner' || !request.identity.executionId) {
+    response.status(403).json({ error: 'workflow_runner_context_required' }); return;
+  }
+  next();
+});
+
+app.post('/internal/agents/runs', async(request: AuthenticatedRequest, response, next) => {
+  try {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
+    const identity = request.identity!;
+    const agentId = typeof request.body?.agentId === 'string' ? request.body.agentId.trim() : '';
+    const prompt = typeof request.body?.prompt === 'string' ? request.body.prompt.trim() : '';
+    const label = typeof request.body?.label === 'string' ? request.body.label.trim() : '';
+    if (!agentId || agentId.length > 300 || !prompt || prompt.length > 100_000 || label.length > 500) {
+      return response.status(400).json({ error: 'bounded agentId and prompt are required' });
+    }
+    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId : '';
+    const execution = (await pool.query(
+      `SELECT playbook_state FROM workflow_executions WHERE execution_id=$5 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId],
+    )).rows[0];
+    const declaredNode = execution?.playbook_state?.definition?.nodes?.find((node: any) => node.id === nodeId);
+    const subtype = declaredNode?.data?.subtype;
+    const expectedAgent = subtype === 'agent' ? (declaredNode.data.config?.agentId || 'sulla-desktop') : 'sulla-desktop';
+    if (!declaredNode || !['agent', 'router', 'condition', 'loop', 'orchestrator-prompt', 'response'].includes(subtype) || agentId !== expectedAgent) {
+      return response.status(403).json({ error: 'agent is outside this workflow node scope' });
+    }
+    const inserted = await pool.query(
+      `INSERT INTO workflow_agent_runs
+         (execution_id,node_id,invocation_id,owner_issuer,owner_subject,authority_id,organization_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (execution_id,node_id) DO NOTHING
+       RETURNING invocation_id,agent_run_id`,
+      [identity.executionId, nodeId, crypto.randomUUID(), ...identityParams(identity)],
+    );
+    const binding = inserted.rows[0] ?? (await pool.query(
+      `SELECT invocation_id,agent_run_id FROM workflow_agent_runs
+        WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId],
+    )).rows[0];
+    if (!binding?.invocation_id) throw new Error('Could not bind workflow node to an agent invocation');
+    const invocationId = String(binding.invocation_id);
+    const launched = await agentsJson('/internal/workflow-runs', {
+      invocationId,
+      agentId,
+      prompt,
+      label,
+      workflowExecutionId: identity.executionId,
+      issuer:              identity.issuer,
+      subject:             identity.subject,
+      authorityId:         identity.authorityId,
+      organizationId:      identity.organizationId,
+    });
+    const runId = typeof launched.id === 'string' && launched.id.length <= 300 && launched.id.trim() === launched.id ? launched.id : '';
+    if (!runId) throw new Error('Agents returned an invalid run id');
+    const recorded = await pool.query(
+      `UPDATE workflow_agent_runs SET agent_run_id=$7
+        WHERE execution_id=$5 AND node_id=$6 AND ${ identitySql }
+          AND (agent_run_id IS NULL OR agent_run_id=$7)
+        RETURNING agent_run_id`,
+      [...identityParams(identity), identity.executionId, nodeId, runId],
+    );
+    if (!recorded.rowCount) throw new Error('Agents returned a run outside the workflow node binding');
+    response.status(202).json({ id: runId, status: launched.status ?? 'starting' });
+  } catch (error) { next(error) }
+});
+
+app.post('/internal/agents/runs/status', async(request: AuthenticatedRequest, response, next) => {
+  try {
+    if (config.mode !== 'server') return response.status(404).json({ error: 'server agent routing is disabled' });
+    const identity = request.identity!;
+    const runId = typeof request.body?.runId === 'string' ? request.body.runId.trim() : '';
+    const nodeId = typeof request.body?.nodeId === 'string' ? request.body.nodeId.trim() : '';
+    if (!runId || runId.length > 300 || !nodeId || nodeId.length > 300) {
+      return response.status(400).json({ error: 'bounded runId and nodeId are required' });
+    }
+    const owned = await pool.query(
+      `SELECT 1 FROM workflow_agent_runs
+        WHERE execution_id=$5 AND node_id=$6 AND agent_run_id=$7 AND ${ identitySql }`,
+      [...identityParams(identity), identity.executionId, nodeId, runId],
+    );
+    if (!owned.rowCount) return response.status(404).json({ error: 'agent run not found' });
+    const run = await agentsJson('/internal/workflow-runs/status', {
+      runId,
+      workflowExecutionId: identity.executionId,
+      authorityId:         identity.authorityId,
+      organizationId:      identity.organizationId,
+    });
+    response.json({ id: runId, status: run.status, output: run.output, error: run.error });
+  } catch (error) { next(error) }
+});
+
 app.use((error: any, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
   console.error('[workflow-manager]', error);
   response.status(500).json({ error: error instanceof Error ? error.message : String(error) });
@@ -961,14 +1083,15 @@ async function resumeDueRuns(): Promise<void> {
         [row.execution_id],
       )).rows[0];
       if (config.mode === 'server') {
-        if (!current?.delegated_grant_token || !current?.delegated_grant_workflow_id || !current?.schedule_node_id) {
-          throw new Error('server continuation has no delegated schedule grant');
+        const delegatedFields = [current?.delegated_grant_token, current?.delegated_grant_workflow_id, current?.schedule_node_id];
+        if (delegatedFields.some(Boolean) && !delegatedFields.every(Boolean)) throw new Error('server continuation has an incomplete delegated schedule grant');
+        if (delegatedFields.every(Boolean)) {
+          await resolveScheduleGrant(
+            { ...current, id: current.delegated_grant_workflow_id },
+            current.schedule_node_id,
+            current.delegated_grant_token,
+          );
         }
-        await resolveScheduleGrant(
-          { ...current, id: current.delegated_grant_workflow_id },
-          current.schedule_node_id,
-          current.delegated_grant_token,
-        );
       }
       if (current?.wait_payload?.nodeId) {
         await emitEvent(row.execution_id, current.workflow_id, 'node_completed', { output: 'wait elapsed' }, current.wait_payload.nodeId);

@@ -4,14 +4,26 @@ import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 
-import { authenticateRequest, requireEditor, tenantParams, tenantSql, type AuthenticatedRequest, type RequestIdentity } from './auth.js';
+import {
+  authenticateRequest,
+  authenticateWorkflowService,
+  requireEditor,
+  tenantParams,
+  tenantSql,
+  type AuthenticatedRequest,
+  type RequestIdentity,
+  type WorkflowServiceRequest,
+} from './auth.js';
 import { config } from './config.js';
 import { migrate, pool } from './db.js';
 import { messageAgentRun, recoverRuns, startAgentRun, stopAgentRun } from './runtime.js';
 
 const app = express();
 app.disable('x-powered-by');
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({
+  limit: '1mb',
+  verify: (request, _response, buffer) => { (request as WorkflowServiceRequest).rawBody = Buffer.from(buffer) },
+}));
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const uiRoot = path.resolve(here, '../../../../ui');
@@ -24,7 +36,6 @@ app.use('/ui', (_request, response, next) => {
   response.setHeader('Content-Security-Policy', "default-src 'self'; frame-ancestors 'self'; script-src 'self'; style-src 'self'"); next();
 });
 app.use('/ui', express.static(uiRoot, { index: 'index.html', fallthrough: false }));
-app.use('/v1', authenticateRequest);
 
 const definitionColumns = `id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,
   model_priority,version,status,enabled,config,prompt_content,goals_content,provider,model,source_kind,
@@ -46,6 +57,80 @@ function allowedTools(value: unknown): string[] | null {
 function canManageToolGrants(identity: RequestIdentity): boolean {
   return identity.roles.some(role => role === 'owner' || role === 'admin');
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function boundedIdentity(value: unknown, max = 2_048): string {
+  return typeof value === 'string' && value.length > 0 && value.length <= max && value.trim() === value ? value : '';
+}
+
+app.post('/internal/workflow-runs', authenticateWorkflowService, async(request, response, next) => {
+  try {
+    const body = request.body ?? {};
+    const invocationId = boundedIdentity(body.invocationId, 36);
+    const workflowExecutionId = boundedIdentity(body.workflowExecutionId, 300);
+    const issuer = boundedIdentity(body.issuer);
+    const subject = boundedIdentity(body.subject);
+    const authorityId = boundedIdentity(body.authorityId, 36);
+    const organizationId = boundedIdentity(body.organizationId, 36);
+    const agentId = boundedIdentity(body.agentId, 300);
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+    if (!UUID.test(invocationId) || !workflowExecutionId || !issuer || !subject || !UUID.test(authorityId) ||
+        !UUID.test(organizationId) || !agentId || !prompt || prompt.length > 100_000) {
+      return response.status(400).json({ error: 'invalid workflow agent invocation' });
+    }
+    const existing = (await pool.query(
+      `SELECT id,status FROM server_agent_runs
+        WHERE workflow_invocation_id=$1 AND workflow_execution_id=$2
+          AND authority_id=$3::uuid AND organization_id=$4::uuid`,
+      [invocationId, workflowExecutionId, authorityId, organizationId],
+    )).rows[0];
+    if (existing) return response.status(202).json(existing);
+    const agent = (await pool.query(
+      `SELECT * FROM service_agent_definitions
+        WHERE authority_id=$1::uuid AND organization_id=$2::uuid AND (id=$3 OR slug=$3)
+          AND enabled=TRUE AND status='production' LIMIT 1`,
+      [authorityId, organizationId, agentId],
+    )).rows[0];
+    if (!agent) return response.status(404).json({ error: 'active production agent not found' });
+    const identity: RequestIdentity = { issuer, subject, authorityId, organizationId, roles: [] };
+    response.status(202).json(await startAgentRun(agent, prompt, identity, { executionId: workflowExecutionId, invocationId }));
+  } catch (error: any) {
+    if (String(error?.message).includes('duplicate key')) {
+      const body = request.body ?? {};
+      const row = (await pool.query(
+        `SELECT id,status FROM server_agent_runs
+          WHERE workflow_invocation_id=$1 AND workflow_execution_id=$2
+            AND authority_id=$3::uuid AND organization_id=$4::uuid`,
+        [body.invocationId, body.workflowExecutionId, body.authorityId, body.organizationId],
+      )).rows[0];
+      if (row) return response.status(202).json(row);
+    }
+    next(error);
+  }
+});
+
+app.post('/internal/workflow-runs/status', authenticateWorkflowService, async(request, response, next) => {
+  try {
+    const body = request.body ?? {};
+    const runId = boundedIdentity(body.runId, 300);
+    const workflowExecutionId = boundedIdentity(body.workflowExecutionId, 300);
+    const authorityId = boundedIdentity(body.authorityId, 36);
+    const organizationId = boundedIdentity(body.organizationId, 36);
+    if (!runId || !workflowExecutionId || !UUID.test(authorityId) || !UUID.test(organizationId)) {
+      return response.status(400).json({ error: 'invalid workflow agent status request' });
+    }
+    const run = (await pool.query(
+      `SELECT id,status,output,error FROM server_agent_runs
+        WHERE id=$1 AND workflow_execution_id=$2
+          AND authority_id=$3::uuid AND organization_id=$4::uuid`,
+      [runId, workflowExecutionId, authorityId, organizationId],
+    )).rows[0];
+    if (!run) return response.status(404).json({ error: 'workflow agent run not found' });
+    response.json(run);
+  } catch (error) { next(error) }
+});
+
+app.use('/v1', authenticateRequest);
 
 app.get('/v1/agents', async(request: AuthenticatedRequest, response, next) => {
   try { const scope = definitionTenant(request.identity!); response.json((await pool.query(`SELECT ${ definitionColumns } FROM ${ definitionsTable } WHERE ${ scope.clause } ORDER BY name,slug`, scope.params)).rows) }

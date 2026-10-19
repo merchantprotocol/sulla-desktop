@@ -48,8 +48,11 @@ async function monitor(id: string, containerId: string, tenant: [string | null, 
   }
 }
 
-export async function startAgentRun(agent: any, prompt: string, identity: RequestIdentity): Promise<any> {
-  const id = `agent-run-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }`;
+export async function startAgentRun(agent: any, prompt: string, identity: RequestIdentity, workflow?: {
+  executionId: string;
+  invocationId: string;
+}): Promise<any> {
+  const id = workflow ? `agent-run-${ workflow.invocationId }` : `agent-run-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }`;
   const provider = String(agent.provider ?? agent.model_priority?.[0]?.provider ?? '').trim();
   const model = String(agent.model ?? agent.model_priority?.[0]?.model ?? '').trim();
   if (!['codex', 'claude-code'].includes(provider)) throw new Error('agent provider must be codex or claude-code for headless execution');
@@ -57,9 +60,10 @@ export async function startAgentRun(agent: any, prompt: string, identity: Reques
   if (provider === 'claude-code' && !config.anthropicApiKey) throw new Error('SULLA_ANTHROPIC_API_KEY_FILE is required for claude-code server execution');
   const tenant: [string | null, string | null] = [identity.authorityId, identity.organizationId];
   await pool.query(
-    `INSERT INTO server_agent_runs(id,agent_id,label,prompt,provider,model,status,requested_by,owner_issuer,owner_subject,authority_id,organization_id)
-     VALUES($1,$2,$3,$4,$5,$6,'starting',$7,$8,$9,$10,$11)`,
-    [id, agent.slug, agent.name, prompt, provider, model || null, identity.subject, identity.issuer, identity.subject, ...tenant],
+    `INSERT INTO server_agent_runs(id,agent_id,label,prompt,provider,model,status,requested_by,owner_issuer,owner_subject,authority_id,organization_id,workflow_execution_id,workflow_invocation_id)
+     VALUES($1,$2,$3,$4,$5,$6,'starting',$7,$8,$9,$10,$11,$12,$13)`,
+    [id, agent.slug, agent.name, prompt, provider, model || null, identity.subject, identity.issuer, identity.subject, ...tenant,
+      workflow?.executionId ?? null, workflow?.invocationId ?? null],
   );
   let containerId = '';
   try {

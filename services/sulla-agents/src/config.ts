@@ -19,6 +19,9 @@ function optionalSecretFile(name: string): string {
 const mode = (process.env.SULLA_AGENT_SERVICE_MODE ?? 'desktop') as AgentServiceMode;
 if (mode !== 'desktop' && mode !== 'server') throw new Error('SULLA_AGENT_SERVICE_MODE must be desktop or server');
 const installationSecret = process.env.SULLA_API_TOKEN?.trim() ?? '';
+const workflowsServiceToken = mode === 'server'
+  ? required('SULLA_WORKFLOWS_SERVICE_TOKEN_FILE', optionalSecretFile('SULLA_WORKFLOWS_SERVICE_TOKEN_FILE'))
+  : '';
 
 export const config = {
   mode,
@@ -32,6 +35,7 @@ export const config = {
   accountsUrl:          mode === 'server' ? required('SULLA_ACCOUNTS_URL', process.env.SULLA_ACCOUNTS_URL).replace(/\/$/, '') : '',
   accountsServiceId:    mode === 'server' ? required('SULLA_ACCOUNTS_SERVICE_ID', process.env.SULLA_ACCOUNTS_SERVICE_ID) : '',
   accountsServiceToken: mode === 'server' ? required('SULLA_ACCOUNTS_SERVICE_TOKEN_FILE', optionalSecretFile('SULLA_ACCOUNTS_SERVICE_TOKEN_FILE')) : '',
+  workflowsServiceToken,
   audience:             mode === 'server' ? (process.env.SULLA_AGENT_AUDIENCE?.trim() || 'sulla-agents') : '',
   requiredRoles:        (process.env.SULLA_AGENT_REQUIRED_ROLES ?? '').split(',').map(value => value.trim()).filter(Boolean),
   openAiApiKey:         optionalSecretFile('SULLA_OPENAI_API_KEY_FILE'),
@@ -39,3 +43,4 @@ export const config = {
 };
 
 if (Buffer.byteLength(config.toolApiToken) < 32) throw new Error('SULLA_API_TOKEN must contain at least 32 bytes');
+if (mode === 'server' && Buffer.byteLength(config.workflowsServiceToken) < 32) throw new Error('SULLA_WORKFLOWS_SERVICE_TOKEN_FILE must contain at least 32 bytes');

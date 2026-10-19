@@ -27,6 +27,7 @@ chown node:node "$private_dir"
 chmod 0700 "$private_dir"
 
 stage_secret SULLA_ACCOUNTS_SERVICE_TOKEN_FILE accounts-service.token
+stage_secret SULLA_WORKFLOWS_SERVICE_TOKEN_FILE workflows-service.token
 stage_secret SULLA_OPENAI_API_KEY_FILE openai-api.key
 stage_secret SULLA_ANTHROPIC_API_KEY_FILE anthropic-api.key
 
