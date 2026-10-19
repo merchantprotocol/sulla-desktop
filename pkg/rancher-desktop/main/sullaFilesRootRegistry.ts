@@ -22,10 +22,10 @@ export interface StoredSullaFilesRoot {
   exclusions: string[];
 }
 
-export interface SullaFilesRootView extends StoredSullaFilesRoot, Partial<SullaFilesRootStatus> {
+export type SullaFilesRootView = StoredSullaFilesRoot & Partial<SullaFilesRootStatus> & {
   activation: 'active' | 'pending-restart' | 'offline';
   removable:  boolean;
-}
+};
 
 function defaultRoot():StoredSullaFilesRoot {
   return { id: 'default', name: 'Sulla Files', path: resolveSullaFilesUserRoot().activePath, syncMode: 'server', paused: false, exclusions: [] };
