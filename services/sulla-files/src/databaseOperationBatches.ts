@@ -107,17 +107,19 @@ async function itemRows(client:pg.PoolClient, row:any, actor:FilesIdentity):Prom
 }
 async function view(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<DatabaseBatchReceipt> {
   const receipts = await itemRows(client, row, actor);
-  const native=(await client.query(`SELECT operation_id,state,plan->>'itemId' AS item_id,last_error FROM files_path_operations
-    WHERE plan->>'operationId'=$1 AND plan->>'version'='2' AND state NOT IN('completed','undone','rolled-back')`,[row.id])).rows;
+  const native=(await client.query(`SELECT operation_id,state,plan,plan->>'itemId' AS item_id,last_error FROM files_path_operations
+    WHERE plan->>'operationId'=$1 AND plan->>'version'='2'`,[row.id])).rows;
   const items:DatabaseBatchItemReceipt[] = row.request.items.map((item:DatabaseBatchItem) => {
     const stored = receipts.find(r => r.idempotency_key === row.item_keys[item.itemId]);
-    const pending=native.find(n=>n.item_id===item.itemId && (n.last_error || stored));
+    const nativeRow=native.find(n=>n.item_id===item.itemId);
+    const pending=nativeRow && (!['completed','undone','rolled-back'].includes(nativeRow.state)||nativeRow.last_error) ? nativeRow : null;
     const error = pending ? {status:409,code:'recovery-required',message:'Native artifacts require reconciliation before retry or undo'} : row.errors[item.itemId] ?? null;
     const state:DatabaseItemState = stored?.state ?? (error?.code==='recovery-required'?'failed':row.cancelled ? 'cancelled' : error ? 'failed' : 'pending');
+    const invalidated=Boolean(stored?.folder_plan?.lifecycle?.disposal?.undoInvalidatedAt || nativeRow?.plan?.disposal?.undoInvalidatedAt);
     return { itemId: item.itemId, action: item.action, state, receiptId: stored?.id ?? null,
       before: stored?.before_state ?? null, after: stored?.after_state ?? null,
       ...(stored?.displaced_before ? { displacedBefore: stored.displaced_before, displacedAfter: stored.displaced_after } : {}),
-      error, undoSupported: state === 'completed', retryable: ['pending','failed','cancelled'].includes(state) };
+      error, undoSupported: state === 'completed' && !invalidated, retryable: ['pending','failed','cancelled'].includes(state) };
   });
   const state:DatabaseBatchState = items.some(i=>i.error?.code==='recovery-required')?(items.some(i=>i.state==='completed' || i.state==='undone')?'partial':'failed'):items.some(i => i.state === 'pending') ? 'pending'
     : items.every(i => i.state === 'undone' || i.state === 'skipped') && items.some(i => i.state === 'undone') ? 'undone'

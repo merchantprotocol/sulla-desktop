@@ -90,22 +90,63 @@ that needs rename preserves its journal/artifacts and reports failure until the
 helper is restored. Helper disappearance or unsupported renameat2 after preflight
 still requires recovery; availability is not a runtime durability certification.
 
-### Full14 continuation — not implemented by this slice
+### Trash Restore and receipt disposal continuation
 
-- Native Trash Restore: `POST /v1/trash/:id/restore` in `app.ts` calls
-  `databaseOperations.restoreTrashedFile`, which is metadata-only for stored
-  files. Native roots now explicitly reject with HTTP422
-  `native-trash-restore-unsupported`; batch Undo is not a substitute for Trash
-  Restore. Implement authorized tombstone-to-journal lookup, inverse plan and
-  atomic restored version/watched-row receipt before enabling native Restore.
-- `GET /v1/trash` returns files only; explicit empty-folder tombstones are absent.
-  Add typed folder tombstones and folder Restore with subtree authorization/CAS.
-- `documentLifecycle.ts` DELETE `/v1/trash/:id/purge` and retention/disposal logic
-  do not consult native retained artifacts or receipt undo eligibility. Native
-  artifacts are not automatically deleted by this PR, but metadata purge can
-  invalidate Undo. Before enabling integrated disposal, define receipt expiry,
-  active-journal holds, ownership-verified artifact GC and synchronized purge;
-  audit `LocalFilesManager` remote purge application as well.
+`GET /v1/trash?collectionId=UUID` returns typed file and explicit-folder
+tombstones. Every row has `kind`, its real database `id`, canonical `path`, the
+decimal `operation_revision` as `revision`, and `currentTombstone`. A file
+tombstone identifies the exact current deleted version and, when applicable, its
+receipt/batch. A folder tombstone identifies the exact folder Trash receipt; an
+empty folder never receives a fake file identity. `currentTombstone.undo` is
+`available`, `invalidated`, `recovery-required`, or `unavailable`, and includes
+the configured expiry when the collection has `retention_policy.trashDays`.
+
+`POST /v1/trash/:id/restore` accepts the displayed `kind`, `expectedRevision`,
+and `currentTombstone`. Native files require the displayed receipt. Folders
+always require it. Restore locks and reauthorizes the exact current tombstone,
+receipt, full folder subtree, watched rows, permissions, versions and revisions.
+It applies only that receipt's inverse through `files_path_operations`; it never
+invokes batch Undo or changes sibling batch items. Empty folders use the same
+guarded inverse with zero file children. Metadata, history pointer, watched state,
+receipt state and `undo-db-committed` phase commit together. A crash before that
+commit rolls the inverse publication back; a lost commit acknowledgement is
+resolved by `LocalFilesManager.recoverPathOperations` against the recorded inode,
+hash, metadata and watched snapshots.
+
+Trash receipts store an expiry derived only from configured `trashDays`; no
+fallback duration is invented. Local maintenance invalidates expired receipt
+Undo only when no affected file has active retention/record lock. Invalidation is
+durable in the receipt and native path plan before artifact GC starts. GC unlinks
+only exact recorded file fingerprints after hash verification and removes only
+exact recorded empty-directory inodes. Unknown replacements, non-empty folders,
+unavailable roots and active/recovery journals are preserved and reported.
+
+`DELETE /v1/trash/:id/purge` accepts `kind`, the displayed `expectedRevision`
+and `currentTombstone`, plus `invalidateUndo:true` when a current receipt remains
+available. For `kind:'folder'`, `:id` is the real `file_folders.id` and
+`currentTombstone` is the exact receipt returned by the listing. The service
+locks and compares every receipt-recorded file/folder identity, path, revision
+and current file tombstone, including the zero-file case; it invalidates only
+that folder receipt and its child Trash receipts. Active retention, record
+locks, links, unknown subtree changes, or path-journal recovery block metadata
+disposal. Explicit invalidation and exact subtree metadata purge commit together;
+exact retained-artifact and chunk GC follow. Full completion returns
+`status:'purged'`, `kind`, the disposed `id`/`path`/`revision`,
+`currentTombstone:null`, and the receipt state. Incomplete cleanup returns HTTP
+202 `status:'recovery-required'`, `metadataPurged:true`, and truthful
+`chunks`/`retainedArtifacts` states; it never claims preserved bytes were purged.
+Remote purge uses `files_path_operations` as its sole recovery authority. It
+durably records the exact collection/file/version/revision, watched hash,
+fingerprint, source and private stage before moving bytes. The metadata deletion
+transaction changes that same intent to `db-committed`; startup restores the
+verified stage for any earlier state and permits GC only after the committed
+state is corroborated by the exact purge tombstone and absence of live file/path
+metadata. The final directory entry is identity-checked again while the verified
+file remains pinned. A crash at any boundary therefore leaves either a guarded
+rollback or a committed, discoverable GC stage; raw recursive deletion and a
+parallel audit cleanup queue are not used.
+
+### Full14 continuation — separate open scope
 - Folder Replace: extend `folderOperationBatches.ts` to snapshot/authorize both
   complete trees, displace the target tree to a visible recovery sibling, then
   publish incoming leaves in one journal. Preserve both identities/grants/history,

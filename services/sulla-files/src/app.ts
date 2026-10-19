@@ -8,6 +8,7 @@ import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
+import { purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
@@ -316,7 +317,8 @@ export function createApp(
     }
     await client.query('COMMIT');
     await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
-    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length });
+    const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
+    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => { try { if (!search) return response.status(503).json({ error: 'search unavailable' }); response.json(await search.search(request.body, await searchableScopes(db, identityDb, identity(request)))) } catch (error) { next(error) } });
@@ -889,10 +891,71 @@ export function createApp(
     await trashFileWithoutReceipt(db, request.params.id, identity(request), operationAccess(request));
     response.status(204).end();
   } catch (error) { next(error) } });
-  app.get('/v1/trash', async(request:RequestWithIdentity, response, next) => { try { const collectionId = String(request.query.collectionId ?? ''); await requireCollection(request, collectionId, 'view', true, true); const rows = await db.query(`SELECT * FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, [collectionId]); const allowed = []; for (const file of rows.rows) { try { const authorized = await requireFile(request, file.id, 'view'); const role = await fileRole(request, authorized); const draftVisible = canViewDraft(role, identity(request), authorized); allowed.push({ ...lifecycleFields(authorized), capabilities: lifecycleCapabilities(role, draftVisible) }) } catch { /* filtered */ } } response.json(allowed) } catch (error) { next(error) } });
-  app.post('/v1/trash/:id/restore', async(request:RequestWithIdentity, response, next) => { try {
-    response.json(await restoreTrashedFile(db, request.params.id, identity(request), operationAccess(request), request.body?.expectedVersionId));
+  app.get('/v1/trash', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId=String(request.query.collectionId??''); const access=await requireCollection(request,collectionId,'view',true,true);
+    const files=await db.query(`SELECT * FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`,[collectionId]);
+    const allowed:any[]=[];
+    const undoState=(receipt:any,pathOperation:any) => {
+      const lifecycle=receipt?.folder_plan?.lifecycle??{}; const disposal=pathOperation?.plan?.disposal??lifecycle.disposal??{};
+      const state=disposal.undoInvalidatedAt?'invalidated':pathOperation && (!['completed','undone','rolled-back'].includes(pathOperation.state)||pathOperation.last_error)?'recovery-required':receipt?'available':'unavailable';
+      return {state,...(lifecycle.expiresAt?{expiresAt:lifecycle.expiresAt}:{})};
+    };
+    for (const file of files.rows) { try {
+      const authorized=await requireFile(request,file.id,'view'); const role=await fileRole(request,authorized); const draftVisible=canViewDraft(role,identity(request),authorized);
+      const receipt=(await db.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash' AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1`,[file.id,file.current_version_id])).rows[0];
+      const pathOperation=receipt?(await db.query('SELECT state,plan,last_error FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0]:null;
+      allowed.push({ ...lifecycleFields(authorized),kind:'file',id:authorized.id,path:authorized.path,revision:String(authorized.operation_revision),
+        currentTombstone:{kind:'version',id:authorized.current_version_id,...(receipt?{receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{})}:{}),undo:undoState(receipt,pathOperation)},
+        capabilities:lifecycleCapabilities(role,draftVisible) });
+    } catch { /* inaccessible tombstones are filtered */ } }
+    const folders=await db.query(`SELECT * FROM file_folders f WHERE f.collection_id=$1 AND f.deleted_at IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM file_folders p WHERE p.collection_id=f.collection_id AND p.deleted_at IS NOT NULL AND p.id<>f.id AND starts_with(f.path,p.path||'/')) ORDER BY f.deleted_at DESC,f.path`,[collectionId]);
+    for (const folder of folders.rows) { try {
+      await requirePath(request,collectionId,folder.path,'view');
+      const role=[access.role,...access.paths.filter(grant=>folder.path===grant.folderPath||folder.path.startsWith(`${grant.folderPath}/`)).map(grant=>grant.role)]
+        .filter(Boolean).sort((left,right)=>ROLE_LEVEL[right!]-ROLE_LEVEL[left!])[0];
+      const receipt=(await db.query(`SELECT * FROM files_database_operation_receipts r WHERE r.collection_id=$1 AND r.action='trash' AND r.state='completed'
+        AND r.folder_plan->>'source'=$2 AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.folder_plan->'folders') item WHERE item->'after'->>'folderId'=$3 AND item->'after'->>'revision'=$4)
+        ORDER BY r.created_at DESC LIMIT 1`,[collectionId,folder.path,folder.id,String(folder.operation_revision)])).rows[0];
+      if (!receipt) continue;
+      const pathOperation=(await db.query('SELECT state,plan,last_error FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0];
+      allowed.push({kind:'folder',id:folder.id,path:folder.path,revision:String(folder.operation_revision),deleted_at:folder.deleted_at,
+        currentTombstone:{kind:'receipt',id:receipt.id,receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{}),undo:undoState(receipt,pathOperation)},
+        capabilities:lifecycleCapabilities(role,false)});
+    } catch { /* inaccessible tombstones are filtered */ } }
+    response.json(allowed);
   } catch (error) { next(error) } });
+  app.post('/v1/trash/:id/restore', async(request:RequestWithIdentity, response, next) => { try {
+    const kind=request.body?.kind??'file'; const tombstone=request.body?.currentTombstone;
+    const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
+    if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
+    if (kind==='folder' && receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
+    if (kind==='folder') {
+      response.json(await restoreTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request)));
+      return;
+    }
+    if (kind!=='file') throw new HttpError(400,'kind must be file or folder');
+    response.json(await restoreTrashedFile(db,request.params.id,identity(request),operationAccess(request),{
+      expectedVersionId:String(tombstone?.id??request.body?.expectedVersionId??'')||undefined,
+      expectedRevision:request.body?.expectedRevision===undefined?undefined:String(request.body.expectedRevision),
+      receiptId,
+    }));
+  } catch (error) { next(error) } });
+  app.delete('/v1/trash/:id/purge', async(request:RequestWithIdentity,response,next) => {
+    if (request.body?.kind!=='folder') return next();
+    try {
+      const tombstone=request.body?.currentTombstone;
+      const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
+      if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
+      if (receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
+      const result=await purgeTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request),{
+        invalidateUndo:request.body?.invalidateUndo===true,
+        ...(manager?{dispose:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
+        drainChunks:()=>drainPendingChunkGc(db,(collectionId,chunkId)=>store.delete(collectionId,chunkId)),
+      });
+      response.status(result.status==='recovery-required'?202:200).json(result);
+    } catch(error) { next(error) }
+  });
   app.post('/v1/files/:id/restore', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const file = await requireFile(request, request.params.id, 'edit'); const actor = identity(request); const authorized = await visibleVersion(request, file, String(request.body.versionId ?? '')); const source = (await db.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [authorized, file.id])).rows[0]; if (!source) throw new HttpError(404, 'version not found'); await client.query('BEGIN'); const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,version_comment,version_kind,publication_status,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,'user',$6,'Restored version',$7,'minor','draft',$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.manifest_hash, source.size, actor.userId, request.body.comment ?? 'Restored as a new version', actor.deviceId || 'server-web'])).rows[0]; await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]); await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW() WHERE id=$1', [file.id, version.id, source.size]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]); await client.query('COMMIT'); await audit(request, 'version-restore', { ...file, current_version_id: version.id }); response.json({ ok: true, versionId: version.id }) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
   async function managedFile(request:RequestWithIdentity, fileId:string):Promise<{ file:any; access:any }> {
@@ -989,7 +1052,10 @@ export function createApp(
       FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId]);
     response.json({ count: result.rowCount ?? result.rows.length });
   } catch (error) { next(error) } });
-  registerDocumentLifecycleRoutes(app, db, { identity, requireFile, role: fileRole, audit, deleteChunk: (collectionId, chunkId) => store.delete(collectionId, chunkId) });
+  registerDocumentLifecycleRoutes(app, db, { identity, requireFile, role: fileRole, audit,
+    deleteChunk:(collectionId,chunkId)=>store.delete(collectionId,chunkId),
+    ...(manager?{disposeTrashReceipt:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
+  });
   app.use('/v1/original-reveal', (error:any,_request:any,response:any,_next:any) => {
     const status=typeof error.status==='number'?error.status:409;
     response.setHeader('Cache-Control','no-store');

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, readdir, realpath, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { FileHandle } from 'node:fs/promises';
@@ -155,7 +155,7 @@ export class FilesMutationCoordinator {
             await verify(restored);
             await restored.assertUnchanged();
           } finally { await restored.close() }
-          await this.unlinkPinned(receipt.quarantine);
+          await this.unlinkPinned(receipt.quarantine,receipt.fingerprint);
           return;
         }
         await this.ensureParent(receipt.source);
@@ -164,7 +164,7 @@ export class FilesMutationCoordinator {
         try {
           if (!sameIdentity(restored.fingerprint, receipt.fingerprint)) throw new Error('Restored source identity does not match eviction receipt');
         } finally { await restored.close() }
-        await this.unlinkPinned(receipt.quarantine);
+        await this.unlinkPinned(receipt.quarantine,receipt.fingerprint);
       } finally { await quarantine.close() }
     });
   }
@@ -319,7 +319,31 @@ export class FilesMutationCoordinator {
       try {
         if (!sameIdentity(pinned.fingerprint, receipt.fingerprint)) throw new Error('Private staged identity changed before cleanup');
       } finally { await pinned.close() }
-      await this.unlinkPinned(staged);
+      await this.unlinkPinned(staged,receipt.fingerprint);
+    });
+  }
+
+  /** Dispose one proven retained file. Unknown replacements are never unlinked. */
+  async disposeRetainedFile(path:string,expected:FileFingerprint,verify:Verify):Promise<void> {
+    await this.runExclusive([path],async()=>{
+      const pinned=await this.pinVerified(path,verify);
+      try {
+        if (!sameFingerprint(pinned.fingerprint,expected)) throw new Error('Retained file identity changed; preserved');
+        await this.unlinkPinned(path,pinned.fingerprint);
+      } finally { await pinned.close() }
+    });
+  }
+
+  /** Dispose one proven empty retained directory without recursive deletion. */
+  async disposeRetainedDirectory(expected:DirectoryReceipt):Promise<void> {
+    await this.runExclusive([expected.path],async()=>{
+      const actual=await this.directory(expected.path);
+      if (actual.dev!==expected.dev || actual.ino!==expected.ino) throw new Error('Retained directory identity changed; preserved');
+      const parent=await this.pinParent(expected.path);
+      try {
+        if ((await readdir(parent.child)).length) throw new Error('Retained directory acquired unknown children; preserved');
+        await rmdir(parent.child); await parent.handle.sync();
+      } finally { await parent.handle.close() }
     });
   }
 
@@ -438,9 +462,15 @@ export class FilesMutationCoordinator {
     } finally { await Promise.all([from.handle.close(),to.handle.close()]) }
   }
 
-  private async unlinkPinned(path:string):Promise<void> {
+  private async unlinkPinned(path:string,expected?:FileFingerprint):Promise<void> {
     const parent = await this.pinParent(path);
-    try { await unlink(parent.child); await parent.handle.sync() } finally { await parent.handle.close() }
+    try {
+      if (expected) {
+        const entry=fingerprint(await lstat(parent.child,{bigint:true}));
+        if (!sameFingerprint(entry,expected)) throw new Error('Directory entry identity changed before cleanup; replacement was preserved');
+      }
+      await unlink(parent.child); await parent.handle.sync();
+    } finally { await parent.handle.close() }
   }
 
   private absolute(path:string):string { return resolve(this.root, this.clean(path)) }
