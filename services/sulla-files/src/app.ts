@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 
 import { resolveFilesUiSession } from './accountsAuth.js';
+import { healthPayload } from './health.js';
 import { requireOrganizationScope, prepareCollectionMembership, resolveCollectionGrants, ROLE_LEVEL, searchableScopes, type CollectionMembership } from './acl.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
@@ -327,10 +328,7 @@ export function createApp(
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json({
-    ok: true, mode: config.mode, locked: !ready(), legacyImport: config.legacyPreflight,
-    lifecycle: filesLifecycle?.status(),
-  }));
+  app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status())));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
