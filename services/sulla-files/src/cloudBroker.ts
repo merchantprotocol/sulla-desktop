@@ -44,12 +44,13 @@ export class FilesCloudBroker {
 
   async execute(path:string, method = 'GET', body?:unknown, contentType?:string):Promise<BrokerResponse> {
     const { accountId, principal } = await this.account();
+    const operation = path === '/shares' || path.startsWith('/shares/') ? 'sulla-cloud.shares' : 'sulla-cloud.api';
     const binary = body instanceof Uint8Array;
     const requestBody = binary ? Buffer.from(body).toString('base64') : body;
     const result = await this.request<{ status:number; body:unknown }>('/v1/broker/execute', {
       method: 'POST', body: JSON.stringify({
         claims: { v: 1, iss: 'sulla-files', aud: 'sulla-tools', sub: principal, agent_id: 'sulla-files', pod_id: 'sulla-files', credential_scope: { integration_id: 'sulla-cloud', account_id: accountId } },
-        operation: 'sulla-cloud.api', ref: { integrationId: 'sulla-cloud', accountId }, url: `${ this.config.cloudUrl }${ path }`, method, headers: { accept: 'application/json', ...(contentType ? { 'content-type': contentType } : {}) },
+        operation, ref: { integrationId: 'sulla-cloud', accountId }, url: `${ this.config.cloudUrl }${ path }`, method, headers: { accept: 'application/json', ...(contentType ? { 'content-type': contentType } : {}) },
         ...(requestBody === undefined ? {} : { body: binary ? requestBody : requestBody, ...(binary ? { bodyEncoding: 'base64' } : {}) }),
         injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }], responseType: 'json',
       }),
