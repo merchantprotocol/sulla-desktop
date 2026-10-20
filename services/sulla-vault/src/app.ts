@@ -20,6 +20,7 @@ import {
   initializeAccountsOnboarding,
 } from './accountsOnboarding.js';
 import { LocalVaultAuthority, LocalVaultError } from './localAuthority.js';
+import { FilesAuditEmitter } from './filesAudit.js';
 import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
@@ -220,6 +221,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
   const app = express();
   const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
   const filesKeyBundleAuthority = localAuthority ? new VaultFilesKeyBundleAuthority(db, localAuthority) : null;
+  const filesAudit = new FilesAuditEmitter(config);
   app.disable('x-powered-by');
   app.use((request, response, next) => {
     const origin = request.header('origin');
@@ -1724,6 +1726,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       [actorId, request.body.deviceId ?? null, orgId, collectionId,
         itemId, action, podId, sanitizedAuditMetadata(request.body.metadata), blocked, reason],
     );
+    if (itemId) filesAudit.emit({ subjectKind: 'vault-secret', subjectId: itemId, action, actor: actorId, result: blocked ? 'blocked' : 'allowed' });
     if (blocked) { response.status(403).json({ error: 'agent_blocked', reason, auditId: result.rows[0].id }); return; }
     response.status(201).json(result.rows[0]);
   });

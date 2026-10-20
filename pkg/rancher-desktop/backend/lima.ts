@@ -3469,13 +3469,17 @@ start_pre() {
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
           SULLA_VAULT_BROKER_TOKEN: vaultIdentities.brokerToken,
           SULLA_VAULT_FILES_TOKEN: vaultIdentities.filesToken,
+          SULLA_FILES_API_URL: 'https://sulla_files:8792',
+          SULLA_VAULT_AUDIT_SPOOL_DIR: '/var/lib/sulla-vault',
+          SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
+          NODE_EXTRA_CA_CERTS: '/run/sulla-files-ca/tls.crt',
           SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
         ports: ['127.0.0.1:30135:8787'],
-        volumes: [vaultTlsBind()],
+        volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
@@ -3803,6 +3807,7 @@ start_pre() {
     }
 
     compose.volumes ??= {};
+    compose.volumes['sulla-vault-data'] ??= {};
     compose.volumes['sulla-files-data'] ??= {};
     compose.volumes['sulla-files-folder'] ??= {};
 
