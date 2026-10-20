@@ -134,8 +134,8 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
-  availableCollections?: { id:string; name:string; treePath?:string }[];
+  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'training-data' | 'sulla' | null; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string };
+  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'training-data' | 'sulla' | null }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   trash?: FilesTrashItem[];
@@ -279,6 +279,7 @@ export interface FilesOperationReceipt {
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
 export interface FilesDetail {
+  access?: { role?:string; inherited:{ id:string; folder_path:string; principal_type:SharePrincipalType; principal_id:string; role:'view' | 'edit' }[] };
   item?: FilesItem;
   capabilities?: FilesItemCapabilities;
   provenance: { type:string; id:string };
@@ -286,7 +287,6 @@ export interface FilesDetail {
   recording?: { version_id:string; language?:string; transcript:RecordingSegment[]; chapters:RecordingChapter[]; duration_seconds?:number; generator?:string; generated_at?:string };
   links: { id:string; path:string; mime:string; kind:'links_to' | 'created_by' | 'derived_from'; direction:'incoming' | 'outgoing'; createdAt:string }[];
   activity: { id:string; who_type:string; who_id:string; device_or_run_id?:string; action:string; at:string; details?:Record<string, unknown> }[];
-  access: { role?:string; inherited:{ id:string; folder_path:string; principal_type:SharePrincipalType; principal_id:string; role:'view' | 'edit' }[] };
 }
 
 export interface FilesCapabilities {
@@ -294,8 +294,6 @@ export interface FilesCapabilities {
   versionHistory: boolean;
   restoreVersions: boolean;
   trash: boolean;
-  orgSharing: boolean;
-  publicLinks: boolean;
   onlineOnly: boolean;
   keepOnComputer?: boolean;
   authenticatedRemote?: boolean;
@@ -309,8 +307,7 @@ export interface FilesCapabilities {
   crossCollectionOperations?: FilesCrossCollectionCapability;
 }
 
-export type ShareAccessMode = 'view' | 'download';
-export type ShareAssetKind = 'file' | 'capture' | 'artifact';
+// Compatibility types for the service adapter; no explorer sharing operations.
 export type SharePrincipalType = 'user' | 'group';
 
 export interface SharePrincipal {
@@ -355,46 +352,6 @@ export interface FileAccessList {
   ownerId?: string;
   direct: FileShare[];
   inherited: InheritedFileShare[];
-}
-
-export interface ShareLinkOptions {
-  mode: ShareAccessMode;
-  password?: string;
-  expiresAt?: string | null;
-  displaySharerName: boolean;
-  keepAvailable: boolean;
-  keepUntil?: string | null;
-  assetKind?: ShareAssetKind;
-  captureMetadata?: Record<string, unknown>;
-}
-
-export interface ShareLink {
-  id: string;
-  url: string;
-  name: string;
-  mode: ShareAccessMode;
-  password: boolean;
-  expiresAt?: string;
-  viewCount: number;
-  lastViewedAt?: string;
-  keepAvailable: boolean;
-  keepUntil?: string;
-  displaySharerName: boolean;
-  servedFrom: 'desktop' | 'server' | 'cloud';
-  assetKind: ShareAssetKind;
-  source?: string;
-  targetId?: string;
-  targetType?: 'file' | 'capture' | 'artifact';
-  collectionId?: string;
-  revokedAt?: string;
-  createdAt?: string;
-}
-
-export interface ShareActivity {
-  id: string;
-  action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked';
-  occurredAt: string;
-  detail?: string;
 }
 
 export interface FilesDataSource {
@@ -454,20 +411,6 @@ export interface FilesDataSource {
   purgeTrash?(fileId:string): Promise<void>;
   purgeTrashItem?(item:FilesTrashItem): Promise<FilesTrashPurgeResult>;
   trashFile(fileId:string): Promise<void>;
-  createPublicLink?(fileId:string, options:ShareLinkOptions):Promise<ShareLink>;
-  updatePublicLink?(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink>;
-  listPublicLinks?():Promise<ShareLink[]>;
-  revokePublicLink?(id:string):Promise<void>;
-  restorePublicLink?(id:string, password?:string):Promise<ShareLink>;
-  shareActivity?(id?:string):Promise<ShareActivity[]>;
-  listFolderShares?(collectionId:string):Promise<FolderShare[]>;
-  shareFolder?(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare>;
-  unshareFolder?(share:FolderShare):Promise<void>;
-  listFileShares?(fileId:string):Promise<FileAccessList>;
-  shareFile?(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare>;
-  updateFileShare?(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare>;
-  unshareFile?(fileId:string, shareId:string):Promise<void>;
-  listMembers?(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }>;
   keepOnMac?(fileId:string):Promise<void>;
   makeOnlineOnly?(fileId:string):Promise<void>;
   residencyStatus?(fileId:string):Promise<{ desiredState:'local' | 'online-only'; state:string; lastError:string | null }>;
