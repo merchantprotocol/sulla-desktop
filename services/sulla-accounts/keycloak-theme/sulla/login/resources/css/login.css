@@ -203,10 +203,7 @@ label {
 }
 
 .pf-v5-c-form-control,
-.pf-c-form-control,
-input[type="text"],
-input[type="email"],
-input[type="password"] {
+.pf-c-form-control {
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--sulla-line) !important;
@@ -216,12 +213,49 @@ input[type="password"] {
   box-shadow: none !important;
 }
 
-.pf-v5-c-form-control:focus,
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+  border: 0 !important;
+}
+
+.pf-v5-c-form-control > input[type="text"],
+.pf-v5-c-form-control > input[type="email"],
+.pf-v5-c-form-control > input[type="password"] {
+  width: 100%;
+  min-height: 40px;
+  border: 0 !important;
+  border-radius: inherit !important;
+  background: transparent !important;
+  color: var(--sulla-ink) !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+}
+
+.pf-v5-c-form-control:focus-within,
 .pf-c-form-control:focus,
-input:focus {
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus {
   border-color: var(--sulla-accent-bright) !important;
   box-shadow: 0 0 0 3px rgba(80, 150, 179, .13) !important;
   outline: 0;
+}
+
+.pf-v5-c-form-control > input:focus {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#kc-form-login .pf-v5-c-button.pf-m-control,
+#kc-form-login .pf-v5-c-button.pf-m-control::before,
+#kc-form-login .pf-v5-c-button.pf-m-control::after {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#kc-form-login .pf-v5-c-button.pf-m-control:focus {
+  outline: 2px solid var(--sulla-accent-bright);
+  outline-offset: 2px;
 }
 
 #kc-form-buttons {
