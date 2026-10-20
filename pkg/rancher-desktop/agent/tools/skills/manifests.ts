@@ -33,7 +33,7 @@ export const skillsToolManifests: ToolManifest[] = [
   },
   {
     name:        'skill_save',
-    description: 'Create or update a skill in the database from SKILL.md text: a YAML frontmatter block (slug, title, tags, triggers, ...) followed by the markdown body. Optionally pass files (relative path -> text) to store extra files such as templates/ or scripts/. Saving over a built-in or imported skill marks it as edited, so app updates and folder imports never overwrite it. Saving a deleted slug restores it.',
+    description: 'Create or update a skill as a draft in Files from SKILL.md text: a YAML frontmatter block (slug, title, tags, triggers, ...) followed by the markdown body. Optionally pass files (relative path -> text) to store extra files such as templates/ or scripts/. The draft is invisible to runtime until a human approves files_request_publish; only published Files versions are active.',
     category:    'skills',
     schemaDef:   {
       markdown: { type: 'string', description: 'The full SKILL.md text, starting with the --- frontmatter block.' },

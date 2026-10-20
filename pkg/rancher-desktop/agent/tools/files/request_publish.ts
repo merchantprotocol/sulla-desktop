@@ -33,6 +33,19 @@ export class FilesRequestPublishWorker extends FilesTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     if (!input.file_id || !input.version_id) throw new Error('file_id and version_id are required');
+    const draft = await this.containerJson<{ file?: { path?: string }; content_base64?: string }>(`/v1/agent-files/${ encodeURIComponent(input.file_id) }?versionId=${ encodeURIComponent(input.version_id) }`, input);
+    const path = draft.file?.path ?? `file ${ input.file_id }`;
+    const match = /^Sulla\/Use Cases\/(agents|skills|workflows|functions|recipes)\/([^/]+)/.exec(path);
+    let label = path;
+    if (match) {
+      let version = 'draft';
+      try {
+        const text = Buffer.from(draft.content_base64 ?? '', 'base64').toString('utf8');
+        const parsed = path.endsWith('.yaml') || path.endsWith('.yml') ? (await import('yaml')).parse(text) : path.endsWith('.json') ? JSON.parse(text) : {};
+        version = String(parsed?.version ?? parsed?.metadata?.version ?? 'draft');
+      } catch { /* title remains useful without parsing untrusted draft content */ }
+      label = `Activate ${ match[1].slice(0, -1) } '${ match[2] }' v${ version }`;
+    }
     const request = await this.containerJson<{ id?: string; requestId?: string }>(`/v1/files/${ encodeURIComponent(input.file_id) }/versions/${ encodeURIComponent(input.version_id) }/publish-request`, input, {
       method: 'POST',
       body: JSON.stringify({ reason: input.reason }),
@@ -42,7 +55,7 @@ export class FilesRequestPublishWorker extends FilesTool {
     const metadata = (this.state as any)?.metadata ?? {};
     const { record } = await decisionService.request({
       kind: 'approval',
-      title: `Publish file version ${ input.version_id }?`,
+      title: `${ label }?`,
       toolName: 'files_request_publish',
       conversationId: metadata.threadId || '',
       channel: metadata.wsChannel || 'sulla-desktop',
