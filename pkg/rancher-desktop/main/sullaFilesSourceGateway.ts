@@ -79,6 +79,12 @@ export class SullaFilesSourceGateway {
     return `http://host.lima.internal:${ this.port }`;
   }
 
+  /** URL for a job container on the isolated, hostname-routed agent network. */
+  get containerUrl():string {
+    if (!this.port) throw new Error('Files source gateway is not running');
+    return `http://sulla-host-relay:30124/_sulla/${ this.port }`;
+  }
+
   get loopbackUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
     return `http://${ BIND_HOST }:${ this.port }`;

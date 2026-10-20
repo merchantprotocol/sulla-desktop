@@ -61,6 +61,10 @@ const RENEW_MS = 5 * 60_000;
 const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
 const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
+const AGENT_NETWORK = 'sulla-agents';
+const HOST_RELAY_NAME = 'sulla-host-relay';
+const HOST_RELAY_PORT = 30124;
+const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
@@ -167,13 +171,51 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
   }
 }
 
-/** Docker containers need the Lima guest's host aliases explicitly; Docker's
- * host-gateway points at the Docker bridge, not the Lima host service address. */
-async function containerHostAliases(): Promise<string[]> {
-  const output = await limactl(['sh', '-c', 'getent ahostsv4 host.lima.internal | awk \'NR == 1 { print $1 }\'']);
-  const address = output.stdout.trim().split(/\s+/)[0];
-  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) throw new Error('Could not resolve the Lima host address for agent containers');
-  return ['host.lima.internal', 'host.docker.internal', 'host.rancher-desktop.internal'].map(host => `${ host }:${ address }`);
+/** Rewrite a Desktop URL through the hostname-only agent relay. */
+export function agentContainerRelayUrl(value: string): string {
+  const target = new URL(value);
+  if (!target.port) throw new Error(`Desktop relay URL has no port: ${ value }`);
+  return `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ target.port }${ target.pathname }${ target.search }`;
+}
+
+/**
+ * The named Docker endpoint only bridges TCP to a Unix socket.  The process
+ * that resolves and reaches host.lima.internal runs in the Lima VM, keeping
+ * host IP addresses and host networking out of every container invocation.
+ */
+async function ensureHostRelay(image: string): Promise<void> {
+  const vmRelay = String.raw`import os,socket,threading
+p='${ HOST_RELAY_SOCKET }'
+os.makedirs(os.path.dirname(p),exist_ok=True)
+try: os.unlink(p)
+except FileNotFoundError: pass
+s=socket.socket(socket.AF_UNIX);s.bind(p);os.chmod(p,0o666);s.listen(64)
+def copy(a,b):
+ try:
+  while True:
+   d=a.recv(65536)
+   if not d: break
+   b.sendall(d)
+ except OSError: pass
+ try: b.shutdown(socket.SHUT_WR)
+ except OSError: pass
+def serve(c):
+ try:
+  line=b''
+  while not line.endswith(b'\n') and len(line)<16: line+=c.recv(1)
+  port=int(line.strip());u=socket.create_connection(('host.lima.internal',port),5)
+  threading.Thread(target=copy,args=(c,u),daemon=True).start();copy(u,c)
+ except Exception: c.close()
+while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
+  const bridge = String.raw`const n=require('net');n.createServer(c=>{let b=Buffer.alloc(0),done=false;c.on('data',d=>{if(done)return;b=Buffer.concat([b,d]);const i=b.indexOf('\r\n\r\n');if(i<0)return;const m=b.toString('latin1',0,i).match(/^(\S+)\s+\/_sulla\/(\d+)(\/[^\s]*)\s+(HTTP\/\d\.\d)/);if(!m){c.destroy();return}done=true;const u=n.connect('${ HOST_RELAY_SOCKET }',()=>{u.write(m[2]+'\n');u.write(Buffer.from(b.toString('latin1').replace(m[0],m[1]+' '+m[3]+' '+m[4]),'latin1'))});u.on('data',x=>c.write(x));u.on('end',()=>c.end());u.on('error',()=>c.destroy());c.on('data',x=>u.write(x));c.on('end',()=>u.end())})}).listen(${ HOST_RELAY_PORT },'0.0.0.0');`;
+  await limactl(['sh', '-c', 'test -S "$1" || { mkdir -p "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
+  await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
+  const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
+  if (!exists) {
+    await limactl(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
+      '--network', AGENT_NETWORK, '--volume', '/run/sulla-host-relay:/run/sulla-host-relay',
+      '--entrypoint', 'node', image, '-e', bridge]);
+  }
 }
 
 let imageReady: Promise<string> | null = null;
@@ -511,7 +553,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     if (existing) return existing;
     const created = (async() => {
       if (!/^[a-zA-Z0-9._-]+$/.test(sessionId)) throw new Error('Container tool session id is invalid');
-      const mcpUrl = getMCPServerHost().getVmReachableUrl();
+      const mcpUrl = agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl());
       const target = `/run/secrets/sulla-agent/mcp-${ sessionId }.json`;
       const payload = JSON.stringify({
         mcpServers: {
@@ -552,6 +594,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     throw new Error(`Provider "${ run.provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
   }
   const image = await ensureAgentImage();
+  await ensureHostRelay(image);
   const runtime = new LimaDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
@@ -641,19 +684,19 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         SULLA_AGENT_MODEL:    run.model ?? '',
       },
       binds,
-      network:     'sulla_default',
-      extraHosts: await containerHostAliases(),
+      network:     AGENT_NETWORK,
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
       tmpfs:       { '/home/sulla': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700` },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
+    await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
     await runtime.start(containerId);
-    const mcpUrl = new URL(getMCPServerHost().getVmReachableUrl());
+    const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
     await limactl([
       'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
-      `${ mcpUrl.origin }/healthz`,
+      `${ mcpUrl.origin }${ mcpUrl.pathname.replace(/\/mcp$/, '/healthz') }`,
     ]).catch(error => {
       throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
     });
@@ -737,7 +780,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           accountId,
           authMode,
           models:         run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
-          advertisedHost: mcpUrl.hostname,
+          advertisedHost:   mcpUrl.hostname,
+          advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
           signal:         lifecycleAbort.signal,
           authorize:      async() => {
             const context = bridgeContext();
@@ -852,6 +896,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
   const image = await ensureAgentImage();
+  await ensureHostRelay(image);
   const runtime = new LimaDockerRuntimeDriver();
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
@@ -920,13 +965,14 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       stdinOpen:   true,
       env:         configuration.env,
       binds,
-      network:     'sulla_default',
+      network:     AGENT_NETWORK,
       workingDir:  workspacePath,
       user:        `${ identity.uid }:${ identity.gid }`,
       tmpfs:       { '/home/sulla': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700` },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
+    await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
       subject,

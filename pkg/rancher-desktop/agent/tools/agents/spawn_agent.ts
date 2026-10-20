@@ -203,7 +203,11 @@ export class SpawnAgentWorker extends BaseTool {
           return { successBoolean: false, responseString: 'A tab launch must come from an active chat thread.' };
         }
         const { resolveRoutableAgent } = await import('../../services/ChatAgentRouting');
-        const routable = await resolveRoutableAgent(selector || 'sulla');
+        // Preserve inherited persona unless a model-only launch explicitly asks
+        // for the built-in Sulla persona with that override.
+        const inheritedSelector = (this.state as any)?.metadata?.routedAgentSourceId ||
+          (this.state as any)?.metadata?.agentId || parentChannel;
+        const routable = await resolveRoutableAgent(selector || (tasks[i].model ? 'sulla' : inheritedSelector));
         if (!routable) {
           await this.rejectTasks([tasks[i]], `unknown agent "${ selector ?? '' }"`);
           return {

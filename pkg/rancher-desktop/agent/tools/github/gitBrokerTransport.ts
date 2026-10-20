@@ -148,7 +148,10 @@ export async function withGitHubBrokerRemote<T>(
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('github.git broker did not bind a TCP port');
   try {
-    return await run(`http://host.lima.internal:${ address.port }${ scopedPath }`);
+    const base = ctx.pod_id
+      ? `http://sulla-host-relay:30124/_sulla/${ address.port }`
+      : `http://host.lima.internal:${ address.port }`;
+    return await run(`${ base }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
