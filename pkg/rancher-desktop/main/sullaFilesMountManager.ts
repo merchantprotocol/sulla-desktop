@@ -1,3 +1,4 @@
+import { traceAsync, traceEvent } from '@pkg/utils/startupTrace';
 import { EventEmitter } from 'node:events';
 
 import type { VMExecutor } from '@pkg/backend/backend';
@@ -107,7 +108,8 @@ export class SullaFilesMountManager extends EventEmitter {
     this.cancelRetry();
     const lifecycle = this.lifecycle;
 
-    await this.serialize(() => this.attempt(lifecycle));
+    traceEvent(`mount start requested (lifecycle ${ lifecycle })`);
+    await traceAsync('mount start (queued+attempt)', () => this.serialize(() => this.attempt(lifecycle)));
   }
 
   /**
@@ -116,7 +118,10 @@ export class SullaFilesMountManager extends EventEmitter {
    * preparation or start never stays failed for the session.
    */
   private async attempt(lifecycle:number):Promise<void> {
-    if (lifecycle !== this.lifecycle || !this.wanted || this.statusValue.ready) return;
+    if (lifecycle !== this.lifecycle || !this.wanted || this.statusValue.ready) {
+      traceEvent(`mount attempt skipped (lifecycle ${ lifecycle }/${ this.lifecycle }, wanted ${ this.wanted }, ready ${ this.statusValue.ready })`);
+      return;
+    }
     const provider = this.credentialProvider;
 
     try {
@@ -156,9 +161,11 @@ export class SullaFilesMountManager extends EventEmitter {
     }
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      this.serialize(() => this.attempt(lifecycle)).catch(() => undefined);
+      traceEvent(`mount retry timer fired (timer lifecycle ${ lifecycle }, current ${ this.lifecycle }, wanted ${ this.wanted })`);
+      traceAsync('mount retry attempt', () => this.serialize(() => this.attempt(lifecycle))).catch(() => undefined);
     }, delay);
     this.retryTimer.unref?.();
+    traceEvent(`mount retry scheduled in ${ Math.round(delay / 1000) }s`);
   }
 
   private cancelRetry():void {
@@ -173,15 +180,15 @@ export class SullaFilesMountManager extends EventEmitter {
     const credentialGeneration = ++this.credentialGeneration;
     this.publish('starting');
     try {
-      await executor.execCommand({ root: true }, 'install', '-d', '-m', '0700', RUNTIME_ROOT);
+      await traceAsync('mount: install runtime root', () => executor.execCommand({ root: true }, 'install', '-d', '-m', '0700', RUNTIME_ROOT));
       // Recover a stale adapter/mount before admitting a fresh generation.
-      await this.stopGuest();
-      if (await this.mountState(executor) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
-      await this.refreshCredentials(credentialGeneration);
-      await executor.execCommand(
+      await traceAsync('mount: stop stale guest', () => this.stopGuest());
+      if (await traceAsync('mount: classify anchor', () => this.mountState(executor)) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
+      await traceAsync('mount: refresh credentials', () => this.refreshCredentials(credentialGeneration));
+      await traceAsync('mount: compose up adapter', () => executor.execCommand(
         { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
-      );
+      ));
       for (let attempt = 0; attempt < 20; attempt++) {
         if (await this.isAdapterMounted(executor)) {
           // Prove adapter health with a real Files-backed directory read.
