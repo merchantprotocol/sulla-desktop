@@ -90,6 +90,7 @@ services:
     restart: "no"
     depends_on:
       postgres: { condition: service_healthy }
+      postgres-init: { condition: service_completed_successfully }
     environment:
       PGPASSWORD: ${SULLA_POSTGRES_PASSWORD}
     command:
@@ -183,6 +184,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+      start_period: 10m
+      start_interval: 5s
   redis:
     image: redis:7.4.11-alpine
     restart: unless-stopped

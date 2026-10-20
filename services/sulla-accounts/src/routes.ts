@@ -149,8 +149,17 @@ async function freshRemoteMembership(
   return context;
 }
 
+// Organization roles are ranked: an owner or admin also holds member access.
+const ROLE_RANK = ['viewer', 'member', 'editor', 'admin', 'owner'];
+
+function holdsRole(held: string[], required: string): boolean {
+  const needed = ROLE_RANK.indexOf(required);
+  if (needed < 0) return held.includes(required);
+  return held.some(role => ROLE_RANK.indexOf(role) >= needed);
+}
+
 function requireRoles(context: MembershipContext, required: string[]): void {
-  if (required.some(role => !context.roles.includes(role))) throw new HttpError(403, 'required membership role is missing');
+  if (required.some(role => !holdsRole(context.roles, role))) throw new HttpError(403, 'required membership role is missing');
 }
 
 async function verifiedIdentity(token: string | undefined, authority: Authority, audience: string): Promise<{ issuer: string; subject: string }> {
@@ -596,7 +605,8 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
     if (!grant || !config.keycloakIssuer || !config.keycloakAuthorityId || !grant.issuers.has(config.keycloakIssuer) || !grant.allowedAudiences.has(audience) || !config.keycloakResourceAudiences.has(audience)) {
       throw new HttpError(403, 'service audience is not allowed');
     }
-    const membership = await currentMembership(db, config, await authorityById(db, config.keycloakAuthorityId), identity, organizationId);
+    const authority = await authorityById(db, config.keycloakAuthorityId);
+    const membership = await currentMembership(db, config, authority, identity, organizationId);
     if (!membership.roles.length) throw new HttpError(403, 'membership has no service role');
     const token = base64url();
     const expiresAt = new Date(Date.now() + 5 * 60_000);
@@ -604,7 +614,7 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       `INSERT INTO accounts.ui_sessions
          (id,token_digest,web_session_id,service_id,audience,issuer,subject,authority_id,organization_id,expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [randomUUID(), digest(token), identity.id, serviceId, audience, identity.issuer, identity.subject, config.keycloakAuthorityId, organizationId, expiresAt],
+      [randomUUID(), digest(token), identity.id, serviceId, audience, identity.issuer, identity.subject, authority.id, organizationId, expiresAt],
     );
     response.status(201).json({ token, expiresAt: expiresAt.toISOString(), service: serviceId, audience, organizationId });
   }));
@@ -1009,5 +1019,6 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     response.status(400).json({ error: 'invalid_request' });
     return;
   }
+  console.error('accounts request failed', error);
   response.status(500).json({ error: 'internal_error' });
 }
