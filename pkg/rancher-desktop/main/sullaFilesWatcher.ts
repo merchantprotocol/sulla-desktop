@@ -13,10 +13,8 @@ import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFil
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
 import {
-  resolveSullaConversationsDir,
   resolveSullaDocsDir,
   resolveSullaFunctionsDir,
-  resolveSullaLogsDir,
   resolveSullaUserAgentsDir,
   resolveSullaUserSkillsDir,
   resolveSullaUserWorkflowsDir,
@@ -32,6 +30,14 @@ import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
 const API = FILES_HTTPS_ORIGIN;
+/**
+ * System areas are read-only inputs that must never delay startup or the
+ * native-publication poll. The first scan starts this long after unlock and
+ * later scans run at most this often (file-change events request an earlier,
+ * still non-blocking, scan).
+ */
+const SYSTEM_SCAN_START_DELAY_MS = 45_000;
+const SYSTEM_SCAN_INTERVAL_MS = 5 * 60_000;
 const USE_CASE_SOURCES = [
   { type: 'skills', root: resolveSullaUserSkillsDir() },
   { type: 'workflows', root: resolveSullaUserWorkflowsDir() },
@@ -226,7 +232,9 @@ class SullaFilesWatcher {
         this.nativeBroker.resume();
         this.nativePolling = true;
       }
-      await this.scanSystemSources().catch(error=>console.warn('[SullaFiles] system native sources will retry:',error));
+      // Never gate unlock/startup on the system-area scan: schedule the first
+      // pass shortly after startup and let the poll start it in the background.
+      this.systemSourcesLastScan = Date.now() - SYSTEM_SCAN_INTERVAL_MS + SYSTEM_SCAN_START_DELAY_MS;
       // The Files service remains usable when the optional guest FUSE adapter
       // cannot start (for example, an older VM kernel lacks /dev/fuse). The
       // mount reports its own error state and can be retried on the next
@@ -251,8 +259,9 @@ class SullaFilesWatcher {
       const inventory=await inventoryResponse.json() as {fileId:string;versionId:string;collectionId:string;path:string;handle:string;sourceHash:string;state:string}[];
       const gateway=getSullaFilesSourceGateway();
       const sources = [
-        {area:'logs',root:resolveSullaLogsDir(),prefix:'app/',filter:(name:string) => true},
-        {area:'training-data',root:resolveSullaConversationsDir(),prefix:'',filter:(name:string) => name.endsWith('.jsonl')},
+        // The logs and training-data areas are intentionally NOT scanned here:
+        // registering ~19k run logs as two-way native sources saturated Postgres.
+        // They return later as plain read-only background ingest.
         {area:'sulla',root:resolveSullaDocsDir(),prefix:'Docs/',filter:(_name:string) => true},
         ...USE_CASE_SOURCES.map(source => ({
           area:   'sulla',
@@ -685,7 +694,9 @@ class SullaFilesWatcher {
   private async pollNativePublications():Promise<void> {
     if (!this.nativePolling || this.stopped) return;
     await this.nativeBroker.poll();
-    if (Date.now()-this.systemSourcesLastScan>15_000) await this.scanSystemSources();
+    if (Date.now() - this.systemSourcesLastScan > SYSTEM_SCAN_INTERVAL_MS) {
+      this.scanSystemSources().catch(error => console.warn('[SullaFiles] system native sources will retry:', error));
+    }
   }
 
   async folderForCollection(collectionId?:string):Promise<string> {
