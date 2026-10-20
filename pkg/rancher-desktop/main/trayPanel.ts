@@ -395,19 +395,24 @@ function registerPanelIpc(): void {
 
   ipcMain.handle('tray-panel:files-dashboard', async(event) => {
     requireTrayRenderer(event);
-    const [status, files, preferences] = await Promise.all([
-      getSullaFilesWatcher().status(),
-      getSullaFilesWatcher().recentFiles(4),
-      capturePreferences(),
+    // Each part loads independently with a deadline so one slow or failing
+    // source can't leave the whole panel stuck on "Loading…".
+    const within = <T>(promise:Promise<T>, ms = 8_000):Promise<T> => Promise.race([promise, new Promise<T>((_resolve, reject) => setTimeout(() => reject(new Error('timed out')), ms))]);
+    const [statusResult, filesResult, preferencesResult, sharesResult] = await Promise.allSettled([
+      within(getSullaFilesWatcher().status()),
+      within(getSullaFilesWatcher().recentFiles(4)),
+      within(capturePreferences()),
+      within(getSullaFilesLinkService().list()),
     ]);
-    let shares:any[] = []; let sharingUnavailable = false;
+    const status = statusResult.status === 'fulfilled' ? statusResult.value : { state: 'error', pendingFiles: 0, lastError: 'Could not check sync', serverConfigured: false, location: 'local' };
+    const files = filesResult.status === 'fulfilled' ? filesResult.value : [];
+    const preferences = preferencesResult.status === 'fulfilled' ? preferencesResult.value : {};
+    const shares = sharesResult.status === 'fulfilled' ? sharesResult.value : [];
+    const sharingUnavailable = sharesResult.status === 'rejected' && sharesResult.reason instanceof SharingUnavailableError;
+    const filesError = filesResult.status === 'rejected';
+    const sharesError = sharesResult.status === 'rejected' && !sharingUnavailable;
 
-    try { shares = await getSullaFilesLinkService().list() } catch (error) {
-      if (error instanceof SharingUnavailableError) sharingUnavailable = true;
-      else throw error;
-    }
-
-    return { status, files, preferences, shares, sharingUnavailable };
+    return { status, files, preferences, shares, sharingUnavailable, filesError, sharesError };
   });
 
   ipcMain.handle('tray-panel:capture-screenshot', async(event, mode:ScreenshotMode) => {

@@ -346,18 +346,37 @@ function updateCaptureNotes(preferences) {
   if (!filesRecording) document.getElementById('files-record-state').textContent = record;
 }
 
+let filesRefreshing = false;
 async function refreshFilesDashboard() {
+  if (filesRefreshing) return;
+  filesRefreshing = true;
   try {
     const dashboard = await ipcRenderer.invoke('tray-panel:files-dashboard');
     const files = dashboard.files || [];
-    updateFilesSync(dashboard.status, files); renderRecentFiles(files); renderRecentShares(dashboard.shares || [], dashboard.sharingUnavailable);
+    updateFilesSync(dashboard.status, files);
+    if (dashboard.filesError) document.getElementById('files-recent').innerHTML = '<div class="it empty">Recent files unavailable right now</div>';
+    else renderRecentFiles(files);
+    if (dashboard.sharesError) document.getElementById('files-shares').innerHTML = '<div class="it empty">Recent shares unavailable right now</div>';
+    else renderRecentShares(dashboard.shares || [], dashboard.sharingUnavailable);
     filesMic = dashboard.preferences.recordMic !== false; filesCam = dashboard.preferences.recordCamera === true;
     if (dashboard.preferences.visitorMode === 'download' || dashboard.preferences.visitorMode === 'view') selectUploadMode(dashboard.preferences.visitorMode);
     document.getElementById('files-mic').classList.toggle('on', filesMic); document.getElementById('files-cam').classList.toggle('on', filesCam);
     updateCaptureNotes(dashboard.preferences);
-  } catch (error) { showFilesToast(error.message || 'Files are temporarily unavailable', true) }
+  } catch (error) {
+    document.getElementById('files-recent').innerHTML = '<div class="it empty">Recent files unavailable right now</div>';
+    document.getElementById('files-shares').innerHTML = '<div class="it empty">Recent shares unavailable right now</div>';
+    document.getElementById('files-sync-detail').textContent = 'Could not check sync';
+    showFilesToast(error.message || 'Files are temporarily unavailable', true);
+  }
+  filesRefreshing = false;
   sendPanelSize();
 }
+
+// Files is the default view: load it now and keep it fresh while the panel is open.
+selectPanel('files');
+document.addEventListener('visibilitychange', () => { if (!document.hidden && document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); });
+window.addEventListener('focus', () => { if (document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); });
+setInterval(() => { if (!document.hidden && document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); }, 10_000);
 
 function selectUploadMode(mode) {
   filesUploadMode = mode;
