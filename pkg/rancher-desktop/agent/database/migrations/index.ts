@@ -115,6 +115,7 @@ import { up as up_0125, down as down_0125 } from './0125_retire_archived_workflo
 import { up as up_0126, down as down_0126 } from './0126_settle_abandoned_workflow_launches';
 import { up as up_0127, down as down_0127 } from './0127_create_conversation_messages';
 import { up as up_0128, down as down_0128 } from './0128_conversation_message_kinds';
+import { up as up_0129, down as down_0129 } from './0129_drop_system_area_native_sources';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -231,4 +232,5 @@ export const migrationsRegistry = [
   { name: '0126_settle_abandoned_workflow_launches', up: up_0126, down: down_0126 },
   { name: '0127_create_conversation_messages', up: up_0127, down: down_0127 },
   { name: '0128_conversation_message_kinds', up: up_0128, down: down_0128 },
+  { name: '0129_drop_system_area_native_sources', up: up_0129, down: down_0129 },
 ] as const;
