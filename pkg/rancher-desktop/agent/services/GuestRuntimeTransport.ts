@@ -1,7 +1,6 @@
 import * as childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 import * as fs from 'node:fs';
-import os from 'node:os';
 import * as path from 'node:path';
 
 import paths from '@pkg/utils/paths';
@@ -268,11 +267,11 @@ async function pipeToGuest(
 }
 
 export async function seedGitWorktreeIntoGuest(source: string, jobKey: string): Promise<string> {
-  const expectedRoot = path.join(os.homedir(), 'Sites', 'worktrees');
+  const expectedRoot = '/mnt/worktrees';
   const resolved = fs.realpathSync(source);
   const allowedRoot = fs.realpathSync(expectedRoot);
   if ((!resolved.startsWith(`${ allowedRoot }${ path.sep }`) && resolved !== allowedRoot) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error('Container workspacePath must be an existing worktree under ~/Sites/worktrees');
+    throw new Error('Container workspacePath must be an existing worktree under /mnt/worktrees');
   }
   const git = (...args: string[]) => spawnCapture('git', ['-C', resolved, ...args]);
   const [top, commonGitDir, head, branch, remoteUrl, dirty] = await Promise.all([

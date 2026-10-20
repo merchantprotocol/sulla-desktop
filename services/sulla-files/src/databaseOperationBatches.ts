@@ -92,7 +92,7 @@ export function parseDatabaseBatch(value:any):DatabaseBatchRequest {
 }
 async function owner(client:pg.PoolClient, id:string, actor:FilesIdentity, lock=true):Promise<any> {
   if (!uuid.test(id)) throw fail(400, 'operationId must be a UUID');
-  const row = (await client.query('SELECT * FROM files_database_operation_batches WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3' + (lock ? ' FOR UPDATE' : ''), [id, actor.userId, scope(actor)])).rows[0];
+  const row = (await client.query('SELECT * FROM files_database_operation_batches WHERE id=$1' + (lock ? ' FOR UPDATE' : ''), [id])).rows[0];
   if (!row) throw fail(404, 'Operation not found');
   return row;
 }
@@ -122,7 +122,7 @@ async function authorize(client:pg.PoolClient, row:any, access:DatabaseOperation
   }
 }
 async function itemRows(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<any[]> {
-  return (await client.query('SELECT * FROM files_database_operation_receipts WHERE actor_user_id=$1 AND actor_scope=$2 AND idempotency_key=ANY($3::uuid[])', [actor.userId, scope(actor), Object.values(row.item_keys)])).rows;
+  return (await client.query('SELECT * FROM files_database_operation_receipts WHERE idempotency_key=ANY($1::uuid[])', [Object.values(row.item_keys)])).rows;
 }
 async function view(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<DatabaseBatchReceipt> {
   const receipts = await itemRows(client, row, actor);
@@ -191,7 +191,7 @@ export async function getDatabaseBatch(db:pg.Pool, id:string, actor:FilesIdentit
 }
 async function prepareBatch(db:pg.Pool,id:string,actor:FilesIdentity,access:DatabaseOperationAccess):Promise<void> {
   if (!uuid.test(id)) throw fail(400,'operationId must be a UUID');
-  const row = (await db.query('SELECT collection_id,request FROM files_database_operation_batches WHERE id=$1 AND actor_user_id=$2 AND actor_scope=$3',[id,actor.userId,scope(actor)])).rows[0];
+  const row = (await db.query('SELECT collection_id,request FROM files_database_operation_batches WHERE id=$1',[id])).rows[0];
   if (!row) throw fail(404,'Operation not found');
   await access.prepare?.(row.collection_id);
   for (const item of row.request.items) if (item.targetCollectionId) await access.prepare?.(item.targetCollectionId);

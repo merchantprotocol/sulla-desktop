@@ -19,7 +19,7 @@
       </div>
       <div v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="tree-roots" aria-label="File tree roots">
         <div class="grp">Folders</div>
-        <button v-for="collection in snapshot?.availableCollections" :key="collection.id" type="button"
+        <button v-for="collection in visibleCollections" :key="collection.id" type="button"
           :class="{ on: collection.id === snapshot?.collection.id }" :disabled="busy || loading"
           @click="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></button>
       </div>
@@ -43,7 +43,6 @@
         :class="{ warn: entry.warn }"
       >{{ entry.count }}</span></a>
       <template v-if="sharedFolders.length">
-        <div class="sep" />
         <div class="grp">
           Shared folders
         </div>
@@ -60,6 +59,11 @@
           v-html="icons.folderLine"
         /><span>{{ folder.split('/').at(-1) }}</span></a>
       </template>
+
+      <button class="more-system-areas" :aria-expanded="showSystemAreas" type="button" @click="toggleSystemAreas">
+        <span>{{ showSystemAreas ? 'Less' : 'More' }}</span>
+      </button>
+      <template v-if="showSystemAreas"><a v-for="collection in systemCollections" :key="collection.id" href="#" :class="{ on: collection.id === snapshot?.collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="collection.systemArea === 'logs' ? icons.doc : icons.code" /><span>{{ collection.name }}</span></a></template>
       <div class="sep" />
       <section
         class="favorites"
@@ -181,10 +185,10 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
-            v-if="dataSource.capabilities.upload || dataSource.capabilities.durableOperations"
+            v-if="!readOnlyArea && (dataSource.capabilities.upload || dataSource.capabilities.durableOperations)"
             class="btn"
             type="button"
-            :disabled="busy || loading || section !== 'files'"
+            :disabled="busy || loading || section !== 'files' || readOnlyArea"
             @click="newFolder"
           >
             <span
@@ -193,14 +197,14 @@
             /> New folder
           </button>
           <button
-            v-if="dataSource.createFile"
+            v-if="!readOnlyArea && dataSource.createFile"
             class="btn"
             type="button"
-            :disabled="busy || loading || section !== 'files'"
+            :disabled="busy || loading || section !== 'files' || readOnlyArea"
             @click="newFile"
           >New file</button>
           <button
-            v-if="dataSource.nativeSourceReady && dataSource.chooseNativeSource"
+            v-if="!readOnlyArea && dataSource.nativeSourceReady && dataSource.chooseNativeSource"
             class="btn"
             type="button"
             :disabled="busy"
@@ -209,7 +213,7 @@
           <button
             class="btn pri"
             type="button"
-            :disabled="busy || !dataSource.capabilities.upload"
+            :disabled="busy || readOnlyArea || !dataSource.capabilities.upload"
             @click="upload"
           >
             <span
@@ -225,7 +229,7 @@
       </div>
       <div v-else class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
         <div class="toolbar">
-          <div v-if="section === 'files'" class="history-controls">
+          <div v-if="section === 'files' && !readOnlyArea" class="history-controls">
             <button
               class="folder-up"
               type="button"
@@ -358,7 +362,7 @@
 
         <div class="selection-slot" :aria-hidden="!selectedEntries.length"><div v-show="selectedEntries.length" class="selection-bar">
           <b>{{ selectedEntries.length }} selected</b>
-          <template v-if="section !== 'trash'">
+          <template v-if="section !== 'trash' && !readOnlyArea">
             <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
             <button class="btn sm" type="button" :disabled="busy" @click="moveSelected">Move</button>
             <button class="btn sm" type="button" :disabled="busy" @click="copyToClipboard('copy')">Copy</button>
@@ -441,7 +445,7 @@
           />
           <strong>{{ emptyTitle }}</strong><p>{{ emptyCopy }}</p>
           <button
-            v-if="section === 'files'"
+            v-if="section === 'files' && !readOnlyArea"
             class="btn pri"
             type="button"
             @click="upload"
@@ -499,7 +503,7 @@
                   :key="entry.key"
                   class="row"
                   :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
-                  :draggable="section === 'files' && !busy && editingKey !== entry.key"
+                  :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
                   :data-entry-key="entry.key"
                   @pointerdown="prepareDragSnapshot(entry)"
                   @click="focusEntry(entry, $event)"
@@ -613,7 +617,7 @@
                         @click.stop="shareEntry(entry)"
                         v-html="icons.share"
                       /><button
-                        v-if="section !== 'trash'"
+                        v-if="section !== 'trash' && !readOnlyArea"
                         class="btn ico"
                         type="button"
                         :title="starred.has(entry.id) ? 'Unstar' : 'Star'"
@@ -648,7 +652,7 @@
             :key="entry.key"
             class="tile"
             :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
-            :draggable="section === 'files' && !busy && editingKey !== entry.key"
+            :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
             :data-entry-key="entry.key"
             @pointerdown="prepareDragSnapshot(entry)"
             @click="focusEntry(entry, $event)"
@@ -704,7 +708,7 @@
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button v-if="section !== 'trash' || !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
             <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
-            <template v-if="section !== 'trash'">
+            <template v-if="section !== 'trash' && !readOnlyArea">
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('rename')">Rename</button>
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('move')">Move</button>
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('copy')">Copy</button>
@@ -724,7 +728,7 @@
             <b>{{ pageTitle }}</b>
             <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
             <button role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFolder(); closeBackgroundActions()">New folder</button>
-            <button v-if="dataSource.createFile" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFile(); closeBackgroundActions()">New file</button>
+            <button v-if="!readOnlyArea && dataSource.createFile" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFile(); closeBackgroundActions()">New file</button>
             <button role="menuitem" type="button" @click="setSort('name'); closeBackgroundActions()">Sort by name</button>
             <button role="menuitem" type="button" @click="refresh(true); closeBackgroundActions()">Refresh</button>
           </div>
@@ -740,7 +744,7 @@
           /><div><b>{{ uploadHeading }}</b><small>{{ dropCopy }}</small></div><button
             class="btn"
             type="button"
-            :disabled="busy || !dataSource.capabilities.upload"
+            :disabled="busy || readOnlyArea || !dataSource.capabilities.upload"
             @click="upload"
           >
             Choose files
@@ -968,6 +972,11 @@ const folderFavorites = computed(() => {
       available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
     }));
 });
+const showSystemAreas = ref(localStorage.getItem('sulla:files:show-system-areas') === 'true');
+const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
+const systemCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea === 'logs' || collection.systemArea === 'training-data') ?? []);
+const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
+function toggleSystemAreas() { showSystemAreas.value = !showSystemAreas.value; localStorage.setItem('sulla:files:show-system-areas', String(showSystemAreas.value)); }
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1174,6 +1183,7 @@ async function refresh(silent = false, afterMutation = false) {
   finally { if (isCurrent()) loading.value = false }
 }
 async function runMutation(operation:() => Promise<void>, reload = true) {
+  if (readOnlyArea.value && reload) return false;
   if (busy.value || loading.value || error.value || !snapshot.value) return false;
   busy.value = true; refreshGeneration++; operationError.value = ''; stopPointerGesture?.();
   try { await operation(); return true }
@@ -1208,6 +1218,7 @@ async function onCollectionDrop(collectionId:string,event:DragEvent) {
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
 async function newFolder() {
+  if (readOnlyArea.value) return;
   if (busy.value || loading.value || section.value !== 'files' || (!props.dataSource.capabilities.upload && !operations.supported())) return;
   const name = window.prompt('Name this folder')?.trim(); if (!name) return;
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
@@ -1216,6 +1227,7 @@ async function newFolder() {
   else await runMutation(() => props.dataSource.createFolder(path));
 }
 async function newFile() {
+  if (readOnlyArea.value) return;
   if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.createFile) return;
   const name=window.prompt('Name this file','untitled.txt')?.trim(); if(!name) return;
   if(name.includes('/') || name==='.' || name==='..'){ operationError.value='Enter a file name without path separators.'; return }
@@ -1299,6 +1311,7 @@ function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && ev
 function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
 async function onDrop(event:DragEvent) {
+  if (readOnlyArea.value) { clearInternalDrag(); return }
   dragging.value = false;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
   if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
@@ -1351,6 +1364,7 @@ function beginDragPreparation(entries:DisplayEntry[],collectionId:string,anchorK
   return dragPreparation;
 }
 function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (readOnlyArea.value) { event.preventDefault(); return }
   if (section.value !== 'files' || busy.value || loading.value || !event.dataTransfer) { event.preventDefault(); return }
   const entries=dragEntriesFor(entry);
   const collectionId=snapshot.value?.collection.id;
@@ -1576,6 +1590,7 @@ function operationRequests(action:'move'|'copy',items:OperationItem[],collection
   });
 }
 async function perform(action:'move' | 'copy', items:OperationItem[], sourceCollectionId?:string, capturedSourceCapability?:FilesCrossCollectionCapability) {
+  if (readOnlyArea.value) return;
   if (busy.value || !snapshot.value || !items.length) return false;
   const destinationCollectionId = snapshot.value.collection.id;
   const destinationPath = currentPath.value;
@@ -1682,7 +1697,7 @@ async function recoverOperation() {
   await runMutation(async() => { if (request) await operations.submit(request); else if (receipt) await operations.resume(receipt.operationId) });
 }
 async function showOperation(operationId:string) { await runMutation(async() => { await operations.resume(operationId) }) }
-function beginRename(entry = selectedEntries.value[0]) { if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
+function beginRename(entry = selectedEntries.value[0]) { if (readOnlyArea.value) return; if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
 function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
 function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
 async function commitRename(entry:DisplayEntry) {
@@ -1696,6 +1711,7 @@ async function commitRename(entry:DisplayEntry) {
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
 async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
 async function copyToClipboard(mode:'copy' | 'cut') {
+  if (readOnlyArea.value && mode === 'cut') return;
   if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return;
   const collectionId=snapshot.value.collection.id; const entries=[...selectedEntries.value]; const sourceCapability=props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
   busy.value=true; operationError.value='';
@@ -1707,6 +1723,7 @@ async function pasteClipboard() { if (!snapshot.value || !canPaste.value || !cli
 function isCut(entry:DisplayEntry) { return clipboard.value?.mode === 'cut' && clipboard.value.collectionId === snapshot.value?.collection.id && clipboard.value.targets.some(target => target.key === entry.key) }
 async function downloadSelected() { const entries = selectedEntries.value.filter(entry => !entry.folder); if (!entries.length) return; await runMutation(async() => { const result = await props.dataSource.downloadFiles(entries.map(entry => ({ fileId: entry.id, name: entry.name, versionId: entry.currentVersionId }))); if (result.error) operationError.value = result.error }, false) }
 async function trashSelected() {
+  if (readOnlyArea.value) return;
   if (busy.value || section.value === 'trash' || !props.dataSource.capabilities.trash) return;
   if (operations.supported() && props.dataSource.capabilities.folderReceipts) {
     const items:FilesOperationItem[] = selectedEntries.value.map(entry => entry.folder ? {
@@ -2330,4 +2347,5 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
   .detail-panel { width: calc(100% - 64px); }
 }
 .details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}
+.more-system-areas{border:0;background:transparent;color:var(--muted);text-align:left;padding:6px 12px;font-size:11px;cursor:pointer}
 </style>

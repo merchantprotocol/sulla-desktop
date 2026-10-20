@@ -88,7 +88,7 @@
               <div v-if="detail?.links.length" class="section"><h4>Linked files</h4><div class="links"><button v-for="link in detail.links" :key="`${link.id}-${link.direction}`" type="button" @click="emit('open-linked', link.id)"><span class="file-glyph small" v-html="fileIcon(link.mime)" /><span>{{ link.path.split('/').at(-1) }}</span><small>{{ link.direction === 'incoming' ? 'links here' : link.kind.replaceAll('_', ' ') }}</small></button></div></div>
             </div>
             <div v-else-if="sideTab === 'Versions'" class="pane versions">
-              <div class="version-actions"><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('minor')">New minor version</button><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('major')">New major version</button></div><div v-for="(version, index) in versions" :key="version.id" class="version"><span class="version-number" :class="{ current: version.current }">{{ version.versionNumber || `v${ versions.length - index }` }}</span><div><b>{{ version.message || 'File updated' }}</b><small>{{ formatDate(version.created_at) }} · {{ version.created_by_id }} · {{ formatBytes(version.size) }}</small></div><span v-if="version.current" class="pill ok">Current</span><span v-if="version.publicationStatus === 'published'" class="pill published">Published</span><button v-if="canPublish && version.publicationStatus !== 'published' && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="publish(version.id)">Publish</button><button v-else-if="!version.current && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="restore(version.id)">Restore</button></div>
+              <div class="version-actions"><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('minor')">New minor version</button><button v-if="canCheckin" class="btn sm" type="button" :disabled="busy" @click="checkin('major')">New major version</button></div><div v-for="(version, index) in versions" :key="version.id" class="version"><span class="version-number" :class="{ current: version.current }">{{ version.versionNumber || `v${ versions.length - index }` }}</span><div><b>{{ version.message || 'File updated' }}</b><small>{{ formatDate(version.created_at) }} · {{ version.created_by_id }} · {{ formatBytes(version.size) }}</small></div><span v-if="version.current" class="pill ok">Current</span><span v-if="version.publicationStatus === 'published'" class="pill published">Published</span><button v-if="canPublish && version.publicationStatus !== 'published' && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="publish(version.id)">Publish</button><button v-else-if="!readOnlyArea && !version.current && !version.deleted" class="btn sm" type="button" :disabled="busy" @click="restore(version.id)">Restore</button></div>
               <p class="note">Restoring makes a new version. Nothing is overwritten.</p>
             </div>
             <div v-else-if="sideTab === 'Access'" class="pane">
@@ -126,8 +126,9 @@ const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs
 const name = computed(() => item.path.split('/').at(-1) || item.path); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
 const transcript = computed(() => detail.value?.recording?.transcript || []); const chapters = computed(() => detail.value?.recording?.chapters || []);
 const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => item.ownerDisplayName || props.collection.accountName || item.createdById || 'Unknown owner');
+const readOnlyArea = computed(() => props.collection.systemArea === 'logs' || props.collection.systemArea === 'training-data');
 const deniedPermissions = Object.freeze({ canEdit: false, canManage: false, canViewDraft: false, canPublish: false });
-const permissions = computed(() => detail.value?.capabilities ?? item.capabilities ?? deniedPermissions);
+const permissions = computed(() => readOnlyArea.value ? deniedPermissions : (detail.value?.capabilities ?? item.capabilities ?? deniedPermissions));
 const canPublish = computed(() => Boolean(props.dataSource.publishVersion && permissions.value.canPublish && item.publicationState));
 const canCheckout = computed(() => Boolean(props.dataSource.checkout && permissions.value.canEdit));
 const canCheckin = computed(() => Boolean(props.dataSource.checkin && permissions.value.canEdit && permissions.value.canViewDraft && item.versioning?.enabled));
@@ -290,6 +291,7 @@ async function refreshLifecycleState():Promise<void> {
   });
 }
 async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<boolean> {
+  if (readOnlyArea.value) return false;
   busy.value = true;
   error.value = '';
   try {

@@ -1,5 +1,16 @@
+import path from 'node:path';
+
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+
+const WORKTREE_ROOT = '/mnt/worktrees';
+
+function worktreeSlug(value: string): string {
+  return value
+    .replace(/^refs\/(?:heads|remotes\/[^/]+)\//, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'detached';
+}
 
 /**
  * Git Worktree Tool - Add, list, remove, or prune linked working trees.
@@ -17,7 +28,7 @@ export class GitWorktreeWorker extends BaseTool {
     const {
       absolutePath,
       action,
-      worktreePath = '',
+      worktreePath: requestedWorktreePath = '',
       branch = '',
       createBranch = false,
       commitish = '',
@@ -35,6 +46,9 @@ export class GitWorktreeWorker extends BaseTool {
         return { successBoolean: false, responseString: `Git error: ${ rootResult.stderr || rootResult.stdout }` };
       }
       const repoRoot = rootResult.stdout.trim();
+      const worktreePath = requestedWorktreePath || (action === 'add'
+        ? path.join(WORKTREE_ROOT, `${ path.basename(repoRoot) }-${ worktreeSlug(branch || commitish) }`)
+        : '');
 
       let cmd: string;
       switch (action) {
@@ -43,7 +57,7 @@ export class GitWorktreeWorker extends BaseTool {
         break;
       case 'add':
         if (!worktreePath) {
-          return { successBoolean: false, responseString: 'worktreePath is required for add.' };
+          return { successBoolean: false, responseString: 'Unable to derive the default worktree path.' };
         }
         if (createBranch) {
           // Create a NEW branch in the new worktree, optionally based on commitish.

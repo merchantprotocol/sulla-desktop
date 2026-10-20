@@ -2,6 +2,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import https from 'node:https';
 
+import { installAuditContext } from './auditContext.js';
+import { ensureSystemAreas } from './systemAreas.js';
 import { createApp } from './app.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
@@ -30,6 +32,7 @@ const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
 const db = await connect(config.databaseUrl); await migrate(db);
+installAuditContext(db);
 const processDiagnostics = new FilesStartupDiagnostics();
 if (config.mode === 'desktop') {
   await cleanupStaleUploads(db, new Store(config.chunkRoot)).catch(error => processDiagnostics.cleanupFailed(error));
@@ -80,6 +83,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
       const { principalId } = await vaultAuthority.unlockedPrincipal();
       await adoptVaultPrincipal(db, config, principalId);
     }
+    await ensureSystemAreas(db, config);
     if (manager) {
       reportStage('manager-initialization');
       await manager.initialize(async() => {
@@ -152,6 +156,8 @@ if (config.mode === 'server') {
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
 const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
+const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWriter.drain().catch((error:unknown)=>console.error('[SullaFiles] audit delivery failed; retry pending',error)) },1000);
+auditTimer.unref();
 const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
 if (config.mode === 'desktop' && !tlsEnabled) throw new Error('Files TLS identity is required in desktop mode');
 const server = tlsEnabled
@@ -165,6 +171,7 @@ function listening() {
 }
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
+    clearInterval(auditTimer);
     server.close(() => {
       lifecycle.lock().finally(() => {
         return Promise.all([db.end(), identityDb?.end()]).finally(() => process.exit(0));

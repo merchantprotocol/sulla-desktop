@@ -594,10 +594,10 @@ export class LocalFilesManager {
     }));
   }
 
-  async listNativeSources():Promise<{ fileId:string; versionId:string; path:string; handle:string; name:string; sourceRevision:string; sourceHash:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> {
-    const rows = await this.db.query(`SELECT n.file_id::text,f.current_version_id::text AS version_id,f.path,n.source_handle,n.display_name,n.source_revision,n.source_hash,n.state,n.last_error,n.recovery
+  async listNativeSources():Promise<{ fileId:string; versionId:string; collectionId:string; path:string; handle:string; name:string; sourceRevision:string; sourceHash:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> {
+    const rows = await this.db.query(`SELECT n.file_id::text,f.current_version_id::text AS version_id,f.collection_id,f.path,n.source_handle,n.display_name,n.source_revision,n.source_hash,n.state,n.last_error,n.recovery
       FROM files_native_sources n JOIN files f ON f.id=n.file_id ORDER BY n.created_at`);
-    return rows.rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, path: row.path, handle: row.source_handle, name: row.display_name,
+    return rows.rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, collectionId: row.collection_id, path: row.path, handle: row.source_handle, name: row.display_name,
       sourceRevision: row.source_revision, sourceHash: row.source_hash, state: row.state, lastError: row.last_error ?? undefined, recovery: row.recovery ?? {} }));
   }
 
@@ -698,14 +698,10 @@ export class LocalFilesManager {
   }
 
   /** Experimental Files mount view over watched roots and indexed native sources. */
-  async fuseSnapshot(collectionId:string, scope?:{ paths:string[]; fileIds:string[] }):Promise<FuseTrackedFile[]> {
+  async fuseSnapshot(collectionId:string):Promise<FuseTrackedFile[]> {
     const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
     if (root) await this.serial(() => this.scanRoot(root));
     const params:any[] = [collectionId, root?.id ?? null];
-    const scopeFilter = scope
-      ? ` AND (f.id::text=ANY($3::text[]) OR EXISTS (SELECT 1 FROM unnest($4::text[]) granted(path) WHERE f.path=granted.path OR starts_with(f.path, granted.path||'/')))`
-      : '';
-    if (scope) params.push(scope.fileIds, scope.paths);
     const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
       COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
       COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms
@@ -714,7 +710,7 @@ export class LocalFilesManager {
       LEFT JOIN files_native_conflicts c ON c.file_id=f.id
       LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
       WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND (n.file_id IS NOT NULL OR c.file_id IS NOT NULL OR ($2::text IS NOT NULL AND w.root_id=$2))
-        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)${ scopeFilter } ORDER BY f.path`, params);
+        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) ORDER BY f.path`, params);
     return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
       id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
       size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms),
@@ -885,10 +881,10 @@ export class LocalFilesManager {
 
   async recent(limit:number, exactPath?:string):Promise<any[]> {
     const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds,r.state AS residency_state
-      FROM files f JOIN collection_acl a ON a.collection_id=f.collection_id AND a.principal_type='user' AND a.principal_id=$1
+      FROM files f
       LEFT JOIN recording_metadata m ON m.file_id=f.id
       LEFT JOIN file_residency r ON r.file_id=f.id
-      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.deleted_at IS NULL AND ($2::text IS NULL OR f.path=$2) ORDER BY f.updated_at DESC LIMIT $3`, [this.config.userId, exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
+      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.deleted_at IS NULL AND ($1::text IS NULL OR f.path=$1) ORDER BY f.updated_at DESC LIMIT $2`, [exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
     const syncState = this.status().state;
     return result.rows.filter(row => !isProtectedPath(row.path)).map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: row.residency_state === 'online-only' ? 'online-only' : syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
   }
@@ -1038,7 +1034,6 @@ export class LocalFilesManager {
         if (action === 'move' && item.folder) {
           const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [collectionId, item.sourcePath]);
           for (const star of folderStars.rows) await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, collectionId, `${ item.targetPath }${ star.folder_path.slice(item.sourcePath.length) }`, star.folder_path]);
-          for (const table of ['folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [collectionId, item.sourcePath, item.targetPath]);
         }
       }
       if (action === 'copy') {
@@ -1251,7 +1246,6 @@ export class LocalFilesManager {
           VALUES($1,$2,$3,$4,'knowledge',$5,'{}','{}',$6)`, [id, this.config.orgId ?? null, this.config.userId, root.primary ? 'Files' : root.name, root.syncMode === 'server' && this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);
         const wrapped = await this.config.keyring!.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
-        await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, this.config.userId]);
       } else if (this.config.orgId) await client.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]);
       await client.query('COMMIT'); return existing.rows[0]?.id ?? id;
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -1298,7 +1292,7 @@ export class LocalFilesManager {
   private async scanRoot(root:FileRootConfig):Promise<void> {
     const collectionId = this.rootCollections.get(root.id)!;
     await this.db.query("UPDATE file_roots SET state='scanning',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
-    const patterns = await this.ignores(root); const scanned = await this.diskFiles(root, root.path, '', patterns); const diskSet = new Set(scanned.paths); const states = (await this.db.query<WatchedRow>(`SELECT w.*,a.role FROM watched_folder_state w JOIN collection_acl a ON a.collection_id=w.collection_id AND a.principal_type='user' AND a.principal_id=$1 LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$2 AND COALESCE(r.state,'local')<>'online-only'`, [this.config.userId, root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
+    const patterns = await this.ignores(root); const scanned = await this.diskFiles(root, root.path, '', patterns); const diskSet = new Set(scanned.paths); const states = (await this.db.query<WatchedRow>(`SELECT w.* FROM watched_folder_state w LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$1 AND COALESCE(r.state,'local')<>'online-only'`, [root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
     const reconciledStates = states.filter(row => !isProtectedPath(row.path) && !isSensitiveTrackedPath(row.path) && !matchIgnore(row.path, patterns));
     const missingRows = reconciledStates.filter(row => !diskSet.has(row.path));
     if (scanned.complete && reconciledStates.length > 0 && (scanned.paths.length === 0 || (missingRows.length >= 100 && missingRows.length / reconciledStates.length >= 0.8))) {
@@ -1310,7 +1304,7 @@ export class LocalFilesManager {
       try { const info = await stat(this.safe(filePath, root)); if (info.isFile()) diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) } catch (error:any) { scanned.complete = false; scanned.errors.push(`Could not inspect ${ filePath }: ${ error?.code ?? 'filesystem error' }`) }
     }
     const disk = [...diskInfo.keys()];
-    const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath)!; return current?.role !== 'view' && (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)) });
+    const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath)!; return (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)) });
     this.pendingFiles = changedPaths.length + missing.size; this.totalBytes = changedPaths.reduce((sum, filePath) => sum + diskInfo.get(filePath)!.size, 0); this.pendingBytes = this.totalBytes; this.processedBytes = 0; this.progressStartedAt = Date.now();
     await this.db.query("UPDATE files_runtime_state SET state='syncing',pending_files=$1,updated_at=NOW() WHERE id=TRUE", [this.pendingFiles]);
     await this.db.query("UPDATE file_roots SET state='scanning',pending_files=$2,updated_at=NOW() WHERE id=$1", [root.id, this.pendingFiles]);
@@ -1318,12 +1312,11 @@ export class LocalFilesManager {
     for (const filePath of disk) {
       const info = diskInfo.get(filePath)!; const old = states.find(row => row.path === filePath);
       if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue;
-      if (old?.role === 'view') continue;
       try { if (await this.ingest(root, collectionId, filePath, info.mtimeMs, old, missing)) changed++ } catch (error:any) { scanned.errors.push(`Could not import ${ filePath }: ${ error?.code ?? error?.message ?? 'filesystem error' }`) }
       this.processedBytes += info.size; this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes); this.pendingFiles = Math.max(0, this.pendingFiles - 1);
     }
     const currentStates = (await this.db.query<WatchedRow>('SELECT * FROM watched_folder_state WHERE root_id=$1', [root.id])).rows;
-    if (scanned.complete) for (const row of reconciledStates) if (!diskSet.has(row.path) && row.role !== 'view' && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
+    if (scanned.complete) for (const row of reconciledStates) if (!diskSet.has(row.path) && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
     this.pendingFiles = 0; this.pendingBytes = 0; this.processedBytes = this.totalBytes; this.lastScanAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
     const scanError = scanned.errors.length ? scanned.errors.slice(0, 5).join('; ').slice(0, 2000) : null;
     await this.db.query("UPDATE file_roots SET state=$2,pending_files=0,last_error=$3,last_scan_at=NOW(),updated_at=NOW() WHERE id=$1", [root.id, scanError
@@ -1394,18 +1387,15 @@ export class LocalFilesManager {
       await this.remote('/v1/collections', { method: 'POST', body: JSON.stringify({ collection }) });
     }
     const remoteCollections:any[] = await this.remote('/v1/collections');
-    for (const remote of remoteCollections) await this.config.keyring!.requireLegacySync(remote.id);
-    for (const remote of remoteCollections) {
+    for (const remote of remoteCollections.filter(remote=>!remote.systemArea)) await this.config.keyring!.requireLegacySync(remote.id);
+    for (const remote of remoteCollections.filter(remote=>!remote.systemArea)) {
       if (remote.id !== this.collectionId) {
         await this.db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy)
           VALUES($1,$2,$3,$4,$5,'synced',$6,$7,$8,$9)
           ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,org_id=EXCLUDED.org_id,updated_at=NOW()`, [remote.id, remote.org_id, remote.owner_user_id, remote.name, remote.kind, remote.encryption, remote.encrypted_data_key, remote.dedup_key_ciphertext, remote.retention_policy ?? {}]);
-        const role = remote.access_role ?? (remote.shared_folders?.some((folder:any) => folder.role === 'edit') ? 'edit' : 'view');
-        await this.db.query(`INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,$3)
-          ON CONFLICT(collection_id,principal_type,principal_id) DO UPDATE SET role=EXCLUDED.role`, [remote.id, this.config.userId, role]);
       }
       const localRoot = syncRoots.find(root => this.rootCollections.get(root.id) === remote.id);
-      await this.syncCollection(remote.id, Boolean(localRoot) || remote.access_role === 'edit' || remote.access_role === 'manage' || remote.shared_folders?.some((folder:any) => folder.role === 'edit'));
+      await this.syncCollection(remote.id, true);
     }
     this.pendingFiles = 0; this.lastSyncAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=TRUE");
     await this.db.query("UPDATE file_roots SET state='idle',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=ANY($1::text[])", [syncRoots.map(root => root.id)]);
@@ -1524,7 +1514,6 @@ export class LocalFilesManager {
           ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),purged_at=EXCLUDED.purged_at`,
         [collectionId, entry.file.id, existing?.path??entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
         await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [entry.file.id]);
-        await client.query('DELETE FROM file_share_links WHERE file_id=$1', [entry.file.id]);
         await client.query(`UPDATE files SET record_lock_type='none',retention_mode='none',retain_until=NULL,retention_event_type=NULL,retention_event_at=NULL,
           retention_duration_days=NULL,disposal_status='approved',draft_version_id=NULL,published_version_id=NULL,current_version_id=NULL,
           lifecycle_generation=GREATEST(lifecycle_generation,$2) WHERE id=$1`, [entry.file.id, entry.file.lifecycle_generation ?? 0]);

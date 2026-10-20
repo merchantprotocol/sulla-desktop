@@ -134,8 +134,8 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
-  availableCollections?: { id:string; name:string; treePath?:string }[];
+  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'training-data' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
+  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'training-data' | 'sulla' | null }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   trash?: FilesTrashItem[];

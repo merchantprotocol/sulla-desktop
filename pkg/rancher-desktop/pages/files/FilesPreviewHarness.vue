@@ -8,5 +8,5 @@ import { SyntheticFilesDataSource } from './SyntheticFilesDataSource';
 
 const dataSource = new SyntheticFilesDataSource();
 const query = new URLSearchParams(window.location.search || window.location.hash.split('?')[1] || '');
-const navigation = ref<{ section:string; fileId:string } | undefined>({ section: query.get('section') || 'detail', fileId: query.get('fileId') || 'synthetic-image' });
+const navigation = ref<{ section:string; fileId:string } | undefined>(query.has('fileId') ? { section: query.get('section') || 'detail', fileId: query.get('fileId')! } : undefined);
 </script>

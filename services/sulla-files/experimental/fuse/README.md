@@ -29,9 +29,9 @@ from the staged Lima configuration. Persisted mount arrays are replaced rather
 than deep-merged, Files runs stored-only on encrypted chunks/named volumes, and
 agent file tools use guest-owned homes/workspaces. Sulla/PostgreSQL application
 data remains outside this change and retains its pre-change storage behavior.
-The test-phase feature starts automatically. Every mount operation crosses the
-single allow-all hook in `src/fusePolicy.ts`, which is the insertion point for
-later per-agent/job grants.
+The Files mount starts automatically. Authenticated callers can operate on all
+non-system files. Logs and Training Data are structurally read-only; sensitive
+wallet/vault paths and protected files remain excluded.
 
 The exact staged host acceptance procedure is in
 [`MACOS_NATIVE_PROOF.md`](./MACOS_NATIVE_PROOF.md). It uses one disposable

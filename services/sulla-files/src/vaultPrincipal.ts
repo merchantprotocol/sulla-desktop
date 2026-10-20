@@ -19,18 +19,6 @@ export async function adoptVaultPrincipal(db:pg.Pool, config:Pick<Config, 'userI
     )).rowCount) throw new Error('Existing Files collections belong to another principal; secure migration is required');
     if (sentinelIds.length) {
       await client.query(
-        `INSERT INTO collection_acl(collection_id,principal_type,principal_id,role)
-         SELECT id,'user',$2,'manage' FROM collections WHERE id=ANY($1::uuid[])
-         ON CONFLICT(collection_id,principal_type,principal_id) DO UPDATE SET role='manage'`,
-        [sentinelIds, principalId],
-      );
-      await client.query(
-        `DELETE FROM collection_acl a USING collections c
-          WHERE a.collection_id=c.id AND c.id=ANY($1::uuid[])
-            AND a.principal_type='user' AND a.principal_id=c.owner_user_id`,
-        [sentinelIds],
-      );
-      await client.query(
         `UPDATE file_share_links links SET owner_user_id=$2
           WHERE links.owner_user_id=$3 AND (
             links.collection_id=ANY($1::uuid[])

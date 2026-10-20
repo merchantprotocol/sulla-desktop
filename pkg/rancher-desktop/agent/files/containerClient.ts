@@ -96,7 +96,7 @@ export async function filesContainerRequest(path:string, context:FilesCallerCont
   // secret explicitly; Desktop-local callers continue using the settings model.
   const servicePassword = process.env.SULLA_FILES_CAPABILITY_SECRET || await SullaSettingsModel.getServicePassword();
   // The Files service owns user identity. Never trust a caller-supplied subject
-  // for local ACL decisions, including tool contexts restored from old threads.
+  // for caller identification, including tool contexts restored from old threads.
   const sub = await localPrincipal(api, request, servicePassword);
   const token = issueCapabilityToken({ ...context, sub, scopes: ['files/*'], expiresInSeconds: 300 }, sullaFilesCapabilityKey(servicePassword));
   const headers = new Headers(init.headers); headers.set('authorization', `Bearer ${ token }`); if (init.body) headers.set('content-type', 'application/json');

@@ -320,7 +320,7 @@ export const githubToolManifests: ToolManifest[] = [
     schemaDef:   {
       absolutePath: { type: 'string', description: 'Absolute path to the git repository (or any path inside it)' },
       action:       { type: 'enum', enum: ['add', 'list', 'remove', 'prune'], description: 'Worktree operation to perform' },
-      worktreePath: { type: 'string', optional: true, description: 'Absolute path for the worktree directory (required for add/remove)' },
+      worktreePath: { type: 'string', optional: true, description: 'Absolute worktree directory. Add defaults to /mnt/worktrees/<repo>-<branch-slug>; remove requires an explicit path.' },
       branch:       { type: 'string', optional: true, description: 'Branch (or commit-ish) to check out in the new worktree (add). With createBranch=true, the new branch name to create.' },
       createBranch: { type: 'boolean', optional: true, description: 'If true, create a NEW branch named `branch` in the added worktree (git worktree add -b)' },
       commitish:    { type: 'string', optional: true, description: 'Base commit/ref for the new branch or detached worktree (add)' },

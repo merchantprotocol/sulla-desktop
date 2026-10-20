@@ -117,6 +117,17 @@ provision:
     mount --bind /mnt/data/root /root
     echo "[boot-perf] persist-root: ${t0}s -> $(T)s" >> "$LOG"
 
+    # --- Persist agent Git worktrees ---
+    # The VM root filesystem is tmpfs, so keep worktrees on the ext4 data disk
+    # and expose them at a short, stable path used by agent prompts and tools.
+    t0=$(T)
+    mkdir -p /mnt/data/worktrees /mnt/worktrees
+    chown "{{.User}}" /mnt/data/worktrees /mnt/worktrees
+    if ! mountpoint -q /mnt/worktrees; then
+      mount --bind /mnt/data/worktrees /mnt/worktrees
+    fi
+    echo "[boot-perf] persist-worktrees: ${t0}s -> $(T)s" >> "$LOG"
+
     # --- Docker certs.d symlink ---
     mkdir -p /etc/docker
     [ -L /etc/docker/certs.d ] && rm /etc/docker/certs.d
