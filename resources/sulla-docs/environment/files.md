@@ -8,6 +8,30 @@ The Files service owns collection keys, encrypted storage, file metadata and ver
 
 Native adapters may show file dialogs, capture media, watch explicitly configured host folders and open authorized downloads in native applications. They must not implement a second encrypted store, unwrap collection keys, or decide how to recover a failed Files startup. General development tools are separate from this managed file store.
 
+## File Manager tree and agent mount
+
+The File Manager namespace is the path authority. The Files FUSE adapter exposes
+that same namespace at `/mnt/sulla-files`: the default Files collection maps to
+the mount root, while existing non-default collections retain an additive,
+stable `collections.explorer_path` mapping. The mapping does not rewrite file,
+version, share, history, or native-source rows. A path such as
+`Clients/Acme/contract.pdf` in File Manager is therefore the same path at
+`/mnt/sulla-files/Clients/Acme/contract.pdf`; agents must not add a collection
+directory of their own.
+
+The mount supports reads, writes, empty-file creation, `mkdir`, file and folder
+rename/move (including authorized cross-collection moves), `unlink`, and empty
+`rmdir`. Mutations call the authenticated Files service. File/folder moves use
+the durable operation coordinator, tracked-host mutations keep native custody,
+and deletes enter Files history/Trash rather than bypassing it. Directory reads
+refresh from Files with zero attribute/entry cache timeout, so File Manager and
+mount changes converge on the next lookup.
+
+Paths are canonical relative POSIX paths. Absolute paths, empty components,
+`.`/`..`, backslashes, protected wallet/vault names, symlink traversal, and raw
+host paths are rejected. The Files bearer token remains mandatory between the
+FUSE adapter and service. Crypto-wallet data is never admitted to the tree.
+
 ## Desktop bootstrap
 
 The native bootstrap helper runs in an isolated process before the ordinary Desktop module graph loads. It unwraps OS-protected Files material and sends it directly to the authenticated Files service. The Desktop parent receives status only. The Files master and bootstrap identity are distinct from Vault secrets.

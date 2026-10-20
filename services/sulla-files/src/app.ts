@@ -488,14 +488,15 @@ export function createApp(
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     requireFusePolicy(request, 'list');
-    const collections = await db.query("SELECT id,name FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY name,id");
+    const collections = await db.query("SELECT id,name,explorer_path AS tree_path,is_default FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY explorer_path,id");
     const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
       f.current_version_id AS "versionId" FROM files f
       WHERE f.deleted_at IS NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
       ORDER BY f.collection_id,f.path`);
     const folders = await db.query('SELECT id,collection_id,path FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path');
     response.setHeader('Cache-Control', 'private, no-store');
-    response.json({ collections: collections.rows, files: files.rows, folders: folders.rows });
+    const root = collections.rows.find(row => row.tree_path === '') ?? collections.rows.find(row => row.is_default);
+    response.json({ rootCollectionId: root?.id ?? null, collections: collections.rows, files: files.rows, folders: folders.rows });
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect(); try {
@@ -510,15 +511,21 @@ export function createApp(
       await client.query('COMMIT'); response.status(201).json(file);
     } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
   });
-  app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
-    const file = await fileRow(request.params.id, client); const nextPath = cleanPath(request.body.path, false);
+  app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
+    const file = await fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
+    const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
     requireFusePolicy(request, 'rename', { collectionId:file.collection_id, fileId:file.id, path:nextPath });
-    await client.query('BEGIN'); await lockStoredNamespace(client, file.collection_id);
-    await assertStoredFilePath(client, file.collection_id, nextPath, file.id);
-    await ensureStoredFileParents(client, file.collection_id, nextPath, identity(request));
-    await client.query('UPDATE files SET path=$2,updated_at=NOW(),operation_revision=operation_revision+1 WHERE id=$1', [file.id,nextPath]);
-    await client.query('COMMIT'); response.json({ ...file,path:nextPath });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+    const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId:file.collection_id,items:[{
+      itemId:randomUUID(),action:targetCollectionId===file.collection_id?'rename':'move',fileId:file.id,
+      expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:nextPath,
+      ...(targetCollectionId===file.collection_id?{}:{targetCollectionId}),
+    }]});
+    const submitted=await submitDatabaseBatch(db,input,identity(request),operationAccess(request));
+    await runDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
+    const result=await getDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
+    if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Files move did not complete');
+    response.json(result.items[0]?.after);
+  } catch (error) { next(error) } });
   app.delete('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await fileRow(request.params.id); requireFusePolicy(request, 'delete', { collectionId:file.collection_id,fileId:file.id,path:file.path });
     await trashFileWithoutReceipt(db, file.id, identity(request), operationAccess(request)); response.status(204).end();
@@ -529,6 +536,22 @@ export function createApp(
     await client.query('BEGIN'); await lockStoredNamespace(client,collectionId); await ensureStoredFolder(client,collectionId,folderPath,actor);
     await client.query('COMMIT'); response.status(201).json({collectionId,path:folderPath});
   } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+  app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
+    const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
+    const targetCollectionId=String(request.body.targetCollectionId??collectionId); const targetPath=cleanPath(request.body.targetPath,false);
+    requireFusePolicy(request,'rename',{collectionId,path:folderPath});
+    const source=await folderOperationState(db,collectionId,folderPath,operationAccess(request));
+    const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId,items:[{
+      itemId:randomUUID(),kind:'folder',action:targetCollectionId===collectionId?'rename':'move',folderPath,
+      expectedFolder:source.folderId?source:undefined,sourceSubtreeSignature:source.subtreeSignature,targetPath,
+      ...(targetCollectionId===collectionId?{}:{targetCollectionId}),
+    }]});
+    const submitted=await submitDatabaseBatch(db,input,identity(request),operationAccess(request));
+    await runDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
+    const result=await getDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
+    if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Folder move did not complete');
+    response.json(result.items[0]?.after);
+  } catch(error){next(error)} });
   app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
     const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
     requireFusePolicy(request,'delete',{collectionId,path:folderPath}); await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
@@ -1147,6 +1170,16 @@ export function createApp(
     await client.query('COMMIT');
     response.status(201).json({ collectionId, path: folderPath });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+    const collectionId=String(request.body.collectionId??''); const filePath=cleanPath(request.body.path,false);
+    await requirePath(request,collectionId,filePath,'edit'); const actor=identity(request);
+    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
+    const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND path=$2
+      UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 LIMIT 1`,[collectionId,filePath]);
+    if(occupied.rowCount) throw new HttpError(409,'A file or folder already exists at that Files path.');
+    const file=await insertVersion(client,{collectionId,path:filePath,mime:'text/plain',bytes:Buffer.alloc(0),actor,message:'Created empty file'});
+    await client.query('COMMIT'); await audit(request,'create-empty-file',file); response.status(201).json(file);
+  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
   app.delete('/v1/folders', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const collectionId = String(request.query.collectionId ?? '');
     const folderPath = cleanPath(String(request.query.path ?? ''), false);
