@@ -4037,6 +4037,7 @@ start_pre() {
 
         for (let attempt = 1; attempt <= 3; attempt++) {
           for (const { service, container } of orderedOptionalServices) {
+            if (this.#activeOptionalSullaServices.has(service)) continue;
             try {
               await startOptionalService(service);
               await this.waitForDockerServiceHealthy(container, 20, generation);
