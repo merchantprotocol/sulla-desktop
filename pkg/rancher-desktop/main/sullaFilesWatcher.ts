@@ -333,18 +333,11 @@ class SullaFilesWatcher {
     return getSullaFilesMountManager().status();
   }
 
-  private async fuseMountCredentials():Promise<{ collectionId:string; token:string }> {
+  private async fuseMountCredentials():Promise<{ token:string }> {
     await this.requireAppUnlocked();
-    const [principalId, collectionResponse] = await Promise.all([
-      this.localPrincipalId(),
-      this.rawLocalRequest('/v1/local/native-sources/collection'),
-    ]);
-    if (!collectionResponse.ok) throw new Error('The native Files collection is unavailable');
-    const collection = await collectionResponse.json() as { collectionId?:unknown };
-    if (typeof collection.collectionId !== 'string') throw new Error('Files returned an invalid native collection');
+    const principalId = await this.localPrincipalId();
     return {
-      collectionId: collection.collectionId,
-      token: await this.capabilityToken(principalId, {}, ['files/fuse'], collection.collectionId),
+      token: await this.capabilityToken(principalId, {}, ['files/fuse']),
     };
   }
 

@@ -41,7 +41,7 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       },
       network:    config.dockerNetwork,
       autoRemove: true,
-      binds:      ['/var/run/docker.sock:/var/run/docker.sock'],
+      binds:      ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       tmpfs:      { '/run/sulla-workflows-private': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
     });
     return id;

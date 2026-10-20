@@ -12,6 +12,7 @@ import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperation
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { folderOperationState,purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
+import { authorizeFuseOperation, type FuseOperation } from './fusePolicy.js';
 import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
@@ -167,6 +168,12 @@ export function createApp(
     next();
   });
   const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
+  const requireFusePolicy = (request:RequestWithIdentity, operation:FuseOperation, resource:Parameters<typeof authorizeFuseOperation>[2] = {}) => {
+    const actor = identity(request);
+    if (actor.kind !== 'capability' || !actor.scopes?.includes('files/fuse')) throw new HttpError(403, 'Files mount capability required');
+    if (!authorizeFuseOperation(actor, operation, resource)) throw new HttpError(403, 'Files mount policy denied this operation');
+    return actor;
+  };
   const effectiveRight = (request:RequestWithIdentity, right:Right):Right => right === 'view' && (identity(request).agentId || identity(request).jobId) ? 'use-by-agents' : right;
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
@@ -182,6 +189,11 @@ export function createApp(
   }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, allowShared = false, allowExactFiles = false) {
     const actor = identity(request);
+    if (actor.kind === 'capability' && actor.scopes?.includes('files/fuse')) {
+      const operation:FuseOperation = right === 'view' ? 'list' : 'write';
+      if (!authorizeFuseOperation(actor, operation, { collectionId })) throw new HttpError(403, 'Files mount policy denied this operation');
+      return { role:'manage', paths:[], files:[], collection:await collectionRow(collectionId) };
+    }
     if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId);
@@ -194,6 +206,11 @@ export function createApp(
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right, queryable:pg.Pool | pg.PoolClient = db) {
     if (isProtectedPath(path)) throw protectedPathError();
     const actor = identity(request);
+    if (actor.kind === 'capability' && actor.scopes?.includes('files/fuse')) {
+      const operation:FuseOperation = right === 'view' ? 'read' : 'write';
+      if (!authorizeFuseOperation(actor, operation, { collectionId,path })) throw new HttpError(403, 'Files mount policy denied this operation');
+      return { role:'manage', paths:[], files:[], collection:await collectionRow(collectionId) };
+    }
     if (actor.collectionId && actor.collectionId !== collectionId) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, collectionId, queryable);
@@ -205,6 +222,11 @@ export function createApp(
   async function fileRow(fileId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> { const result = await queryable.query('SELECT * FROM files WHERE id=$1', [fileId]); if (!result.rows[0]) throw new HttpError(404, 'file not found'); await assertUnprotectedFile(queryable, result.rows[0]); return result.rows[0] }
   async function requireFile(request:RequestWithIdentity, fileId:string, right:Right, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
     const file = await fileRow(fileId, queryable); const actor = identity(request);
+    if (actor.kind === 'capability' && actor.scopes?.includes('files/fuse')) {
+      const operation:FuseOperation = right === 'view' ? 'read' : 'write';
+      if (!authorizeFuseOperation(actor, operation, { collectionId:file.collection_id,fileId,path:file.path })) throw new HttpError(403, 'Files mount policy denied this operation');
+      return file;
+    }
     if (actor.collectionId && actor.collectionId !== file.collection_id) throw new HttpError(403, 'capability is bound to another collection');
     right = effectiveRight(request, right);
     const access = await grants(request, file.collection_id, queryable);
@@ -462,9 +484,69 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-store');
     response.json(await requireFuseExperiment().fuseSnapshot(collectionId, scope));
   } catch (error) { next(error) } });
+  app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
+    requireFuseExperiment();
+    requireFusePolicy(request, 'list');
+    const collections = await db.query("SELECT id,name FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY name,id");
+    const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
+      f.current_version_id AS "versionId" FROM files f
+      WHERE f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+      ORDER BY f.collection_id,f.path`);
+    const folders = await db.query('SELECT id,collection_id,path FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.json({ collections: collections.rows, files: files.rows, folders: folders.rows });
+  } catch (error) { next(error) } });
+  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
+    const client = await db.connect(); try {
+      const collectionId = String(request.query.collectionId ?? '');
+      const filePath = cleanPath(String(request.query.path ?? ''), false);
+      const actor = requireFusePolicy(request, 'create', { collectionId, path: filePath });
+      await collectionRow(collectionId);
+      await client.query('BEGIN'); await lockStoredNamespace(client, collectionId);
+      const file = await insertVersion(client, { collectionId, path: filePath,
+        mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor,
+        createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
+      await client.query('COMMIT'); response.status(201).json(file);
+    } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+  });
+  app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+    const file = await fileRow(request.params.id, client); const nextPath = cleanPath(request.body.path, false);
+    requireFusePolicy(request, 'rename', { collectionId:file.collection_id, fileId:file.id, path:nextPath });
+    await client.query('BEGIN'); await lockStoredNamespace(client, file.collection_id);
+    await assertStoredFilePath(client, file.collection_id, nextPath, file.id);
+    await ensureStoredFileParents(client, file.collection_id, nextPath, identity(request));
+    await client.query('UPDATE files SET path=$2,updated_at=NOW(),operation_revision=operation_revision+1 WHERE id=$1', [file.id,nextPath]);
+    await client.query('COMMIT'); response.json({ ...file,path:nextPath });
+  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.delete('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
+    const file = await fileRow(request.params.id); requireFusePolicy(request, 'delete', { collectionId:file.collection_id,fileId:file.id,path:file.path });
+    await trashFileWithoutReceipt(db, file.id, identity(request), operationAccess(request)); response.status(204).end();
+  } catch (error) { next(error) } });
+  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
+    const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
+    const actor=requireFusePolicy(request,'create',{collectionId,path:folderPath}); await collectionRow(collectionId);
+    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId); await ensureStoredFolder(client,collectionId,folderPath,actor);
+    await client.query('COMMIT'); response.status(201).json({collectionId,path:folderPath});
+  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+    const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
+    requireFusePolicy(request,'delete',{collectionId,path:folderPath}); await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
+    const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
+    if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
+    await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
+    await client.query('COMMIT'); response.status(204).end();
+  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
-    await requireFile(request, request.params.id, 'view');
-    const content = await requireFuseExperiment().fuseRead(request.params.id);
+    const file = await requireFile(request, request.params.id, 'view');
+    const manager = requireFuseExperiment();
+    const backing = await db.query(`SELECT EXISTS(SELECT 1 FROM files_native_sources WHERE file_id=$1 AND state IN('active','conflict'))
+      OR EXISTS(SELECT 1 FROM files_native_conflicts WHERE file_id=$1)
+      OR EXISTS(SELECT 1 FROM watched_folder_state WHERE file_id=$1) AS backed`, [file.id]);
+    const content = backing.rows[0]?.backed
+      ? await manager.fuseRead(file.id)
+      : { file: { id:file.id,collectionId:file.collection_id,path:file.path,mime:file.mime,size:Number(file.size),
+        versionId:file.current_version_id,sourceHash:createHash('sha256').update(await manager.readStoredVersion(file.id,file.current_version_id)).digest('hex'),mtimeMs:Number(file.updated_at) },
+      bytes:await manager.readStoredVersion(file.id,file.current_version_id) };
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('ETag', `"${ content.file.versionId }"`);
     response.setHeader('X-Sulla-Source-Hash', content.file.sourceHash);
@@ -476,6 +558,22 @@ export function createApp(
     const sourceHash = request.header('x-sulla-source-hash');
     if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
     const manager = requireFuseExperiment();
+    const backing = await db.query(`SELECT EXISTS(SELECT 1 FROM files_native_sources WHERE file_id=$1 AND state IN('active','conflict'))
+      OR EXISTS(SELECT 1 FROM files_native_conflicts WHERE file_id=$1)
+      OR EXISTS(SELECT 1 FROM watched_folder_state WHERE file_id=$1) AS backed`, [file.id]);
+    if (!backing.rows[0]?.backed) {
+      const currentBytes = await manager.readStoredVersion(file.id,file.current_version_id);
+      const currentHash = createHash('sha256').update(currentBytes).digest('hex');
+      if (match !== file.current_version_id || sourceHash.toLowerCase() !== currentHash) throw new HttpError(409,'Files mount version changed');
+      const client=await db.connect(); try {
+        await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
+        const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,
+          bytes:Buffer.from(request.body as Buffer),actor:identity(request),message:'Updated through the Files mount',baseVersionId:file.current_version_id});
+        await client.query('COMMIT'); const nextHash=createHash('sha256').update(request.body as Buffer).digest('hex');
+        response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
+        response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()}); return;
+      } catch(error){await client.query('ROLLBACK');throw error} finally{client.release()}
+    }
     const current = await manager.fuseRow(request.params.id);
     const bytes = Buffer.from(request.body as Buffer);
     const result = current.native

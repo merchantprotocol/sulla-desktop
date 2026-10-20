@@ -597,6 +597,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       `${ workspacePath }:${ workspacePath }:rw`,
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
+      '/mnt/sulla-files:/mnt/sulla-files:rslave',
     ];
     containerId = await runtime.create({
       name:   containerName,
@@ -880,6 +881,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       `${ docsPath }:/opt/sulla-docs:ro`,
+      '/mnt/sulla-files:/mnt/sulla-files:rslave',
     ];
     containerId = await runtime.create({
       name:   containerName,

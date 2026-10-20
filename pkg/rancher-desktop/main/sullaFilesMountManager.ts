@@ -9,13 +9,11 @@ const console = Logging.background;
 const COMPOSE_FILE = '/tmp/sulla-docker-compose.yml';
 const RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 const TOKEN_FILE = `${ RUNTIME_ROOT }/token`;
-const COLLECTION_FILE = `${ RUNTIME_ROOT }/collection`;
 const MOUNT_PATH = '/mnt/sulla-files';
 const TOKEN_REFRESH_MS = 4 * 60_000;
-const DISABLED_REASON = 'Native Files rollout is disabled pending grant-scoped agent admission and native acceptance.';
+const DISABLED_REASON = 'The Files mount is unavailable.';
 
 export interface SullaFilesMountCredentials {
-  collectionId: string;
   token:        string;
 }
 
@@ -129,7 +127,7 @@ export class SullaFilesMountManager extends EventEmitter {
     const mountState = await this.mountState(executor);
     await executor.execCommand(
       { root: true }, 'rm', '-f',
-      TOKEN_FILE, `${ TOKEN_FILE }.new`, COLLECTION_FILE, `${ COLLECTION_FILE }.new`,
+      TOKEN_FILE, `${ TOKEN_FILE }.new`,
     );
     if (mountState === 'adapter') throw new Error('The guest Files mount did not unmount cleanly');
     if (mountState === 'unexpected') throw new Error('An unexpected mount occupies the guest Files path');
@@ -141,12 +139,10 @@ export class SullaFilesMountManager extends EventEmitter {
       if (!this.executor || !this.credentialProvider || generation !== this.credentialGeneration) throw new Error('Files mount credential custody is unavailable');
       const credentials = await this.credentialProvider();
       if (generation !== this.credentialGeneration) throw new Error('Files mount credential generation changed');
-      if (!/^[0-9a-f-]{36}$/i.test(credentials.collectionId) || credentials.token.length < 64 || credentials.token.length > 4096) {
+      if (credentials.token.length < 64 || credentials.token.length > 4096) {
         throw new Error('Files mount credentials are invalid');
       }
       await this.writeGuestSecret(TOKEN_FILE, `${ credentials.token }\n`);
-      if (generation !== this.credentialGeneration) throw new Error('Files mount credential generation changed');
-      await this.writeGuestSecret(COLLECTION_FILE, `${ credentials.collectionId }\n`);
       if (generation !== this.credentialGeneration) throw new Error('Files mount credential generation changed');
     });
 
