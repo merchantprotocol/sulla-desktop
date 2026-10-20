@@ -6,13 +6,13 @@ Local-only calendar backed by Postgres. **No Google Calendar sync exists yet.** 
 
 | Tool | Purpose |
 |------|---------|
-| `sulla calendar/calendar_create` | Create event or reminder |
-| `sulla calendar/calendar_get` | Fetch one event by id |
-| `sulla calendar/calendar_list` | List events in a date range |
-| `sulla calendar/calendar_list_upcoming` | Next N days (default 7) |
-| `sulla calendar/calendar_update` | Patch an event |
-| `sulla calendar/calendar_cancel` | Soft-cancel (`status='cancelled'`, row preserved) |
-| `sulla calendar/calendar_delete` | Hard delete |
+| `sulla calendar/create` | Create event or reminder |
+| `sulla calendar/get` | Fetch one event by id |
+| `sulla calendar/list` | List events in a date range |
+| `sulla calendar/list_upcoming` | Next N days (default 7) |
+| `sulla calendar/update` | Patch an event |
+| `sulla calendar/cancel` | Soft-cancel (`status='cancelled'`, row preserved) |
+| `sulla calendar/delete` | Hard delete |
 
 Times are ISO 8601 strings with timezone (e.g., `2026-04-24T14:00:00-07:00`). The agent must compute the absolute time itself — there's no "tomorrow at 2pm" parser inside the tool.
 
@@ -47,13 +47,13 @@ This means scheduled events double as agent triggers. A calendar entry titled "R
 
 ### "What's on my calendar today/this week?"
 ```bash
-sulla calendar/calendar_list_upcoming '{"days":7}'
+sulla calendar/list_upcoming '{"days":7}'
 ```
 
 ### "Schedule a meeting with X tomorrow at 2pm"
 Compute the ISO time first (mind the user's timezone), then:
 ```bash
-sulla calendar/calendar_create '{
+sulla calendar/create '{
   "title": "Sync with Sarah",
   "start": "2026-04-24T14:00:00-07:00",
   "end":   "2026-04-24T15:00:00-07:00",
@@ -64,7 +64,7 @@ sulla calendar/calendar_create '{
 ### "Remind me to do X tomorrow at 9am"
 Same tool — reminders aren't a separate type. Use a short event:
 ```bash
-sulla calendar/calendar_create '{
+sulla calendar/create '{
   "title": "Reminder: review the PR",
   "start": "2026-04-24T09:00:00-07:00",
   "end":   "2026-04-24T09:05:00-07:00"
@@ -74,9 +74,9 @@ sulla calendar/calendar_create '{
 When the start time fires, SchedulerService will surface it in the chat (or fire an autonomous agent if the user is away).
 
 ### "Reschedule that to Friday"
-Get the event id (from `calendar_list` if needed), then:
+Get the event id (from `calendar/list` if needed), then:
 ```bash
-sulla calendar/calendar_update '{
+sulla calendar/update '{
   "eventId": 123,
   "start":   "2026-04-26T14:00:00-07:00",
   "end":     "2026-04-26T15:00:00-07:00"
@@ -86,7 +86,7 @@ sulla calendar/calendar_update '{
 ### "Cancel that meeting"
 Prefer soft cancel (preserves history):
 ```bash
-sulla calendar/calendar_cancel '{"eventId":123}'
+sulla calendar/cancel '{"eventId":123}'
 ```
 
 ### "Wake me with a workflow at 7am every day"

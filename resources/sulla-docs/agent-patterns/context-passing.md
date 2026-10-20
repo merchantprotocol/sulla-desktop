@@ -28,7 +28,9 @@ Templates in `orchestratorInstructions`, `prompt`, `responseTemplate`, etc. are 
 {{loop.currentItem.result}} → result field of current for-each item
 ```
 
-**Matching is by node label first, then by node ID.** Keep labels stable — renaming a node breaks all downstream references.
+**Matching accepts the node label or the node ID**, checking upstream outputs first. Keep labels stable. Renaming a node breaks the downstream references to it.
+
+Only `.result` (the default) and `.threadId` work after a node name. `{{Node Label.anyOtherField}}` is not resolved. The whole result is inserted, serialized to JSON when it isn't a string.
 
 Unresolved variables remain literal: `{{MissingNode}}` → `{{MissingNode}}`
 
@@ -49,27 +51,26 @@ Each completed node produces:
 }
 ```
 
-For **agent** nodes: `result` is the full text the agent returned in its `<AGENT_DONE>` block.
-For **function** nodes: `result` is the outputs object from the function handler.
-For **orchestrator-prompt** nodes: `result` is the orchestrator's response text.
-For **merge** nodes: `result` is `[{nodeId, label, result}, ...]` — array of all merged outputs.
+For **merge** nodes: `result` is `{ strategy, merged: [{nodeId, label, result}, ...] }`. The `strategy` is the merge config's `strategy`, defaulting to `wait-all`.
+
+(Unverified: the `result` text for agent nodes and orchestrator-prompt nodes. The code reads the agent's text output, not necessarily the `<AGENT_DONE>` body.)
 
 ---
 
 ## Merge Node Output
 
-After a `parallel` + `merge` pattern:
+After a `parallel` + `merge` pattern, `{{Collect Results}}` inserts the whole merge object as JSON. The entries are under `merged`:
 
 ```yaml
 # In a downstream node:
 orchestratorInstructions: |
   Merge result: {{Collect Results}}
-  
-  This is an array. Each entry has: nodeId, label, result.
+
+  The JSON has a "merged" array. Each entry has: nodeId, label, result.
   Synthesize all three analyses into one executive summary.
 ```
 
-Or access by original node label:
+Or reference the nodes one at a time by label:
 ```yaml
 responseTemplate: |
   Twitter: {{Twitter Writer}}
@@ -81,15 +82,15 @@ responseTemplate: |
 
 ## Function Node Output
 
-Function outputs are returned as a flat object. Access them directly:
+A function node's `result` is its outputs object. `{{Read Cache}}` inserts the whole object as JSON. The resolver can't reach a single field, so `{{Read Cache.needs_refresh}}` stays literal. Tell the agent which fields to read from the JSON:
 
 ```yaml
 # Function node "Read Cache" returns: { exists: true, needs_refresh: false, cache: {...} }
 
 orchestratorInstructions: |
   Cache result: {{Read Cache}}
-  
-  The result object has fields: exists, needs_refresh, age_days, cache.
+
+  The JSON has fields: exists, needs_refresh, age_days, cache.
   If needs_refresh is true, research fresh ICP data.
   Otherwise use the cache object directly.
 ```

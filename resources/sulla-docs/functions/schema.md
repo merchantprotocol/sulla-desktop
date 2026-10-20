@@ -20,7 +20,7 @@ createdAt: "2026-04-23T00:00:00.000Z"
 updatedAt: "2026-04-23T00:00:00.000Z"
 
 spec:
-  runtime: python              # Required. python | node | shell | agent
+  runtime: python              # Required. python | node | shell
   entrypoint: main.py::handler # Required. <file>::<function> for python/node, <file> for shell
   compatibility: "python>=3.10" # Optional. e.g., node>=20, bash>=5
 
@@ -51,7 +51,7 @@ spec:
         mode: read             # read | write
     env: []                    # Env vars to expose (beyond integration vars).
 
-  timeout: 60s                 # Optional. Duration: Xs|Xm|Xh. Default 60s.
+  timeout: 60s                 # Optional. Duration: Xs|Xm|Xh. Default 60s. Read by function_run; see "What function_run enforces".
 ```
 
 ---
@@ -59,8 +59,20 @@ spec:
 ## ID & Slug Rules
 
 - `id` must be `function-` + slug: e.g., `function-social-cache-read`
-- `slug` must match the directory name: `~/sulla/functions/<slug>/`
+- `slug` is the key `function_run` looks up in Postgres (`function_definitions`). Keep it equal to the folder name in `~/sulla/functions/<slug>/`, which is the File Manager copy.
 - Pattern: lowercase letters, numbers, hyphens. No spaces.
+
+## What function_run enforces
+
+`function_run` reads only these fields from `function.yaml`:
+- `spec.runtime`: must be `python`, `node`, or `shell`. Anything else fails with `Unknown runtime`.
+- `spec.entrypoint`: passed to the runtime.
+- `spec.timeout`: read and shown in the trace. It is not applied by `function_run` itself.
+- `spec.inputs`: passed through. `function_run` does not check types, `required`, `enum`, or min/max.
+- `spec.outputs`: shown in the trace.
+- `spec.integrations`: vault values are injected as env vars (see below).
+
+`permissions` is not read by `function_run`. Whether the runtime enforces `network`, `filesystem`, or `env` is unverified, so don't tell users a function is sandboxed by these fields.
 
 ---
 
@@ -120,4 +132,4 @@ spec:
       - slack.com
 ```
 
-When the function runs, `os.environ["SLACK_TOKEN"]` is populated from the vault automatically.
+When the function runs, `os.environ["SLACK_TOKEN"]` is populated from the vault, but only if that integration's `llm_access` setting allows secrets to reach agent code. If it doesn't, `function_run` skips the injection and logs a warning. Function code is agent-authored, so don't have a function return env values.

@@ -10,4 +10,10 @@ Native tool calls use their graph state. Provider CLI calls carry their existing
 
 Cloud/mobile read signed Projects snapshots when Projects sync is enabled. Decision changes trigger a fresh snapshot. They can also fetch `decisions.list` and submit `decisions.resolve` through the companion channel. The response includes `settled`; clients must wait for true before showing acceptance or reopening the original conversation. Offline snapshots are not authorization to execute. Cloud clients use the existing signed paired-browser channel; mobile uses the existing authenticated companion relay. Workspace filtering remains in the device/snapshot discovery path.
 
-Activation requires merging the Desktop, website, and mobile branches, deploying the website, updating mobile, and a Desktop restart at a user-approved time. A test build does not install or restart Desktop. Never claim live acceptance from a source build alone.
+Source inspection does not prove a running installation has these changes.
+Verify the deployed Desktop and paired clients before claiming live acceptance.
+
+## References
+
+- `pkg/rancher-desktop/agent/services/DecisionService.ts`
+- `pkg/rancher-desktop/agent/database/migrations/0098_create_decisions.ts`

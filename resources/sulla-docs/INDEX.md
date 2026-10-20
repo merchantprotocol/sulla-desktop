@@ -28,7 +28,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 → [`design-system.md`](design-system.md) — all project HTML must use `sulla.css`. Copy `template.html`, link the CSS relative to `~/sulla/designs/`, default `class="dark"` on `<html>`.
 
 **Start here when a user request comes in:**
-- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~183 tools)
+- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
@@ -58,7 +58,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `browser.md` — Full 23-tool surface: tab/snapshot/screenshot/click/click_at/type_at/eval_js/cookies/history/storage/alarms
 - `gdrive.md` — Google Drive read-only: list_folder, search, read (Docs/Sheets/Slides as text), download
 - `github.md` — git + GitHub API (52 tools): git_push/pull/commit, PRs, issues, Projects V2, PAT auth
-- `function.md` — function_list, function_run, invocation examples
+- `function.md` — function/list, function/run, function/runs (run history), invocation examples
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
 - `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
@@ -68,7 +68,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
 - `applescript.md` — Drive macOS apps via AppleScript; Administrative Access + macOS Automation perms
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
-- `ui.md` — Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat via `ui/open_tab`
+- `ui.md` — Open Sulla Desktop views (use-cases, vault, routines, etc.) from chat via `ui/open_tab`
 - `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 6 kinds
 - `skills.md` — Skills live in the `skill_definitions` table: skill_list / skill_get / skill_save / skill_disable; folders are import/export only
 - `capture.md` — Capture Studio control: teleprompter, mic, speaker loopback, camera, recorder, screenshots (20 tools, headless)
@@ -81,14 +81,14 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `schema.md` — Top-level YAML structure, template syntax, edge handles
 - `node-types.md` — Every node subtype with config fields and examples
 - `examples.md` — 4 complete working workflow patterns
-- `authoring.md` — Build, validate, run, debug, schedule, restart, archive workflows
+- `authoring.md` — Build, validate, import, run, debug, schedule, restart, stop workflows
 - `create-workflow-skill.md` — 🧭 SOP for "build me a workflow" requests: scaffold → validate → install-to-DB → open editor → iterate. Mirrors the runtime skill at `~/sulla/resources/skills/create-workflow/SKILL.md`.
 
 ## functions/
 - `schema.md` — Complete function.yaml spec, permissions, integrations
 - `runtimes.md` — Python/Node/Shell handler signatures, ports, invocation flow
 - `examples.md` — 4 complete working function examples (python, node, shell, production)
-- `authoring.md` — Build, run, debug, edit, delete custom functions
+- `authoring.md` — Build, run, debug, and edit custom functions
 
 ## agent-patterns/
 - `orchestrator.md` — Writing orchestratorInstructions, completion wrappers, common patterns
@@ -103,7 +103,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `writing-voice.md` — ✍️ Required reading before writing any prose for a human; bans end-summary wrap-ups and bullet-burst fact dumps; full AI-tell catalogue + positive rules
 
 ## marketplace/
-- `overview.md` — Recipes (Docker compose), catalog, install/uninstall, extension UIs
+- `overview.md` — Use Cases (the marketplace) and recipes (Docker compose): catalog, install/uninstall, start/stop, extension UIs
 
 ## cloud/
 - `overview.md` — Sulla Cloud: managed compute, hosted models, pricing, when to recommend
@@ -122,5 +122,5 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - Actual template: `<app-resources>/design-system/template.html` → also at `~/sulla/designs/template.html`
 
 ## identity/
-- `structure.md` — ~/sulla/identity/ layout, file formats, observational memory, and the outcome ledger at ~/sulla/ledger/
+- `structure.md` — ~/sulla/identity/ layout, file formats, observational memory, and the frozen ledger at ~/sulla/ledger/
 - `icp.md` — Ideal customer profile, content framing arc, post angles, cache pattern

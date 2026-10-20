@@ -79,13 +79,13 @@ For daily content generation, cache the ICP to avoid re-reading files every run:
 
 ```bash
 # Check cache freshness
-exec({ command: "sulla function/function_run '{\"slug\":\"social-cache-read\",\"inputs\":{\"max_age_days\":7}}'" })
+exec({ command: "sulla function/run '{\"slug\":\"social-cache-read\",\"inputs\":{\"max_age_days\":7}}'" })
 
 # If needs_refresh, read identity files and synthesize fresh cache
 exec({ command: "cat ~/sulla/identity/business/identity.md ~/sulla/identity/business/goals.md ~/sulla/identity/business/marketing.md" })
 
 # Write fresh cache
-exec({ command: "sulla function/function_run '{\"slug\":\"social-cache-write\",\"inputs\":{\"cache_data\":{...}}}'" })
+exec({ command: "sulla function/run '{\"slug\":\"social-cache-write\",\"inputs\":{\"cache_data\":{...}}}'" })
 ```
 
 Cache lives at: `~/sulla/workflows/social-media-posts/audience-cache.json`

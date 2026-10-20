@@ -6,8 +6,8 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 
 - **Default cadence:** every 15 minutes (configurable via `SullaSettingsModel.get('heartbeatDelayMinutes', 15)`)
 - **Default state:** disabled (`heartbeatEnabled` defaults to `false`)
-- **Tick alignment:** scheduler aligns to the minute boundary, then fires every N minutes from there
-- **Sleep prevention:** while a heartbeat run is executing, the service calls `startCaffeinate('heartbeat')` to keep the Mac from sleeping mid-run; releases on completion
+- **Tick alignment:** scheduler checks every minute on the minute; elapsed time since the last run controls the interval
+- **Sleep prevention:** the enabled operator holds `heartbeat-standing` even outside its configured window; each run also holds `heartbeat` until completion. Disabling releases the standing hold and aborts an in-flight run
 - **Overlap protection:** if a previous heartbeat is still running when the next tick fires, the new tick is skipped (recorded as `heartbeat_already_running`)
 - **Abortable:** in-flight heartbeat can be aborted via `activeAbort.abort()` — subconscious middleware, graph execution, and tool calls all respect the signal
 
@@ -16,20 +16,17 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 1. Check `heartbeatEnabled`. If false, record `heartbeat_skipped`, return.
 2. Check elapsed since last trigger. If less than `heartbeatDelayMinutes`, record `scheduler_check`, return.
 3. Acquire abort signal, start caffeinate.
-4. Build a system prompt that includes:
-   - Current time, timezone
-   - Projects project-state standup + goals (injected `<project_report>` from Postgres project tables, plus recalled observations)
-   - Directive to work autonomously from Projects project-state through `sulla project/*` — not from `~/sulla/ledger/`
-5. Dispatch to the **HeartbeatGraph** via `GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt)`
-6. The HeartbeatNode loops: LLM → tool calls → check completion wrapper → loop or exit
-7. On exit, show a desktop notification in the top-right frameless window with the run summary
-8. Stop caffeinate, record `heartbeat_completed` (or `_error` / `_aborted`)
+4. Build a timestamp trigger with optional `heartbeatMobileInstructions`.
+   HeartbeatNode's SystemPromptBuilder assembles the system prompt.
+5. Run `GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt)`.
+6. Execute the graph, tracking completion, errors and aborts.
+7. Release the run's caffeinate hold and record the result in the event history
+   and run audit. The standing hold remains while enabled.
 
 ## Projects and Heartbeat
 
 Projects is a plain board; nothing in the app claims or launches tasks. Each
-project's assigned agent (usually its project manager) drives it, launches a
-director, and checks progress on its own chat heartbeat. Heartbeat is not a
+project's assigned agent (usually its project manager) drives it, can delegate work, and checks progress on its own chat heartbeat. Heartbeat is not a
 task dispatcher: it works its own idea lab and tasks assigned to `heartbeat`,
 and tells a project's assigned agent when that project looks stuck rather than
 doing the work itself.
@@ -86,25 +83,31 @@ The HeartbeatService keeps a 200-event circular buffer:
 ## Common requests
 
 ### "What's the heartbeat doing?"
-Read `getStatus()` and last 10 entries from `getHistory()`. Summarize:
+`getStatus()` and `getHistory()` are in-process service methods, not CLI commands. In application code, read status and the last 10 history entries. Summarize:
 - Is it enabled? (check `SullaSettingsModel`)
 - When did it last fire?
 - What did the last run do? (last DONE wrapper summary)
 
 ### "Pause / resume the heartbeat"
-Toggle the setting:
-```typescript
-SullaSettingsModel.set('heartbeatEnabled', false /* or true */)
+
+Use the settings tools, not raw Redis writes or a shell import of the model:
+
+```bash
+sulla settings/settings_set '{"property":"heartbeatEnabled","value":"false","cast":"boolean"}'
+sulla settings/settings_set '{"property":"heartbeatEnabled","value":"true","cast":"boolean"}'
 ```
-Next tick picks up the new value. There's no dedicated CLI tool for this — agent invokes the model directly or instructs the user to flip the setting in the UI.
 
 ### "Make the heartbeat check every 10 minutes"
-```typescript
-SullaSettingsModel.set('heartbeatDelayMinutes', 10)
+
+```bash
+sulla settings/settings_set '{"property":"heartbeatDelayMinutes","value":"10","cast":"number"}'
 ```
 
+`heartbeatWindow` optionally restricts days (0–6), start/end hours and timezone.
+Read current settings with `settings/settings_get`.
+
 ### "Show me heartbeat history"
-`HeartbeatService.getHistory(50)` — returns the last 50 events with timestamps, types, durations, errors. If the user asks for older history, tell them: only the last 200 events are kept in memory.
+`HeartbeatService.getHistory(50)` — returns the last 50 events with timestamps, types, durations, errors. If the user asks for older history, tell them: only the last 200 events are kept in this in-memory buffer; run audit persistence is separate.
 
 ### "Trigger a heartbeat now"
 There's a `forceCheck()` on the service. The agent rarely needs this — usually a regular agent run is more appropriate than forcing the heartbeat to wake.

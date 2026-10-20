@@ -66,23 +66,23 @@ When responding to a message from another agent, include your sender identity in
 To notify Jonathon (the human):
 
 ```bash
-exec({ command: "sulla notify/notify_user '{\"title\":\"Task Complete\",\"message\":\"Social posts generated for today.\"}'" })
+exec({ command: "sulla notify/user '{\"title\":\"Task Complete\",\"message\":\"Social posts generated for today.\"}'" })
 ```
 
-This sends a desktop notification. Also fire-and-forget.
+This sends a desktop notification. Also fire-and-forget. Add `"targets":["desktop","mobile"]` to reach the phone too.
 
 ---
 
-## Redis Presence (Agent State)
+## Human Presence
 
-Check if the human is currently active:
+Check whether the human is around:
 ```bash
 exec({ command: "sulla bridge/get_human_presence '{}'" })
 ```
 
-Returns: `{ available, current_view, current_activity, active_channel, idle_since }`
+It returns a text summary, not JSON. For example: `**Jonathon (human):** Busy · idle 0m · viewing "Sulla Desktop" · activity: idle`. It shows Available, Busy, or Offline, the idle time, the current view, and the current activity. Anything idle for more than 60 minutes shows as Offline.
 
-Update your own presence:
+`bridge/update_human_presence` writes the **human's** presence record, not yours. The app normally keeps it current. Only write it if you have a reason to:
 ```bash
 exec({ command: "sulla bridge/update_human_presence '{\"available\":true,\"current_activity\":\"generating social posts\"}'" })
 ```

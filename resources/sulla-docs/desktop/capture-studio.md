@@ -2,7 +2,7 @@
 
 A multi-track audio/video recording app embedded in Sulla Desktop. Records screen, camera, microphone, and system audio independently — separate WebM files per source so the user can edit/mux in post.
 
-**Status:** Shipping in v1.3.0 (released 2026-04-09). Local feature, no Cloud dependency.
+Local recording feature; no Cloud dependency for capture.
 
 ## What it does
 
@@ -42,7 +42,7 @@ MediaRecorder writes 250ms chunks. Audio is **not muxed** into the video files �
 ## Tech stack
 
 - **Recording:** Web MediaRecorder API
-- **Video codec:** VP9 (WebM container)
+- **Video codec:** VP9 when supported, with WebM fallback
 - **Audio codec:** Opus (WebM) for native speaker capture; PCM (WAV) for mic and BlackHole fallback
 - **Disk I/O:** Node.js `fs.createWriteStream` (renderer has `nodeIntegration: true`)
 - **STT (teleprompter):** Whisper.cpp (bundled binary, Homebrew fallback)
@@ -70,13 +70,13 @@ example Secretary Mode) can still hold mic or speaker drivers without conflict.
 2. **Video tutorials** — screen + voiceover (raw or noise-reduced mic)
 3. **Podcasting** — high-quality mic-only WAV
 4. **Presentation** — screen + camera + teleprompter (eye-contact reading)
-5. **Interviews** — multi-camera, speaker audio, edit in post
+5. **Interviews** — camera, speaker audio, edit in post
 6. **Voice memo / dictation** — mic-only with VAD
 7. **ASMR / music** — raw mic mode (unprocessed)
 
 ## Agent control
 
-A `capture/` tool category now exists with **13 tools** for headless control of the Capture Studio components. See [`tools/capture.md`](../tools/capture.md) for the full reference.
+A `capture/` tool category now exists with **20 tools** for headless control of the Capture Studio components. See [`tools/capture.md`](../tools/capture.md) for the full reference.
 
 **What the agent CAN do today via `capture/*`:**
 - **Teleprompter:** open / close / status / push script with per-word highlight position / restyle
@@ -88,39 +88,32 @@ A `capture/` tool category now exists with **13 tools** for headless control of 
 - **Screens:** enumerate displays + windows, capture full-resolution PNG screenshots to `~/sulla/captures/screenshots/YYYY-MM-DD/`
   - `capture/list_screens`, `capture/screenshot`
 
-**What the agent still CAN'T do:**
-- Add or replace a camera/screen source in the middle of an active recording
-- Query the last session via a dedicated tool (use `meta/exec` with `ls ~/sulla/captures/` and read `manifest.json`)
+**Recording and source control:**
+- `capture/recorder_start`, `recorder_stop`, `recorder_status`
+- `capture/camera_list`, `camera_set`, `camera_release`, `screen_set`, `quality_set`
 
-**File-side discovery still works the old way:**
-- Read recording files: `ls ~/sulla/captures/` to find sessions
-- Read `manifest.json` to inspect a session
-- Pipe a saved recording through a Whisper-based custom function to transcribe (no built-in batch transcription tool yet)
+Use `recorder_start` to acquire requested sources and start recording, then
+`recorder_stop` to finalize tracks and the manifest. The recorder status tool
+reports recording state. Check `tools/capture.md` or the manifests for exact
+source parameters. Source changes may be rejected while recording.
+
+The manifest remains authoritative for saved track filenames and formats.
+Do not assume a raw host captures path is reachable from a VM shell; use Files
+for managed recordings. There is no dedicated batch transcription tool in
+`capture/*`.
 
 ## When users ask about Capture Studio
 
-- **"What is Capture Studio?"** — Multi-track recorder for screen + camera + mic + system audio. Each source saves to a separate file so you can edit them independently. Shipping in v1.3.0.
+- **"What is Capture Studio?"** — Multi-track recorder for screen + camera + mic + system audio. Each source saves to a separate file so you can edit them independently.
 - **"Can you record this meeting for me?"** — Yes. Use `capture/recorder_start` with the requested sources; Capture Studio opens automatically. Use `capture/recorder_stop` to flush every track and publish the manifest.
-- **"Where are my recordings?"** — `~/sulla/captures/<sessionId>/`. The agent can list and inspect manifests.
+- **"Where are my recordings?"** — `~/sulla/captures/<sessionId>/`. This is an application storage path, not a host-home VM mount.
 - **"Why is system audio not capturing?"** — Check Screen Recording permission. Native ScreenCaptureKit loopback is the primary path; Capture Studio falls back to BlackHole when native loopback cannot be acquired.
 - **"Can you transcribe this old recording?"** — Yes, via a custom function calling Whisper.cpp. Not a built-in tool.
-
-## Recent fixes (v1.3.0 changelog)
-
-- Fixed audio driver boot timeout
-- Fixed camera stream flickering
-- Stopped muxing mic into screen/camera files (separate now)
-- Fixed camera preview live video
-- Fixed audio meters and inline playback
-- Auto-start audio driver when Capture Studio opens
-- Defensive null guards on composable refs
-- Wrapped capture studio IPC handlers in try/catch
-- 55 reliability fixes total
 
 ## Known limitations
 
 - Native loopback requires Screen Recording permission on macOS. The OS prompt still needs a person to approve it.
-- **Browser STT broken** — uses Whisper.cpp instead.
+- Teleprompter transcription uses the local Whisper pipeline, not browser speech recognition.
 
 ## Reference
 
@@ -131,4 +124,4 @@ A `capture/` tool category now exists with **13 tools** for headless control of 
 - Sub-components: `pkg/rancher-desktop/pages/capture-studio/`
 - Composables: `pkg/rancher-desktop/pages/capture-studio/composables/`
 - Audio driver: `pkg/rancher-desktop/main/audio-driver/`
-- Memory: `~/.claude/projects/-Users-jonathonbyrdziak-Sites/memory/project_capture_studio_mic_modes.md`, `project_audio_driver.md`, `project_audio_driver_api.md`
+- Tools: `pkg/rancher-desktop/agent/tools/capture/manifests.ts`

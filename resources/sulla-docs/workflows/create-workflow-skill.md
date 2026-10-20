@@ -18,13 +18,13 @@ the runtime file is canonical — sync this one to match.
 4. **Validate** — both passes:
    - `sulla meta/validate_sulla_workflow '{"filePath":"<path>"}'` (graph)
    - `sulla marketplace/validate '{"kind":"workflow","slug":"<slug>"}'` (kind-schema)
-5. **Install to DB** — `sulla workflow/import_workflow '{"slug":"<slug>","status":"draft"}'`
+5. **Install to DB** — `sulla workflow/import_workflow '{"slug":"<slug>","yaml":"<full routine yaml>","status":"draft"}'`. The `yaml` param is required, and `status` defaults to `production`, so always pass `draft` while authoring.
 6. **Display the workflow as an artifact** — `sulla workflow/display_workflow '{"slug":"<slug>"}'`.
    Reads the routine YAML and publishes it as a `workflow_document` event. The chat frontend
    opens (or updates in place) a workflow artifact whose payload IS the routine — zero
    field mapping. Deduped by workflow name.
 7. **Iterate**: edit YAML → re-validate → re-import → re-run `display_workflow`
-8. **Ship** — flip `status` to `"production"` on the final `import_workflow` call
+8. **Ship** — re-import with `status: "production"`, or run `sulla workflow/set_workflow_status '{"name":"<workflow display name>","status":"production"}'` (it also accepts `id`).
 
 ---
 

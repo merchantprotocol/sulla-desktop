@@ -48,7 +48,7 @@ orchestratorInstructions: |
 
 ## successCriteria
 
-Metadata field — describes what "done" looks like. The system doesn't actively validate it; you write it for documentation and your own clarity.
+Describes what "done" looks like. Agent nodes must have this field, or `meta/validate_sulla_workflow` reports an error. The validator checks that the field exists, not what it says. Write it so the agent can tell when it's finished.
 
 ```yaml
 successCriteria: "LinkedIn post 150-300 words, saved to ~/sulla/content/"
@@ -108,7 +108,7 @@ orchestratorInstructions: |
 ### Call a tool and use the result
 ```yaml
 orchestratorInstructions: |
-  Run: exec `sulla function/function_run '{"slug":"social-cache-read","inputs":{"max_age_days":7}}'`
+  Run: exec `sulla function/run '{"slug":"social-cache-read","inputs":{"max_age_days":7}}'`
   If needs_refresh is true: [do fresh research]
   If needs_refresh is false: use the cache as-is.
   Return the audience profile object.

@@ -36,7 +36,7 @@ sulla github/git_fetch '{"absolutePath":"/path/to/repo","remote":"origin","branc
 
 ## Per-worker file claims (3)
 
-`github_claim_files`, `github_release_files`, and `github_list_claims` coordinate workers editing linked worktrees. Repository identity comes from Git's common directory, so claims created in one worktree are visible from every worktree of that repository.
+`github/claim_files`, `github/release_files`, and `github/list_claims` coordinate workers editing linked worktrees. Repository identity comes from Git's common directory, so claims created in one worktree are visible from every worktree of that repository.
 
 ```bash
 sulla github/claim_files '{"absolutePath":"/path/to/worktree","paths":["pkg/example/**","docs/readme.md"],"ownerLabel":"worker-2","jobId":"agent-job-123"}'
@@ -47,40 +47,40 @@ sulla github/release_files '{"absolutePath":"/path/to/worktree","ownerLabel":"wo
 Claims are advisory: `git_status`, `git_add`, and `git_commit` append a clear warning when changed files match a claim from another worktree, but never block the operation. Release claims manually when the worker finishes. Automatic job-completion release is not currently wired.
 
 ## Repositories & refs (10)
-`github_init`, `github_add_remote`, `github_create_repo`, `github_get_repo`, `github_list_repos`, `github_delete_repo` (destructive), `github_fork_repo`, `github_list_branches`, `github_create_ref` (create a remote branch/tag at a SHA or another branch's tip), `github_delete_ref` (delete a remote branch/tag).
+`github/init`, `github/add_remote`, `github/create_repo`, `github/get_repo`, `github/list_repos`, `github/delete_repo` (destructive), `github/fork_repo`, `github/list_branches`, `github/create_ref` (create a remote branch/tag at a SHA or another branch's tip), `github/delete_ref` (delete a remote branch/tag).
 
 ## Files via API (3)
-`github_read_file`, `github_create_file`, `github_update_file` — read/write a file directly in a remote repo without cloning. This is the **API-replication fallback** when local push is unavailable: `create_ref` a branch → `create_file`/`update_file` per changed file → `create_pr`.
+`github/read_file`, `github/create_file`, `github/update_file` — read/write a file directly in a remote repo without cloning. This is the **API-replication fallback** when local push is unavailable: `create_ref` a branch → `create_file`/`update_file` per changed file → `create_pr`.
 
 ## Issues (7)
-`github_create_issue`, `github_get_issue`, `github_get_issues`, `github_get_issue_comments` (PRs are issues — pass the PR number), `github_update_issue`, `github_close_issue` (reason `completed`/`not_planned`), `github_comment_on_issue`.
+`github/create_issue`, `github/get_issue`, `github/get_issues`, `github/get_issue_comments` (PRs are issues — pass the PR number), `github/update_issue`, `github/close_issue` (reason `completed`/`not_planned`), `github/comment_on_issue`.
 
 ## Pull requests (12)
-`github_create_pr` (`draft:true` for draft), `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr` (draft → ready; drafts can't be merged), `github_draft_pr` (ready → draft; **requires `comment`** saying what to fix, posted before the conversion — the reversible way to hand work back instead of leaving it in limbo), `github_close_pr`, `github_merge_pr` (`merge`/`squash`/`rebase`, requires `confirm:true`), `github_add_pr_review` (APPROVE / REQUEST_CHANGES / COMMENT), `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
+`github/create_pr` (`draft:true` for draft), `github/get_pr`, `github/list_prs`, `github/update_pr`, `github/ready_pr` (draft → ready; drafts can't be merged), `github/draft_pr` (ready → draft; **requires `comment`** saying what to fix, posted before the conversion — the reversible way to hand work back instead of leaving it in limbo), `github/close_pr`, `github/merge_pr` (`merge`/`squash`/`rebase`, requires `confirm:true`), `github/add_pr_review` (APPROVE / REQUEST_CHANGES / COMMENT), `github/list_pr_reviews`, `github/request_pr_reviewers`, `github/get_pr_files`.
 
 ```bash
-sulla github/github_create_pr '{"owner":"merchantprotocol","repo":"sulla-desktop","title":"feat: X","head":"feature/x","base":"main","draft":true}'
+sulla github/create_pr '{"owner":"merchantprotocol","repo":"sulla-desktop","title":"feat: X","head":"feature/x","base":"main","draft":true}'
 ```
 
 ## Releases & CI (4)
-`github_create_release` (cuts the release + git tag), `github_check_runs` (CI status for a ref — is it green?), `github_ci_logs` (failure annotations plus bounded Actions job-log excerpts for a `runId`, `jobId`, or `ref`), `github_trigger_workflow_run` (manual `workflow_dispatch`).
+`github/create_release` (cuts the release + git tag), `github/check_runs` (CI status for a ref — is it green?), `github/ci_logs` (failure annotations plus bounded Actions job-log excerpts for a `runId`, `jobId`, or `ref`), `github/trigger_workflow_run` (manual `workflow_dispatch`).
 
 ```bash
 sulla github/ci_logs '{"owner":"merchantprotocol","repo":"sulla-desktop","ref":"main","failedOnly":true,"maxLines":300}'
 ```
 
 ## Projects V2 boards (3, GraphQL)
-`github_list_projects` (board node ids + fields + single-select options), `github_add_issue_to_project`, `github_set_project_field` (most often the Status single-select).
+`github/list_projects` (board node ids + fields + single-select options), `github/add_issue_to_project`, `github/set_project_field` (most often the Status single-select).
 
 ## Heartbeat issue-discovery (2)
-`heartbeat_new_issues` (open issues Heartbeat hasn't handled — anti-joined against the seen-set), `heartbeat_claim_issue` (atomic claim + collision guard). Internal to the Heartbeat operator loop.
+`github/heartbeat_new_issues` (open issues Heartbeat hasn't handled — anti-joined against the seen-set), `github/heartbeat_claim_issue` (atomic claim + collision guard). Internal to the Heartbeat operator loop.
 
 ---
 
 ## Notes
 - All local git operates on the **Mac filesystem** — the home dir is shared into Lima.
 - Commit author is the repo's configured git identity.
-- Merges and destructive ops (`github_merge_pr`, `github_delete_repo`) require `confirm:true`.
+- Merges and destructive ops require a confirm flag: `github/merge_pr` and `github/close_pr` need `confirm:true`; `github/delete_repo` needs `confirm:true` plus `confirm_name` matching the repo name; `github/delete_ref` and a non-draft `github/create_release` need `confirm:true`.
 - Pushed changes to a running app still need a **rebuild/restart** to take effect in the binary.
 
 ### Tested PR heads and complete inventories

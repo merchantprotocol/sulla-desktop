@@ -107,10 +107,10 @@ The business identity and goals files are the authoritative source for:
 Identity lives in **two** places now — the editable `~/sulla/identity/` files above, and a **domain-keyed Postgres store** that the subconscious writes and recalls automatically. Prefer the DB store for anything the agent should learn on its own; the files remain a human-editable baseline.
 
 ### 1. `identity_observations` — domain-keyed identity (the live store)
-Migrations `0050`–`0054`. One row = one focused fact about a domain. The `domain` column is constrained to exactly six values, mirroring `~/sulla/identity/`:
+Migrations `0050`–`0060`. One row = one focused fact about a domain. The `domain` column is constrained to exactly seven values (`skills` was added in migration `0059`):
 
 ```
-human · business · world · agent · environment · projects
+human · business · world · agent · environment · projects · skills
 ```
 
 Each row carries a **certainty level**:
@@ -144,4 +144,6 @@ Both stores soft-archive (never hard-delete), so history is recoverable. Use the
 
 ## Projects Work-State (the one project-state store)
 
-Project work in motion lives in the Postgres project tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<project_report>` (or `sulla project/list_project_items` / `sulla project/project_report`), picks the top open task, moves it, and writes back with `sulla project/update_task` + `sulla project/add_task_comment`. Measure by task status and `last_moved_at`, not markdown. Do not look for native project-management tools outside the Sulla CLI catalog.
+Project work in motion lives in the Postgres project tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are old leftovers and are frozen).
+
+Read and update work with the `sulla project/*` tools. For example, `sulla project/list_project_items`, `sulla project/report`, `sulla project/list_ready_tasks`, `sulla project/update_task`, and `sulla project/add_task_comment`. Don't look for native project-management tools outside the Sulla CLI catalog.

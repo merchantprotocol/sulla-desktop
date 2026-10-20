@@ -4,7 +4,7 @@ This contract defines the Files authority boundary for desktop and server deploy
 
 ## Ownership
 
-The Files service owns collection keys, encrypted storage, file metadata and versions, access checks, sharing, indexing, migration, recovery decisions, and its ready/locked state. Desktop, chat, agents and other integrations call its authenticated API. Desktop and server interfaces share Files UI code and API response mappings.
+The Files service owns collection keys, encrypted storage, file metadata and versions, sharing, indexing, migration, recovery decisions, and its ready/locked state. Desktop, chat, agents and other integrations call its authenticated API. Desktop and server interfaces share Files UI code and API response mappings.
 
 Native adapters may show file dialogs, capture media, watch explicitly configured host folders and open authorized downloads in native applications. They must not implement a second encrypted store, unwrap collection keys, or decide how to recover a failed Files startup. General development tools are separate from this managed file store.
 
@@ -20,7 +20,7 @@ version, share, history, or native-source rows. A path such as
 directory of their own.
 
 The mount supports reads, writes, empty-file creation, `mkdir`, file and folder
-rename/move (including authorized cross-collection moves), `unlink`, and empty
+rename/move (including cross-collection moves), `unlink`, and empty
 `rmdir`. Mutations call the authenticated Files service. File/folder moves use
 the durable operation coordinator, tracked-host mutations keep native custody,
 and deletes enter Files history/Trash rather than bypassing it. Directory reads
@@ -31,6 +31,36 @@ Paths are canonical relative POSIX paths. Absolute paths, empty components,
 `.`/`..`, backslashes, protected wallet/vault names, symlink traversal, and raw
 host paths are rejected. The Files bearer token remains mandatory between the
 FUSE adapter and service. Crypto-wallet data is never admitted to the tree.
+
+## Agent access, sharing and system areas
+
+There are no agent ACLs, per-file permission gates, allow-all switches or
+scratch-run policies. Agents can read and write non-system files through the
+Files API and FUSE. Authentication is still required: the service token
+`x-sulla-files-token` is not an agent permission policy.
+
+Sharing is retained: collection/folder/file sharing, share links and the
+**Shared by me** view are separate from agent permission gating.
+
+The Files-owned system collections are:
+
+- `Sulla`: `Docs`, `Use Cases/{skills,workflows,agents,functions,recipes}`,
+  `Projects`, and `Identity`.
+- `Logs`: hidden behind **Trash → More**, with `audit/files`, `audit/vault`
+  and `app` folders.
+- `Training Data`: hidden behind **Trash → More**.
+
+Logs and Training Data are structurally read-only to callers; only services
+write them. This is enforced by `assertSystemAreaWritable` and by the FUSE
+adapter, not by agent ACLs. Audit files are append-only JSONL at
+`Logs/audit/files/<file-id>.jsonl` and `Logs/audit/vault/<secret-id>.jsonl`.
+Each line has `ts`, `actor`, `action`, `subjectKind`, `subjectId`, `path`,
+`result`, `requestId`, `prevHash`, and `hash`; optional `meta` must not contain
+secret values. The writer drains `files_audit_spool` in order and retains
+failed appends for retry. These files supplement existing database audit data.
+
+Use Cases folders are the file authority; database definitions are runtime
+indexes. See [files-first.md](files-first.md) for the approved design.
 
 ## Desktop bootstrap
 
@@ -48,7 +78,7 @@ Files generates collection data and deduplication keys and persists authenticate
 
 Existing content ciphertext and working collection keys must survive migration. Where a supported historical scheme derived collection keys from a signing secret, migration wraps those same keys without changing their value. Unknown or inconsistent historical state must remain preserved and produce a bounded error. Recovery requires a complete, context-verified key set before committing replacement envelopes. If the canonical OS master is missing and only historical legacy archives remain, automatic bootstrap refuses fresh-key creation. Preserve the archives and restore the original protected master or use an explicitly supported recovery procedure; do not delete key state to make startup pass.
 
-Desktop principal adoption is limited to legacy desktop-user collections. Other collection owners, access grants and recovery bundles remain unchanged. Share-link owner changes are limited to the collections actually adopted.
+Desktop principal adoption is limited to legacy desktop-user collections. Other collection owners and recovery bundles remain unchanged. Share-link owner changes are limited to the collections actually adopted.
 
 Server deployments use the same Files envelope keyring and file-management core. Their master provisioning mechanism may differ from the native OS helper, but must not turn authentication signing credentials into new content-encryption keys.
 
@@ -57,3 +87,11 @@ Server deployments use the same Files envelope keyring and file-management core.
 Use synthetic collections and isolated databases to verify envelope preservation, principal isolation, invalid key rejection, replay and expiry, lock/startup races, restart persistence, and migration rollback. Use nonsecret status for live diagnosis. Never print key material, transport credentials, decrypted file contents, or live wallet data.
 
 Rebuild both the Files service and Desktop when their bootstrap contract changes. Preserve the previous deployment and encrypted state until the new pair has passed acceptance. Record the exact source and image revisions; a merged change alone does not prove that the running application uses it.
+
+## Implementation references
+
+- `services/sulla-files/src/systemAreas.ts`
+- `services/sulla-files/src/fileAudit.ts` and `auditChain.ts`
+- `services/sulla-files/src/app.ts`, `shares.ts`, and `protectedFiles.ts`
+- `services/sulla-files/src/bootstrapAuthority.ts`, `bootstrapProtocol.ts`, and `keyring.ts`
+- `services/sulla-files-fuse/sulla_files_fuse.py`

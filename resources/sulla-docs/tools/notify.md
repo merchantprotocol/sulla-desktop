@@ -4,23 +4,34 @@ How the agent gets the user's attention when they're not looking at the chat.
 
 ## Two notification surfaces
 
-1. **System notification** (macOS Notification Center / native) — fired by `notify_user`
+1. **Desktop notification** (macOS Notification Center / native) — fired by `notify/user` with `targets` including `desktop`
 2. **Heartbeat window** (custom frameless Electron, top-right) — fired by the heartbeat agent automatically when its run completes
 
-The agent only fires #1 directly. #2 is owned by the HeartbeatService.
+The agent fires #1 directly. #2 is owned by the HeartbeatService.
 
-## `notify_user`
+## `notify/user`
 
 ```bash
-sulla notify/notify_user '{
+sulla notify/user '{
   "title": "Build complete",
   "message": "Workflow shipped, all green",
   "id": "build-1234",      // optional, auto-generated if omitted
-  "silent": false          // optional, default false
+  "silent": false,         // optional, default false
+  "targets": ["desktop"]   // optional, default ["desktop"]; also "mobile"
 }'
 ```
 
-Implementation routes to `chrome.notifications.create()` → host IPC → macOS Notification Center.
+- `desktop` routes to `chrome.notifications.create()` → host IPC → macOS Notification Center.
+- `mobile` sends a push to the paired Sulla Mobile device through the Sulla Cloud relay.
+- Pass both to send to both. The response lists which targets delivered. A failed target shows up as "Partial failures" in the text; the call still reports success.
+
+## `notify/history`
+
+```bash
+sulla notify/history '{"limit":20,"only_failures":true}'
+```
+
+Params: `limit`, `target`, `only_failures`, `since`. Use it to check whether a past notification actually delivered.
 
 ## Presence — knowing whether to interrupt
 
@@ -48,7 +59,7 @@ Returns:
 - `idleMinutes 2–10` → likely at desk, may have switched windows. Notify only if useful.
 - `idleMinutes > 10` → user is away. Notify, but make the message self-contained (they'll read it without the chat context).
 
-The agent can also publish its own state with `bridge/update_human_presence` when relevant (e.g., setting `current_activity` so other channel agents know what's happening).
+The agent can also publish its own state with `bridge/update_human_presence` when relevant (e.g., setting `current_activity` or `active_channel`, so other channel agents know what's happening).
 
 ## When to notify (rules of thumb)
 
@@ -65,14 +76,13 @@ The agent can also publish its own state with `bridge/update_human_presence` whe
 
 ## Format
 
-- **Title:** ≤50 chars, action-summary, no trailing punctuation. "Build complete" not "The build has been completed successfully."
-- **Message:** ≤200 chars. Lead with the status, then 1 useful detail. The user reads this without context.
+- **Title:** short action summary, no trailing punctuation. "Build complete" not "The build has been completed successfully."
+- **Message:** keep it short. Lead with the status, then 1 useful detail. The user reads this without context.
 - **id:** Pass when you want to dedupe — multiple ticks of the same job should reuse the same id so the notification updates instead of stacking.
 - **silent:** `true` for low-urgency status updates so you don't annoy with sound.
 
 ## What's NOT yet supported
 
-- **Mobile delivery.** `notify_user` is desktop-only. There's no mobile relay route for notifications yet. If the user is on their phone, they won't see it.
 - **Action buttons.** No reply-from-notification or click-action wiring beyond opening the app.
 - **Persistent notifications / banners.** macOS surface only.
 
@@ -80,6 +90,7 @@ The agent can also publish its own state with `bridge/update_human_presence` whe
 
 - Tool manifest: `pkg/rancher-desktop/agent/tools/notify/manifests.ts`
 - Implementation: `pkg/rancher-desktop/agent/tools/notify/notify_user.ts`
+- Mobile delivery: `pkg/rancher-desktop/agent/mobile/MobileApiClient.ts`
 - Bridge tools: `pkg/rancher-desktop/agent/tools/bridge/manifests.ts`
 - Presence service: `pkg/rancher-desktop/agent/services/HumanHeartbeatBridge.ts`
 - Heartbeat window: `pkg/rancher-desktop/main/heartbeatNotification.ts`

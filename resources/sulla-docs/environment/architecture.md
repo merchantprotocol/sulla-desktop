@@ -16,37 +16,26 @@ Agent turns run through Sulla's own graph + model-provider layer, not a single h
 
 ## Electron Main Process
 
-Entry point: `pkg/rancher-desktop/sulla.ts`
+Application service registration: `pkg/rancher-desktop/sulla.ts`
 
-**Startup order.** Early HTTP/IPC surface comes up first (before DB/Redis), then Lima boots, then `instantiateSullaStart()` registers services with the `ServiceLifecycleManager`, which topologically sorts by declared dependency and starts them in order.
+`instantiateSullaStart()` bootstraps application storage and registers services
+with ServiceLifecycleManager, which starts them by declared dependency.
+The application exposes the chat/tools HTTP server on port 3000, the internal
+Basic-auth extension command API on 6107, and Terminal WebSocket on 6108.
+Do not assume the chat server is ready before its database dependency.
 
 ```
-1. Early startup (no DB/Redis yet)
-   ├── Tools API HTTP    :3000    — Authenticated tool-call endpoint (token in chat-api-token.json)
-   ├── Backend API       :6107    — Internal extension/install API (Basic auth)
-   ├── Terminal WebSocket :6108   — PTY into Lima
-   └── IPC handlers registered
-
-2. Lima VM boots
-
-3. instantiateSullaStart() → bootstrapSullaHome() (creates ~/sulla/ tree)
-   → ServiceLifecycleManager.startAll(), which registers (deps in parens):
-       ├── backend-ws              ()                      — BackendGraphWebSocketService (chat transport)
-       ├── model-provider-ipc      ()                      — model-provider IPC handlers (early, so UI can query)
-       ├── postgres                ()   persistOnRestart   — waits for the Lima Postgres connection
-       ├── redis                   ()   persistOnRestart   — waits for the Lima Redis connection
-       ├── database-manager        (postgres)              — runs migrations, brings models online
-       ├── scheduler               (database-manager)      — calendar/alarm SchedulerService
-       ├── heartbeat               (database-manager,redis)— autonomous operator loop
-       ├── workflow-scheduler      (database-manager)      — arms routine cron triggers
-       ├── chat-server             (database-manager)      — chat completions API server
-       ├── mcp-server-host         ()                      — in-process MCP HTTP; agent tool calls land here
-       ├── vault                   (database-manager)      — unlocks the credential vault
-       ├── model-provider          (database-manager,redis)— provider inventory; invalidates LLM caches on change
-       ├── integrations            (vault)                 — loads integration configs
-       ├── oauth                   (database-manager,vault)— resumes OAuth refresh timers
-       ├── file-search             ()                      — warms the file-search index
-       └── host-access-sync        (database-manager,redis)— reconciles the host-access gate from disk
+instantiateSullaStart() → bootstrapSullaHome()
+   → ServiceLifecycleManager.startAll()
+   Connections: postgres, redis (persistOnRestart)
+   Database layer: database-manager (postgres)
+   Application services include scheduler, heartbeat, workflow-scheduler,
+   workflow-container-events, chat-server, local-tool-tunnel, accounts, vault,
+   sulla-files-runtime, sulla-files-maintenance, projects-auto-archive,
+   projects-domain-events, knowledge-projection-outbox, model-provider,
+   integrations, oauth, file-search and host-access-sync.
+   Independent bridges include backend-ws, relay-tool-tunnel,
+   model-provider-ipc and mcp-server-host.
 ```
 
 `postgres` and `redis` are marked `persistOnRestart` — a backend restart re-uses the live connections instead of tearing them down.
@@ -55,27 +44,31 @@ Entry point: `pkg/rancher-desktop/sulla.ts`
 
 ## Lima VM
 
-Lima runs Alpine Linux as a QEMU guest. The host macOS home directory is mounted into Lima at the **same absolute path** via virtiofs/9p.
+Lima runs Alpine Linux. `backend/lima.ts:getMounts()` mounts only app-owned
+transport/cache roots: `/tmp/rancher-desktop`, `paths.cache`, `paths.logs`, and
+`paths.resources` (read-only). The host home is not mounted. Selected host
+content is reached through Files, not raw host paths.
 
-**Key mount:** `~` (entire macOS home) is mounted writable into Lima.
+Agent files are exposed at `/mnt/sulla-files`. Git worktrees use
+`/mnt/worktrees`, bind-mounted from persistent `/mnt/data/worktrees` by
+`assets/lima-config.yaml`. The VM's guest-owned HOME is kept by CommandRunner.
 
-This means `~/sulla/` on the Mac and `~/sulla/` inside Lima are the **same files**. No copying needed — Lima sees them natively.
+**Base Docker containers inside Lima:**
 
-**Docker containers inside Lima:**
+| Container | Published port | Purpose |
+|-----------|----------------|---------|
+| sulla_postgres | 30116 | PostgreSQL |
+| sulla_redis | 30117 | Redis (no persistence) |
+| sulla_python_runtime | 30118 | Python functions |
+| sulla_shell_runtime | 30119 | Shell functions |
+| sulla_node_runtime | 30120 | Node.js functions |
 
-| Container | Port (host) | Purpose |
-|-----------|-------------|---------|
-| sulla_postgres | 30116 | PostgreSQL database |
-| sulla_redis | 30117 | Redis key-value store (no persistence) |
-| python_runtime | 30118 | Executes Python custom functions |
-| shell_runtime | 30119 | Executes Shell custom functions |
-| node_runtime | 30120 | Executes Node.js custom functions |
+Function runtimes mount VM-owned function catalog and invocation directories,
+not host `~/sulla/functions`. See [docker.md](docker.md) for image sources.
 
-All function containers mount `~/sulla/functions/` read-only.
-
-**`sulla` CLI** lives at `/usr/local/bin/sulla` inside Lima. Always invoke via `exec({ command: "sulla ..." })`.
-
-**VM-first execution:** Agents should keep everyday shell work inside Lima via `exec`. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons). Home is mounted into Lima at the same path, so host project files are already reachable without leaving the sandbox.
+The `sulla` CLI is installed at `/usr/local/bin/sulla` in Lima. Use `meta/exec`
+for VM commands. `meta/exechost` is a separate host-only escape hatch, not a
+substitute for Files or normal VM development.
 
 ### Background task completions (Claude Code)
 
@@ -94,14 +87,14 @@ All function containers mount `~/sulla/functions/` read-only.
 Browser tabs are `WebContentsView`s in the `persist:sulla-browser` session. They run arbitrary websites, so everything in this session counts as **untrusted web content**:
 
 - **Injected scripts** — `browserTabPreload.ts` injects `window.sullaBridge` (DOM helpers for `GuestBridge.ts`) and `window.__sulla` (the runtime used by `browser/exec`) into every frame at document-start. They do nothing until an agent tool calls them; there is no passive event streaming.
-- **IPC** — `main/ipcGuestGuard.ts` is imported first in `background.ts` and wraps every `ipcMain` handler/listener. Senders from the browser session are rejected unless the channel is on `GUEST_ALLOWED_CHANNELS` (`sulla-settings-get` for `theme` only, and `browser-tab-view:bridge-event`). Any new channel the tab preload uses must be added there.
+- **IPC** — `main/ipcGuestGuard.ts` wraps `ipcMain` handler/listener. Senders from the browser session are rejected unless the channel is on `GUEST_ALLOWED_CHANNELS` (`sulla-settings-get` for `theme` only, and `browser-tab-view:bridge-event`). Any new channel the tab preload uses must be added there.
 - **Vault** — bridge events are bound to `event.senderFrame.origin`; a page only ever sees and autofills accounts saved for its own origin.
 - **Site permissions** — `main/browserTabs/browserPermissions.ts`: camera/mic, location, clipboard read, screen share etc. prompt once per site (saved in `userData/browser-site-permissions.json`); pages the user can't see (parked/agent tabs) are denied without a prompt. Fullscreen, pointer lock, DRM and notifications are allowed.
 - **`chrome.*`** — web pages get no `chrome.*` APIs (same as Chrome). `main/chromeApi/ChromeApiService.ts` is Sulla's *internal* implementation of the Chrome extension API shape, used by agent tools and Sulla's own UI over `chrome-api:*` IPC — which web content cannot reach. Sulla does not load Chrome extensions today; supporting them would mean `session.extensions.loadExtension` plus mapping these APIs onto the extension runtime.
 
 ## Vue Renderer
 
-The renderer cannot access the filesystem directly. All file ops go through IPC to the main process. Chat messages are sent over WebSocket to the BackendGraphWebSocketService.
+Managed Files operations go through IPC to the main process and the Files service. This is not a blanket renderer filesystem sandbox: several trusted windows enable Node integration; Capture Studio writes recording tracks directly. Chat messages travel over WebSocket to BackendGraphWebSocketService.
 
 ---
 
@@ -114,10 +107,10 @@ Sulla Desktop.app/Contents/Resources/resources/
 
 In **development**:
 ```
-/Users/<user>/Sites/sulla/sulla-desktop/resources/
+<repository>/resources/
 ```
 
-Accessed in code via `paths.resources`. This directory is **mounted into Lima** alongside `~` — so anything in `resources/sulla-docs/` is readable inside Lima at the same absolute path.
+Accessed in code via `paths.resources`. This directory is **mounted read-only into Lima** — so anything in `resources/sulla-docs/` is readable inside Lima at the same absolute path.
 
 ---
 

@@ -1,5 +1,11 @@
 # Sulla Workflows — Node Types
 
+Every node has `data.subtype` and `data.category`. The validator (`validate_sulla_workflow`) rejects a subtype under the wrong category. Required config fields below are the ones the validator enforces.
+
+The editor palette offers only `manual`, `schedule`, and the node types listed below. Other trigger subtypes (`chat-app`, `calendar`, `heartbeat`, `sulla-desktop`, `workbench`, `chat-completions`) still validate so older routines load, but don't author new ones.
+
+---
+
 ## TRIGGER Nodes (category: trigger)
 
 Every workflow needs at least one trigger.
@@ -10,7 +16,7 @@ subtype: manual
 category: trigger
 config:
   triggerType: manual
-  triggerDescription: "Runs when manually launched from AgentRoutines"
+  triggerDescription: "Runs when manually launched from Routines"
 ```
 
 ### schedule
@@ -29,15 +35,6 @@ config:
   timezone: "America/Los_Angeles"
 ```
 
-### chat-app
-```yaml
-subtype: chat-app
-category: trigger
-config:
-  triggerType: chat-app
-  triggerDescription: "Triggered by user message"
-```
-
 ---
 
 ## AGENT Nodes (category: agent)
@@ -49,13 +46,14 @@ category: agent
 config:
   agentId: null                  # Agent slug or null (uses default)
   agentName: "My Agent"          # Display name
-  additionalPrompt: ""           # Extra system instructions
+  additionalPrompt: ""           # Required key; extra system instructions
   orchestratorInstructions: |    # What the agent should do (supports {{templates}})
     Research {{trigger}} and return a summary.
     Use exec to run: sulla github/git_status '{}'
   successCriteria: "Summary returned"
   completionContract: "Exit when done"
 ```
+All six keys are required. Optional: `inheritParentToolPolicy`, and `maxAgents` (only `1` is accepted).
 
 ### orchestrator-prompt — message the orchestrating agent directly
 ```yaml
@@ -72,11 +70,13 @@ config:
 subtype: function
 category: agent
 config:
-  functionRef: "social-cache-read"   # Slug from ~/sulla/functions/
+  functionRef: "social-cache-read"   # Slug of a function in the functions table
   inputs:
     max_age_days: "7"
-  timeoutOverride: null
+  integrationAccounts: {}            # Optional: integration slug -> accountId, or null to let the orchestrator pick
+  timeoutOverride: null              # Optional, e.g. "60s"
 ```
+Only `functionRef` is required. The runtime (python, node, shell) comes from the function's own `function.yaml`, not from this node. See [`functions/schema.md`](../functions/schema.md).
 
 ### tool-call — call a native tool directly
 ```yaml
@@ -88,16 +88,21 @@ config:
     title: "Done"
     message: "{{upstream-node}} completed"
 ```
+Required: `toolName`, `defaults`. Use `toolName: browser_controller` directly for browser work. Nested CLI calls don't carry the graph's browser capability.
 
-### desktop-notification — shortcut for notify_user
+### integration-call — call an integration endpoint
 ```yaml
-subtype: desktop-notification
+subtype: integration-call
 category: agent
 config:
+  integrationSlug: "anthropic"
+  endpointName: "messages-create"
+  accountId: "acct-123"
   defaults:
-    title: "Task Complete"
-    message: "{{upstream-node}} finished"
+    model: "claude-haiku-5-5"
+  preCallDescription: "Summarize the upstream output with a small model."
 ```
+Required: all five keys above. The orchestrator sees `preCallDescription` before the call runs.
 
 ---
 
@@ -110,14 +115,12 @@ category: routing
 config:
   classificationPrompt: "Classify the input from {{previous-node}}"
   routes:
-    - id: route-0
-      label: "Support"
+    - label: "Support"
       description: "Customer support inquiry"
-    - id: route-1
-      label: "Sales"
+    - label: "Sales"
       description: "Pricing question"
 ```
-Edges must use `sourceHandle: route-0`, `route-1`, etc.
+Routes are numbered by position. The first route is `route-0`, the second `route-1`, and so on. Edges must use those `sourceHandle` values.
 
 ### condition — boolean branch
 ```yaml
@@ -142,7 +145,7 @@ subtype: parallel
 category: flow-control
 config: {}
 ```
-Edges use `sourceHandle: branch-0`, `branch-1`, etc. Only agent/integration nodes can be parallelized — no routers, conditions, waits.
+Each outgoing edge is a branch. No `sourceHandle` is needed. Only children that are `agent`, `integration-call`, or `tool-call` nodes run as a concurrent batch. Routers, conditions, waits, and other nodes run one after another.
 
 ### merge — collect parallel outputs
 ```yaml
@@ -151,7 +154,7 @@ category: flow-control
 config:
   strategy: "wait-all"           # wait-all | first
 ```
-Output available as `{{Merge Node.result}}` — array of `{nodeId, label, result}`.
+`{{Merge Node.result}}` resolves to the JSON text of `{strategy, merged: [{nodeId, label, result}, ...]}`. Reference a branch directly with `{{Branch Label}}` when you need one branch's output.
 
 ### wait — pause execution
 ```yaml
@@ -171,9 +174,11 @@ config:
   maxIterations: 10
   condition: ""
   conditionMode: "template"      # template | llm
-  orchestratorPrompt: ""
+  orchestratorPrompt: ""         # Used by ask-orchestrator
 ```
-Edges use `targetHandle: loop-entry` (entry), `targetHandle: loop-back` (re-entry), `sourceHandle: loop-start` (body), `sourceHandle: loop-exit` (after loop).
+Required: `maxIterations`, `condition`, `conditionMode`. Inside the body, use `{{loop.index}}`, `{{loop.currentItem}}`, `{{loop.currentItem.result}}`, `{{loop.currentItem.label}}`, and `{{loop.currentItem.nodeId}}`. The `loop.currentItem` values resolve only while the loop has a current item, which is the `for-each` case.
+
+Edges use `targetHandle: loop-entry` (entry), `targetHandle: loop-back` (re-entry), `sourceHandle: loop-start` (body), and `sourceHandle: loop-exit` (after the loop).
 
 ### sub-workflow — call another workflow
 ```yaml
@@ -182,8 +187,10 @@ category: flow-control
 config:
   workflowId: "workflow-analysis"
   awaitResponse: true
-  agentId: null
+  agentId: null                  # Optional: agent that orchestrates the child
+  orchestratorPrompt: ""         # Optional: instructions when agentId is set
 ```
+Required: `workflowId`, `awaitResponse`.
 
 ---
 
@@ -199,7 +206,7 @@ config:
     {{Research Agent}}
     Analysis: {{Synthesis Node}}
 ```
-If `responseTemplate` is empty, passes through upstream output.
+The `responseTemplate` key is required. If its value is empty, the node passes through upstream output.
 
 ### user-input — pause for user input
 ```yaml
@@ -216,4 +223,17 @@ category: io
 config:
   targetWorkflowId: "workflow-specialist"
 ```
-Cannot be inside a loop or parallel branch.
+Cannot be inside a loop or a parallel branch. The run fails if it is.
+
+### desktop-notification — shortcut for notify_user
+```yaml
+subtype: desktop-notification
+category: io
+config:
+  toolName: notify_user
+  defaults:
+    title: "Task Complete"
+    message: "{{upstream-node}} finished"
+```
+Required: `toolName`, `defaults`. The playbook always calls `notify_user`.
+</content>

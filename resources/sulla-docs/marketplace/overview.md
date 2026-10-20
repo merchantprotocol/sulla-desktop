@@ -1,27 +1,34 @@
-# Marketplace & Recipes
+# Use Cases & Recipes
+
+**Use Cases** is the user-facing name for the marketplace. The Use Cases tab lists ready-made jobs (skills, workflows, agents, functions, recipes) you can install. A **recipe** is one kind of Use Case: a Docker Compose configuration that runs a service in Lima. Say "Use Cases" to users, and use "recipe" only when you mean the Docker Compose kind.
 
 ## What a recipe is
 
-A **recipe** is a marketplace-installable Docker Compose configuration — not a Docker image. Each recipe ships:
+A recipe is a Docker Compose configuration, not a Docker image. Each recipe ships:
 
-- `compose.yaml` — what containers to run, ports, volumes, env
-- `metadata.yaml` — catalog info (title, description, categories, icon, exposed URLs)
+- `compose.yaml`: what containers to run, ports, volumes, env
+- `metadata.yaml`: catalog info (title, description, categories, icon, exposed URLs)
 - Optional `README.md`, icons
 
-Installing a recipe pulls the referenced container images and starts them via Lima's Docker daemon. The recipe directory ends up at `~/sulla/recipes/<slug>/`.
+Installing a recipe pulls the referenced container images and starts them through Lima's Docker daemon. Recipe folders live under `~/sulla/recipes/<slug>/` (`resolveSullaRecipesDir()`).
 
-**Catalog source:** `https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml` (cached 1 min)
+**Catalog source:** `https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml`
 
-**Backend API:** `http://127.0.0.1:6107/v1/extensions` (Basic auth) — handles install, list, uninstall. The agent calls extension tools, which proxy through this backend.
+**Backend API:** `http://127.0.0.1:6107/v1/extensions`. The extension tools call this backend.
 
 ## Tools the agent has
 
-| Tool | Purpose |
-|------|---------|
-| `sulla extensions/list_extension_catalog` | Browse the marketplace. Filter by `category` or `query`. |
-| `sulla extensions/list_installed_extensions` | What's installed and running, with version + URLs |
-| `sulla extensions/install_extension` | Install by ID (e.g. `docker.io/merchantprotocol/twenty:2.1.0`) |
-| `sulla extensions/uninstall_extension` | Remove. Default preserves `data/`; `deleteData: true` wipes |
+| Command | Purpose |
+|---------|---------|
+| `sulla extensions/list_extension_catalog` | Browse the catalog. Filter by `category` or `query`. |
+| `sulla extensions/list_installed_extensions` | What's installed, with version, URLs, and status |
+| `sulla extensions/install_extension` | Install by `id` (e.g. `docker.io/merchantprotocol/twenty:2.1.0`) |
+| `sulla extensions/uninstall_extension` | Remove by `id`. Default keeps `data/`; `deleteData: true` wipes it |
+| `sulla extensions/start_extension` | Start an installed extension by `id` |
+| `sulla extensions/stop_extension` | Stop by `id`. Needs `confirm` |
+| `sulla extensions/get_extension_status` | Status for one extension by `id` |
+
+For Use Cases that aren't recipes, use `sulla marketplace/*` (see [`../tools/marketplace.md`](../tools/marketplace.md)).
 
 ## Common user requests
 
@@ -36,57 +43,57 @@ sulla extensions/list_extension_catalog '{"query":"pdf"}'
 ```bash
 sulla extensions/list_installed_extensions '{}'
 ```
-Returns each running extension with `id`, `version`, `extraUrls` (where the web UI is exposed), `status`, and `canUpgrade`.
+Returns each extension with `id`, `version`, `extraUrls` (where the web UI is exposed), `status`, and `canUpgrade`.
 
 ### "Install Twenty CRM"
 ```bash
 sulla extensions/install_extension '{"id":"docker.io/merchantprotocol/twenty:2.1.0"}'
 ```
-Backend pulls the image, starts the compose stack, allocates ports. Twenty ends up at `localhost:30207`.
+The backend pulls the image, starts the compose stack, and allocates ports. Get the URL from `list_installed_extensions`. Don't assume a port.
 
 ### "Uninstall X"
 ```bash
 sulla extensions/uninstall_extension '{"id":"docker.io/.../X:1.0","deleteData":false}'
 ```
-**Default keeps user data.** Confirm with the user before passing `deleteData:true` — it's irreversible.
+**Default keeps user data.** Confirm with the user before passing `deleteData:true`. It's irreversible.
 
 ### "Open Twenty CRM" / "Show me X"
-After locating the URL via `list_installed_extensions`, open it in a browser tab:
+After getting the URL from `list_installed_extensions`, open it in a browser tab:
 ```bash
-sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
+sulla browser/tab '{"action":"upsert","url":"<url from list_installed_extensions>"}'
 ```
 
 ### "Update an extension"
-There's no dedicated update tool. Re-install with the new version tag:
+There's no dedicated update tool. Reinstall with the new version tag:
 ```bash
 sulla extensions/install_extension '{"id":"docker.io/.../X:2.0.0"}'
 ```
 
 ### "Build me a new recipe"
-Author files locally under `~/sulla/recipes/<slug>/`:
-- Write a `compose.yaml` (real Docker Compose; pin image versions)
-- Write a `metadata.yaml` with title, description, labels (categories), `extraUrls`
-- Test by running the compose stack manually via `sulla docker/docker_run` or `lima_shell`
+Author the files locally under `~/sulla/recipes/<slug>/`:
+- Write a `compose.yaml` (real Docker Compose, with pinned image versions)
+- Write a `metadata.yaml` with title, description, labels (categories), and `extraUrls`
+- Test the stack with `sulla docker/docker_run` or `lima_shell`
 
-Submitting to the public marketplace = a PR against `merchantprotocol/sulla-recipes`. The agent can prep the PR but Jonathon merges.
+To publish it, use `sulla marketplace/publish '{"kind":"recipe","slug":"<slug>"}'`. It needs a Sulla Cloud sign-in. The listing stays pending until an admin approves it. Don't claim it's public before that.
 
 ## Discovery vs invocation
 
-Installed extensions are passively listed in the agent's system prompt (e.g., "Twenty CRM at localhost:30207"). That list comes from `list_installed_extensions` at startup — it's data, not tools. To **use** an extension, the agent either:
+Installed extensions are listed in the agent's system prompt (for example, "Twenty CRM at localhost:30207"). That list comes from `list_installed_extensions` at startup. It's data, not a tool. To **use** an extension, the agent either:
 
 1. Opens its web UI in a browser tab (most extensions)
-2. Calls a registered integration if the extension exposes one (e.g., `sulla twenty/<endpoint>` once the integration is connected via vault)
+2. Calls a registered integration, if the extension exposes one, once it's connected through the vault
 
 ## Safety rules
 
-- **Never uninstall without explicit user confirmation.** Recipes can hold months of user data.
-- **Never pass `deleteData:true` without explicit user confirmation.** Same reason.
-- **Don't kill running extension containers via `docker_stop` directly** — let `uninstall_extension` handle lifecycle. Manual `docker_stop` confuses the backend.
-- Pre-installed Sulla containers (`sulla_postgres`, `sulla_redis`, `python_runtime`, `shell_runtime`, `node_runtime`) are NOT extensions — they are managed by `ServiceLifecycleManager`. Do not attempt to install/uninstall them.
+- **Never uninstall or stop an extension without explicit user confirmation.** Recipes can hold months of user data.
+- **Never pass `deleteData:true` without explicit user confirmation.** It's irreversible.
+- **Don't stop extension containers with `docker_stop` directly.** Use `stop_extension` or `uninstall_extension` so the backend stays in sync.
+- Built-in Sulla containers (`sulla_postgres`, `sulla_redis`, `python_runtime`, `shell_runtime`, `node_runtime`) are NOT extensions. `ServiceLifecycleManager` manages them. Don't install or uninstall them.
 
 ## Reference
 
 - Tool manifests: `pkg/rancher-desktop/agent/tools/extensions/manifests.ts`
 - Extension service: `pkg/rancher-desktop/agent/services/ExtensionService.ts`
 - Recipe path resolver: `resolveSullaRecipesDir()` in `pkg/rancher-desktop/agent/utils/sullaPaths.ts`
-- Memory: `~/.claude/projects/-Users-jonathonbyrdziak-Sites/memory/project_marketplace_recipe_model.md`
+- Lifecycle manager: `pkg/rancher-desktop/agent/services/ServiceLifecycleManager.ts`
