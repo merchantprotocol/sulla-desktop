@@ -68,7 +68,7 @@ class FilesApi:
                 detail = json.loads(payload or b"{}")
             except json.JSONDecodeError:
                 detail = {}
-            failure = OSError(errno.EROFS if detail.get("code") == "EROFS" else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
+            failure = OSError(errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or error.code == 423 else errno.EPERM if error.code == 409 else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
             failure.status = error.code
             failure.detail = detail
             raise failure from error

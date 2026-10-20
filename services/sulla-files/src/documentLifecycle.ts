@@ -125,25 +125,103 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
     await deps.audit(request, force ? 'checkout-force-release' : 'checkout-release', row); response.json(lifecycleFields(row));
   } catch (error) { next(error) } });
 
-  const publish = async(request:RequestWithIdentity, requireExpected:boolean, releaseCheckout = false) => {
-    await deps.requireFile(request, request.params.id, 'manage'); const actor = deps.identity(request);
+  const isAgent = (actor:FilesIdentity) => Boolean(actor.agentId || actor.jobId || actor.threadId);
+  const requireHuman = (request:RequestWithIdentity) => {
+    const actor = deps.identity(request);
+    if (isAgent(actor)) throw httpError(403, 'human identity required');
+    return actor;
+  };
+  const publishLocked = async(client:pg.PoolClient, request:RequestWithIdentity, versionId:string, releaseCheckout = false) => {
+    const actor = requireHuman(request);
+    const file = await locked(client, request.params.id);
+    const active = (await client.query('SELECT files_retention_active(f) active FROM files f WHERE id=$1', [file.id])).rows[0]?.active;
+    if (active) throw httpError(423, 'file is locked by record retention');
+    if (!versionId) throw httpError(409, 'file has no draft to publish');
+    const version = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE FOR UPDATE', [versionId, file.id])).rows[0];
+    if (!version) throw httpError(404, 'version not found');
+    if (version.publication_status === 'published') return file;
+    const major = Number((await client.query('SELECT COALESCE(MAX(major_version),0)::int major FROM file_versions WHERE file_id=$1', [file.id])).rows[0].major) + 1;
+    await client.query("UPDATE file_versions SET publication_status='superseded' WHERE file_id=$1 AND publication_status='published'", [file.id]);
+    await client.query(`UPDATE file_versions SET publication_status='published',version_kind='major',major_version=$2,minor_version=0,published_at=NOW(),published_by=$3,version_comment=COALESCE($4,version_comment) WHERE id=$1`, [version.id, major, actor.userId, request.body?.comment ?? null]);
+    const result = (await client.query(`UPDATE files SET published_version_id=$2,draft_version_id=CASE WHEN draft_version_id=$2 THEN NULL ELSE draft_version_id END,
+      checked_out_by_user_id=CASE WHEN $3 THEN NULL ELSE checked_out_by_user_id END,checked_out_by_device_id=CASE WHEN $3 THEN NULL ELSE checked_out_by_device_id END,checked_out_at=CASE WHEN $3 THEN NULL ELSE checked_out_at END,
+      lifecycle_generation=lifecycle_generation+1,updated_at=NOW() WHERE id=$1 RETURNING *`, [file.id, version.id, releaseCheckout])).rows[0];
+    await journalLifecycle(client, result, 'put', version.id);
+    return result;
+  };
+  const publish = async(request:RequestWithIdentity, requireExpected:boolean, releaseCheckout = false, explicitVersionId?:string) => {
+    await deps.requireFile(request, request.params.id, 'manage');
     return transaction(async client => {
-      const file = await locked(client, request.params.id); const versionId = String(request.body?.versionId ?? file.draft_version_id ?? '');
-      if (file.record_lock_type !== 'none') throw httpError(423, 'record is locked');
-      if (!versionId) throw httpError(409, 'file has no draft to publish');
+      const file = await locked(client, request.params.id);
+      const versionId = explicitVersionId ?? String(request.body?.versionId ?? file.draft_version_id ?? '');
       if (requireExpected && request.body?.expectedDraftVersionId !== file.draft_version_id) throw httpError(409, 'draft changed while publication was starting');
-      const version = (await client.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE FOR UPDATE', [versionId, file.id])).rows[0];
-      if (!version) throw httpError(404, 'version not found');
-      const major = Number((await client.query("SELECT COALESCE(MAX(major_version),0)::int major FROM file_versions WHERE file_id=$1 AND publication_status='published'", [file.id])).rows[0].major) + 1;
-      await client.query("UPDATE file_versions SET publication_status='superseded' WHERE file_id=$1 AND publication_status='published'", [file.id]);
-      await client.query(`UPDATE file_versions SET publication_status='published',version_kind='major',major_version=$2,minor_version=0,published_at=NOW(),published_by=$3,version_comment=COALESCE($4,version_comment) WHERE id=$1`, [version.id, major, actor.userId, request.body?.comment ?? null]);
-      const result = (await client.query(`UPDATE files SET published_version_id=$2,draft_version_id=CASE WHEN draft_version_id=$2 THEN NULL ELSE draft_version_id END,
-        checked_out_by_user_id=CASE WHEN $3 THEN NULL ELSE checked_out_by_user_id END,checked_out_by_device_id=CASE WHEN $3 THEN NULL ELSE checked_out_by_device_id END,checked_out_at=CASE WHEN $3 THEN NULL ELSE checked_out_at END,
-        lifecycle_generation=lifecycle_generation+1,updated_at=NOW() WHERE id=$1 RETURNING *`, [file.id, version.id, releaseCheckout])).rows[0];
-      await journalLifecycle(client, result, 'put', version.id); return result;
+      return publishLocked(client, request, versionId, releaseCheckout);
     });
   };
-  app.post('/v1/files/:id/publish', async(request:RequestWithIdentity, response, next) => { try { const row = await publish(request, true); await deps.audit(request, 'publish', row, { versionId: row.published_version_id }); response.json(lifecycleFields(row)) } catch (error) { next(error) } });
+
+  app.get('/v1/files/:id/versions', async(request:RequestWithIdentity, response, next) => { try {
+    const file = await deps.requireFile(request, request.params.id, 'view');
+    const versions = await db.query(`SELECT id,major_version,minor_version,version_kind,publication_status,created_by_type,created_by_id,created_at,version_comment,size
+      FROM file_versions WHERE file_id=$1 AND deleted=FALSE ORDER BY created_at DESC,id DESC`, [file.id]);
+    response.json({
+      fileId:file.id,draftVersionId:file.draft_version_id,publishedVersionId:file.published_version_id,
+      recordLockType:file.record_lock_type,retentionMode:file.retention_mode,retainUntil:iso(file.retain_until),disposalStatus:file.disposal_status,
+      versions:versions.rows.map(row => ({id:row.id,major:row.major_version,minor:row.minor_version,kind:row.version_kind,
+        publication_status:row.publication_status,created_by:{type:row.created_by_type,id:row.created_by_id},created_at:iso(row.created_at),comment:row.version_comment,size:Number(row.size)})),
+    });
+  } catch (error) { next(error) } });
+
+  app.post('/v1/files/:id/versions/:versionId/publish', async(request:RequestWithIdentity, response, next) => { try {
+    requireHuman(request);
+    const row = await publish(request, false, false, request.params.versionId);
+    await deps.audit(request, 'publish', {...row,current_version_id:request.params.versionId}, {versionId:request.params.versionId,requestId:request.body?.requestId ?? null});
+    response.json(lifecycleFields(row));
+  } catch (error) { next(error) } });
+
+  app.post('/v1/files/:id/versions/:versionId/publish-request', async(request:RequestWithIdentity, response, next) => { try {
+    await deps.requireFile(request, request.params.id, 'edit'); const actor = deps.identity(request);
+    if (!isAgent(actor)) throw httpError(403, 'agent identity required');
+    const reason = request.body?.reason == null ? null : String(request.body.reason).slice(0, 2000);
+    const row = await transaction(async client => {
+      const file = await locked(client, request.params.id);
+      const version = (await client.query("SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE AND publication_status='draft'", [request.params.versionId,file.id])).rows[0];
+      if (!version) throw httpError(404, 'draft version not found');
+      return (await client.query(`INSERT INTO files_publish_requests(file_id,version_id,requested_by,reason) VALUES($1,$2,$3,$4)
+        ON CONFLICT(file_id,version_id) WHERE status='pending' DO UPDATE SET reason=COALESCE(EXCLUDED.reason,files_publish_requests.reason) RETURNING *`,
+      [file.id,version.id,actor.jobId ?? actor.agentId ?? actor.userId,reason])).rows[0];
+    });
+    await deps.audit(request, 'publish-request', {id:request.params.id,current_version_id:request.params.versionId}, {requestId:row.id,reason});
+    response.status(202).json(row);
+  } catch (error) { next(error) } });
+
+  app.get('/v1/files/publish-requests', async(request:RequestWithIdentity, response, next) => { try {
+    requireHuman(request); const status = typeof request.query.status === 'string' ? request.query.status : 'pending';
+    if (!['pending','approved','rejected','expired'].includes(status)) throw httpError(400, 'invalid publish request status');
+    const rows = await db.query(`SELECT r.*,f.path,f.collection_id FROM files_publish_requests r JOIN files f ON f.id=r.file_id
+      WHERE r.status=$1 AND ($2::uuid IS NULL OR r.file_id=$2) ORDER BY r.created_at`, [status,typeof request.query.fileId === 'string' ? request.query.fileId : null]);
+    response.json({requests:rows.rows});
+  } catch (error) { next(error) } });
+
+  for (const decision of ['approve','reject'] as const) app.post(`/v1/files/publish-requests/:requestId/${decision}`, async(request:RequestWithIdentity, response, next) => { try {
+    const actor = requireHuman(request);
+    const result = await transaction(async client => {
+      const publication = (await client.query('SELECT * FROM files_publish_requests WHERE id=$1 FOR UPDATE', [request.params.requestId])).rows[0];
+      if (!publication) throw httpError(404, 'publish request not found');
+      if (publication.status !== 'pending') throw httpError(409, `publish request is ${publication.status}`);
+      request.params.id = publication.file_id;
+      let file:any = await locked(client, publication.file_id);
+      if (decision === 'approve') file = await publishLocked(client, request, publication.version_id);
+      const decided = (await client.query(`UPDATE files_publish_requests SET status=$2,decided_by=$3,decided_at=NOW() WHERE id=$1 RETURNING *`, [publication.id,decision === 'approve' ? 'approved' : 'rejected',actor.userId])).rows[0];
+      return {file,request:decided};
+    });
+    if (decision === 'approve') await deps.audit(request, 'publish', {...result.file,current_version_id:result.request.version_id}, {requestId:result.request.id,versionId:result.request.version_id});
+    await deps.audit(request, decision === 'approve' ? 'publish-request-approve' : 'publish-request-reject',
+      {...result.file,current_version_id:result.request.version_id}, {requestId:result.request.id,versionId:result.request.version_id});
+    response.json(result);
+  } catch (error) { next(error) } });
+
+  // Compatibility endpoint retained for existing File Manager callers.
+  app.post('/v1/files/:id/publish', async(request:RequestWithIdentity, response, next) => { try { requireHuman(request); const row = await publish(request, true); await deps.audit(request, 'publish', row, { versionId: row.published_version_id }); response.json(lifecycleFields(row)) } catch (error) { next(error) } });
   app.post('/v1/files/:id/checkin', async(request:RequestWithIdentity, response, next) => { try {
     await deps.requireFile(request, request.params.id, 'edit'); const actor = deps.identity(request);
     if (request.body?.publish === true) { const row = await publish(request, false, true); await deps.audit(request, 'checkin-publish', row); return response.json(lifecycleFields(row)) }
