@@ -38,6 +38,8 @@ import ProgressTracker, { getProgressErrorDescription } from './progressTracker'
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
+import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
+import { reconcileComposeService } from './sullaServiceReconcile';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
@@ -3078,12 +3080,6 @@ start_pre() {
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
-    // One-time migration: copy data from old VM paths to new host-mounted paths
-    await this.progressTracker.action('Migrating Sulla data to host storage', 40, async() => {
-      await this.migrateSullaDataToHost();
-      this.assertManagedServicesGeneration(generation);
-    });
-
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
@@ -3376,6 +3372,18 @@ start_pre() {
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
     try {
       const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
+      // The host files remain the value store; the container binds a
+      // root-owned guest copy because the VM cannot see host paths.
+      await provisionAccountsSecretsInGuest({
+        run:         (command, options) => this.execCommand({ capture: true, root: options?.root }, ...command),
+        copyToGuest: (hostPath, guestPath) => this.lima('copy', hostPath, `${ MACHINE_NAME }:${ guestPath }`),
+      }, {
+        'database.username': accountsSecrets.databaseUsername,
+        'database.password': accountsSecrets.databasePassword,
+        'bootstrap.secret':  accountsSecrets.bootstrap,
+        'session.secret':    accountsSecrets.session,
+        'encryption.key':    accountsSecrets.encryption,
+      });
       const accountsImage = resolveSullaServiceImage(
         'sulla-accounts', process.cwd(), Electron.app.getVersion(), process.env.SULLA_ACCOUNTS_IMAGE,
       );
@@ -3408,13 +3416,7 @@ start_pre() {
           SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
         },
         ports:   ['127.0.0.1:3020:3020'],
-        volumes: [
-          `${ accountsSecrets.databaseUsername }:/run/sulla-accounts-source/database.username:ro`,
-          `${ accountsSecrets.databasePassword }:/run/sulla-accounts-source/database.password:ro`,
-          `${ accountsSecrets.bootstrap }:/run/sulla-accounts-source/bootstrap.secret:ro`,
-          `${ accountsSecrets.session }:/run/sulla-accounts-source/session.secret:ro`,
-          `${ accountsSecrets.encryption }:/run/sulla-accounts-source/encryption.key:ro`,
-        ],
+        volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
         healthcheck: {
@@ -3707,6 +3709,11 @@ start_pre() {
       ports: ['127.0.0.1:30124:8792'],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
+        // The image declares VOLUME /data/files. Without an explicit mount,
+        // compose re-inherits whatever an older container had there on every
+        // recreate -- including a stale host bind (~/sulla/files) the VM can
+        // no longer see. Stored-only mode does not use this folder.
+        'sulla-files-folder:/data/files',
         filesTlsBind(),
         ...(vaultIdentities
           ? [vaultTlsBind(true)]
@@ -3792,15 +3799,9 @@ start_pre() {
       });
     }
 
-    // Resolve the persistent data directory for bind mounts (cross-platform via paths.appHome)
-    const sullaDataDir = path.join(paths.appHome, 'data');
-
-    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
     compose.volumes ??= {};
     compose.volumes['sulla-files-data'] ??= {};
-
-    // Ensure data directory is writable by container user (postgres=UID 70)
-    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
+    compose.volumes['sulla-files-folder'] ??= {};
 
     // Function code and invocation material stay inside the guest. Host paths
     // must never become Docker bind sources for agent-controlled runtimes.
@@ -3810,43 +3811,13 @@ start_pre() {
     // /mnt/data is root-owned, so creating /mnt/data/sulla needs root.
     await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', sullaFunctionsDir, sullaRuntimeTempDir);
 
+    // The VM cannot see host directories; a host bind would leave a service
+    // permanently unable to start. Fail generation instead of shipping one.
+    assertNoHostBindMounts(compose);
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
-    composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
-  }
-
-  /**
-   * One-time migration: copies data from old VM-internal paths (/var/lib/sulla/*)
-   * to the new host-mounted paths under paths.appHome/data/. Skips if the
-   * destination already contains data or the source doesn't exist.
-   */
-  private async migrateSullaDataToHost(): Promise<void> {
-    const sullaDataDir = path.join(paths.appHome, 'data');
-    const migrations = [
-      { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
-    ];
-
-    for (const { src, dest } of migrations) {
-      try {
-        // Check if destination already has data (PG_VERSION for postgres, or any file for redis)
-        const destFiles = await fs.promises.readdir(dest);
-
-        if (destFiles.length > 0) {
-          console.log(`[Sulla] Migration skip: ${ dest } already has data`);
-          continue;
-        }
-
-        // Check if old VM path exists and has data, then copy
-        await this.execCommand({ root: true }, 'test', '-d', src);
-        console.log(`[Sulla] Migrating ${ src } -> ${ dest }`);
-        await this.execCommand({ root: true }, 'cp', '-a', `${ src }/.`, `${ dest }/`);
-        console.log(`[Sulla] Migration complete: ${ src } -> ${ dest }`);
-      } catch {
-        console.log(`[Sulla] Migration skip: ${ src } does not exist or copy failed`);
-      }
-    }
   }
 
   /**
@@ -3890,26 +3861,13 @@ start_pre() {
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
       const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
-      const reconcileOptionalService = async(service: string): Promise<void> => {
-        this.assertManagedServicesGeneration(generation);
-        const refreshImage = this.#managedSullaRefreshImages.get(service);
-
-        if (refreshImage) {
-          try {
-            await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
-          } catch (error) {
-            console.warn(`[Sulla] Could not refresh ${ refreshImage }; trying the cached image:`, error);
-          }
-        }
-        this.assertManagedServicesGeneration(generation);
-        // Compose owns the desired-state diff. It leaves unchanged containers
-        // running and recreates only services whose image or configuration changed.
-        await this.execCommand(
-          { root: true }, ...composeCommand, 'up', '-d', '--no-deps',
-          ...(refreshImage ? ['--pull', 'never'] : []), service,
-        );
-        this.assertManagedServicesGeneration(generation);
-      };
+      const reconcileOptionalService = (service: string): Promise<void> => reconcileComposeService({
+        composeCommand,
+        service,
+        refreshImage: this.#managedSullaRefreshImages.get(service),
+        run:          (...command) => this.execCommand({ root: true }, ...command),
+        checkpoint:   () => this.assertManagedServicesGeneration(generation),
+      });
 
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
@@ -3998,7 +3956,7 @@ start_pre() {
             }
           }
           if (!serviceStarted) {
-            console.warn(`[Sulla] Service ${ service } image unavailable; continuing startup without it:`, unavailableError);
+            console.warn(`[Sulla] Service ${ service } could not be started; continuing startup without it:`, unavailableError);
           }
         }
         if (!serviceStarted) continue;
