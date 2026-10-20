@@ -4,9 +4,9 @@ import type { Config } from './config.js';
 import type pg from 'pg';
 
 const AREAS = [
-  { key: 'logs', name: 'Logs', folders: ['audit/files', 'audit/vault', 'app'] },
-  { key: 'training-data', name: 'Training Data', folders: [] },
-  { key: 'sulla', name: 'Sulla', folders: ['Docs', 'Use Cases/skills', 'Use Cases/workflows', 'Use Cases/agents', 'Use Cases/functions', 'Use Cases/recipes', 'Projects', 'Identity'] },
+  { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault', 'app'] },
+  { key: 'training-data', name: 'Training Data', explorerPath: 'Training Data', folders: [] },
+  { key: 'sulla', name: 'Docs', explorerPath: 'Sulla/Docs', folders: [] },
 ] as const;
 
 export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void> {
@@ -21,10 +21,13 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
         const id = randomUUID();
         collection = (await client.query(`INSERT INTO collections
           (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,explorer_path,system_area)
-          VALUES($1,$2,$3,$4,'knowledge','desktop-only',$5,$6,'{}',$4,$7) RETURNING *`,
-        [id, config.orgId ?? null, config.userId, area.name, {}, {}, area.key])).rows[0];
+          VALUES($1,$2,$3,$4,'knowledge','desktop-only',$5,$6,'{}',$8,$7) RETURNING *`,
+        [id, config.orgId ?? null, config.userId, area.name, {}, {}, area.key, area.explorerPath])).rows[0];
         const wrapped = await config.keyring.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
+      } else if (area.key === 'sulla' && (collection.name !== area.name || collection.explorer_path !== area.explorerPath)) {
+        collection = (await client.query(`UPDATE collections SET name=$2,explorer_path=$3 WHERE id=$1 RETURNING *`,
+          [collection.id, area.name, area.explorerPath])).rows[0];
       }
       for (const folder of area.folders) {
         const parts = folder.split('/');

@@ -12,7 +12,7 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
-import { resolveSullaLogsDir, resolveSullaConversationsDir } from '@pkg/agent/utils/sullaPaths';
+import { resolveSullaDocsDir, resolveSullaLogsDir, resolveSullaConversationsDir } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -103,6 +103,7 @@ class SullaFilesWatcher {
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
+  private docsWatcher?: fs.FSWatcher;
   private nativePolling = false;
   private systemSourcesScanning = false;
   private systemSourcesLastScan = 0;
@@ -234,7 +235,11 @@ class SullaFilesWatcher {
       if (!inventoryResponse.ok) throw new Error('System source inventory unavailable');
       const inventory=await inventoryResponse.json() as {fileId:string;versionId:string;collectionId:string;path:string;handle:string;sourceHash:string;state:string}[];
       const gateway=getSullaFilesSourceGateway();
-      for (const source of [{area:'logs',root:resolveSullaLogsDir(),prefix:'app/'},{area:'training-data',root:resolveSullaConversationsDir(),prefix:''}]) {
+      for (const source of [
+        { area: 'logs', root: resolveSullaLogsDir(), prefix: 'app/' },
+        { area: 'training-data', root: resolveSullaConversationsDir(), prefix: '' },
+        { area: 'sulla', root: resolveSullaDocsDir(), prefix: '' },
+      ]) {
         const collection=areas.find(area=>area.systemArea===source.area);
         if (!collection) throw new Error(`System collection ${source.area} missing`);
         const walk=async(relative:string):Promise<void> => {
@@ -323,6 +328,14 @@ class SullaFilesWatcher {
         this.watchers.set(root.id, watcher);
       } catch (error) { console.warn(`[SullaFiles] watcher unavailable for root ${ root.id }; periodic rescans remain active:`, error) }
     }
+    try {
+      const docsRoot = resolveSullaDocsDir();
+      this.docsWatcher = fs.watch(docsRoot, { recursive: process.platform !== 'linux', persistent: false }, () => {
+        this.systemSourcesLastScan = 0;
+      });
+    } catch (error) {
+      console.warn('[SullaFiles] bundled docs watcher unavailable; periodic native scans remain active:', error);
+    }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
     const pauseUntil = Number(await SullaSettingsModel.get('sullaFilesPauseUntil', 0));
@@ -334,7 +347,7 @@ class SullaFilesWatcher {
     }
   }
 
-  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void { if (this.rescanTimer) clearTimeout(this.rescanTimer); this.rescanTimer = setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] debounced rescan failed:', error)), 350) }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
