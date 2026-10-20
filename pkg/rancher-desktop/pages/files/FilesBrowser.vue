@@ -17,7 +17,7 @@
           S
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
-      <div v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="tree-roots" aria-label="File tree roots">
+      <div v-if="visibleCollections.length" class="tree-roots" aria-label="Pinned file tree roots">
         <div class="grp">Folders</div>
         <button v-for="collection in visibleCollections" :key="collection.id" type="button"
           :class="{ on: collection.id === snapshot?.collection.id }" :disabled="busy || loading"
@@ -60,10 +60,6 @@
         /><span>{{ folder.split('/').at(-1) }}</span></a>
       </template>
 
-      <button class="more-system-areas" :aria-expanded="showSystemAreas" type="button" @click="toggleSystemAreas">
-        <span>{{ showSystemAreas ? 'Less' : 'More' }}</span>
-      </button>
-      <template v-if="showSystemAreas"><a v-for="collection in systemCollections" :key="collection.id" href="#" :class="{ on: collection.id === snapshot?.collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="collection.systemArea === 'logs' ? icons.doc : icons.code" /><span>{{ collection.name }}</span></a></template>
       <div class="sep" />
       <section
         class="favorites"
@@ -262,6 +258,21 @@
           </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
+            <select
+              v-if="snapshot?.availableCollections?.length"
+              :value="snapshot.collection.id"
+              aria-label="Browse collection"
+              :disabled="busy || loading"
+              @change="selectCollection(($event.target as HTMLSelectElement).value)"
+            ><option v-for="collection in snapshot.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option></select>
+            <button
+              v-if="snapshot?.collection.id"
+              class="btn sm ghost"
+              type="button"
+              :aria-pressed="currentCollectionPinned"
+              :title="currentCollectionPinned ? 'Remove this collection from the sidebar' : 'Pin this collection to the sidebar'"
+              @click="setCollectionPinned(snapshot.collection.id, !currentCollectionPinned)"
+            >{{ currentCollectionPinned ? 'Unpin from sidebar' : 'Pin to sidebar' }}</button>
             <button
               v-if="snapshot?.collection.memberCount !== undefined"
               class="btn sm ghost"
@@ -972,11 +983,22 @@ const folderFavorites = computed(() => {
       available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
     }));
 });
-const showSystemAreas = ref(localStorage.getItem('sulla:files:show-system-areas') === 'true');
-const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
-const systemCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea === 'logs' || collection.systemArea === 'training-data') ?? []);
+function loadPinnedCollectionIds():Set<string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem('sulla:files:pinned-collections') ?? '[]');
+    return new Set(Array.isArray(stored) ? stored.filter((id):id is string => typeof id === 'string') : []);
+  } catch { return new Set() }
+}
+const pinnedCollectionIds = ref(loadPinnedCollectionIds());
+const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => pinnedCollectionIds.value.has(collection.id)) ?? []);
+const currentCollectionPinned = computed(() => Boolean(snapshot.value?.collection.id && pinnedCollectionIds.value.has(snapshot.value.collection.id)));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
-function toggleSystemAreas() { showSystemAreas.value = !showSystemAreas.value; localStorage.setItem('sulla:files:show-system-areas', String(showSystemAreas.value)); }
+function setCollectionPinned(collectionId:string, pinned:boolean) {
+  const next = new Set(pinnedCollectionIds.value);
+  if (pinned) next.add(collectionId); else next.delete(collectionId);
+  pinnedCollectionIds.value = next;
+  localStorage.setItem('sulla:files:pinned-collections', JSON.stringify([...next]));
+}
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));

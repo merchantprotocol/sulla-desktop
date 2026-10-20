@@ -198,11 +198,6 @@ class SullaFilesWatcher {
       if (!response.ok) throw new Error(`System collections unavailable (${ response.status })`);
       return response.json();
     },
-    gateway: {
-      registerExactFile: file => getSullaFilesSourceGateway().registerExactFile(file),
-      read:              handle => getSullaFilesSourceGateway().read(handle),
-      revoke:            handle => getSullaFilesSourceGateway().revoke(handle),
-    },
     ingest: request => this.ingestSystemAreaFile(request),
     customerBusy: () => this.customerFilesBusy(),
     active:    () => this.nativePolling && !this.stopped,
