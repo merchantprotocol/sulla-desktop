@@ -1,0 +1,175 @@
+/** @jest-environment node */
+// Drives the real LimaBackend.prepareSullaComposeFile() with the VM and the
+// app's services faked, then inspects the compose file it would write.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
+import yaml from 'yaml';
+
+const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-lima-compose-'));
+const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-desktop/assets/sulla-docker-compose.yaml'), 'utf8'));
+// All '@pkg/assets/*' imports resolve to one stub, so the stub carries the
+// compose definition plus the dependency versions lima.ts reads at load.
+const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
+const flags = { vaultV2: false, fuse: false };
+const noop = () => undefined;
+const stubs = (names: string, extra: Record<string, unknown> = {}) => ({
+  ...Object.fromEntries(names.split(' ').map(name => [name, noop])), ...extra,
+});
+
+jest.unstable_mockModule('@pkg/assets/sulla-docker-compose.yaml', () => ({ default: assetStub }));
+jest.unstable_mockModule('electron', () => {
+  const any: any = new Proxy(function() {}, { get: (_t, key) => key === 'then' ? undefined : any, apply: () => any, construct: () => any });
+  const app = { getVersion: () => '1.6.1', isPackaged: true, getPath: () => appHome, on: noop, whenReady: () => Promise.resolve() };
+  const names = 'BaseWindow BrowserView BrowserWindow MessageChannelMain Menu MenuItem Notification Tray WebContentsView ' +
+    'autoUpdater clipboard contextBridge crashReporter desktopCapturer dialog globalShortcut ipcMain ipcRenderer ' +
+    'nativeImage nativeTheme net powerMonitor powerSaveBlocker protocol safeStorage screen session shell ' +
+    'systemPreferences utilityProcess webContents webFrame';
+  const exports: Record<string, unknown> = Object.fromEntries(names.split(' ').map(name => [name, any]));
+
+  return { ...exports, app, default: { ...exports, app } };
+});
+jest.unstable_mockModule('@pkg/agent/database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { getServicePassword: () => Promise.resolve('service-pass$word'), get: () => Promise.resolve('') },
+}));
+jest.unstable_mockModule('@pkg/config/settingsImpl', () => stubs(
+  'SETTING clearSettings createSettings determineLockedFields firstRunDialogNeeded getDefaultMemory getLockedSettings ' +
+  'load merge migrateSpecifiedSettingsToCurrentVersion runInDebugMode save turnFirstRunOff updateLockedFields updateTable',
+  { getSettings: () => ({ experimental: { sullaVaultV2Enabled: flags.vaultV2 } }) },
+));
+jest.unstable_mockModule('@pkg/utils/paths', () => ({
+  default: new Proxy({ appHome }, { get: (target: any, key) => target[key] ?? appHome }),
+}));
+jest.unstable_mockModule('@pkg/utils/sullaFilesNativeSource', () => ({
+  sullaFilesNativeSourceRolloutRequested: () => flags.fuse,
+}));
+jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ refreshVaultPinnedSessions: () => Promise.resolve() }));
+jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({ refreshFilesPinnedSessions: () => Promise.resolve() }));
+jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager getSullaFilesMountManager'));
+jest.unstable_mockModule('@pkg/main/mainEvents', () => stubs('NoMainEventsHandlerError', {
+  default: { on: noop, emit: noop, handle: noop, invoke: noop },
+}));
+jest.unstable_mockModule('@pkg/main/deploymentProfiles', () => stubs('DeploymentProfileError readDeploymentProfiles validateDeploymentProfile'));
+jest.unstable_mockModule('@pkg/main/credentialServer/httpCredentialHelperServer', () => ({
+  getServerCredentialsPath: () => '', ServerState: {},
+}));
+jest.unstable_mockModule('@pkg/sulla', () => stubs('afterBackgroundLoaded hookSullaEnd initiateWindowContext ' +
+  'instantiateSullaStart markSullaDockerServicesStarted onMainProxyLoad sullaEnd'));
+jest.unstable_mockModule('@pkg/window', () => stubs('centerDialog closeExtension createWindow getWindow openAudioSettings ' +
+  'openCaptureStudio openComputerUseSettings openDenyRootDialog openDialog openDockerDashboard openExtension ' +
+  'openFirstRunDialog openKubernetesErrorMessageWindow openLanguageModelSettings openMain openSudoPrompt ' +
+  'openUnmetPrerequisitesDialog openUpdatesWindow openUrlInApp restoreWindow send showMessageBox webRoot windowMapping'));
+jest.unstable_mockModule('@pkg/sudo-prompt', () => ({ exec: noop }));
+
+const { default: LimaBackend } = await import('../lima');
+const { ACCOUNTS_SECRETS_DIRECTORY, findHostBindMounts } = await import('../sullaComposeMounts');
+
+interface Recorded { command: string[]; options: any }
+
+async function generate() {
+  const backend: any = new LimaBackend('x86_64' as any, () => ({}) as any);
+  const commands: Recorded[] = [];
+  const copies: [string, string][] = [];
+  let written = '';
+
+  backend.execCommand = (...args: any[]) => {
+    const options = typeof args[0] === 'object' ? args.shift() : {};
+
+    commands.push({ command: args, options });
+
+    if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
+    if (args[0] === 'findmnt') return Promise.resolve('ext4 /dev/vdb1[/mnt/sulla-files]\n');
+
+    return Promise.resolve('');
+  };
+  backend.lima = (...args: string[]) => { copies.push([args[1], args[2]]); return Promise.resolve() };
+  backend.writeFile = (file: string, contents: string) => {
+    if (file === '/tmp/sulla-docker-compose.yml') written = contents;
+
+    return Promise.resolve();
+  };
+  backend.prepareFilesTlsIdentity = () => Promise.resolve({ fingerprint: 'files-fp' });
+  backend.prepareVaultTlsIdentity = () => Promise.resolve({ fingerprint: 'vault-fp' });
+  backend.loadOrCreateFilesBootstrapIdentity = () => Promise.resolve('files-bootstrap');
+  backend.loadOrCreateVaultServiceIdentities = () => Promise.resolve({
+    bootstrapToken: 'b', controlToken: 'c', approvalToken: 'a', brokerToken: 'k', filesToken: 'f',
+  });
+
+  await backend.prepareSullaComposeFile();
+
+  return { compose: yaml.parse(written), commands, copies };
+}
+
+function volumeSource(volume: any): string | undefined {
+  if (typeof volume !== 'string') return volume.type === 'volume' ? undefined : volume.source;
+  const [source, target] = volume.split(':');
+
+  const isPath = ['/', '.', '~', '{'].some(prefix => source.startsWith(prefix));
+
+  // "target" alone is anonymous; "name:target" is a named volume.
+  return target !== undefined && isPath ? source : undefined;
+}
+
+beforeAll(() => {
+  fs.writeFileSync(path.join(appHome, 'chat-api-token.json'), JSON.stringify({ token: 'api-token' }));
+});
+afterAll(() => { fs.rmSync(appHome, { recursive: true, force: true }) });
+beforeEach(() => {
+  const fresh = structuredClone(assetCompose);
+
+  for (const key of Object.keys(assetStub)) if (key !== 'alpineLimaISO') delete assetStub[key];
+  Object.assign(assetStub, fresh);
+});
+
+describe.each([
+  { vaultV2: false, fuse: false },
+  { vaultV2: true, fuse: true },
+])('generated Sulla compose (vault v2: $vaultV2, files fuse: $fuse)', (scenario) => {
+  beforeEach(() => { Object.assign(flags, scenario) });
+
+  test('no service binds a host path; every bind is a guest-local path', async() => {
+    const { compose } = await generate();
+    const home = os.homedir();
+    const services = Object.keys(compose.services);
+
+    expect(services).toEqual(expect.arrayContaining(['postgres', 'redis', 'sulla_accounts', 'sulla_files', 'tools']));
+    if (scenario.vaultV2) expect(services).toContain('sulla_vault');
+    if (scenario.fuse) expect(services).toContain('sulla_files_fuse');
+    expect(findHostBindMounts(compose)).toEqual([]);
+    for (const [name, service] of Object.entries<any>(compose.services)) {
+      for (const volume of service.volumes ?? []) {
+        const source = volumeSource(volume);
+
+        if (source === undefined) continue; // named volume
+        expect({ name, source }).toEqual({ name, source: expect.stringMatching(/^\/(mnt\/data\/|var\/lib\/sulla\/|mnt\/sulla-files$|var\/run\/docker\.sock$)/) });
+        expect(source.startsWith(appHome)).toBe(false);
+        expect(source.startsWith(home)).toBe(false);
+        expect(source.startsWith('/Users')).toBe(false);
+      }
+    }
+  });
+
+  test('accounts reads its secrets from the guest copy, which Desktop provisions', async() => {
+    const { compose, commands, copies } = await generate();
+    const accountsVolumes = compose.services.sulla_accounts.volumes;
+
+    expect(accountsVolumes.map((v: any) => v.source)).toEqual(
+      ['database.username', 'database.password', 'bootstrap.secret', 'session.secret', 'encryption.key']
+        .map(name => `${ ACCOUNTS_SECRETS_DIRECTORY }/${ name }`));
+    // Values come from the host value store under appHome, copied into staging.
+    expect(copies.map(([hostPath]) => path.dirname(hostPath))).toEqual(Array(5).fill(path.join(appHome, 'accounts')));
+    expect(copies.every(([, guest]) => guest.startsWith('0:/tmp/sulla-accounts-secrets.Test01/'))).toBe(true);
+    const install = commands.find(c => c.command[0] === 'sh' && c.command.includes(ACCOUNTS_SECRETS_DIRECTORY));
+
+    expect(install?.options.root).toBe(true);
+  });
+
+  test('Files mounts /data/files explicitly so a stale inherited bind is replaced', async() => {
+    const { compose } = await generate();
+
+    expect(compose.services.sulla_files.volumes).toContain('sulla-files-folder:/data/files');
+    expect(compose.volumes).toHaveProperty('sulla-files-folder');
+  });
+});
