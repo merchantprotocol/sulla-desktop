@@ -3568,7 +3568,7 @@ start_pre() {
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30122:8788'],
-      volumes: ['/var/run/docker.sock:/var/run/docker.sock'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
@@ -3747,7 +3747,6 @@ start_pre() {
         environment: {
           SULLA_FILES_FUSE_URL:             'https://sulla_files:8792',
           SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
-          SULLA_FILES_FUSE_COLLECTION_FILE: '/run/sulla-files-fuse/collection',
           SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla-files',
           SSL_CERT_FILE:                     '/run/sulla-files-ca/tls.crt',
         },
@@ -3765,7 +3764,8 @@ start_pre() {
         pids_limit:   64,
         mem_limit:    '256m',
         cpus:         0.5,
-        restart:      'no',
+        depends_on:   { sulla_files: { condition: 'service_healthy' } },
+        restart:      'unless-stopped',
       };
       await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '/var/lib/sulla/files-fuse');
       await this.execCommand({ root: true }, 'install', '-d', '-m', '0755', '/mnt/sulla-files');

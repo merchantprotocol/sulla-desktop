@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded read/write FUSE view of one authenticated Sulla Files collection.
-
-This adapter is intentionally narrow: existing regular files can be read,
-truncated, and rewritten. Creation, deletion, rename, links, xattrs, locking,
-mmap, and executable workloads fail closed. In particular, editors that save by
-creating a temporary file and renaming it over the original are unsupported.
-"""
+"""Read/write FUSE view of every tracked Sulla Files collection."""
 
 import argparse
 import errno
@@ -22,15 +16,14 @@ import trio
 
 
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_OPEN_HANDLES = 2
+MAX_OPEN_HANDLES = 128
 MAX_TOKEN_BYTES = 4096
 
 
 class FilesApi:
-    def __init__(self, base_url: str, token_file: str, collection_id: str):
+    def __init__(self, base_url: str, token_file: str):
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
-        self.collection_id = collection_id
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -73,8 +66,7 @@ class FilesApi:
             raise OSError(errno.EIO, f"Files service unavailable: {error}") from error
 
     async def snapshot(self):
-        query = urllib.parse.urlencode({"collectionId": self.collection_id})
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files?{query}")
+        _, _, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree")
         return json.loads(body)
 
     async def read(self, file_id):
@@ -84,16 +76,29 @@ class FilesApi:
     async def write(self, file_id, data, version_id, source_hash):
         if len(data) > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
-        headers = {
-            "Content-Type": "application/octet-stream",
-            "If-Match": f'"{version_id}"',
-            "X-Sulla-Source-Hash": source_hash,
-        }
-        _, response_headers, body = await trio.to_thread.run_sync(
-            self._request, f"/v1/fuse/files/{file_id}/content", "PUT", bytes(data), headers
-        )
-        result = json.loads(body)
-        return result, response_headers
+        headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash}
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", bytes(data), headers)
+        return json.loads(body)
+
+    async def create(self, collection_id, path):
+        query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files?{query}", "POST", b"", {"Content-Type":"application/octet-stream"})
+        return json.loads(body)
+
+    async def rename(self, file_id, path):
+        body = json.dumps({"path": path}).encode()
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "PATCH", body, {"Content-Type":"application/json"})
+
+    async def delete(self, file_id):
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "DELETE")
+
+    async def mkdir(self, collection_id, path):
+        body = json.dumps({"collectionId":collection_id,"path":path}).encode()
+        await trio.to_thread.run_sync(self._request, "/v1/fuse/folders", "POST", body, {"Content-Type":"application/json"})
+
+    async def rmdir(self, collection_id, path):
+        query = urllib.parse.urlencode({"collectionId":collection_id,"path":path})
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/folders?{query}", "DELETE")
 
 
 class SullaFiles(pyfuse3.Operations):
@@ -111,21 +116,33 @@ class SullaFiles(pyfuse3.Operations):
         self.gid = 0
 
     async def refresh(self):
-        rows = await self.api.snapshot()
+        snapshot = await self.api.snapshot()
         present = {""}
-        for row in rows:
-            parts = row["path"].split("/")
-            for index in range(1, len(parts)):
-                path = "/".join(parts[:index])
-                present.add(path)
-                self._node(path, True)
-            present.add(row["path"])
-            inode = self._node(row["path"], False)
-            self.nodes[inode].update(row)
+        for collection in snapshot["collections"]:
+            root = f"{collection['name'].replace('/', '_')}--{collection['id'][:8]}"
+            present.add(root)
+            inode = self._node(root, True)
+            self.nodes[inode].update({"collectionId":collection["id"], "collectionRoot":True})
+        roots = {node.get("collectionId"):path for path,inode in self.path_inode.items() for node in [self.nodes[inode]] if node.get("collectionRoot")}
+        for folder in snapshot["folders"]:
+            root = roots.get(folder["collection_id"])
+            if not root: continue
+            full = f"{root}/{folder['path']}"
+            for index in range(1, len(full.split('/')) + 1):
+                path = "/".join(full.split('/')[:index]); present.add(path)
+                inode = self._node(path, True); self.nodes[inode].update({"collectionId":folder["collection_id"]})
+        for row in snapshot["files"]:
+            root = roots.get(row["collection_id"])
+            if not root: continue
+            full = f"{root}/{row['path']}"; parts=full.split('/')
+            for index in range(1,len(parts)):
+                path="/".join(parts[:index]); present.add(path)
+                inode=self._node(path,True); self.nodes[inode].update({"collectionId":row["collection_id"]})
+            present.add(full); inode=self._node(full,False)
+            self.nodes[inode].update({**row,"path":full,"filesPath":row["path"],"collectionId":row["collection_id"],"mtimeMs":int(time.time()*1000)})
         for path, inode in list(self.path_inode.items()):
             if path and path not in present:
-                self.path_inode.pop(path, None)
-                self.nodes.pop(inode, None)
+                self.path_inode.pop(path, None); self.nodes.pop(inode, None)
 
     def _node(self, path, directory):
         inode = self.path_inode.get(path)
@@ -145,7 +162,7 @@ class SullaFiles(pyfuse3.Operations):
         # Only explicitly admitted containers receive this mount.  The Files
         # capability remains the authorization boundary; allow any numeric
         # runtime UID to exercise that scoped view without guessing its ID.
-        attrs.st_mode = (stat.S_IFDIR | 0o555) if node["directory"] else (stat.S_IFREG | 0o666)
+        attrs.st_mode = (stat.S_IFDIR | 0o777) if node["directory"] else (stat.S_IFREG | 0o666)
         attrs.st_nlink = 2 if node["directory"] else 1
         attrs.st_uid = self.uid
         attrs.st_gid = self.gid
@@ -296,17 +313,52 @@ class SullaFiles(pyfuse3.Operations):
         finally:
             self.handles.pop(fh, None)
 
-    async def create(self, *args):
-        raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+    def _child(self, parent_inode, name):
+        parent=self.nodes.get(parent_inode)
+        if not parent or not parent.get("directory"): raise pyfuse3.FUSEError(errno.ENOTDIR)
+        return parent, "/".join(filter(None,[parent["path"],os.fsdecode(name)]))
 
-    async def rename(self, *args):
-        raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+    def _files_path(self, node_path):
+        return node_path.split("/",1)[1] if "/" in node_path else ""
 
-    async def unlink(self, *args):
-        raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+    async def create(self, parent_inode, name, mode, flags, ctx):
+        parent,path=self._child(parent_inode,name)
+        if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
+        try: row=await self.api.create(parent["collectionId"],self._files_path(path))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        inode=self._node(path,False); self.nodes[inode].update({**row,"path":path,"filesPath":self._files_path(path),"collectionId":parent["collectionId"]})
+        info=await self.open(inode,flags,ctx)
+        return info,self._attrs(inode)
 
-    async def mkdir(self, *args):
-        raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+    async def rename(self, parent_inode, name, new_parent_inode, new_name, flags, ctx):
+        parent,old_path=self._child(parent_inode,name); target_parent,new_path=self._child(new_parent_inode,new_name)
+        inode=self.path_inode.get(old_path); node=self.nodes.get(inode) if inode else None
+        if not node or node.get("directory") or parent.get("collectionId") != target_parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+        try: await self.api.rename(node["id"],self._files_path(new_path))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        self.path_inode.pop(old_path,None); self.path_inode[new_path]=inode; node.update({"path":new_path,"filesPath":self._files_path(new_path)})
+
+    async def unlink(self, parent_inode, name, ctx):
+        _,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
+        if not node or node.get("directory"): raise pyfuse3.FUSEError(errno.ENOENT)
+        try: await self.api.delete(node["id"])
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        self.path_inode.pop(path,None); self.nodes.pop(inode,None)
+
+    async def mkdir(self, parent_inode, name, mode, ctx):
+        parent,path=self._child(parent_inode,name)
+        if not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
+        try: await self.api.mkdir(parent["collectionId"],self._files_path(path))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        inode=self._node(path,True); self.nodes[inode].update({"collectionId":parent["collectionId"]})
+        return self._attrs(inode)
+
+    async def rmdir(self, parent_inode, name, ctx):
+        parent,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
+        if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EPERM)
+        try: await self.api.rmdir(parent["collectionId"],self._files_path(path))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        self.path_inode.pop(path,None); self.nodes.pop(inode,None)
 
 
 async def main(options):
@@ -314,7 +366,7 @@ async def main(options):
     if not token_file:
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     os.makedirs(options.mountpoint, exist_ok=True)
-    operations = SullaFiles(FilesApi(options.url, token_file, options.collection))
+    operations = SullaFiles(FilesApi(options.url, token_file))
     pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "default_permissions", "allow_other"})
     try:
         await pyfuse3.main()
@@ -325,6 +377,5 @@ async def main(options):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Files service base URL")
-    parser.add_argument("--collection", required=True)
     parser.add_argument("mountpoint")
     trio.run(main, parser.parse_args())

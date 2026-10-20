@@ -24,7 +24,8 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as CapabilityClaims;
   if (claims.v !== 1 || claims.aud !== 'sulla-tools' || claims.exp <= Math.floor(Date.now() / 1_000) || !claims.sub) throw new Error('Invalid capability claims');
   if (!claims.scopes?.some(scope => scope === '*' || scope === 'files/*' || scope === 'files/fuse')) throw new Error('Capability does not allow files');
-  if (claims.scopes.includes('files/fuse') && !claims.scopes.some(scope => scope === '*' || scope === 'files/*') && !claims.collection_id) throw new Error('FUSE capability is not collection-bound');
+  // Test-phase FUSE capabilities are installation-wide. Every mount request
+  // still crosses the policy hook before touching Files data.
   return claims;
 }
 

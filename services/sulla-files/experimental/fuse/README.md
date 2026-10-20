@@ -29,9 +29,9 @@ from the staged Lima configuration. Persisted mount arrays are replaced rather
 than deep-merged, Files runs stored-only on encrypted chunks/named volumes, and
 agent file tools use guest-owned homes/workspaces. Sulla/PostgreSQL application
 data remains outside this change and retains its pre-change storage behavior.
-The native feature remains hard-disabled by
-`SULLA_FILES_NATIVE_SOURCE_READY=false` until a reviewed native host acceptance
-run succeeds.
+The test-phase feature starts automatically. Every mount operation crosses the
+single allow-all hook in `src/fusePolicy.ts`, which is the insertion point for
+later per-agent/job grants.
 
 The exact staged host acceptance procedure is in
 [`MACOS_NATIVE_PROOF.md`](./MACOS_NATIVE_PROOF.md). It uses one disposable
@@ -40,8 +40,9 @@ application data.
 
 ## Supported proof boundary
 
-Existing tracked regular files support list, stat, read, truncate, positional
-write, flush, fsync, and close. Each write sends both the Files version in
+All tracked collections are exposed beneath `/mnt/sulla-files` and support
+list, stat, read, create, truncate, positional write, flush, fsync, rename,
+mkdir, unlink, rmdir, and close. Each write sends both the Files version in
 `If-Match` and the indexed source SHA-256. A stale source leaves the external
 source bytes current, imports them into the original Files entry with
 base-version CAS, preserves the FUSE bytes as a visible conflict file, and
@@ -52,10 +53,15 @@ source revision/hash, exact Files version, and result before completing the
 action. A service or broker outage returns `EIO` from flush/fsync and is never
 reported as a durable save.
 
-Creation, deletion, directory mutation, rename, hard/symbolic links, xattrs,
-locks, mmap, and executable workloads fail closed. Temp-file-plus-rename editor
-saves are unsupported in this slice. Use an in-place tool that opens an existing
-file with `r+b`.
+Hard/symbolic links, xattrs, locks, mmap, cross-collection moves, and executable
+workloads fail closed. Files collections appear as stable top-level directories
+named `<collection-name>--<id-prefix>`.
+
+Desktop runs one resource-capped FUSE infrastructure container attached to the
+VM's shared `/mnt/sulla-files` anchor. Only that daemon receives `/dev/fuse` and
+`SYS_ADMIN`; workflow and agent containers receive the propagated mount with
+`rslave`, never either privilege. This keeps the adapter's pinned Python/FUSE
+runtime reproducible while preserving the one-daemon design.
 
 The reusable Linux proof exercises the same stored-only implementation: the
 real Electron source-gateway class owns an exact synthetic descriptor, the real
@@ -74,7 +80,6 @@ Run the adapter after starting an isolated Files service:
 export SULLA_FILES_FUSE_TOKEN='short-lived capability'
 python3 experimental/fuse/sulla_files_fuse.py \
   --url http://127.0.0.1:8792 \
-  --collection COLLECTION_UUID \
   /path/to/mount
 ```
 

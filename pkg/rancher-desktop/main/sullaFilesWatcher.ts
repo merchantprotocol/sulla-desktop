@@ -204,7 +204,13 @@ class SullaFilesWatcher {
         this.nativeBroker.resume();
         this.nativePolling = true;
       }
-      await getSullaFilesMountManager().start(() => this.fuseMountCredentials());
+      // The Files service remains usable when the optional guest FUSE adapter
+      // cannot start (for example, an older VM kernel lacks /dev/fuse). The
+      // mount reports its own error state and can be retried on the next
+      // unlock; it must not make Files unlock fail or block desktop startup.
+      await getSullaFilesMountManager().start(() => this.fuseMountCredentials()).catch(error => {
+        console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
+      });
     }
   }
 
@@ -333,18 +339,11 @@ class SullaFilesWatcher {
     return getSullaFilesMountManager().status();
   }
 
-  private async fuseMountCredentials():Promise<{ collectionId:string; token:string }> {
+  private async fuseMountCredentials():Promise<{ token:string }> {
     await this.requireAppUnlocked();
-    const [principalId, collectionResponse] = await Promise.all([
-      this.localPrincipalId(),
-      this.rawLocalRequest('/v1/local/native-sources/collection'),
-    ]);
-    if (!collectionResponse.ok) throw new Error('The native Files collection is unavailable');
-    const collection = await collectionResponse.json() as { collectionId?:unknown };
-    if (typeof collection.collectionId !== 'string') throw new Error('Files returned an invalid native collection');
+    const principalId = await this.localPrincipalId();
     return {
-      collectionId: collection.collectionId,
-      token: await this.capabilityToken(principalId, {}, ['files/fuse'], collection.collectionId),
+      token: await this.capabilityToken(principalId, {}, ['files/fuse']),
     };
   }
 
