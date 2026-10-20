@@ -378,10 +378,16 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const watcher = getSullaFilesWatcher();
       startSullaFilesSourceGateway();
       try {
-        await watcher.initialize();
-        const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-        if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
-        console.log('[Background] Sulla Files runtime initialized');
+        // Files is optional for the app to be usable: never let it hold the
+        // startup screen. After the budget it keeps starting in the background.
+        const { awaitWithBudget } = await import('@pkg/utils/awaitWithBudget');
+        const filesStartup = (async() => {
+          await watcher.initialize();
+          const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+          if (getVaultKeyService().isUnlocked()) await watcher.unlockService();
+          console.log('[Background] Sulla Files runtime initialized');
+        })();
+        await awaitWithBudget('Sulla Files runtime', filesStartup, 20_000);
       } catch (error) {
         await watcher.shutdown().catch(() => undefined);
         await stopSullaFilesSourceGateway();
