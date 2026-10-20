@@ -25,7 +25,7 @@ import { Store } from './store.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload } from './streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
-import { authorizedVersionId, canViewDraft, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
+import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
 import type { Config } from './config.js';
@@ -38,7 +38,7 @@ import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 type RequestWithIdentity = express.Request<Record<string, string>> & { filesIdentity?: FilesIdentity };
-type Right = 'view' | 'use-by-agents' | 'edit' | 'manage';
+type Right = 'view' | 'edit' | 'manage';
 
 class HttpError extends Error { constructor(public readonly status:number, message:string) { super(message) } }
 
@@ -172,7 +172,7 @@ export function createApp(
     const actor=request.filesIdentity;
     auditContext.run({actor:actor?.agentId ?? actor?.jobId ?? (actor ? 'human' : 'sulla-files'),
       requestId:request.header('x-request-id')?.slice(0,256) ?? randomUUID(),
-      action:request.body?.action === 'copy' || request.body?.items?.some?.((item:any)=>item.action==='copy') ? 'copy' : /\/restore$/.test(request.path) ? 'restore' : undefined},next);
+      action:request.body?.action === 'copy' || (Array.isArray(request.body?.items) && request.body.items.some((item:any)=>item?.action==='copy')) ? 'copy' : /\/restore$/.test(request.path) ? 'restore' : undefined},next);
   });
   const auditWriter=new FileAuditWriter(db, async(id,versionId) => {
     const content=await loadFileContent(db,config,store,id,versionId);
@@ -185,7 +185,7 @@ export function createApp(
     const event=validateAuditEvent(request.body);
     await db.query('INSERT INTO files_audit_spool(event) VALUES($1)',[event]);
     response.status(202).json({ok:true});
-    void auditWriter.drain();
+    void auditWriter.drain().catch(error=>console.error('[SullaFiles] audit delivery failed; retry pending',error));
   } catch(error) {next(error)} });
   const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
   const mountIdentity = (request:RequestWithIdentity, _operation:string, _resource:Record<string,unknown> = {}) => identity(request);
@@ -195,19 +195,19 @@ export function createApp(
     return result.rows[0];
   }
   async function collectionAccess(_request:RequestWithIdentity, collectionId:string, queryable:pg.Pool | pg.PoolClient = db) {
-    return { role:'manage', paths:[] as {folderPath:string;role:string}[], files:[] as {fileId:string;role:string}[], collection:await collectionRow(collectionId, queryable) };
+    return {collection:await collectionRow(collectionId,queryable)};
   }
   async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, _allowShared = false, _allowExactFiles = false) {
     identity(request);
     const access = await collectionAccess(request, collectionId);
-    if (right !== 'view' && right !== 'use-by-agents') assertSystemAreaWritable(access.collection.system_area);
+    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;
   }
   async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right, queryable:pg.Pool | pg.PoolClient = db) {
     identity(request);
     const access = await collectionAccess(request, collectionId, queryable);
     if (isProtectedPath(path) && !(access.collection.system_area === 'logs' && (isAuditLogPath(path) || path === 'audit/vault'))) throw protectedPathError();
-    if (right !== 'view' && right !== 'use-by-agents') assertSystemAreaWritable(access.collection.system_area);
+    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;
   }
   async function fileRow(fileId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
@@ -221,9 +221,8 @@ export function createApp(
     await requirePath(request, file.collection_id, file.path, right, queryable);
     return file;
   }
-  async function fileRole(_request:RequestWithIdentity, _file:any):Promise<string> { return 'manage' }
   async function visibleVersion(request:RequestWithIdentity, file:any, requested?:string):Promise<string> {
-    return authorizedVersionId(db, file, canViewDraft(await fileRole(request, file), identity(request), file), requested);
+    return authorizedVersionId(db, file, true, requested);
   }
   const originalReveals = new OriginalRevealAttestations();
   // Both the native-only local secret and a fresh principal capability are
@@ -866,7 +865,7 @@ export function createApp(
     const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
     const actor = identity(request); const entries:any[] = [];
     for (const row of query.rows.filter(row => !isProtectedPath(row.file.path))) {
-      const role = await fileRole(request, row.file); const draftVisible = canViewDraft(role, actor, row.file); const canEdit = true;
+      const draftVisible = true; const canEdit = true;
       const visibleFile = row.file;
       entries.push({ ...row, file: lifecycleFields(visibleFile), syncAuthority: { canEdit, canViewDraft: draftVisible, canMaterialize: row.version.deleted || row.version.publication_status === 'published' || draftVisible } });
     }
@@ -1075,10 +1074,10 @@ export function createApp(
     const actor = identity(request); const visible = [];
     for (const row of rows.rows.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
       const role = 'manage';
-      const versionId = canViewDraft(role, actor, row) ? row.current_version_id : row.published_version_id;
+      const versionId = true ? row.current_version_id : row.published_version_id;
       if (!versionId) continue;
       const version = versionId === row.current_version_id ? row : (await db.query('SELECT size,created_at,created_by_type,created_by_id FROM file_versions WHERE id=$1', [versionId])).rows[0];
-      const draftVisible = canViewDraft(role, actor, row);
+      const draftVisible = true;
       visible.push({ ...lifecycleFields({ ...row, current_version_id: versionId, size: Number(version?.size ?? row.size), version_created_at: version?.created_at, version_created_by_type: version?.created_by_type, version_created_by_id: version?.created_by_id }), capabilities: lifecycleCapabilities(role, draftVisible) });
     }
     response.json(visible);
@@ -1119,8 +1118,8 @@ export function createApp(
   } catch (error) { next(error) } });
   app.get('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');
-    const effectiveRole = await fileRole(request, file);
-    const draftVisible = canViewDraft(effectiveRole, identity(request), file);
+    const effectiveRole = 'manage';
+    const draftVisible = true;
     // A trashed file points at a deleted tombstone. Detail remains available for
     // retention and disposal decisions, but it must not use that tombstone to
     // broaden version/content visibility.
@@ -1166,7 +1165,7 @@ export function createApp(
   app.get('/v1/files/:id/preview', (request:RequestWithIdentity, response, next) => stream(request, response, next));
   app.get('/v1/files/:id/download', (request:RequestWithIdentity, response, next) => stream(request, response, next, true));
   app.get('/v1/files/:id/thumbnail', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const versionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined); const content = await thumbnail(db, config, store, file.id, versionId); if (!content) return response.sendStatus(404); return sendContent(request, response, content, 'private, max-age=86400') } catch (error) { next(error) } });
-  app.get('/v1/files/:id/history', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const drafts = canViewDraft(await fileRole(request, file), identity(request), file); const rows = await db.query(`SELECT *,major_version::text||'.'||minor_version::text AS version_number FROM file_versions WHERE file_id=$1 AND ($2 OR publication_status='published') ORDER BY created_at DESC`, [request.params.id, drafts]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
+  app.get('/v1/files/:id/history', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const drafts = true; const rows = await db.query(`SELECT *,major_version::text||'.'||minor_version::text AS version_number FROM file_versions WHERE file_id=$1 AND ($2 OR publication_status='published') ORDER BY created_at DESC`, [request.params.id, drafts]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
   app.put('/v1/files/upload', express.raw({ type: '*/*', limit: '2gb' }), async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request); await client.query('BEGIN'); await lockStoredNamespace(client, collectionId); const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0]; if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } } else await requirePath(request, collectionId, path, 'edit'); const file = await insertVersion(client, { collectionId, fileId: existing?.id, path, mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor, message: 'Uploaded' }); await client.query('COMMIT'); await audit(request, 'upload', file); response.status(201).json(file) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
@@ -1206,7 +1205,7 @@ export function createApp(
       return {state,...(lifecycle.expiresAt?{expiresAt:lifecycle.expiresAt}:{})};
     };
     for (const file of files.rows) { try {
-      const authorized=await requireFile(request,file.id,'view'); const role=await fileRole(request,authorized); const draftVisible=canViewDraft(role,identity(request),authorized);
+      const authorized=await requireFile(request,file.id,'view'); const role='manage'; const draftVisible=true;
       const receipt=(await db.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash' AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1`,[file.id,file.current_version_id])).rows[0];
       const pathOperation=receipt?(await db.query('SELECT state,plan,last_error FROM files_path_operations WHERE operation_id=$1',[receipt.id])).rows[0]:null;
       allowed.push({ ...lifecycleFields(authorized),kind:'file',id:authorized.id,path:authorized.path,revision:String(authorized.operation_revision),

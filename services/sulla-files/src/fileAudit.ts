@@ -1,4 +1,5 @@
 import { appendAuditLine, type AuditEventInput, type AuditEventLine } from './auditChain.js';
+import { lockStoredNamespace } from './storedNamespace.js';
 import { auditContext } from './auditContext.js';
 
 import type pg from 'pg';
@@ -52,6 +53,7 @@ export class FileAuditWriter {
             const input=validateAuditEvent(pending.event);
             const logs=(await client.query("SELECT id FROM collections WHERE system_area='logs'")).rows[0];
             if (!logs) throw new Error('Logs system collection is not initialized');
+            await lockStoredNamespace(client,logs.id);
             const path=`audit/${input.subjectKind==='vault-secret'?'vault':'files'}/${input.subjectId}.jsonl`;
             const existing=(await client.query('SELECT id,current_version_id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE',[logs.id,path])).rows[0];
             const bytes=existing ? await this.read(existing.id,existing.current_version_id) : Buffer.alloc(0);

@@ -122,7 +122,7 @@ async function authorize(client:pg.PoolClient, row:any, access:DatabaseOperation
   }
 }
 async function itemRows(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<any[]> {
-  return (await client.query('SELECT * FROM files_database_operation_receipts WHERE actor_user_id=$1 AND actor_scope=$2 AND idempotency_key=ANY($3::uuid[])', [actor.userId, scope(actor), Object.values(row.item_keys)])).rows;
+  return (await client.query('SELECT * FROM files_database_operation_receipts WHERE idempotency_key=ANY($1::uuid[])', [Object.values(row.item_keys)])).rows;
 }
 async function view(client:pg.PoolClient, row:any, actor:FilesIdentity):Promise<DatabaseBatchReceipt> {
   const receipts = await itemRows(client, row, actor);

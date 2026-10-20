@@ -23,8 +23,6 @@ export function lifecycleFields(file:any) {
   };
 }
 
-export function canViewDraft(_role:string | undefined, _actor:FilesIdentity, _file:any):boolean { return true }
-
 export function lifecycleCapabilities(_role:string | undefined, draftVisible:boolean) {
   return {canEdit:true,canManage:true,canViewDraft:draftVisible,canPublish:true};
 }
