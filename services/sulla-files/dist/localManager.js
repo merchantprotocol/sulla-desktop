@@ -1,0 +1,2001 @@
+import { isLegacyInternalPath } from './legacyPreflight.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { issueCapabilityToken } from './auth.js';
+import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
+import { copyLockedFile } from './fileOperations.js';
+import { isProtectedPath } from './protectedFiles.js';
+import { FilesMutationCoordinator } from './safeFilesystem.js';
+import { NativeOperationJournal } from './nativeOperationJournal.js';
+import { queryNativeSourcePage } from './nativeSourcePaging.js';
+import { streamFileContent } from './fileStream.js';
+import { Store } from './store.js';
+import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
+const CHUNK_BYTES = 4 * 1024 * 1024;
+const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/', '.sulla-operation-recovery/', 'master.key'];
+function mime(path) {
+    const extension = extname(path).toLowerCase();
+    return {
+        '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.tsv': 'text/tab-separated-values',
+        '.js': 'text/javascript', '.jsx': 'text/javascript', '.mjs': 'text/javascript', '.cjs': 'text/javascript', '.ts': 'text/typescript', '.tsx': 'text/typescript',
+        '.css': 'text/css', '.html': 'text/html', '.htm': 'text/html', '.vue': 'text/plain', '.svelte': 'text/plain', '.py': 'text/x-python', '.rb': 'text/x-ruby', '.go': 'text/x-go', '.rs': 'text/x-rust',
+        '.java': 'text/x-java-source', '.c': 'text/x-c', '.h': 'text/x-c', '.cc': 'text/x-c++', '.cpp': 'text/x-c++', '.hpp': 'text/x-c++', '.swift': 'text/x-swift', '.kt': 'text/x-kotlin',
+        '.sh': 'text/x-shellscript', '.sql': 'text/x-sql', '.toml': 'text/x-toml', '.json': 'application/json', '.yaml': 'application/yaml', '.yml': 'application/yaml', '.xml': 'application/xml',
+        '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.ppt': 'application/vnd.ms-powerpoint', '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+        '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.opus': 'audio/opus', '.aif': 'audio/aiff', '.aiff': 'audio/aiff', '.weba': 'audio/webm',
+        '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+    }[extension] ?? 'application/octet-stream';
+}
+function matchIgnore(path, patterns) {
+    const parts = path.split('/');
+    return patterns.some(raw => {
+        const pattern = raw.trim().replace(/^\//, '');
+        if (!pattern || pattern.startsWith('#'))
+            return false;
+        if (pattern.endsWith('/'))
+            return parts.slice(0, -1).includes(pattern.slice(0, -1));
+        const expression = new RegExp(`^${pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*')}$`);
+        return expression.test(path) || parts.some(part => expression.test(part));
+    });
+}
+function isSensitiveTrackedPath(relativePath) {
+    return relativePath.replaceAll('\\', '/').split('/').some(part => {
+        const value = part.toLowerCase();
+        return value.includes('wallet') || value === 'vault' || value === 'vaults';
+    });
+}
+function conflictPath(path, device) {
+    const extension = extname(path);
+    const stem = extension ? path.slice(0, -extension.length) : path;
+    const date = new Date().toISOString().replace(/T.*/, '');
+    return `${stem} (conflicted copy ${device.replace(/[^\w-]/g, '-')} ${date})${extension}`;
+}
+function collectionIdFor(userId, rootId = 'default') {
+    const identity = rootId === 'default' ? `sulla-files:v1:${userId}` : `sulla-files:root:v1:${userId}:${rootId}`;
+    const value = createHash('sha256').update(identity).digest('hex').slice(0, 32).split('');
+    value[12] = '4';
+    value[16] = '8';
+    return `${value.slice(0, 8).join('')}-${value.slice(8, 12).join('')}-${value.slice(12, 16).join('')}-${value.slice(16, 20).join('')}-${value.slice(20).join('')}`;
+}
+function serializeFingerprint(value) {
+    return { dev: value.dev.toString(), ino: value.ino.toString(), size: value.size, mtimeMs: value.mtimeMs };
+}
+function deserializeFingerprint(value) {
+    if (!/^\d+$/.test(value.dev) || !/^\d+$/.test(value.ino) || !Number.isSafeInteger(value.size) || !Number.isSafeInteger(value.mtimeMs)) {
+        throw new Error('Path operation publication receipt has an invalid fingerprint');
+    }
+    return { dev: BigInt(value.dev), ino: BigInt(value.ino), size: value.size, mtimeMs: value.mtimeMs };
+}
+function sameIdentity(left, right) {
+    return left.dev === right.dev && left.ino === right.ino;
+}
+function sameFingerprint(left, right) {
+    return sameIdentity(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+/** Resolve symlinks before allowing plaintext watched files beside private storage. */
+export async function assertSeparateStorageRoots(filesRoot, dataRoot, chunkRoot) {
+    const [files, data, chunks] = await Promise.all([realpath(filesRoot), realpath(dataRoot), realpath(chunkRoot)]);
+    const contains = (parent, child) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+    for (const privateRoot of [data, chunks]) {
+        if (contains(files, privateRoot) || contains(privateRoot, files))
+            throw new Error('Files watched folder must not overlap private data or chunk storage');
+    }
+}
+export class LocalFilesManager {
+    db;
+    config;
+    indexer;
+    store;
+    collectionId;
+    stopped = false;
+    running;
+    paused;
+    lastError;
+    lastScanAt;
+    lastSyncAt;
+    syncTimer;
+    pendingFiles = 0;
+    pendingBytes = 0;
+    processedBytes = 0;
+    totalBytes = 0;
+    progressStartedAt = 0;
+    mutations;
+    rootCollections = new Map();
+    rootMutations = new Map();
+    roots;
+    nativeJournalInstance;
+    get nativeJournal() {
+        return this.nativeJournalInstance ??= new NativeOperationJournal(this.db, async (collectionId) => {
+            const row = (await this.db.query('SELECT * FROM file_roots WHERE collection_id=$1', [collectionId])).rows[0];
+            if (!row) {
+                if ((await this.db.query('SELECT 1 FROM watched_folder_state WHERE collection_id=$1 LIMIT 1', [collectionId])).rowCount)
+                    throw new Error('Tracked root is missing');
+                return null;
+            }
+            const root = this.roots.find(root => root.id === row.id);
+            if (!root || !row.enabled || ['detached', 'offline'].includes(row.state) || root.path !== row.mount_path || this.rootCollections.get(root.id) !== collectionId)
+                throw new Error('Tracked root is unavailable');
+            return { id: root.id, collectionId, mutations: this.rootMutations.get(root.id) };
+        }, (fileId, versionId, hash) => this.verifyNativeVersion(fileId, versionId, hash), async (fileId, versionId) => {
+            const content = await streamFileContent(this.db, this.config, this.store, fileId, versionId, undefined, new AbortController().signal);
+            if (!content)
+                throw Object.assign(new Error('Original version content is unavailable'), { status: 409, code: 'original-changed' });
+            return content.body;
+        });
+    }
+    async verifyNativeVersion(fileId, versionId, hash) {
+        const content = await streamFileContent(this.db, this.config, this.store, fileId, versionId, undefined, new AbortController().signal);
+        if (!content)
+            throw Object.assign(new Error('Original version content is unavailable'), { status: 409, code: 'original-changed' });
+        const digest = createHash('sha256');
+        for await (const chunk of content.body)
+            digest.update(chunk);
+        if (digest.digest('hex') !== hash)
+            throw Object.assign(new Error('Original differs from the current Files version'), { status: 409, code: 'original-changed' });
+    }
+    operationCustody() {
+        const locked = (operation) => {
+            const roots = [...this.rootMutations.entries()].sort(([a], [b]) => a.localeCompare(b));
+            const acquire = (index) => index === roots.length ? operation() : roots[index][1].runExclusive([], () => acquire(index + 1));
+            return acquire(0);
+        };
+        return {
+            run: (operation) => this.serial(() => locked(async () => {
+                await this.recoverPathOperations();
+                try {
+                    const result = await operation();
+                    await this.recoverPathOperations();
+                    return result;
+                }
+                catch (error) {
+                    try {
+                        await this.recoverPathOperations();
+                    }
+                    catch {
+                        throw Object.assign(new Error('Native operation requires preserved-artifact reconciliation'), { status: 409, code: 'recovery-required' });
+                    }
+                    throw error;
+                }
+            })),
+            publish: (client, receipt, undo) => this.nativeJournal.publish(client, receipt, undo),
+            occupied: (collectionId, path) => this.nativeJournal.occupied(collectionId, path),
+            folders: (collectionId, path, files) => this.nativeJournal.folders(collectionId, path, files),
+            folderSnapshot: (collectionId, path, files) => this.nativeJournal.folderSnapshot(collectionId, path, files),
+            available: () => FilesMutationCoordinator.atomicRenameAvailable(),
+        };
+    }
+    async disposeTrashReceipt(receiptId) {
+        return this.serial(async () => {
+            await this.recoverPathOperations();
+            return this.nativeJournal.dispose(receiptId);
+        });
+    }
+    async expireTrashReceipts(now = new Date()) {
+        return this.serial(async () => {
+            const rows = (await this.db.query(`SELECT id FROM files_database_operation_receipts
+        WHERE action='trash' AND state IN('completed','undone')
+          AND folder_plan#>>'{lifecycle,expiresAt}' IS NOT NULL
+          AND (folder_plan#>>'{lifecycle,expiresAt}')::timestamptz<=$1
+          AND folder_plan#>>'{lifecycle,disposal,undoInvalidatedAt}' IS NULL ORDER BY created_at`, [now])).rows;
+            let invalidated = 0, disposed = 0, preserved = 0;
+            for (const candidate of rows) {
+                const client = await this.db.connect();
+                let receipt;
+                let operation;
+                try {
+                    await client.query('BEGIN');
+                    receipt = (await client.query('SELECT * FROM files_database_operation_receipts WHERE id=$1 FOR UPDATE', [candidate.id])).rows[0];
+                    if (!receipt || receipt.folder_plan?.lifecycle?.disposal?.undoInvalidatedAt) {
+                        await client.query('COMMIT');
+                        continue;
+                    }
+                    operation = (await client.query('SELECT * FROM files_path_operations WHERE operation_id=$1 FOR UPDATE', [receipt.id])).rows[0];
+                    if (operation && (!['completed', 'undone', 'rolled-back'].includes(operation.state) || operation.last_error)) {
+                        await client.query('ROLLBACK');
+                        preserved++;
+                        continue;
+                    }
+                    const folderPlan = receipt.folder_plan?.source ? receipt.folder_plan : null;
+                    const fileIds = [...new Set([receipt.file_id, ...(folderPlan?.children ?? []).flatMap((item) => [item.before?.fileId, item.after?.fileId])].filter(Boolean))];
+                    if (fileIds.length && (await client.query('SELECT 1 FROM files f WHERE f.id=ANY($1::uuid[]) AND files_retention_active(f) LIMIT 1', [fileIds])).rowCount) {
+                        await client.query('ROLLBACK');
+                        preserved++;
+                        continue;
+                    }
+                    const invalidation = { undoInvalidatedAt: now.toISOString(), invalidatedBy: 'configured-retention', reason: 'configured-trash-retention-expired' };
+                    receipt.folder_plan.lifecycle = { ...(receipt.folder_plan.lifecycle ?? {}), disposal: invalidation };
+                    await client.query('UPDATE files_database_operation_receipts SET folder_plan=$2 WHERE id=$1', [receipt.id, receipt.folder_plan]);
+                    if (operation) {
+                        operation.plan.disposal = invalidation;
+                        await client.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1', [receipt.id, operation.plan]);
+                    }
+                    await client.query('COMMIT');
+                    invalidated++;
+                }
+                catch (error) {
+                    await client.query('ROLLBACK');
+                    throw error;
+                }
+                finally {
+                    client.release();
+                }
+                if (operation) {
+                    const result = await this.nativeJournal.dispose(receipt.id);
+                    if (result.state === 'complete')
+                        disposed++;
+                    else
+                        preserved++;
+                }
+            }
+            return { invalidated, disposed, preserved };
+        });
+    }
+    async originalRevealTarget(file) {
+        return this.serial(async () => {
+            const row = (await this.db.query(`SELECT w.*,r.enabled,r.state,r.mount_path FROM watched_folder_state w
+        JOIN file_roots r ON r.id=w.root_id AND r.collection_id=w.collection_id
+        WHERE w.file_id=$1 AND w.collection_id=$2 AND w.path=$3`, [file.id, file.collection_id, file.path])).rows[0];
+            if (!row)
+                return null;
+            const root = this.roots.find(root => root.id === row.root_id);
+            if (!root || !row.enabled || ['detached', 'offline', 'error'].includes(row.state) || root.path !== row.mount_path ||
+                this.rootCollections.get(root.id) !== file.collection_id)
+                throw Object.assign(new Error('Original root is unavailable'), { status: 409, code: 'original-unavailable' });
+            if (isProtectedPath(file.path) || file.path.split('/').some((part) => part === '.sulla-trash' || part === '.sulla-operation-recovery'))
+                throw Object.assign(new Error('Protected original path'), { status: 403, code: 'original-forbidden' });
+            const mutations = this.rootMutations.get(root.id);
+            return mutations.runExclusive([file.path], async () => {
+                await this.verifyNativeVersion(file.id, file.current_version_id, row.content_hash);
+                const pinned = await mutations.pinVerified(file.path, pinned => this.verifyOperationPinned(pinned, row.content_hash));
+                try {
+                    if (pinned.fingerprint.size !== Number(row.size) || pinned.fingerprint.mtimeMs !== Number(row.mtime_ms))
+                        throw Object.assign(new Error('Original changed since indexing'), { status: 409, code: 'original-changed' });
+                    const fresh = (await this.db.query(`SELECT 1 FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id AND w.path=f.path
+            JOIN file_roots r ON r.id=w.root_id AND r.collection_id=w.collection_id
+            WHERE f.id=$1 AND f.current_version_id=$2 AND f.operation_revision=$3 AND f.path=$4 AND f.deleted_at IS NULL
+              AND w.content_hash=$5 AND w.size=$6 AND w.mtime_ms=$7 AND r.id=$8 AND r.mount_path=$9 AND r.enabled=TRUE
+              AND r.state NOT IN('detached','offline','error') AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [file.id, file.current_version_id, file.operation_revision, file.path, row.content_hash, row.size, row.mtime_ms, root.id, root.path])).rowCount;
+                    if (!fresh)
+                        throw Object.assign(new Error('Original changed during verification'), { status: 409, code: 'original-changed' });
+                    return { rootId: root.id, collectionId: file.collection_id, relativePath: file.path, fileId: file.id,
+                        versionId: file.current_version_id, revision: String(file.operation_revision), hash: row.content_hash,
+                        size: pinned.fingerprint.size, mtimeMs: pinned.fingerprint.mtimeMs };
+                }
+                finally {
+                    await pinned.close();
+                }
+            });
+        });
+    }
+    constructor(db, config, indexer, mutations) {
+        this.db = db;
+        this.config = config;
+        this.indexer = indexer;
+        this.store = new Store(config.chunkRoot);
+        this.paused = config.paused;
+        this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
+            .filter(root => !isSensitiveTrackedPath(root.path));
+        this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
+        for (const root of this.roots)
+            this.rootMutations.set(root.id, root.primary ? this.mutations : new FilesMutationCoordinator(root.path));
+    }
+    async initialize(beforeScan) {
+        this.stopped = false;
+        await mkdir(this.config.dataRoot, { recursive: true, mode: 0o700 });
+        await mkdir(this.config.chunkRoot, { recursive: true, mode: 0o700 });
+        if (!this.config.filesRoot) {
+            this.collectionId = await this.ensureCollection({
+                id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+            });
+            await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW()");
+            await this.reconcileNativeSourceOperations();
+            await beforeScan?.();
+            return;
+        }
+        for (const root of this.roots)
+            await mkdir(root.path, { recursive: true, mode: 0o700 });
+        for (const root of this.roots)
+            await assertSeparateStorageRoots(root.path, this.config.dataRoot, this.config.chunkRoot);
+        for (const root of this.roots) {
+            const collectionId = await this.ensureCollection(root);
+            this.rootCollections.set(root.id, collectionId);
+            if (root.primary)
+                this.collectionId = collectionId;
+            await this.db.query(`INSERT INTO file_roots(id,collection_id,display_name,mount_path,sync_mode,paused,exclusions,enabled,state)
+        VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8)
+        ON CONFLICT(id) DO UPDATE SET collection_id=EXCLUDED.collection_id,display_name=EXCLUDED.display_name,mount_path=EXCLUDED.mount_path,
+          sync_mode=EXCLUDED.sync_mode,paused=EXCLUDED.paused,exclusions=EXCLUDED.exclusions,enabled=TRUE,state=EXCLUDED.state,updated_at=NOW()`, [root.id, collectionId, root.name, root.path, root.syncMode, root.paused, JSON.stringify(root.exclusions), root.paused ? 'paused' : 'idle']);
+        }
+        await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW() WHERE NOT(id=ANY($1::text[]))", [this.roots.map(root => root.id)]);
+        await this.recoverPathOperations();
+        await this.reconcileNativeSourceOperations();
+        await beforeScan?.();
+        const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
+        if (saved.rows[0]) {
+            this.paused ||= saved.rows[0].paused;
+            this.lastError = saved.rows[0].last_error;
+            this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.();
+            this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.();
+        }
+        await this.rescan();
+        this.syncTimer = setInterval(() => this.sync().catch(error => this.fail(error)), 15_000);
+        this.syncTimer.unref();
+    }
+    async close() {
+        this.stopped = true;
+        if (this.syncTimer)
+            clearInterval(this.syncTimer);
+        await this.mutations.runExclusive(['.'], () => Promise.resolve()).catch(() => undefined);
+    }
+    status() {
+        const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000);
+        const rate = this.processedBytes / elapsed;
+        return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
+    }
+    async nativeCollectionId() {
+        this.collectionId ??= await this.ensureCollection({
+            id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
+        });
+        return this.collectionId;
+    }
+    async ingestNativeSource(input, ingest) {
+        const versionId = randomUUID();
+        return this.serial(async () => {
+            const existing = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+            if (existing) {
+                if (existing.direction !== 'ingest' || existing.source_handle !== input.handle || existing.source_revision !== input.sourceRevision ||
+                    existing.files_base_version_id !== (input.baseVersionId ?? null) || existing.desired_hash !== input.desiredHash) {
+                    throw Object.assign(new Error('Native source operation id was reused with different immutable inputs'), { status: 409 });
+                }
+                if (existing.state === 'completed' && existing.file_id && existing.files_version_id) {
+                    const file = (await this.db.query('SELECT * FROM files WHERE id=$1 AND current_version_id=$2', [existing.file_id, existing.files_version_id])).rows[0];
+                    if (file)
+                        return file;
+                }
+            }
+            else {
+                await this.db.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash)
+          VALUES($1,$2,'ingest','planned',$3,$7,$4,$5,$6,$7)`, [input.operationId, input.handle, input.sourceRevision, input.fileId ?? null, input.baseVersionId ?? null, versionId, input.desiredHash]);
+            }
+            const operation = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+            if (operation.state !== 'planned') {
+                throw Object.assign(new Error('Native source ingestion requires reconciliation before it can be retried'), { status: 409 });
+            }
+            const client = await this.db.connect();
+            try {
+                await client.query('BEGIN');
+                if (!input.collectionId)
+                    throw Object.assign(new Error('Native source collection is required'), { status: 400 });
+                await lockStoredNamespace(client, input.collectionId);
+                await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${input.handle}`]);
+                if (input.fileId) {
+                    const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
+                    if (file?.current_version_id !== (input.baseVersionId ?? null))
+                        throw Object.assign(new Error('Files base version changed before native source ingestion'), { status: 409 });
+                }
+                const result = await ingest(client, operation.files_version_id);
+                if (!input.collectionId || !input.path)
+                    throw Object.assign(new Error('Native source collection and display path are required'), { status: 400 });
+                await client.query(`INSERT INTO files_native_sources
+          (source_handle,collection_id,file_id,display_name,source_revision,source_hash,state,recovery,last_error)
+          VALUES($1,$2,$3,$4,$5,$6,'active','{}',NULL)
+          ON CONFLICT(file_id) DO UPDATE SET source_handle=EXCLUDED.source_handle,collection_id=EXCLUDED.collection_id,
+            display_name=EXCLUDED.display_name,source_revision=EXCLUDED.source_revision,source_hash=EXCLUDED.source_hash,
+            state='active',recovery='{}',last_error=NULL,updated_at=NOW()`, [input.handle, input.collectionId, result.id, input.path, input.sourceRevision, input.desiredHash]);
+                const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',file_id=$2,files_version_id=$3,last_error=NULL,updated_at=NOW()
+          WHERE operation_id=$1 AND state='planned'`, [input.operationId, result.id, result.current_version_id]);
+                if (completed.rowCount !== 1)
+                    throw Object.assign(new Error('Native source ingestion operation changed while it was committing'), { status: 409 });
+                await client.query('COMMIT');
+                return result;
+            }
+            catch (error) {
+                await client.query('ROLLBACK');
+                await this.db.query('UPDATE files_native_source_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [input.operationId, (error instanceof Error ? error.message : String(error)).slice(0, 2000)]).catch(() => undefined);
+                throw error;
+            }
+            finally {
+                client.release();
+            }
+        });
+    }
+    async planNativePublication(input) {
+        await this.db.query(`INSERT INTO files_native_source_operations
+      (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash)
+      SELECT $1,$2,'publish','publishing',$3,n.source_hash,$4,$5,$5,$6 FROM files_native_sources n
+      WHERE n.file_id=$4 AND n.source_handle=$2 AND n.source_revision=$3
+      ON CONFLICT(operation_id) DO NOTHING`, [input.operationId, input.handle, input.sourceRevision, input.fileId, input.baseVersionId, input.desiredHash]);
+        const row = (await this.db.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1', [input.operationId])).rows[0];
+        const matches = row?.direction === 'publish' && row.source_handle === input.handle && row.source_revision === input.sourceRevision &&
+            row.file_id === input.fileId && row.files_base_version_id === input.baseVersionId && row.desired_hash === input.desiredHash;
+        if (!matches) {
+            throw Object.assign(new Error('Native source publication id was reused with different immutable inputs'), { status: 409 });
+        }
+    }
+    async finishNativePublication(operationId, proof, error) {
+        if (!proof) {
+            const result = await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error=$2,recovery=$3::jsonb,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state='publishing'`, [operationId, (error ?? 'Native publication outcome requires reconciliation').slice(0, 2000), JSON.stringify({ action: 'compare-source-to-files-version' })]);
+            if (result.rowCount === 1)
+                return;
+            const operation = (await this.db.query('SELECT direction,state FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+            if (operation?.direction !== 'publish')
+                throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+            if (operation.state === 'recovery-required')
+                return;
+            throw Object.assign(new Error('Native source publication is not in a completable state'), { status: 409 });
+        }
+        const client = await this.db.connect();
+        try {
+            await client.query('BEGIN');
+            const identity = (await client.query('SELECT file_id,direction FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+            if (identity?.direction !== 'publish' || !identity.file_id)
+                throw Object.assign(new Error('Native source publication is unknown'), { status: 404 });
+            // Match fuseWriteNative's file -> source lock order. The completion proof,
+            // current Files version, and current source identity are then one atomic
+            // decision; neither a new FUSE commit nor a reselection can slip between
+            // validation and activation.
+            const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+            const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [identity.file_id])).rows[0];
+            const operation = (await client.query('SELECT * FROM files_native_source_operations WHERE operation_id=$1 FOR UPDATE', [operationId])).rows[0];
+            if (operation.state === 'completed' && proof.nextSourceRevision === operation.next_source_revision) {
+                await client.query('COMMIT');
+                return;
+            }
+            const exactProof = proof.originalSourceRevision === operation.source_revision && proof.originalSourceHash === operation.source_hash &&
+                proof.currentSourceHash === operation.desired_hash && proof.filesBaseVersionId === operation.files_base_version_id &&
+                proof.currentFilesVersionId === operation.files_version_id;
+            if (!exactProof)
+                throw Object.assign(new Error('Native publication acknowledgement does not match its durable source and Files identities'), { status: 409 });
+            if (file?.current_version_id !== operation.files_version_id) {
+                await client.query(`UPDATE files_native_source_operations SET state='recovery-required',next_source_revision=$2,
+          last_error='Files advanced during native publication',recovery=$3::jsonb,updated_at=NOW()
+          WHERE operation_id=$1 AND state IN('publishing','recovery-required')`, [operationId, proof.nextSourceRevision, JSON.stringify({ action: 'compare-source-to-files-version' })]);
+                await client.query('COMMIT');
+                throw Object.assign(new Error('Files advanced during native publication; the source outcome requires reconciliation'), { status: 409 });
+            }
+            const directlyBound = source?.state === 'active' && source.source_handle === operation.source_handle &&
+                source.source_revision === operation.source_revision && source.source_hash === operation.source_hash;
+            const recoveryBound = ['active', 'reselect-required'].includes(source?.state) && source.source_hash === operation.source_hash &&
+                source.source_revision === proof.nextSourceRevision && source.recovery?.publicationOperationId === operationId;
+            if (!directlyBound && !recoveryBound) {
+                throw Object.assign(new Error('Native publication acknowledgement no longer matches the selected source identity'), { status: 409 });
+            }
+            const activated = await client.query(`UPDATE files_native_sources SET source_revision=$2,source_hash=$3,state='active',recovery='{}',last_error=NULL,updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$4 AND source_revision=$5 AND source_hash=$6 RETURNING file_id`, [identity.file_id, proof.nextSourceRevision, operation.desired_hash, source.source_handle, source.source_revision, source.source_hash]);
+            const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',next_source_revision=$2,last_error=NULL,updated_at=NOW()
+        WHERE operation_id=$1 AND direction='publish' AND state IN('publishing','recovery-required') RETURNING operation_id`, [operationId, proof.nextSourceRevision]);
+            if (activated.rowCount !== 1 || completed.rowCount !== 1) {
+                throw Object.assign(new Error('Native source publication changed while it was committing'), { status: 409 });
+            }
+            await client.query('COMMIT');
+        }
+        catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async reselectInterruptedNativePublication(input) {
+        if (input.handle === input.previousHandle)
+            throw Object.assign(new Error('Interrupted publication recovery requires a new source handle'), { status: 409 });
+        const client = await this.db.connect();
+        try {
+            await client.query('BEGIN');
+            const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
+            const source = (await client.query('SELECT * FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [input.fileId])).rows[0];
+            if (source?.state !== 'reselect-required' || source.source_handle !== input.previousHandle) {
+                await client.query('ROLLBACK');
+                return false;
+            }
+            const boundOperationId = typeof source.recovery?.publicationOperationId === 'string' ? source.recovery.publicationOperationId : null;
+            const operations = (await client.query(`SELECT * FROM files_native_source_operations
+        WHERE file_id=$1 AND direction='publish' AND state='recovery-required'
+          AND ($2::uuid IS NULL OR operation_id=$2::uuid) ORDER BY created_at DESC FOR UPDATE`, [input.fileId, boundOperationId])).rows;
+            const candidates = operations.filter(operation => operation.source_hash === source.source_hash && operation.desired_hash === input.sourceHash &&
+                operation.files_version_id === file?.current_version_id && (boundOperationId
+                ? source.source_revision === input.sourceRevision
+                : operation.source_revision === source.source_revision));
+            if (candidates.length !== 1) {
+                await client.query('ROLLBACK');
+                return false;
+            }
+            const operation = candidates[0];
+            await client.query(`UPDATE files_native_sources SET source_handle=$2,source_revision=$3,recovery=jsonb_build_object(
+        'action','compare-source-to-files-version','publicationOperationId',$4::text,'originalHandle',$5::text,'previousHandle',$6::text),
+        last_error='Interrupted native publication requires verified acknowledgement',updated_at=NOW()
+        WHERE file_id=$1 AND source_handle=$6 RETURNING file_id`, [input.fileId, input.handle, input.sourceRevision, operation.operation_id, operation.source_handle, input.previousHandle]);
+            await client.query('COMMIT');
+            return true;
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async finishNativePublicationConflict(operationId, input) {
+        const verified = await this.db.query(`WITH verified AS (UPDATE files_native_source_operations o SET state='completed',last_error='Native source changed; Files preserved both versions',
+      recovery=jsonb_build_object('action','visible-conflict','conflictFileId',$2::text),updated_at=NOW()
+      FROM files_native_sources n,files f,files_native_sources c
+      WHERE o.operation_id=$1 AND o.direction='publish' AND o.state IN('publishing','recovery-required')
+        AND n.source_handle=o.source_handle AND n.file_id=o.file_id AND n.source_revision=$3 AND n.source_hash=$4
+        AND f.id=o.file_id AND f.current_version_id=$5
+        AND c.file_id=$2 AND c.source_hash=o.desired_hash
+      RETURNING o.file_id,o.desired_hash)
+      INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash)
+      SELECT $2,file_id,desired_hash FROM verified
+      ON CONFLICT(file_id) DO UPDATE SET source_file_id=EXCLUDED.source_file_id,content_hash=EXCLUDED.content_hash
+      RETURNING file_id`, [operationId, input.conflictFileId, input.currentSourceRevision, input.currentSourceHash, input.currentFilesVersionId]);
+        if (verified.rowCount !== 1)
+            throw Object.assign(new Error('Native conflict recovery did not match both source and Files outcomes'), { status: 409 });
+    }
+    async nativePublicationActions() {
+        const rows = await this.db.query(`SELECT o.operation_id::text,n.source_handle,o.source_revision,o.source_hash,o.desired_hash,o.file_id::text,
+      o.files_base_version_id::text,o.files_version_id::text,o.state FROM files_native_source_operations o
+      JOIN files_native_sources n ON n.file_id=o.file_id JOIN files f ON f.id=o.file_id
+      WHERE o.direction='publish' AND o.state IN('publishing','recovery-required') AND f.current_version_id=o.files_version_id
+        AND ((n.state='active' AND n.source_handle=o.source_handle AND n.source_revision=o.source_revision AND n.source_hash=o.source_hash)
+          OR (n.state IN('active','reselect-required') AND n.source_hash=o.source_hash AND n.recovery->>'publicationOperationId'=o.operation_id::text))
+      ORDER BY o.created_at LIMIT 8`);
+        return rows.rows.map(row => ({
+            operationId: row.operation_id,
+            handle: row.source_handle,
+            sourceRevision: row.source_revision,
+            sourceHash: row.source_hash,
+            desiredHash: row.desired_hash,
+            fileId: row.file_id,
+            baseVersionId: row.files_base_version_id,
+            versionId: row.files_version_id,
+            state: row.state,
+        }));
+    }
+    /** Keyset-paginated native source inventory; see queryNativeSourcePage. */
+    async listNativeSources(page = {}) {
+        return queryNativeSourcePage(this.db, page);
+    }
+    async revalidateNativeSessions(handles) {
+        await this.db.query(`UPDATE files_native_sources SET state=CASE WHEN source_handle=ANY($1::text[]) THEN 'active' ELSE 'reselect-required' END,
+      last_error=CASE WHEN source_handle=ANY($1::text[]) THEN NULL ELSE 'Native access must be reselected after the Electron session changed' END,
+      recovery=CASE WHEN recovery ? 'publicationOperationId' THEN recovery || jsonb_build_object(
+          'action',CASE WHEN source_handle=ANY($1::text[]) THEN 'compare-source-to-files-version' ELSE 'reselect-native-source' END,
+          'previousHandle',source_handle)
+        WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb
+        ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
+      WHERE state<>'revoked'`, [handles]);
+    }
+    async fuseWriteNative(fileId, expectedVersionId, expectedSourceHash, bytes, actor, ingest, preserveConflict) {
+        const desiredHash = createHash('sha256').update(bytes).digest('hex');
+        const operationId = randomUUID();
+        let staleConflict;
+        await this.serial(async () => {
+            const current = await this.fuseRow(fileId);
+            if (!current.native || !current.sourceHandle || !current.sourceRevision)
+                throw Object.assign(new Error('Native source is unavailable'), { status: 404 });
+            const versionId = randomUUID();
+            const client = await this.db.connect();
+            try {
+                await client.query('BEGIN');
+                await lockStoredNamespace(client, current.collectionId);
+                await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${current.sourceHandle}`]);
+                const locked = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+                const source = (await client.query('SELECT source_revision,source_hash,state FROM files_native_sources WHERE file_id=$1 FOR UPDATE', [fileId])).rows[0];
+                if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash ||
+                    locked?.current_version_id !== expectedVersionId || source?.source_hash !== expectedSourceHash || source?.state !== 'active') {
+                    staleConflict = await preserveConflict(client, versionId, current);
+                    await client.query('INSERT INTO files_native_conflicts(file_id,source_file_id,content_hash) VALUES($1,$2,$3)', [staleConflict.id, fileId, desiredHash]);
+                    await client.query('COMMIT');
+                    return;
+                }
+                const result = desiredHash === current.sourceHash
+                    ? { current_version_id: current.versionId }
+                    : await ingest(client, versionId, current);
+                await client.query(`INSERT INTO files_native_source_operations
+          (operation_id,source_handle,direction,state,source_revision,source_hash,file_id,files_base_version_id,files_version_id,desired_hash,recovery)
+          VALUES($1,$2,'publish','publishing',$3,$4,$5,$6,$7,$8,$9)`, [operationId, current.sourceHandle, current.sourceRevision, current.sourceHash, fileId, expectedVersionId, result.current_version_id, desiredHash,
+                    JSON.stringify({ action: 'publish-files-version-through-electron', actor: actor.deviceId || 'files' })]);
+                await client.query('COMMIT');
+            }
+            catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            }
+            finally {
+                client.release();
+            }
+        });
+        if (staleConflict) {
+            throw Object.assign(new Error('Native source or Files base version changed; the FUSE bytes were preserved as a visible conflict'), {
+                status: 409, recovery: { action: 'visible-conflict', conflictFileId: staleConflict.id },
+            });
+        }
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+            const operation = (await this.db.query('SELECT state,last_error,recovery FROM files_native_source_operations WHERE operation_id=$1', [operationId])).rows[0];
+            if (operation?.state === 'completed') {
+                if (operation.recovery?.action === 'visible-conflict')
+                    throw Object.assign(new Error('Native source changed; both versions are visible in Files'), { status: 409, recovery: operation.recovery });
+                return this.fuseRow(fileId);
+            }
+            if (operation?.state === 'recovery-required')
+                throw Object.assign(new Error(operation.last_error ?? 'Native publication requires recovery'), { status: 409, recovery: operation.recovery });
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',last_error='Electron publication did not complete before the Files durability deadline',updated_at=NOW()
+      WHERE operation_id=$1 AND state='publishing'`, [operationId]);
+        throw Object.assign(new Error('Native publication did not complete before the durability deadline'), { status: 503 });
+    }
+    async reconcileNativeSourceOperations() {
+        await this.db.query(`UPDATE files_native_source_operations o SET state='completed',last_error=NULL,updated_at=NOW()
+      FROM files f WHERE o.direction='ingest' AND o.state='planned' AND o.file_id=f.id AND o.files_version_id=f.current_version_id`);
+        // An ingest transaction commits the Files version and operation receipt
+        // together. A remaining planned row is therefore safe to retry with the
+        // same immutable inputs. Publication crosses the native filesystem and
+        // must be reconciled because its outcome cannot be inferred from SQL.
+        await this.db.query(`UPDATE files_native_source_operations SET state='recovery-required',
+      recovery=jsonb_build_object('action','compare-source-to-files-version'),
+      last_error=COALESCE(last_error,'Native source session ended before the operation outcome was acknowledged'),updated_at=NOW()
+      WHERE direction='publish' AND state='publishing'`);
+    }
+    async listRoots() {
+        const rows = await this.db.query(`SELECT id,display_name,collection_id,sync_mode,paused,exclusions,state,pending_files,last_error,last_scan_at,last_sync_at
+      FROM file_roots WHERE enabled=TRUE ORDER BY created_at`);
+        return rows.rows.map(row => ({
+            id: row.id, name: row.display_name, collectionId: row.collection_id, syncMode: row.sync_mode, paused: row.paused,
+            exclusions: row.exclusions ?? [], state: row.paused ? 'paused' : row.state, pendingFiles: row.pending_files,
+            serverConfigured: Boolean(this.config.serverUrl),
+            lastError: row.last_error ?? undefined, lastScanAt: row.last_scan_at?.toISOString?.(), lastSyncAt: row.last_sync_at?.toISOString?.(),
+        }));
+    }
+    /** Experimental Files mount view over watched roots and indexed native sources. */
+    async fuseSnapshot(collectionId) {
+        const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+        if (root)
+            await this.serial(() => this.scanRoot(root));
+        const params = [collectionId, root?.id ?? null];
+        const rows = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms
+      FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL AND (n.file_id IS NOT NULL OR c.file_id IS NOT NULL OR ($2::text IS NOT NULL AND w.root_id=$2))
+        AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) ORDER BY f.path`, params);
+        return rows.rows.filter(row => !isProtectedPath(row.path)).map(row => ({
+            id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime,
+            size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms),
+        }));
+    }
+    async fuseRead(fileId) {
+        const row = await this.fuseRow(fileId);
+        if (row.native || row.storedNativeConflict)
+            return { file: row, bytes: await this.readStoredVersion(fileId, row.versionId) };
+        const root = this.rootForCollection(row.collectionId);
+        const pinned = await this.rootMutations.get(root.id).pinVerified(row.path, file => this.verifyHash(file, row.sourceHash));
+        try {
+            const chunks = [];
+            for await (const chunk of pinned.createReadStream())
+                chunks.push(Buffer.from(chunk));
+            await pinned.assertUnchanged();
+            return { file: row, bytes: Buffer.concat(chunks) };
+        }
+        finally {
+            await pinned.close();
+        }
+    }
+    async fuseWrite(fileId, expectedVersionId, expectedSourceHash, bytes, actor) {
+        const initial = await this.fuseRow(fileId);
+        if (initial.native)
+            throw Object.assign(new Error('Native source writes require the Electron publication transaction'), { status: 409, code: 'NATIVE_PUBLICATION_REQUIRED' });
+        if (initial.storedNativeConflict)
+            throw Object.assign(new Error('Files-only native conflict entries are read-only in the experimental mount'), { status: 409 });
+        const root = this.rootForCollection(initial.collectionId);
+        const mutations = this.rootMutations.get(root.id);
+        const operationId = randomUUID();
+        const stagedPath = `.sulla-trash/.operations/${operationId}/${basename(initial.path)}.write`;
+        const backupPath = `.sulla-trash/.operations/${operationId}/${basename(initial.path)}.source`;
+        const conflict = conflictPath(initial.path, `${actor.deviceId || 'fuse'}-${operationId.slice(0, 8)}`);
+        const desiredHash = createHash('sha256').update(bytes).digest('hex');
+        return this.serial(() => mutations.runExclusive([initial.path, stagedPath, backupPath, conflict], async () => {
+            const current = await this.fuseRow(fileId);
+            if (current.versionId !== expectedVersionId || current.sourceHash !== expectedSourceHash) {
+                if (desiredHash === expectedSourceHash) {
+                    throw Object.assign(new Error('Tracked source changed before the no-op FUSE write was verified; no source bytes were replaced'), { status: 409 });
+                }
+                const output = await mutations.openPrivateExclusive(stagedPath);
+                try {
+                    let offset = 0;
+                    while (offset < bytes.byteLength) {
+                        const result = await output.write(bytes, offset);
+                        if (!result.bytesWritten)
+                            throw new Error('FUSE staging made no write progress');
+                        offset += result.bytesWritten;
+                    }
+                    await output.sync();
+                }
+                finally {
+                    await output.close();
+                }
+                const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: file => this.verifyHash(file, desiredHash) });
+                await mutations.finalizePublication(publication);
+                await this.scanRoot(root);
+                throw Object.assign(new Error('Tracked source changed before the FUSE write was committed; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict });
+            }
+            const verifyExpected = (file) => this.verifyHash(file, expectedSourceHash);
+            if (desiredHash === expectedSourceHash) {
+                const unchanged = await mutations.pinVerified(current.path, verifyExpected);
+                try {
+                    await unchanged.assertUnchanged();
+                }
+                finally {
+                    await unchanged.close();
+                }
+                return current;
+            }
+            const output = await mutations.openPrivateExclusive(stagedPath);
+            try {
+                let offset = 0;
+                while (offset < bytes.byteLength) {
+                    const result = await output.write(bytes, offset);
+                    if (!result.bytesWritten)
+                        throw new Error('FUSE staging made no write progress');
+                    offset += result.bytesWritten;
+                }
+                await output.sync();
+            }
+            finally {
+                await output.close();
+            }
+            const verifyDesired = (file) => this.verifyHash(file, desiredHash);
+            let receipt;
+            try {
+                receipt = await mutations.replaceVerified({ staged: stagedPath, target: current.path, backup: backupPath, conflict, verifyStaged: verifyDesired, verifyTarget: verifyExpected });
+            }
+            catch (error) {
+                if (await mutations.exists(stagedPath).catch(() => false)) {
+                    const publication = await mutations.publishVerified({ staged: stagedPath, target: conflict, verify: verifyDesired });
+                    await mutations.finalizePublication(publication);
+                }
+                await this.scanRoot(root);
+                throw Object.assign(new Error('Tracked source changed during the FUSE write; the agent edit was preserved as a conflict'), { status: 409, conflictPath: conflict, cause: error });
+            }
+            try {
+                await this.scanRoot(root);
+                const committed = await this.fuseRow(fileId);
+                if (committed.sourceHash !== desiredHash || committed.versionId === expectedVersionId)
+                    throw new Error('Files ingestion did not durably record the replacement');
+                await mutations.finalizeReplacement(receipt);
+                return committed;
+            }
+            catch (error) {
+                let preserved = false;
+                try {
+                    await mutations.preserveReplacement(receipt, conflict, verifyDesired);
+                    preserved = true;
+                }
+                catch { /* Keep both private recovery and current path; never overwrite after failed preservation. */ }
+                await this.scanRoot(root).catch(() => undefined);
+                throw Object.assign(new Error(preserved
+                    ? 'Files could not durably ingest the FUSE write; agent and prior-source bytes were retained for recovery'
+                    : 'Files could not durably ingest the FUSE write; automatic recovery stopped without overwriting the current path'), { status: 503, ...(preserved ? { conflictPath: conflict } : {}), cause: error });
+            }
+        }));
+    }
+    async fuseRow(fileId) {
+        const result = await this.db.query(`SELECT f.id::text,f.collection_id::text,f.path,f.mime,f.size,f.current_version_id::text AS version_id,
+      COALESCE(n.source_hash,c.content_hash,w.content_hash) AS content_hash,
+      COALESCE(EXTRACT(EPOCH FROM n.updated_at)*1000,EXTRACT(EPOCH FROM c.created_at)*1000,w.mtime_ms) AS mtime_ms,
+      w.root_id,n.source_handle,n.source_revision,c.file_id AS native_conflict_file_id FROM files f
+      LEFT JOIN files_native_sources n ON n.file_id=f.id AND n.state IN('active','conflict')
+      LEFT JOIN files_native_conflicts c ON c.file_id=f.id
+      LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+      WHERE f.id=$1 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [fileId]);
+        const row = result.rows[0];
+        if (!row || isProtectedPath(row.path))
+            throw Object.assign(new Error('Tracked file is unavailable'), { status: 404 });
+        if (row.source_handle)
+            return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), native: true, sourceRevision: row.source_revision, sourceHandle: row.source_handle };
+        if (row.native_conflict_file_id)
+            return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms), storedNativeConflict: true };
+        const root = this.rootForCollection(row.collection_id);
+        if (row.root_id !== root.id)
+            throw Object.assign(new Error('Tracked file is not watched by its configured Files root'), { status: 409 });
+        return { id: row.id, collectionId: row.collection_id, path: row.path, mime: row.mime, size: Number(row.size), versionId: row.version_id, sourceHash: row.content_hash, mtimeMs: Number(row.mtime_ms) };
+    }
+    async readStoredVersion(fileId, versionId) {
+        const row = (await this.db.query(`SELECT v.chunk_collection_id,v.size,m.chunk_ids FROM file_versions v
+      JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.file_id=$2`, [versionId, fileId])).rows[0];
+        if (!row || Number(row.size) > 64 * 1024 * 1024)
+            throw Object.assign(new Error('Files version is unavailable or exceeds the native source bound'), { status: 413 });
+        const keys = await this.config.keyring.keys(row.chunk_collection_id);
+        const chunks = [];
+        for (const id of row.chunk_ids)
+            chunks.push(Buffer.from(await decryptChunk(await this.store.get(row.chunk_collection_id, id), keys.data, id)));
+        const bytes = Buffer.concat(chunks).subarray(0, Number(row.size));
+        if (bytes.byteLength !== Number(row.size))
+            throw new Error('Files version length does not match its manifest');
+        return bytes;
+    }
+    async verifyHash(file, expected) {
+        const hash = createHash('sha256');
+        for await (const chunk of file.createReadStream())
+            hash.update(chunk);
+        if (hash.digest('hex') !== expected)
+            throw Object.assign(new Error('Tracked source hash changed'), { status: 409 });
+    }
+    async configureRoot(id, input) {
+        const configured = this.roots.find(root => root.id === id);
+        if (!configured)
+            throw Object.assign(new Error('File root is not mounted in this Files runtime'), { status: 409 });
+        if (input.syncMode === 'server' && !this.config.serverUrl)
+            throw Object.assign(new Error('No Files server is configured'), { status: 409 });
+        if (input.paused !== undefined)
+            configured.paused = input.paused;
+        if (input.syncMode)
+            configured.syncMode = input.syncMode;
+        if (input.exclusions)
+            configured.exclusions = input.exclusions;
+        await this.db.query(`UPDATE file_roots SET paused=$2,sync_mode=$3,exclusions=$4,state=$5,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE`, [id, configured.paused, configured.syncMode, JSON.stringify(configured.exclusions), configured.paused ? 'paused' : 'idle']);
+        if (!configured.paused)
+            await this.rescan();
+        const root = (await this.listRoots()).find(item => item.id === id);
+        if (!root)
+            throw Object.assign(new Error('File root is unavailable'), { status: 404 });
+        return root;
+    }
+    async detachRoot(id) {
+        if (id === 'default')
+            throw Object.assign(new Error('The default Files root cannot be removed'), { status: 409 });
+        const client = await this.db.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await client.query("UPDATE file_roots SET enabled=FALSE,paused=TRUE,state='detached',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE RETURNING collection_id", [id]);
+            if (!result.rowCount)
+                throw Object.assign(new Error('File root was not found'), { status: 404 });
+            // Detaching forgets scan custody only. Source files, encrypted versions,
+            // search records and journal history remain untouched and no delete versions
+            // are emitted.
+            await client.query('DELETE FROM watched_folder_state WHERE root_id=$1', [id]);
+            await client.query('COMMIT');
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+        const configuredIndex = this.roots.findIndex(root => root.id === id);
+        if (configuredIndex >= 0)
+            this.roots.splice(configuredIndex, 1);
+        this.rootCollections.delete(id);
+    }
+    async recent(limit, exactPath) {
+        const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds,r.state AS residency_state
+      FROM files f
+      LEFT JOIN recording_metadata m ON m.file_id=f.id
+      LEFT JOIN file_residency r ON r.file_id=f.id
+      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.deleted_at IS NULL AND ($1::text IS NULL OR f.path=$1) ORDER BY f.updated_at DESC LIMIT $2`, [exactPath ?? null, Math.max(1, Math.min(Number.isFinite(limit) ? limit : 4, 100))]);
+        const syncState = this.status().state;
+        return result.rows.filter(row => !isProtectedPath(row.path)).map(row => ({ id: row.id, path: row.path, mime: row.mime, size: Number(row.size), updatedAt: row.updated_at, conflict: row.conflict, durationSeconds: row.duration_seconds == null ? undefined : Number(row.duration_seconds), syncState: row.residency_state === 'online-only' ? 'online-only' : syncState === 'error' ? 'error' : syncState === 'syncing' ? 'syncing' : 'synced' }));
+    }
+    async setPaused(paused) {
+        this.paused = paused;
+        await this.db.query('UPDATE files_runtime_state SET paused=$1,state=$2,updated_at=NOW() WHERE id=TRUE', [paused, paused ? 'paused' : 'synced']);
+        if (!paused)
+            await this.sync();
+        return this.status();
+    }
+    async watchedPathCoverage(collectionId, items) {
+        if (![...this.rootCollections.values()].includes(collectionId))
+            return 0;
+        let covered = 0;
+        for (const item of items) {
+            const result = await this.db.query(`SELECT file_id::text FROM watched_folder_state WHERE collection_id=$1 AND (path=$2 OR ($3 AND starts_with(path,$2||'/')))`, [collectionId, item.sourcePath, item.folder]);
+            const watched = new Set(result.rows.map(row => row.file_id));
+            covered += item.fileSnapshots.filter(file => watched.has(file.id)).length;
+        }
+        return covered;
+    }
+    async applyPathOperations(action, items, actor) {
+        const fileId = items[0]?.fileSnapshots[0]?.id;
+        const collectionId = fileId ? (await this.db.query('SELECT collection_id FROM files WHERE id=$1', [fileId])).rows[0]?.collection_id : undefined;
+        const root = this.roots.find(item => this.rootCollections.get(item.id) === collectionId);
+        if (!root)
+            throw Object.assign(new Error('The watched Files root is unavailable'), { status: 409 });
+        const paths = items.flatMap(item => [item.sourcePath, item.targetPath]);
+        const mutations = this.rootMutations.get(root.id);
+        return this.serial(() => mutations.runExclusive(paths, () => this.applyPathOperationsNow(action, items, actor, root, mutations)));
+    }
+    async applyPathOperationsNow(action, items, actor, root, mutations) {
+        await FilesMutationCoordinator.requireAtomicRename();
+        if (!this.config.filesRoot)
+            throw Object.assign(new Error('The watched Files folder is unavailable'), { status: 409 });
+        const collectionId = this.rootCollections.get(root.id);
+        const sources = items.map(item => item.sourcePath);
+        if (sources.some((source, index) => sources.some((candidate, other) => index !== other && source.startsWith(`${candidate}/`))))
+            throw Object.assign(new Error('Choose either a folder or an item inside it, not both'), { status: 400 });
+        const destinations = items.flatMap(item => item.fileSnapshots.map(file => `${item.targetPath}${file.path.slice(item.sourcePath.length)}`));
+        if (new Set(destinations).size !== destinations.length)
+            throw Object.assign(new Error('Two selected items have the same destination'), { status: 409 });
+        if (items.some(item => item.fileSnapshots.some(file => `${item.targetPath}${file.path.slice(item.sourcePath.length)}` === file.path)))
+            throw Object.assign(new Error('The destination must be different from the source'), { status: 400 });
+        const operationId = randomUUID();
+        const completed = [];
+        let durablePlan = [];
+        const client = await this.db.connect();
+        let transaction = false;
+        let intentCreated = false;
+        let commitAttempted = false;
+        let clientReleased = false;
+        try {
+            await client.query('BEGIN');
+            transaction = true;
+            await lockStoredNamespace(client, collectionId);
+            const lockedRows = [];
+            const storedFolders = [];
+            for (const item of items) {
+                const snapshots = new Map(item.fileSnapshots.map(file => [file.id, file]));
+                const rows = await client.query(`SELECT f.*,f.id::text,w.path AS watched_path,w.content_hash,w.size AS watched_size,w.mtime_ms,f.current_version_id::text
+          FROM files f JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+          WHERE f.collection_id=$1 AND f.id=ANY($2::uuid[]) AND f.deleted_at IS NULL
+            AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+          ORDER BY w.path FOR UPDATE OF f,w`, [collectionId, [...snapshots.keys()]]);
+                if (rows.rowCount !== snapshots.size || rows.rows.some(row => { const snapshot = snapshots.get(row.id); return !snapshot || snapshot.path !== row.watched_path || snapshot.currentVersionId !== row.current_version_id; }))
+                    throw Object.assign(new Error('A selected file changed or became protected while this operation was starting. Refresh Files and try again.'), { status: 409 });
+                for (const row of rows.rows) {
+                    const nextPath = `${item.targetPath}${row.watched_path.slice(item.sourcePath.length)}`;
+                    await assertStoredFilePath(client, collectionId, nextPath);
+                }
+                if (item.folder) {
+                    const folders = await client.query(`SELECT path FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path FOR UPDATE`, [collectionId, item.sourcePath]);
+                    for (const folder of folders.rows)
+                        storedFolders.push({ sourcePath: folder.path, targetPath: `${item.targetPath}${folder.path.slice(item.sourcePath.length)}` });
+                    await assertStoredFolderPath(client, collectionId, item.targetPath);
+                    const occupied = await client.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 LIMIT 1', [collectionId, item.targetPath]);
+                    if (occupied.rowCount)
+                        throw Object.assign(new Error(`A folder already exists at ${item.targetPath}`), { status: 409 });
+                }
+                lockedRows.push(rows.rows);
+            }
+            const plan = [];
+            for (const [index, item] of items.entries()) {
+                for (const row of lockedRows[index]) {
+                    plan.push({
+                        rootId: root.id,
+                        fileId: row.id,
+                        sourcePath: row.watched_path,
+                        targetPath: `${item.targetPath}${row.watched_path.slice(item.sourcePath.length)}`,
+                        stagePath: `.sulla-trash/.operations/${operationId}/${row.id}.${action}`,
+                        contentHash: row.content_hash,
+                        kind: action,
+                    });
+                }
+            }
+            durablePlan = plan;
+            await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3::jsonb)`, [operationId, action, JSON.stringify(plan)]);
+            intentCreated = true;
+            await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1", [operationId]);
+            let planIndex = 0;
+            for (const [index, item] of items.entries()) {
+                for (const row of lockedRows[index]) {
+                    const sourcePath = row.watched_path;
+                    const targetPath = `${item.targetPath}${sourcePath.slice(item.sourcePath.length)}`;
+                    if (isProtectedPath(sourcePath) || isProtectedPath(targetPath))
+                        throw Object.assign(new Error(`Protected Files content cannot be ${action === 'move' ? 'moved' : 'copied'}`), { status: 403 });
+                    const verify = async (pinned) => {
+                        const hash = createHash('sha256');
+                        for await (const chunk of pinned.createReadStream())
+                            hash.update(chunk);
+                        if (hash.digest('hex') !== row.content_hash)
+                            throw Object.assign(new Error('A selected file changed while the operation was starting. Refresh Files and try again.'), { status: 409 });
+                    };
+                    const operation = plan[planIndex++];
+                    if (action === 'copy') {
+                        completed.push({ publication: await mutations.copyVerified({ source: sourcePath, target: targetPath, staged: operation.stagePath, verify }) });
+                    }
+                    else {
+                        const eviction = await mutations.evictVerified({ source: sourcePath, quarantine: operation.stagePath, verify });
+                        try {
+                            const publication = await mutations.publishVerified({ staged: eviction.quarantine, target: targetPath, verify });
+                            completed.push({ publication, eviction });
+                        }
+                        catch (error) {
+                            try {
+                                await mutations.recoverEviction(eviction, verify);
+                            }
+                            catch (recoveryError) {
+                                throw Object.assign(new Error(`${error instanceof Error ? error.message : String(error)}. The source was preserved for recovery at ${eviction.quarantine}: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`), { status: error?.status ?? 500 });
+                            }
+                            throw error;
+                        }
+                    }
+                    await this.db.query(`UPDATE files_path_operations SET receipts=receipts||$2::jsonb,updated_at=NOW() WHERE operation_id=$1`, [operationId, JSON.stringify([{
+                                fileId: operation.fileId,
+                                stagePath: operation.stagePath,
+                                targetPath: operation.targetPath,
+                                published: true,
+                                fingerprint: serializeFingerprint(completed.at(-1).publication.fingerprint),
+                            }])]);
+                }
+            }
+            let receiptIndex = 0;
+            for (const [index, item] of items.entries()) {
+                for (const row of lockedRows[index]) {
+                    const nextPath = `${item.targetPath}${row.watched_path.slice(item.sourcePath.length)}`;
+                    const receipt = completed[receiptIndex++].publication;
+                    if (action === 'move') {
+                        await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1', [row.id, nextPath]);
+                        await client.query('UPDATE watched_folder_state SET path=$3 WHERE collection_id=$1 AND file_id=$2', [collectionId, row.id, nextPath]);
+                        await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'rename')", [collectionId, row.id, row.current_version_id]);
+                        await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'move',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, row.id, row.current_version_id, JSON.stringify({ collectionId, from: row.path, to: nextPath })]);
+                    }
+                    else {
+                        const copied = await copyLockedFile(client, row, nextPath, actor);
+                        await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id)
+              VALUES($1,$2,$3,$4,$5,$6,$7)`, [collectionId, nextPath, copied.id, row.content_hash, receipt.fingerprint.size, Math.trunc(receipt.fingerprint.mtimeMs), root.id]);
+                        await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'copy',$6)`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, copied.id, copied.current_version_id, JSON.stringify({ collectionId, from: row.watched_path, to: nextPath })]);
+                    }
+                }
+                if (action === 'move' && item.folder) {
+                    const folderStars = await client.query(`SELECT principal_type,principal_id,folder_path FROM file_stars WHERE collection_id=$1 AND (folder_path=$2 OR starts_with(folder_path,$2||'/')) FOR UPDATE`, [collectionId, item.sourcePath]);
+                    for (const star of folderStars.rows)
+                        await client.query(`UPDATE file_stars SET folder_path=$4 WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND folder_path=$5`, [star.principal_type, star.principal_id, collectionId, `${item.targetPath}${star.folder_path.slice(item.sourcePath.length)}`, star.folder_path]);
+                }
+            }
+            if (action === 'copy') {
+                for (const folder of storedFolders)
+                    await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+            }
+            else {
+                for (const folder of [...storedFolders].sort((left, right) => right.sourcePath.length - left.sourcePath.length)) {
+                    await client.query('UPDATE file_folders SET path=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [collectionId, folder.sourcePath, folder.targetPath]);
+                }
+                for (const folder of storedFolders)
+                    await ensureStoredFolder(client, collectionId, folder.targetPath, actor);
+            }
+            for (const [index, item] of items.entries()) {
+                for (const row of lockedRows[index])
+                    await ensureStoredFileParents(client, collectionId, `${item.targetPath}${row.watched_path.slice(item.sourcePath.length)}`, actor);
+            }
+            await client.query("UPDATE files_path_operations SET state='db-committed',updated_at=NOW() WHERE operation_id=$1", [operationId]);
+            commitAttempted = true;
+            await client.query('COMMIT');
+            transaction = false;
+        }
+        catch (error) {
+            if (commitAttempted) {
+                client.release(true);
+                clientReleased = true;
+                throw Object.assign(new Error(`The database commit outcome is being reconciled; published files were preserved: ${error instanceof Error ? error.message : String(error)}`), { status: 503 });
+            }
+            const preservationErrors = [];
+            if (transaction) {
+                try {
+                    await client.query('ROLLBACK');
+                }
+                catch (rollbackError) {
+                    preservationErrors.push(`database rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+                }
+            }
+            for (const item of completed.reverse()) {
+                const planned = durablePlan.find(entry => entry.targetPath === item.publication.target);
+                const verify = async (pinned) => planned ? this.verifyOperationPinned(pinned, planned.contentHash) : pinned.assertUnchanged();
+                try {
+                    await mutations.rollbackPublication(item.publication, verify);
+                }
+                catch (recoveryError) {
+                    preservationErrors.push(`${item.publication.target}: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+                    continue;
+                }
+                if (item.eviction) {
+                    try {
+                        await mutations.recoverEviction(item.eviction, verify);
+                    }
+                    catch (recoveryError) {
+                        preservationErrors.push(`${item.eviction.source}: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+                    }
+                }
+                else {
+                    try {
+                        await mutations.finalizePublication(item.publication);
+                    }
+                    catch (recoveryError) {
+                        preservationErrors.push(`${item.publication.staged}: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+                    }
+                }
+            }
+            if (intentCreated) {
+                await this.db.query(`UPDATE files_path_operations SET state=$2,last_error=$3,updated_at=NOW() WHERE operation_id=$1`, [operationId, preservationErrors.length ? 'publishing' : 'completed', (error instanceof Error ? error.message : String(error)).slice(0, 2000)]).catch(() => undefined);
+            }
+            const reason = error instanceof Error ? error.message : String(error);
+            throw Object.assign(new Error(`${reason}${preservationErrors.length ? ` Recovery artifacts were preserved: ${preservationErrors.join('; ')}` : ''}`), { status: error?.status ?? 500 });
+        }
+        finally {
+            if (!clientReleased)
+                client.release();
+        }
+        const cleanupErrors = [];
+        for (const item of completed)
+            await mutations.finalizePublication(item.publication).catch(error => cleanupErrors.push(`${item.publication.staged}: ${error instanceof Error ? error.message : String(error)}`));
+        await this.db.query(`UPDATE files_path_operations SET state=$2,last_error=$3,updated_at=NOW() WHERE operation_id=$1`, [operationId, cleanupErrors.length ? 'db-committed' : 'completed', cleanupErrors.length ? cleanupErrors.join('; ').slice(0, 2000) : null]);
+        if (cleanupErrors.length)
+            throw Object.assign(new Error(`The operation committed, but protected cleanup artifacts remain: ${cleanupErrors.join('; ')}. Refresh Files before retrying.`), { status: 500 });
+        this.indexer?.wake();
+        await this.scanFolder();
+        if (!this.paused)
+            await this.syncNow();
+    }
+    /** Reconcile durable native publications before the watcher can infer changes. */
+    async recoverPathOperations() {
+        return this.mutations.runExclusive(['.sulla-trash/.operations'], async () => {
+            const rows = (await this.db.query(`SELECT operation_id,state,plan,receipts FROM files_path_operations
+          WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') ORDER BY created_at`)).rows;
+            for (const row of rows) {
+                try {
+                    if (row.plan?.kind === 'remote-purge-v1') {
+                        await this.recoverRemotePurgeOperation(row);
+                        continue;
+                    }
+                    if ([2, 3].includes(row.plan?.version)) {
+                        await this.nativeJournal.recover(row);
+                        continue;
+                    }
+                    const plan = Array.isArray(row.plan) ? row.plan : [];
+                    if (!plan.length)
+                        throw new Error('Path operation has no recoverable plan');
+                    const receipts = Array.isArray(row.receipts) ? row.receipts : [];
+                    if (row.state === 'db-committed')
+                        await this.finishCommittedPathOperation(plan, receipts);
+                    else
+                        await this.rollbackUncommittedPathOperation(plan, receipts);
+                    await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1", [row.operation_id]);
+                }
+                catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [row.operation_id, message.slice(0, 2000)]);
+                    throw new Error(`Files path operation ${row.operation_id} requires preserved-artifact reconciliation: ${message}`);
+                }
+            }
+            const disposalRows = (await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('completed','undone','rolled-back')
+        AND plan#>>'{disposal,undoInvalidatedAt}' IS NOT NULL AND plan#>>'{disposal,artifactsDisposedAt}' IS NULL ORDER BY created_at`)).rows;
+            for (const disposal of disposalRows) {
+                const result = await this.nativeJournal.dispose(disposal.operation_id);
+                if (result.state === 'recovery-required')
+                    throw new Error(result.error ?? `Trash receipt ${disposal.operation_id} artifact disposal requires recovery`);
+            }
+        });
+    }
+    async recoverRemotePurgeOperation(input) {
+        const row = (await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1', [input.operation_id])).rows[0];
+        if (!row)
+            throw new Error('Remote purge journal is missing; retained bytes were preserved');
+        if (row.state === 'completed' || row.state === 'rolled-back')
+            return;
+        if (!['planned', 'publishing', 'db-committed'].includes(row.state) || row.plan?.kind !== 'remote-purge-v1')
+            throw new Error('Remote purge journal state is invalid; retained bytes were preserved');
+        const plan = row.plan;
+        const mutations = this.rootMutations.get(plan.rootId);
+        if (!mutations)
+            throw new Error(`Remote purge root ${plan.rootId} is unavailable; retained bytes were preserved`);
+        const verify = (p) => this.verifyOperationPinned(p, plan.contentHash);
+        const expected = deserializeFingerprint(plan.fingerprint);
+        if (row.state === 'db-committed') {
+            if ((await this.db.query('SELECT 1 FROM files WHERE id=$1 OR (collection_id=$2 AND path=$3) LIMIT 1', [plan.fileId, plan.collectionId, plan.sourcePath])).rowCount) {
+                throw new Error('Remote purge metadata is still live; retained bytes were preserved');
+            }
+            const tombstone = (await this.db.query('SELECT collection_id,path,lifecycle_generation FROM file_purge_tombstones WHERE file_id=$1', [plan.fileId])).rows[0];
+            if (!tombstone || tombstone.collection_id !== plan.collectionId || tombstone.path !== plan.sourcePath || Number(tombstone.lifecycle_generation) < plan.lifecycleGeneration) {
+                throw new Error('Remote purge commit proof is missing or changed; retained bytes were preserved');
+            }
+            if (await mutations.exists(plan.stagePath))
+                await mutations.disposeRetainedFile(plan.stagePath, expected, verify);
+            await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='db-committed'", [row.operation_id]);
+            return;
+        }
+        const sourceExists = await mutations.exists(plan.sourcePath);
+        const stageExists = await mutations.exists(plan.stagePath);
+        if (sourceExists && stageExists)
+            throw new Error('Remote purge source and retained stage both exist; both were preserved');
+        if (!sourceExists && !stageExists)
+            throw new Error('Remote purge source and retained stage are both missing');
+        if (stageExists)
+            await mutations.recoverEviction({ source: plan.sourcePath, quarantine: plan.stagePath, fingerprint: expected }, verify);
+        await this.db.query("UPDATE files_path_operations SET state='rolled-back',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state IN('planned','publishing')", [row.operation_id]);
+    }
+    async finishCommittedPathOperation(plan, receipts) {
+        const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
+        if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default')))
+            throw new Error('Path operation root is unavailable or inconsistent');
+        for (const entry of plan) {
+            const receipt = this.operationReceipt(entry, receipts);
+            if (!receipt?.fingerprint)
+                throw new Error(`Committed publication receipt is missing: ${entry.targetPath}`);
+            const fingerprint = deserializeFingerprint(receipt.fingerprint);
+            if (!await mutations.exists(entry.targetPath))
+                throw new Error(`Committed target is missing: ${entry.targetPath}`);
+            const target = await mutations.pin(entry.targetPath);
+            try {
+                if (!sameFingerprint(target.fingerprint, fingerprint))
+                    throw new Error(`Committed target identity changed: ${entry.targetPath}`);
+                await this.verifyOperationPinned(target, entry.contentHash);
+            }
+            finally {
+                await target.close();
+            }
+            if (await mutations.exists(entry.stagePath)) {
+                const staged = await mutations.pin(entry.stagePath);
+                try {
+                    if (!sameFingerprint(staged.fingerprint, fingerprint))
+                        throw new Error(`Committed stage identity changed: ${entry.stagePath}`);
+                    await this.verifyOperationPinned(staged, entry.contentHash);
+                }
+                finally {
+                    await staged.close();
+                }
+                await mutations.finalizePublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint });
+            }
+        }
+    }
+    async rollbackUncommittedPathOperation(plan, receipts) {
+        const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
+        if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default')))
+            throw new Error('Path operation root is unavailable or inconsistent');
+        for (const entry of [...plan].reverse()) {
+            const durableReceipt = this.operationReceipt(entry, receipts);
+            const stageExists = await mutations.exists(entry.stagePath);
+            if (await mutations.exists(entry.targetPath) && (durableReceipt?.fingerprint || stageExists)) {
+                let fingerprint = durableReceipt?.fingerprint ? deserializeFingerprint(durableReceipt.fingerprint) : undefined;
+                if (!fingerprint) {
+                    const [stage, target] = await Promise.all([mutations.pin(entry.stagePath), mutations.pin(entry.targetPath)]);
+                    try {
+                        if (!sameIdentity(stage.fingerprint, target.fingerprint))
+                            throw new Error(`Uncommitted target is not owned by its recovery stage: ${entry.targetPath}`);
+                        await Promise.all([this.verifyOperationPinned(stage, entry.contentHash), this.verifyOperationPinned(target, entry.contentHash)]);
+                        fingerprint = target.fingerprint;
+                    }
+                    finally {
+                        await Promise.all([stage.close(), target.close()]);
+                    }
+                }
+                await mutations.rollbackPublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint }, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
+            }
+            if (entry.kind === 'move' && await mutations.exists(entry.stagePath)) {
+                const staged = await mutations.pin(entry.stagePath);
+                const receipt = { source: entry.sourcePath, quarantine: entry.stagePath, fingerprint: staged.fingerprint };
+                await staged.close();
+                await mutations.recoverEviction(receipt, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
+            }
+            else if (entry.kind === 'copy' && await mutations.exists(entry.stagePath)) {
+                const staged = await mutations.pin(entry.stagePath);
+                const receipt = { staged: entry.stagePath, target: entry.targetPath, fingerprint: staged.fingerprint };
+                await staged.close();
+                await mutations.finalizePublication(receipt);
+            }
+        }
+    }
+    operationReceipt(entry, receipts) {
+        return receipts.find(receipt => receipt.published && receipt.fileId === entry.fileId && receipt.stagePath === entry.stagePath && receipt.targetPath === entry.targetPath);
+    }
+    async verifyOperationPinned(pinned, expectedHash) {
+        const hash = createHash('sha256');
+        for await (const chunk of pinned.createReadStream())
+            hash.update(chunk);
+        if (hash.digest('hex') !== expectedHash)
+            throw new Error(`Recovery artifact changed: ${pinned.relativePath}`);
+        await pinned.assertUnchanged();
+    }
+    async rescan() { return this.serial(async () => { await this.recoverPathOperations(); await this.scanFolder(); if (!this.paused)
+        await this.syncNow(); }); }
+    async sync() { if (this.paused || !this.config.serverUrl)
+        return; return this.serial(() => this.syncNow()); }
+    async serial(operation) {
+        return this.mutations.runExclusive(['.'], async () => {
+            if (this.stopped)
+                throw new Error('Files is locked');
+            const result = operation().then(value => { this.lastError = undefined; return value; }).catch(error => { this.fail(error); throw error; });
+            const running = result.then(() => undefined);
+            this.running = running;
+            try {
+                await running;
+                return await result;
+            }
+            finally {
+                if (this.running === running)
+                    this.running = undefined;
+            }
+        });
+    }
+    fail(error) { this.lastError = error instanceof Error ? error.message : String(error); this.db.query("UPDATE files_runtime_state SET state='error',last_error=$1,updated_at=NOW() WHERE id=TRUE", [this.lastError]).catch(dbError => console.error('[SullaFiles] failed to record runtime error', dbError)); }
+    async ensureCollection(root) {
+        const id = collectionIdFor(this.config.userId, root.id);
+        const client = await this.db.connect();
+        try {
+            await client.query('BEGIN');
+            const existing = await client.query(`SELECT c.id FROM collections c WHERE c.owner_user_id=$2 AND c.kind='knowledge' AND c.published=TRUE AND c.legacy_source=FALSE
+        AND (c.id=$1 OR c.id=(SELECT shadow_collection_id FROM files_legacy_collection_map WHERE source_collection_id=$1)) ORDER BY (c.id=$1) DESC LIMIT 1`, [id, this.config.userId]);
+            if (!existing.rows[0]) {
+                await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
+          VALUES($1,$2,$3,$4,'knowledge',$5,'{}','{}',$6)`, [id, this.config.orgId ?? null, this.config.userId, root.primary ? 'Files' : root.name, root.syncMode === 'server' && this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);
+                const wrapped = await this.config.keyring.create(id, client);
+                await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
+            }
+            else if (this.config.orgId)
+                await client.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]);
+            await client.query('COMMIT');
+            return existing.rows[0]?.id ?? id;
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async ignores(root) { try {
+        return [...DEFAULT_IGNORES, ...root.exclusions, ...(await readFile(join(root.path, '.sullaignore'), 'utf8')).split(/\r?\n/)];
+    }
+    catch {
+        return [...DEFAULT_IGNORES, ...root.exclusions];
+    } }
+    safe(relativePath, root = this.roots.find(item => item.primary)) { const absolute = resolve(root.path, relativePath); if (absolute !== root.path && !absolute.startsWith(`${root.path}${sep}`))
+        throw new Error('path escapes Files folder'); return absolute; }
+    rootForCollection(collectionId) {
+        const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
+        if (!root)
+            throw Object.assign(new Error('Collection is not mapped to a configured Files root'), { status: 404 });
+        return root;
+    }
+    async diskFiles(configuredRoot, current = configuredRoot.path, prefix = '', patterns) {
+        const ignores = patterns ?? await this.ignores(configuredRoot);
+        const output = { paths: [], complete: true, errors: [] };
+        let entries;
+        try {
+            entries = await readdir(current, { withFileTypes: true });
+        }
+        catch (error) {
+            return { paths: [], complete: false, errors: [`Could not read ${prefix || 'the tracked folder'}: ${error?.code ?? 'filesystem error'}`] };
+        }
+        for (const entry of entries) {
+            const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (isProtectedPath(rel) || isSensitiveTrackedPath(rel) || (configuredRoot.primary && isLegacyInternalPath(rel, this.config.legacyPreflight)) || matchIgnore(rel, ignores))
+                continue;
+            if (entry.isDirectory()) {
+                const nested = await this.diskFiles(configuredRoot, join(current, entry.name), rel, ignores);
+                output.paths.push(...nested.paths);
+                output.complete &&= nested.complete;
+                output.errors.push(...nested.errors);
+            }
+            else if (entry.isFile() && rel !== '.sullaignore')
+                output.paths.push(rel);
+        }
+        return output;
+    }
+    async scanFolder() {
+        const pendingOperation = await this.db.query("SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') LIMIT 1");
+        if (pendingOperation.rowCount)
+            throw new Error(`Files path operation ${pendingOperation.rows[0].operation_id} must be reconciled before watcher scanning`);
+        for (const root of this.roots) {
+            if (root.paused)
+                continue;
+            try {
+                await this.scanRoot(root);
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                await this.db.query("UPDATE file_roots SET state='error',last_error=$2,pending_files=0,updated_at=NOW() WHERE id=$1", [root.id, message]);
+                console.error(`[SullaFiles] root ${root.id} scan failed`, error);
+            }
+        }
+    }
+    async scanRoot(root) {
+        const collectionId = this.rootCollections.get(root.id);
+        await this.db.query("UPDATE file_roots SET state='scanning',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
+        const patterns = await this.ignores(root);
+        const scanned = await this.diskFiles(root, root.path, '', patterns);
+        const diskSet = new Set(scanned.paths);
+        const states = (await this.db.query(`SELECT w.* FROM watched_folder_state w LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$1 AND COALESCE(r.state,'local')<>'online-only'`, [root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
+        const reconciledStates = states.filter(row => !isProtectedPath(row.path) && !isSensitiveTrackedPath(row.path) && !matchIgnore(row.path, patterns));
+        const missingRows = reconciledStates.filter(row => !diskSet.has(row.path));
+        if (scanned.complete && reconciledStates.length > 0 && (scanned.paths.length === 0 || (missingRows.length >= 100 && missingRows.length / reconciledStates.length >= 0.8))) {
+            throw new Error('Folder availability changed unexpectedly; deletion reconciliation was suspended to protect indexed files');
+        }
+        const missing = new Map(missingRows.map(row => [row.content_hash, row]));
+        const diskInfo = new Map();
+        for (const filePath of scanned.paths) {
+            try {
+                const info = await stat(this.safe(filePath, root));
+                if (info.isFile())
+                    diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs });
+            }
+            catch (error) {
+                scanned.complete = false;
+                scanned.errors.push(`Could not inspect ${filePath}: ${error?.code ?? 'filesystem error'}`);
+            }
+        }
+        const disk = [...diskInfo.keys()];
+        const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath); return (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)); });
+        this.pendingFiles = changedPaths.length + missing.size;
+        this.totalBytes = changedPaths.reduce((sum, filePath) => sum + diskInfo.get(filePath).size, 0);
+        this.pendingBytes = this.totalBytes;
+        this.processedBytes = 0;
+        this.progressStartedAt = Date.now();
+        await this.db.query("UPDATE files_runtime_state SET state='syncing',pending_files=$1,updated_at=NOW() WHERE id=TRUE", [this.pendingFiles]);
+        await this.db.query("UPDATE file_roots SET state='scanning',pending_files=$2,updated_at=NOW() WHERE id=$1", [root.id, this.pendingFiles]);
+        let changed = 0;
+        for (const filePath of disk) {
+            const info = diskInfo.get(filePath);
+            const old = states.find(row => row.path === filePath);
+            if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs))
+                continue;
+            try {
+                if (await this.ingest(root, collectionId, filePath, info.mtimeMs, old, missing))
+                    changed++;
+            }
+            catch (error) {
+                scanned.errors.push(`Could not import ${filePath}: ${error?.code ?? error?.message ?? 'filesystem error'}`);
+            }
+            this.processedBytes += info.size;
+            this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes);
+            this.pendingFiles = Math.max(0, this.pendingFiles - 1);
+        }
+        const currentStates = (await this.db.query('SELECT * FROM watched_folder_state WHERE root_id=$1', [root.id])).rows;
+        if (scanned.complete)
+            for (const row of reconciledStates)
+                if (!diskSet.has(row.path) && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) {
+                    await this.softDelete(row);
+                    changed++;
+                }
+        this.pendingFiles = 0;
+        this.pendingBytes = 0;
+        this.processedBytes = this.totalBytes;
+        this.lastScanAt = new Date().toISOString();
+        await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
+        const scanError = scanned.errors.length ? scanned.errors.slice(0, 5).join('; ').slice(0, 2000) : null;
+        await this.db.query("UPDATE file_roots SET state=$2,pending_files=0,last_error=$3,last_scan_at=NOW(),updated_at=NOW() WHERE id=$1", [root.id, scanError
+                ? 'error'
+                : 'idle', scanError]);
+        if (changed)
+            console.log(`[SullaFiles] recorded ${changed} watched folder change(s) for root ${root.id}`);
+    }
+    async ingest(root, collectionId, filePath, mtimeMs, old, missing) {
+        const keys = await this.config.keyring.keys(collectionId);
+        const whole = createHash('sha256');
+        const ids = [];
+        const chunks = [];
+        let total = 0;
+        for await (const part of createReadStream(this.safe(filePath, root), { highWaterMark: CHUNK_BYTES })) {
+            const plain = Buffer.from(part);
+            total += plain.length;
+            whole.update(plain);
+            const id = chunkId(plain, keys.dedup);
+            ids.push(id);
+            if (!await this.store.has(collectionId, id)) {
+                const encrypted = await encryptChunk(plain, keys.data, id);
+                await this.store.put(collectionId, id, encrypted);
+                chunks.push({ id, size: plain.length, storedSize: encrypted.length });
+            }
+        }
+        if (total === 0) {
+            const empty = Buffer.alloc(0);
+            const id = chunkId(empty, keys.dedup);
+            ids.push(id);
+            if (!await this.store.has(collectionId, id)) {
+                const encrypted = await encryptChunk(empty, keys.data, id);
+                await this.store.put(collectionId, id, encrypted);
+                chunks.push({ id, size: 0, storedSize: encrypted.length });
+            }
+        }
+        const contentHash = whole.digest('hex');
+        if (old?.content_hash === contentHash) {
+            await this.db.query('UPDATE watched_folder_state SET size=$3,mtime_ms=$4 WHERE collection_id=$1 AND path=$2', [collectionId, filePath, total, Math.trunc(mtimeMs)]);
+            return false;
+        }
+        const renameFrom = !old ? missing.get(contentHash) : undefined;
+        const manifestHash = createHash('sha256').update(JSON.stringify({ ids, size: total })).digest('hex');
+        const existing = !old && !renameFrom ? (await this.db.query(`SELECT f.id,f.deleted_at,v.manifest_hash FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id
+      WHERE f.collection_id=$1 AND f.path=$2`, [collectionId, filePath])).rows[0] : undefined;
+        if (existing && !existing.deleted_at && existing.manifest_hash === manifestHash) {
+            await this.db.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, filePath, existing.id, contentHash, total, Math.trunc(mtimeMs), root.id]);
+            return false;
+        }
+        const client = await this.db.connect();
+        await client.query('BEGIN');
+        try {
+            await lockStoredNamespace(client, collectionId);
+            await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
+            for (const chunk of chunks)
+                await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${collectionId}/${chunk.id}`]);
+            let fileId = old?.file_id ?? renameFrom?.file_id ?? existing?.id;
+            let parent = null;
+            await assertStoredFilePath(client, collectionId, filePath, fileId);
+            if (fileId) {
+                const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+                parent = file.current_version_id;
+                await client.query("UPDATE files SET path=$2,mime=$3,size=$4,search_text=NULL,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, filePath, mime(filePath), total]);
+            }
+            else {
+                fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, filePath, this.config.userId, mime(filePath), total])).rows[0].id;
+            }
+            await ensureStoredFileParents(client, collectionId, filePath, { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability' });
+            const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
+        VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${renameFrom.path} to ${filePath}` : 'Watched folder change', this.config.deviceId])).rows[0];
+            await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]);
+            await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);
+            await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [collectionId, fileId, version.id, renameFrom ? 'rename' : 'put']);
+            if (renameFrom)
+                await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, renameFrom.path]);
+            await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, filePath, fileId, contentHash, total, Math.trunc(mtimeMs), root.id]);
+            await client.query('COMMIT');
+            this.indexer?.wake();
+            if (renameFrom)
+                missing.delete(contentHash);
+            if (root.primary && filePath.startsWith('Recordings/') && mime(filePath).startsWith('video/') && !/-(?:camera|mic|system-audio)\.[^/]+$/i.test(filePath)) {
+                await this.db.query(`INSERT INTO recording_enrichment_jobs(file_id,version_id,status) VALUES($1,$2,'pending') ON CONFLICT(version_id) DO NOTHING`, [fileId, version.id]).catch(error => console.warn('[SullaFiles] recording enrichment hook unavailable:', error));
+            }
+            return true;
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    async softDelete(row) {
+        const client = await this.db.connect();
+        await client.query('BEGIN');
+        try {
+            const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [row.file_id])).rows[0];
+            if (!file) {
+                await client.query('ROLLBACK');
+                return;
+            }
+            const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
+        VALUES($1,$2,$3,NULL,0,TRUE,'user',$4,'Moved to Trash',$5,$3) RETURNING id`, [row.file_id, row.collection_id, file.current_version_id, this.config.userId, this.config.deviceId])).rows[0];
+            await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [row.file_id, version.id]);
+            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [row.collection_id, row.file_id, version.id]);
+            await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [row.collection_id, row.path]);
+            await client.query('COMMIT');
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+    headers(extra = {}) { return { authorization: `Bearer ${issueCapabilityToken({ sub: this.config.userId, device_id: this.config.deviceId, scopes: ['files/*'] }, this.config.capabilitySigningKey)}`, ...extra }; }
+    async remote(path, init = {}) { const response = await fetch(new URL(path, this.config.serverUrl), { ...init, headers: { ...this.headers({ 'content-type': 'application/json' }), ...init.headers } }); if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw Object.assign(new Error(body.error ?? `sync HTTP ${response.status}`), { status: response.status, body });
+    } return response.status === 204 ? undefined : response.json(); }
+    async syncNow() {
+        if (!this.config.serverUrl)
+            return;
+        const syncRoots = this.roots.filter(root => !root.paused && root.syncMode === 'server');
+        if (!syncRoots.length)
+            return;
+        await this.db.query("UPDATE files_runtime_state SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=TRUE");
+        for (const root of syncRoots) {
+            const collectionId = this.rootCollections.get(root.id);
+            await this.config.keyring.requireLegacySync(collectionId);
+            await this.db.query("UPDATE file_roots SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
+            const collection = (await this.db.query('SELECT * FROM collections WHERE id=$1', [collectionId])).rows[0];
+            await this.remote('/v1/collections', { method: 'POST', body: JSON.stringify({ collection }) });
+        }
+        const remoteCollections = await this.remote('/v1/collections');
+        for (const remote of remoteCollections.filter(remote => !remote.systemArea))
+            await this.config.keyring.requireLegacySync(remote.id);
+        for (const remote of remoteCollections.filter(remote => !remote.systemArea)) {
+            if (remote.id !== this.collectionId) {
+                await this.db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy)
+          VALUES($1,$2,$3,$4,$5,'synced',$6,$7,$8,$9)
+          ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,org_id=EXCLUDED.org_id,updated_at=NOW()`, [remote.id, remote.org_id, remote.owner_user_id, remote.name, remote.kind, remote.encryption, remote.encrypted_data_key, remote.dedup_key_ciphertext, remote.retention_policy ?? {}]);
+            }
+            const localRoot = syncRoots.find(root => this.rootCollections.get(root.id) === remote.id);
+            await this.syncCollection(remote.id, true);
+        }
+        this.pendingFiles = 0;
+        this.lastSyncAt = new Date().toISOString();
+        await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=TRUE");
+        await this.db.query("UPDATE file_roots SET state='idle',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=ANY($1::text[])", [syncRoots.map(root => root.id)]);
+    }
+    async syncCollection(collectionId, canPush) {
+        await this.db.query('INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [collectionId, this.config.deviceId]);
+        let cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
+        const entries = await this.remote(`/v1/collections/${collectionId}/journal?after=${cursor.last_seq}`);
+        for (const entry of entries) {
+            await this.pull(entry);
+            await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
+        }
+        cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
+        if (canPush) {
+            const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
+            this.pendingFiles += pending.length;
+            for (const item of pending) {
+                await this.push(item, collectionId);
+                await this.db.query('UPDATE file_sync_cursors SET last_push_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, item.seq]);
+            }
+        }
+    }
+    async push(item, collectionId = item.file.collection_id) {
+        if (item.op === 'lifecycle') {
+            await this.remote(`/v1/files/${item.file.id}/lifecycle-state`, { method: 'PATCH', body: JSON.stringify({ file: item.file }) });
+            return;
+        }
+        const chunks = item.manifest ? (await this.db.query('SELECT * FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [item.version.chunk_collection_id, item.manifest.chunk_ids])).rows : [];
+        const payload = { collectionId, file: item.file, version: item.version, manifest: item.manifest, chunks, baseServerVersionId: item.version.base_server_version_id ?? item.version.parent_version_id };
+        const prep = await this.remote('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(payload) });
+        if (prep.conflict) {
+            await this.keepConflict(item, prep.currentVersionId);
+            return;
+        }
+        for (const id of prep.missing ?? []) {
+            const response = await fetch(new URL(`/v1/chunks/${item.version.chunk_collection_id}/${id}`, this.config.serverUrl), { method: 'PUT', headers: this.headers({ 'content-type': 'application/octet-stream' }), body: await this.store.get(item.version.chunk_collection_id, id) });
+            if (!response.ok)
+                throw new Error(`chunk upload failed ${response.status}`);
+        }
+        await this.remote('/v1/versions/commit', { method: 'POST', body: JSON.stringify(payload) });
+        await this.db.query('UPDATE file_versions SET base_server_version_id=id WHERE id=$1', [item.version.id]);
+    }
+    async keepConflict(item, remoteVersionId) {
+        const collectionId = item.file.collection_id;
+        const root = this.rootForCollection(collectionId);
+        const nextPath = conflictPath(item.file.path, this.config.deviceId);
+        const source = this.safe(item.file.path, root);
+        const target = this.safe(nextPath, root);
+        await mkdir(dirname(target), { recursive: true });
+        await rename(source, target);
+        const fileId = randomUUID();
+        const versionId = randomUUID();
+        const info = await stat(target);
+        const hash = createHash('sha256');
+        for await (const part of createReadStream(target))
+            hash.update(part);
+        const client = await this.db.connect();
+        await client.query('BEGIN');
+        try {
+            await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)`, [fileId, collectionId, nextPath, item.file.created_by_type, item.file.created_by_id, item.file.mime, item.file.size]);
+            await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
+        VALUES($1,$2,$3,NULL,$4,$5,FALSE,$6,$7,$8,$9,NULL)`, [versionId, fileId, item.version.chunk_collection_id, item.version.manifest_hash, item.version.size, item.version.created_by_type, item.version.created_by_id, `Conflict copy of ${item.file.path}`, this.config.deviceId]);
+            await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, versionId]);
+            await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [item.version.chunk_collection_id, item.manifest.chunk_ids]);
+            await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'conflict')", [collectionId, fileId, versionId]);
+            await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, item.file.path]);
+            await client.query('INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)', [collectionId, nextPath, fileId, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
+            await client.query('COMMIT');
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+        const conflict = { ...item, file: { ...item.file, id: fileId, path: nextPath }, version: { ...item.version, id: versionId, file_id: fileId, parent_version_id: null, base_server_version_id: null, message: `Conflict copy of ${item.file.path}` } };
+        await this.push(conflict);
+        const bundle = await this.remote(`/v1/versions/${remoteVersionId}`);
+        await this.pull({ ...bundle, seq: 0 });
+    }
+    async materialize(bundle) {
+        const root = this.rootForCollection(bundle.file.collection_id);
+        const keys = await this.config.keyring.keys(bundle.version.chunk_collection_id);
+        const target = this.safe(bundle.file.path, root);
+        await mkdir(dirname(target), { recursive: true });
+        const temp = `${target}.sulla-conflict-${randomUUID()}`;
+        const output = createWriteStream(temp, { mode: 0o600 });
+        let lastId;
+        let lastPlain;
+        try {
+            for (const id of bundle.manifest.chunk_ids) {
+                let plain;
+                if (id === lastId && lastPlain)
+                    plain = lastPlain;
+                else {
+                    let encrypted;
+                    if (await this.store.has(bundle.version.chunk_collection_id, id))
+                        encrypted = await this.store.get(bundle.version.chunk_collection_id, id);
+                    else {
+                        const response = await fetch(new URL(`/v1/chunks/${bundle.version.chunk_collection_id}/${id}`, this.config.serverUrl), { headers: this.headers() });
+                        if (!response.ok)
+                            throw new Error(`chunk download failed ${response.status}`);
+                        encrypted = new Uint8Array(await response.arrayBuffer());
+                        await this.store.put(bundle.version.chunk_collection_id, id, encrypted);
+                    }
+                    plain = await decryptChunk(encrypted, keys.data, id);
+                    lastId = id;
+                    lastPlain = plain;
+                }
+                if (!output.write(plain))
+                    await new Promise(resolve => output.once('drain', () => resolve()));
+            }
+            output.end();
+            await new Promise((resolve, reject) => { output.once('finish', resolve); output.once('error', reject); });
+            await rename(temp, target);
+        }
+        catch (error) {
+            output.destroy();
+            throw error;
+        }
+    }
+    async pull(entry) {
+        const collectionId = entry.file.collection_id;
+        if (entry.op === 'purge') {
+            if (entry.syncAuthority?.canMaterialize !== true)
+                return;
+            const active = await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed')
+        AND (plan->>'collectionId'=$1 OR plan::text LIKE $2) LIMIT 1`, [collectionId, `%${entry.file.id}%`]);
+            if (active.rowCount)
+                throw new Error(`Remote purge is held by active Files path operation ${active.rows[0].operation_id}`);
+            const existing = (await this.db.query(`SELECT f.path,f.current_version_id,f.operation_revision,w.root_id,w.content_hash,w.size,w.mtime_ms
+        FROM files f LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id WHERE f.id=$1 AND f.collection_id=$2`, [entry.file.id, collectionId])).rows[0];
+            const root = this.rootForCollection(collectionId);
+            const mutations = this.rootMutations.get(existing?.root_id ?? root.id);
+            let remoteOperationId;
+            let remotePlan;
+            if (existing?.path && existing.content_hash) {
+                if (!mutations)
+                    throw new Error('Remote purge root is unavailable; local bytes were preserved');
+                const pinned = await mutations.pinVerified(existing.path, p => this.verifyOperationPinned(p, existing.content_hash));
+                const expected = pinned.fingerprint;
+                try {
+                    if (expected.size !== Number(existing.size) || expected.mtimeMs !== Number(existing.mtime_ms))
+                        throw new Error('Remote purge cannot prove current watched-file ownership; local bytes were preserved');
+                }
+                finally {
+                    await pinned.close();
+                }
+                remoteOperationId = randomUUID();
+                remotePlan = { kind: 'remote-purge-v1', rootId: existing.root_id, collectionId, fileId: entry.file.id, sourcePath: existing.path,
+                    stagePath: `.sulla-trash/.operations/${remoteOperationId}/remote-purge`, versionId: existing.current_version_id,
+                    revision: String(existing.operation_revision), contentHash: existing.content_hash, fingerprint: serializeFingerprint(expected),
+                    lifecycleGeneration: Number(entry.file.lifecycle_generation ?? 0) };
+                await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,'trash','planned',$2)`, [remoteOperationId, remotePlan]);
+                await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1", [remoteOperationId]);
+                let eviction;
+                try {
+                    eviction = await mutations.evictVerified({ source: remotePlan.sourcePath, quarantine: remotePlan.stagePath, verify: p => this.verifyOperationPinned(p, remotePlan.contentHash) });
+                }
+                catch (error) {
+                    try {
+                        await this.recoverRemotePurgeOperation({ operation_id: remoteOperationId, state: 'publishing', plan: remotePlan, receipts: [] });
+                    }
+                    catch (recoveryError) {
+                        await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [remoteOperationId, String(recoveryError?.message ?? recoveryError).slice(0, 2000)]).catch(() => undefined);
+                        throw recoveryError;
+                    }
+                    throw error;
+                }
+                if (!sameFingerprint(eviction.fingerprint, expected)) {
+                    await this.recoverRemotePurgeOperation({ operation_id: remoteOperationId, state: 'publishing', plan: remotePlan, receipts: [] });
+                    throw new Error('Remote purge source identity changed before eviction; bytes were restored');
+                }
+            }
+            else if (existing?.path)
+                throw new Error('Remote purge cannot prove ownership of local bytes; they were preserved');
+            const client = await this.db.connect();
+            await client.query('BEGIN');
+            try {
+                await client.query("SET LOCAL sulla.trusted_replication='on'");
+                if (existing && !(await client.query('SELECT 1 FROM files WHERE id=$1 AND collection_id=$2 AND path=$3 AND current_version_id=$4 AND operation_revision=$5 FOR UPDATE', [entry.file.id, collectionId, existing.path, existing.current_version_id, existing.operation_revision])).rowCount)
+                    throw new Error('Remote purge target changed; retained bytes were preserved');
+                if (remoteOperationId && !(await client.query("SELECT 1 FROM files_path_operations WHERE operation_id=$1 AND state='publishing' AND plan->>'fileId'=$2 AND plan->>'versionId'=$3 AND plan->>'revision'=$4 FOR UPDATE", [remoteOperationId, entry.file.id, existing.current_version_id, String(existing.operation_revision)])).rowCount)
+                    throw new Error('Remote purge journal changed; retained bytes were preserved');
+                const receipt = existing ? (await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash'
+          AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`, [entry.file.id, existing.current_version_id])).rows[0] : null;
+                if (receipt?.state === 'completed') {
+                    const invalidation = { undoInvalidatedAt: new Date().toISOString(), invalidatedBy: 'remote-authority', reason: 'replicated-disposal' };
+                    const receiptPlan = receipt.folder_plan ?? {};
+                    receiptPlan.lifecycle = { ...(receiptPlan.lifecycle ?? {}), disposal: invalidation };
+                    await client.query('UPDATE files_database_operation_receipts SET folder_plan=$2 WHERE id=$1', [receipt.id, receiptPlan]);
+                    const operation = (await client.query('SELECT * FROM files_path_operations WHERE operation_id=$1 FOR UPDATE', [receipt.id])).rows[0];
+                    if (operation) {
+                        operation.plan.disposal = invalidation;
+                        await client.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1', [receipt.id, operation.plan]);
+                    }
+                }
+                await client.query(`INSERT INTO file_purge_tombstones(collection_id,file_id,path,lifecycle_generation,audience,purged_at)
+          VALUES($1,$2,$3,$4,'{"users":[],"groups":[]}'::jsonb,COALESCE($5,NOW()))
+          ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),purged_at=EXCLUDED.purged_at`, [collectionId, entry.file.id, existing?.path ?? entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
+                await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [entry.file.id]);
+                await client.query(`UPDATE files SET record_lock_type='none',retention_mode='none',retain_until=NULL,retention_event_type=NULL,retention_event_at=NULL,
+          retention_duration_days=NULL,disposal_status='approved',draft_version_id=NULL,published_version_id=NULL,current_version_id=NULL,
+          lifecycle_generation=GREATEST(lifecycle_generation,$2) WHERE id=$1`, [entry.file.id, entry.file.lifecycle_generation ?? 0]);
+                await client.query('DELETE FROM journal WHERE file_id=$1', [entry.file.id]);
+                await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
+                await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
+                if (remoteOperationId && (await client.query("UPDATE files_path_operations SET state='db-committed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='publishing'", [remoteOperationId])).rowCount !== 1)
+                    throw new Error('Remote purge journal commit proof could not be recorded');
+                await client.query('COMMIT');
+                if (remoteOperationId && remotePlan)
+                    await this.recoverRemotePurgeOperation({ operation_id: remoteOperationId, state: 'db-committed', plan: remotePlan, receipts: [] });
+                if (receipt?.state === 'completed') {
+                    const disposed = await this.nativeJournal.dispose(receipt.id);
+                    if (disposed.state === 'recovery-required')
+                        throw new Error(disposed.error ?? 'Remote purge retained artifacts require recovery');
+                }
+            }
+            catch (error) {
+                await client.query('ROLLBACK').catch(() => undefined);
+                if (remoteOperationId) {
+                    const durable = (await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1', [remoteOperationId])).rows[0];
+                    if (durable && ['planned', 'publishing', 'db-committed'].includes(durable.state))
+                        await this.recoverRemotePurgeOperation(durable).catch(async (recoveryError) => {
+                            await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [remoteOperationId, String(recoveryError?.message ?? recoveryError).slice(0, 2000)]).catch(() => undefined);
+                            throw recoveryError;
+                        });
+                }
+                throw error;
+            }
+            finally {
+                client.release();
+            }
+            return;
+        }
+        if (entry.op === 'lifecycle') {
+            if (!entry.file.path)
+                return;
+            const client = await this.db.connect();
+            await client.query('BEGIN');
+            try {
+                await client.query("SET LOCAL sulla.trusted_replication='on'");
+                await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,lifecycle_generation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,-1) ON CONFLICT(id) DO NOTHING`, [entry.file.id, collectionId, entry.file.path,
+                    entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size]);
+                await client.query(`UPDATE files SET
+        draft_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$2 AND file_id=$1) THEN $2 ELSE draft_version_id END,
+        published_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$3 AND file_id=$1) THEN $3 ELSE published_version_id END,
+        versioning_enabled=$4,major_minor_enabled=$5,require_approval=$6,require_checkout=$7,
+        checked_out_by_user_id=$8,checked_out_by_device_id=$9,checked_out_at=$10,retention_mode=$11,retain_until=$12,
+        retention_event_type=$13,retention_event_at=$14,retention_duration_days=$15,record_lock_type=$16,record_locked_at=$17,
+        record_locked_by=$18,disposal_status=$19,disposal_review_at=$20,disposal_extended_until=$21,lifecycle_generation=$22,updated_at=NOW()
+        WHERE id=$1 AND lifecycle_generation < $22`, [entry.file.id, entry.file.draft_version_id, entry.file.published_version_id, entry.file.versioning_enabled, entry.file.major_minor_enabled,
+                    entry.file.require_approval, entry.file.require_checkout, entry.file.checked_out_by_user_id, entry.file.checked_out_by_device_id, entry.file.checked_out_at,
+                    entry.file.retention_mode, entry.file.retain_until, entry.file.retention_event_type, entry.file.retention_event_at, entry.file.retention_duration_days,
+                    entry.file.record_lock_type, entry.file.record_locked_at, entry.file.record_locked_by, entry.file.disposal_status, entry.file.disposal_review_at,
+                    entry.file.disposal_extended_until, entry.file.lifecycle_generation]);
+                await client.query('COMMIT');
+            }
+            catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            }
+            finally {
+                client.release();
+            }
+            return;
+        }
+        if (entry.version?.device_id === this.config.deviceId)
+            return;
+        if (entry.syncAuthority?.canMaterialize !== true)
+            return;
+        const root = this.rootForCollection(collectionId);
+        if (entry.version.deleted) {
+            const existing = (await this.db.query('SELECT path FROM files WHERE id=$1', [entry.file.id])).rows[0];
+            if (existing) {
+                const source = this.safe(existing.path, root);
+                const trash = this.safe(`.sulla-trash/${entry.file.id}/${Date.now()}-${basename(existing.path)}`, root);
+                try {
+                    await mkdir(dirname(trash), { recursive: true });
+                    await rename(source, trash);
+                }
+                catch (error) {
+                    if (error?.code !== 'ENOENT')
+                        throw error;
+                }
+                const client = await this.db.connect();
+                await client.query('BEGIN');
+                try {
+                    await client.query("SET LOCAL sulla.trusted_replication='on'");
+                    await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
+            VALUES($1,$2,$3,$4,NULL,0,TRUE,$5,$6,$7,$8,$9,$1) ON CONFLICT DO NOTHING`, [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id]);
+                    await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [entry.file.id, entry.version.id]);
+                    await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
+                    await client.query('COMMIT');
+                }
+                catch (error) {
+                    await client.query('ROLLBACK');
+                    throw error;
+                }
+                finally {
+                    client.release();
+                }
+            }
+            return;
+        }
+        const client = await this.db.connect();
+        await client.query('BEGIN');
+        try {
+            await client.query("SET LOCAL sulla.trusted_replication='on'");
+            const prior = (await client.query('SELECT path,current_version_id,record_lock_type,lifecycle_generation FROM files WHERE id=$1 FOR UPDATE', [entry.file.id])).rows[0];
+            if (prior?.current_version_id && prior.record_lock_type !== 'none' && Number(entry.file.lifecycle_generation ?? 0) <= Number(prior.lifecycle_generation)) {
+                await client.query('ROLLBACK');
+                return;
+            }
+            if (prior?.path && prior.path !== entry.file.path) {
+                try {
+                    await mkdir(dirname(this.safe(entry.file.path, root)), { recursive: true });
+                    await rename(this.safe(prior.path, root), this.safe(entry.file.path, root));
+                }
+                catch (error) {
+                    if (error?.code !== 'ENOENT')
+                        throw error;
+                }
+            }
+            await this.materialize(entry);
+            const info = await stat(this.safe(entry.file.path, root));
+            const hash = createHash('sha256');
+            for await (const part of createReadStream(this.safe(entry.file.path, root)))
+                hash.update(part);
+            await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [entry.manifest.hash, JSON.stringify(entry.manifest.chunk_ids), entry.manifest.total_size]);
+            await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,versioning_enabled,major_minor_enabled,require_approval,require_checkout,
+        checked_out_by_user_id,checked_out_by_device_id,checked_out_at,retention_mode,retain_until,retention_event_type,retention_event_at,retention_duration_days,
+        record_lock_type,record_locked_at,record_locked_by,disposal_status,disposal_review_at,disposal_extended_until,lifecycle_generation)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+        ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=NULL,
+        versioning_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.versioning_enabled ELSE files.versioning_enabled END,
+        major_minor_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.major_minor_enabled ELSE files.major_minor_enabled END,
+        require_approval=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_approval ELSE files.require_approval END,
+        require_checkout=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_checkout ELSE files.require_checkout END,
+        checked_out_by_user_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_user_id ELSE files.checked_out_by_user_id END,
+        checked_out_by_device_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_device_id ELSE files.checked_out_by_device_id END,
+        checked_out_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_at ELSE files.checked_out_at END,
+        retention_mode=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_mode ELSE files.retention_mode END,
+        retain_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retain_until ELSE files.retain_until END,
+        retention_event_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_type ELSE files.retention_event_type END,
+        retention_event_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_at ELSE files.retention_event_at END,
+        retention_duration_days=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_duration_days ELSE files.retention_duration_days END,
+        record_lock_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_lock_type ELSE files.record_lock_type END,
+        record_locked_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_at ELSE files.record_locked_at END,
+        record_locked_by=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_by ELSE files.record_locked_by END,
+        disposal_status=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_status ELSE files.disposal_status END,
+        disposal_review_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_review_at ELSE files.disposal_review_at END,
+        disposal_extended_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_extended_until ELSE files.disposal_extended_until END,
+        lifecycle_generation=GREATEST(files.lifecycle_generation,EXCLUDED.lifecycle_generation),updated_at=NOW()`, [entry.file.id, collectionId, entry.file.path, entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size,
+                entry.file.versioning_enabled ?? false, entry.file.major_minor_enabled ?? false, entry.file.require_approval ?? false, entry.file.require_checkout ?? false,
+                entry.file.checked_out_by_user_id ?? null, entry.file.checked_out_by_device_id ?? null, entry.file.checked_out_at ?? null, entry.file.retention_mode ?? 'none', entry.file.retain_until ?? null,
+                entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
+                entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
+                entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
+            await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
+        major_version,minor_version,version_kind,publication_status,published_at,published_by,version_comment)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(id) DO UPDATE SET
+        major_version=EXCLUDED.major_version,minor_version=EXCLUDED.minor_version,version_kind=EXCLUDED.version_kind,
+        publication_status=EXCLUDED.publication_status,published_at=EXCLUDED.published_at,published_by=EXCLUDED.published_by,
+        version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id`, [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size,
+                entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id,
+                entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', entry.version.publication_status ?? 'draft',
+                entry.version.published_at ?? null, entry.version.published_by ?? null, entry.version.version_comment ?? null]);
+            await client.query(`UPDATE files SET current_version_id=$2,
+        draft_version_id=CASE WHEN $3='draft' THEN $2 ELSE draft_version_id END,
+        published_version_id=CASE WHEN $3='published' THEN $2 ELSE published_version_id END WHERE id=$1`, [entry.file.id, entry.version.id, entry.version.publication_status ?? 'draft']);
+            await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, entry.file.path, entry.file.id, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
+            await client.query('COMMIT');
+            this.indexer?.wake();
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
+}

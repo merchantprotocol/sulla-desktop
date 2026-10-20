@@ -21,11 +21,14 @@ directory of their own.
 
 The mount supports reads, writes, empty-file creation, `mkdir`, file and folder
 rename/move (including cross-collection moves), `unlink`, and empty
-`rmdir`. Mutations call the authenticated Files service. File/folder moves use
-the durable operation coordinator, tracked-host mutations keep native custody,
-and deletes enter Files history/Trash rather than bypassing it. Directory reads
-refresh from Files with zero attribute/entry cache timeout, so File Manager and
-mount changes converge on the next lookup.
+`rmdir`, plus appends (`>>`) and exclusive create (`O_EXCL`). Mutations call the
+authenticated Files service. File/folder moves use the durable operation
+coordinator, tracked-host mutations keep native custody, and deletes enter Files
+history/Trash rather than bypassing it. The adapter shares one tree snapshot
+across all lookups for up to one second (concurrent refreshes wait for the same
+fetch), so File Manager changes show up in the mount within about a second.
+File times come from the Files `updated_at`. Empty agent scratch collections are
+left out of the tree until they hold a file or folder.
 
 Paths are canonical relative POSIX paths. Absolute paths, empty components,
 `.`/`..`, backslashes, protected wallet/vault names, symlink traversal, and raw
