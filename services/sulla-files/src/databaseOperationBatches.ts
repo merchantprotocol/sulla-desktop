@@ -198,6 +198,8 @@ async function prepareBatch(db:pg.Pool,id:string,actor:FilesIdentity,access:Data
 }
 function safeError(error:any):DatabaseItemError {
   const status = typeof error.status === 'number' ? error.status : 500;
+  // Callers only see a generic retry message for unexpected failures, so keep the cause in the service log.
+  if (status >= 500) console.error('[SullaFiles] database operation item failed:', error?.stack ?? error);
   return { status, code: typeof error.code === 'string' && !/^[0-9A-Z]{5}$/.test(error.code) ? error.code : status === 409 ? 'state-conflict' : 'operation-failed',
     message: status < 500 ? error.message : 'The item could not be committed; retry using the same operation.', ...(error.destination ? { destination: error.destination } : {}) };
 }

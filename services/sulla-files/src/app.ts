@@ -507,7 +507,10 @@ export function createApp(
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
-    const collections = await db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea" FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY explorer_path,id`);
+    // Every agent run gets a scratch collection up front; only list the ones that hold something.
+    const collections = await db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea" FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+      AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
+      ORDER BY explorer_path,id`);
     const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
       f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
       WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)

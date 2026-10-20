@@ -1,0 +1,108 @@
+import { basename } from 'node:path';
+import { cosine, PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
+function filteredWhere(input, scopes, args) {
+    const collectionIds = args.push(scopes.map(scope => scope.collectionId));
+    const where = [`f.collection_id=ANY($${collectionIds}::uuid[])`, 'f.deleted_at IS NULL', "lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)'", 'NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)'];
+    if (input.folder)
+        where.push(`f.path LIKE $${args.push(`${input.folder.replace(/[\\%_]/g, value => `\\${value}`)}%`)} ESCAPE '\\'`);
+    if (input.type)
+        where.push(`f.mime=$${args.push(input.type)}`);
+    if (input.person)
+        where.push(`(f.person_id=$${args.push(input.person)} OR f.created_by_id=$${args.length})`);
+    if (input.from)
+        where.push(`f.updated_at >= $${args.push(input.from)}`);
+    if (input.to)
+        where.push(`f.updated_at <= $${args.push(input.to)}`);
+    return where;
+}
+export class FileSearch {
+    db;
+    embedder;
+    vectorTable;
+    constructor(db, model) {
+        this.db = db;
+        this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
+    }
+    async hasVectorTable() {
+        if (this.vectorTable !== undefined)
+            return this.vectorTable;
+        this.vectorTable = Boolean((await this.db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
+        return this.vectorTable;
+    }
+    async search(input, granted) {
+        const scopes = input.collectionId ? granted.filter(scope => scope.collectionId === input.collectionId) : granted;
+        if (!scopes.length)
+            return { results: [], coverage: { total: 0, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true } };
+        const visibleVersion = (_args) => 'f.current_version_id';
+        const coverageArgs = [];
+        const coverageWhere = filteredWhere(input, scopes, coverageArgs);
+        const coverageVersion = visibleVersion(coverageArgs);
+        const coverageRow = (await this.db.query(`SELECT COUNT(*)::int total,
+      COUNT(*) FILTER(WHERE ij.status='pending')::int pending,
+      COUNT(*) FILTER(WHERE ij.status='indexing')::int indexing,
+      COUNT(*) FILTER(WHERE ij.status='indexed')::int indexed,
+      COUNT(*) FILTER(WHERE ij.status='indexed' AND right(ij.reason_code,8)='_partial')::int partial,
+      COUNT(*) FILTER(WHERE ij.status='unsupported')::int unsupported,
+      COUNT(*) FILTER(WHERE ij.status='failed')::int failed
+      FROM files f LEFT JOIN file_index_jobs ij ON ij.version_id=${coverageVersion} WHERE ${coverageWhere.join(' AND ')} AND ${coverageVersion} IS NOT NULL`, coverageArgs)).rows[0];
+        const coverage = { ...coverageRow, complete: coverageRow.pending === 0 && coverageRow.indexing === 0 && coverageRow.partial === 0 && coverageRow.unsupported === 0 && coverageRow.failed === 0 };
+        if (!input.query.trim())
+            return { results: [], coverage };
+        const queryText = input.terms?.length ? input.terms.filter(term => /^[a-z0-9_.-]+$/i.test(term)).join(' OR ') : input.query;
+        const keywordArgs = [];
+        const keywordWhere = filteredWhere(input, scopes, keywordArgs);
+        const keywordVersion = visibleVersion(keywordArgs);
+        keywordArgs.push(queryText);
+        const keyword = await this.db.query(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
+      ts_rank_cd(sc.search_vector,websearch_to_tsquery('simple',$${keywordArgs.length})) signal
+      FROM files f JOIN file_versions v ON v.id=${keywordVersion} LEFT JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=v.id
+      WHERE ${keywordWhere.join(' AND ')} AND sc.search_vector @@ websearch_to_tsquery('simple',$${keywordArgs.length})
+      ORDER BY signal DESC,f.updated_at DESC LIMIT 60`, keywordArgs);
+        const vector = this.embedder.embed(input.query);
+        let semantic;
+        const semanticArgs = [];
+        const semanticWhere = filteredWhere(input, scopes, semanticArgs);
+        const semanticVersion = visibleVersion(semanticArgs);
+        if (await this.hasVectorTable()) {
+            semanticArgs.push(vectorLiteral(vector));
+            semantic = (await this.db.query(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
+        1-(sv.embedding <=> $${semanticArgs.length}::vector) signal
+        FROM files f JOIN file_versions v ON v.id=${semanticVersion} JOIN file_search_chunks sc ON sc.file_id=f.id JOIN file_search_vectors sv ON sv.chunk_id=sc.id
+        WHERE ${semanticWhere.join(' AND ')} AND sc.version_id=${semanticVersion}
+        ORDER BY sv.embedding <=> $${semanticArgs.length}::vector LIMIT 60`, semanticArgs)).rows;
+        }
+        else {
+            const bounded = (await this.db.query(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
+        FROM files f JOIN file_versions v ON v.id=${semanticVersion} JOIN file_search_chunks sc ON sc.file_id=f.id WHERE ${semanticWhere.join(' AND ')} AND sc.version_id=v.id
+        ORDER BY f.updated_at DESC LIMIT 800`, semanticArgs)).rows;
+            semantic = bounded.map(row => ({ ...row, signal: cosine(vector, row.embedding_json) })).sort((a, b) => b.signal - a.signal).slice(0, 60);
+        }
+        semantic = semantic.filter(row => row.signal >= 0.2);
+        const fused = new Map();
+        const add = (candidate, source, rank) => {
+            const current = fused.get(candidate.file_id) ?? { ...candidate, rank: 0, sources: new Set(), bestSignal: -Infinity };
+            current.rank += 1 / (60 + rank + 1);
+            current.sources.add(source);
+            if (candidate.signal > current.bestSignal) {
+                current.content = candidate.content;
+                current.bestSignal = candidate.signal;
+            }
+            fused.set(candidate.file_id, current);
+        };
+        keyword.rows.forEach((row, rank) => add(row, 'keyword', rank));
+        semantic.forEach((row, rank) => add(row, 'meaning', rank));
+        const results = [...fused.values()].sort((a, b) => b.rank - a.rank).slice(0, Math.min(input.limit ?? 100, 100)).map(row => ({
+            id: row.file_id,
+            title: basename(row.path),
+            path: row.path,
+            mime: row.mime,
+            size: Number(row.size),
+            updated_at: row.updated_at,
+            created_by_id: row.created_by_id,
+            rank: row.rank,
+            snippet: String(row.content ?? '').replace(/\s+/g, ' ').slice(0, 240),
+            why: row.sources.size > 1 ? 'keyword and meaning match' : row.sources.has('meaning') ? 'meaning match' : 'keyword match',
+        }));
+        return { results, coverage };
+    }
+}
