@@ -125,7 +125,8 @@ onUnmounted(() => {
   z-index: 50;
   display: flex;
   overflow: hidden;
-  background: rgb(13, 17, 23);
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
 }
 
 .sulla-startup-column {
@@ -227,7 +228,8 @@ onUnmounted(() => {
 
 <style scoped>
 .theme-noir .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 45%), var(--nx-paper, rgb(13, 17, 23));
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--nx-paper) 108.6957%, transparent);
+  backdrop-filter: blur(22px);
 }
 .theme-noir .sulla-startup-card {
   padding: 14px 22px 16px;
