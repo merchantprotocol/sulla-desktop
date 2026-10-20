@@ -309,7 +309,7 @@ main() {
     authority_hex="$(openssl rand -hex 16)"
     authority_id="${authority_hex:0:8}-${authority_hex:8:4}-4${authority_hex:13:3}-8${authority_hex:17:3}-${authority_hex:20:12}"
     printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_PROJECTS_DATABASE_PASSWORD=%q\nSULLA_PROJECTS_JWT_AUDIENCE=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
-      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$projects_database_password" sulla-projects "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/console/*" >"$env_tmp"
+      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$projects_database_password" sulla-projects "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback" >"$env_tmp"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       tls_dir="$SULLA_DIR/tls"; mkdir -p "$tls_dir"
       [[ -z "$SULLA_TLS_CERT" ]] || cp "$SULLA_TLS_CERT" "$tls_dir/tls.crt"
@@ -349,11 +349,13 @@ main() {
   if [[ -z ${SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID:-} ]]; then
     authority_hex="$(openssl rand -hex 16)"
     SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID="${authority_hex:0:8}-${authority_hex:8:4}-4${authority_hex:13:3}-8${authority_hex:17:3}-${authority_hex:20:12}"
-    SULLA_ACCOUNTS_WEB_REDIRECT_URIS="${SULLA_PUBLIC_URL%/}/console/*"
-    printf 'SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' "$SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID" "$SULLA_ACCOUNTS_WEB_REDIRECT_URIS" >>"$env_file"
+    printf 'SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\n' "$SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID" >>"$env_file"
   fi
-  if [[ -z ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS:-} ]]; then
-    SULLA_ACCOUNTS_WEB_REDIRECT_URIS="${SULLA_PUBLIC_URL%/}/console/*"
+  # Accounts returns browsers to this exact callback after sign-in. Earlier
+  # installs saved /console/*, which Keycloak rejects, so rewrite that value.
+  web_callback="${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback"
+  if [[ -z ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS:-} || ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS} == "${SULLA_PUBLIC_URL%/}/console/*" ]]; then
+    SULLA_ACCOUNTS_WEB_REDIRECT_URIS="$web_callback"
     printf 'SULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' "$SULLA_ACCOUNTS_WEB_REDIRECT_URIS" >>"$env_file"
   fi
   if [[ -z ${SULLA_POSTGRES_PASSWORD_FILE:-} ]]; then

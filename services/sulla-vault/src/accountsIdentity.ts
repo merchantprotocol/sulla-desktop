@@ -4,6 +4,16 @@ const MAX_AUTHORIZATION_VALUES = 100;
 
 import type { VaultConfig } from './config.js';
 
+// Accounts organization roles are ranked: an owner or admin is also a member.
+// Required roles outside this ladder must be held exactly.
+const ROLE_RANK = ['viewer', 'member', 'editor', 'admin', 'owner'];
+
+function hasRole(held: string[], required: string): boolean {
+  const needed = ROLE_RANK.indexOf(required);
+  if (needed < 0) return held.includes(required);
+  return held.some(role => ROLE_RANK.indexOf(role) >= needed);
+}
+
 export interface AccountsContext {
   issuer:         string;
   subject:        string;
@@ -98,7 +108,7 @@ export async function resolveAccountsContext(
   const expiresAt = typeof context.expiresAt === 'string' ? Date.parse(context.expiresAt) : Number.NaN;
   if (!issuer || !subject || !authorityId || !organizationId || !roles || !groups ||
       context.audience !== accounts.audience || !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
-      accounts.requiredRoles.some(role => !roles.includes(role))) {
+      accounts.requiredRoles.some(role => !hasRole(roles, role))) {
     throw new AccountsIdentityError(403, 'Accounts returned a mismatched identity context');
   }
   return { issuer, subject, roles, groups, authorityId,
