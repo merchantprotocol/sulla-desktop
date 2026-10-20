@@ -22,9 +22,8 @@ export async function writeUseCaseDraft(
   slug: string,
   files: Record<string, string>,
 ): Promise<UseCaseDraftFile[]> {
-  const areas = await tool.agentFilesJson<{ id: string; systemArea: string }[]>('/v1/local/system-areas', input);
-  const collection = areas.find(area => area.systemArea === 'sulla');
-  if (!collection) throw new Error('Sulla system collection is unavailable');
+  const { collectionId } = await tool.agentFilesJson<{ collectionId: string }>('/v1/agent-files/use-case-collection', input);
+  const collection = { id: collectionId };
   const result: UseCaseDraftFile[] = [];
   for (const [name, content] of Object.entries(files)) {
     const path = `Use Cases/${ type }/${ slug }/${ name }`;

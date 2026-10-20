@@ -927,6 +927,13 @@ export function createApp(
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
   } catch (error) { next(error) } });
+  // Agents write Use Case drafts into the Sulla system collection; /v1/local/* is desktop-only.
+  app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
+    identity(request);
+    const row = (await db.query("SELECT id FROM collections WHERE system_area='sulla' LIMIT 1")).rows[0];
+    if (!row) throw new HttpError(404, 'Sulla collection is not initialized');
+    response.json({ collectionId: row.id });
+  } catch (error) { next(error) } });
   app.get('/v1/agent-files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');
     const versionId = typeof request.query.versionId === 'string' ? request.query.versionId : file.current_version_id;
