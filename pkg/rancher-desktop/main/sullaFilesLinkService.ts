@@ -1,6 +1,6 @@
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { issueLocalBrokerContext, requireConfiguredCredentialBroker } from '@pkg/vault-broker';
 
 export type ShareMode = 'view' | 'download';
 
@@ -49,8 +49,6 @@ export interface LinkService {
 }
 
 export class SharingUnavailableError extends Error {}
-const filesClient = getSullaFilesClient();
-
 function normalize(value:any):ShareLink {
   return {
     id:            String(value.id ?? value.token ?? ''),
@@ -75,16 +73,36 @@ function normalize(value:any):ShareLink {
   };
 }
 
-async function requestWithContractFallback(paths:string[], init:RequestInit):Promise<Response> {
-  let last:Response | undefined;
-  for (const path of paths) {
-    let response:Response;
+interface BrokerResponse {
+  status:number;
+  ok:boolean;
+  json<T = unknown>():Promise<T>;
+}
 
-    try { response = await filesClient.request(path, init) } catch (error) {
-      throw new SharingUnavailableError(`Sharing service is offline: ${ error instanceof Error ? error.message : String(error) }`);
-    }
-    if (![404, 405].includes(response.status)) return response;
-    last = response;
+async function requestWithContractFallback(paths:string[], init:Pick<RequestInit, 'method' | 'body'>):Promise<BrokerResponse> {
+  const accountId = await getIntegrationService().getActiveAccountId('sulla-cloud');
+  if (!accountId) throw new SharingUnavailableError('Sign in to Sulla Cloud before sharing');
+  const broker = requireConfiguredCredentialBroker();
+  const context = await issueLocalBrokerContext({
+    agentId: 'desktop-files-sharing', podId: 'desktop-main',
+    credentialScope: { integration_id: 'sulla-cloud', account_id: accountId },
+  });
+  let last:BrokerResponse | undefined;
+  for (const path of paths) {
+    const response = await broker.execute(broker.requestFor(context, {
+      operation: 'sulla-cloud.api',
+      ref: { integrationId: 'sulla-cloud', accountId },
+      url: `https://sulla-workers.merchantprotocol.workers.dev${ path }`,
+      method: (init.method ?? 'GET').toUpperCase(),
+      headers: { accept: 'application/json', ...(init.body === undefined ? {} : { 'content-type': 'application/json' }) },
+      body: init.body === undefined ? undefined : JSON.parse(String(init.body)),
+      injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+      responseType: 'json',
+    }));
+    const wrapped:BrokerResponse = { status: response.status, ok: response.status >= 200 && response.status < 300, json: async<T>() => response.body as T };
+    const wrappedResponse = wrapped;
+    if (![404, 405].includes(wrappedResponse.status)) return wrappedResponse;
+    last = wrappedResponse;
   }
   throw new SharingUnavailableError(`Sharing API is not installed (${ last?.status ?? 'offline' })`);
 }
@@ -92,10 +110,8 @@ async function requestWithContractFallback(paths:string[], init:RequestInit):Pro
 /** Thin adapter over the Phase 4 public-link contract; it never owns links. */
 export class SullaFilesLinkService implements LinkService {
   async create(input:CreateShareInput):Promise<ShareLink> {
-    const cloudToken = await getCurrentAccessToken();
-    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before sharing');
     const deviceId = await getDesktopDeviceId();
-    const body = JSON.stringify({
+    const body = {
       fileId:     input.fileId,
       permission: input.mode,
       accessMode: input.mode,
@@ -107,9 +123,9 @@ export class SullaFilesLinkService implements LinkService {
       assetKind:  input.assetKind ?? (input.capture ? 'capture' : 'file'),
       captureMetadata: input.captureMetadata,
       deviceId,
-    });
+    };
     const response = await requestWithContractFallback(['/v1/links', '/v1/shares'], {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken }, body,
+      method: 'POST', body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error ?? `Sharing failed (${ response.status })`);
     const share = normalize(await response.json());
@@ -119,9 +135,7 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async list():Promise<ShareLink[]> {
-    const cloudToken = await getCurrentAccessToken(); const headers:Record<string, string> = {};
-    if (cloudToken) headers['x-sulla-cloud-token'] = cloudToken;
-    const response = await requestWithContractFallback(['/v1/links?createdBy=me', '/v1/shares'], { headers });
+    const response = await requestWithContractFallback(['/v1/links?createdBy=me', '/v1/shares'], {});
     if (!response.ok) throw new Error(`Recent shares failed (${ response.status })`);
     const body = await response.json(); const values = Array.isArray(body) ? body : body.links ?? body.shares ?? [];
 
@@ -129,21 +143,15 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async revoke(id:string):Promise<void> {
-    const cloudToken = await getCurrentAccessToken();
-    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before revoking a public link');
     const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
       method:  'DELETE',
-      headers: { 'x-sulla-cloud-token': cloudToken },
     });
     if (!response.ok) throw new Error(`Revoke share failed (${ response.status })`);
   }
 
   async update(id:string, input:Partial<CreateShareInput>):Promise<ShareLink> {
-    const cloudToken = await getCurrentAccessToken();
-    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before changing link availability');
     const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
       method:  'PATCH',
-      headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken },
       body:    JSON.stringify(input),
     });
     if (!response.ok) throw new Error(`Update share failed (${ response.status })`);
@@ -152,17 +160,13 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async restore(id:string, password?:string):Promise<ShareLink> {
-    const cloudToken = await getCurrentAccessToken();
-    if (!cloudToken) throw new SharingUnavailableError('Sign in to Sulla Cloud before restoring a public link');
-    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'content-type': 'application/json', 'x-sulla-cloud-token': cloudToken }, body: JSON.stringify({ password }) });
+    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', body: JSON.stringify({ password }) });
     if (!response.ok) throw new Error(`Restore share failed (${ response.status })`);
     return normalize(await response.json());
   }
 
   async activity(id?:string):Promise<{ id:string; action:'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt:string; detail?:string }[]> {
-    const cloudToken = await getCurrentAccessToken(); const headers:Record<string, string> = {};
-    if (cloudToken) headers['x-sulla-cloud-token'] = cloudToken;
-    const response = await requestWithContractFallback([id ? `/v1/links/${ encodeURIComponent(id) }/activity` : '/v1/links/activity'], { headers });
+    const response = await requestWithContractFallback([id ? `/v1/links/${ encodeURIComponent(id) }/activity` : '/v1/links/activity'], {});
     if (!response.ok) throw new Error(`Share activity failed (${ response.status })`);
     const body = await response.json(); const events = Array.isArray(body) ? body : body.events ?? [];
     return events.map((event:any) => ({ id: String(event.id), action: event.action, occurredAt: event.occurredAt ?? event.occurred_at, detail: event.detail }));
