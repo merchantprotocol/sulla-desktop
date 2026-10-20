@@ -63,21 +63,8 @@ async function saveDraftToDatabase(draft: {
   if (draft.kind === 'skill') {
     const skill = draft.files_json['SKILL.md'];
     if (!skill) throw new Error('Skill draft is missing SKILL.md');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-skill-draft-'));
-    try {
-      for (const [name, content] of Object.entries(draft.files_json)) {
-        const target = path.join(root, name);
-        if (!path.resolve(target).startsWith(`${ path.resolve(root) }${ path.sep }`)) throw new Error(`Unsafe draft path: ${ name }`);
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, content, 'utf8');
-      }
-      const { importSkillFolder } = await import('@pkg/agent/services/SkillDefinitionService');
-      const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry');
-      await importSkillFolder(root, { sourceKind: 'user', force: true });
-      await skillsRegistry.invalidate();
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+    const { publishUseCasePackage } = await import('./sullaUseCaseFiles');
+    await publishUseCasePackage('skills', draft.slug, draft.files_json);
     return;
   }
 

@@ -18,6 +18,13 @@ type UseCaseType = typeof TYPES[number];
 type FilesRow = { id:string; path:string; published_version_id?:string|null; publishedVersionId?:string|null };
 type Request = (endpoint:string, init?:RequestInit) => Promise<Response>;
 
+let activeUseCaseFiles: SullaUseCaseFiles | undefined;
+export function registerUseCaseFiles(service:SullaUseCaseFiles | undefined):void { activeUseCaseFiles = service; }
+export async function publishUseCasePackage(type:UseCaseType, slug:string, files:Record<string,Buffer|string>):Promise<void> {
+  if (!activeUseCaseFiles) throw new Error('Sulla Files use-case service is not running');
+  await activeUseCaseFiles.publishPackage(type, slug, files);
+}
+
 export function activePublishedVersion(row:FilesRow):string | null {
   return row.published_version_id ?? row.publishedVersionId ?? null;
 }
@@ -39,13 +46,14 @@ export class SullaUseCaseFiles {
   constructor(private readonly request:Request) {}
 
   start():void {
+    activeUseCaseFiles = this;
     if (this.timer) return;
     this.timer = setInterval(() => this.scan().catch(error => console.warn('[UseCases] scan failed:', error)), 2_000);
     this.timer.unref();
     this.scan().catch(error => console.warn('[UseCases] initial scan failed:', error));
   }
 
-  stop():void { if (this.timer) clearInterval(this.timer); this.timer = undefined }
+  stop():void { if (this.timer) clearInterval(this.timer); this.timer = undefined; if (activeUseCaseFiles === this) activeUseCaseFiles = undefined }
 
   private async areas():Promise<{ id:string; systemArea:string }[]> {
     const response = await this.request('/v1/local/system-areas');
@@ -84,6 +92,15 @@ export class SullaUseCaseFiles {
     const row = await ingested.json() as { id:string; current_version_id:string };
     const published = await this.request(`/v1/files/${ encodeURIComponent(row.id) }/versions/${ encodeURIComponent(row.current_version_id) }/publish`, { method:'POST', body:json({ comment:'Initial Postgres use-case export' }) });
     if (!published.ok) throw new Error(`Could not publish ${ path } (${ published.status }): ${ await published.text() }`);
+  }
+
+  /** Publish a human-authored use-case package through Files, never Postgres. */
+  async publishPackage(type:UseCaseType, slug:string, files:Record<string,Buffer|string>):Promise<void> {
+    const area = (await this.areas()).find(item => item.systemArea === 'sulla');
+    if (!area) throw new Error('Sulla Files system area is unavailable');
+    for (const [name, value] of Object.entries(files)) {
+      await this.ingestPublished(area.id, `${ ROOT }/${ type }/${ slug }/${ name }`, typeof value === 'string' ? Buffer.from(value) : value);
+    }
   }
 
   /** Exactly-once migration of the old DB truth. Existing unmatched mirror content is retained under _legacy-import. */

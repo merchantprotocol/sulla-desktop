@@ -30,6 +30,11 @@ export function decideBuiltinSkillSeedAction(content: SkillContent, row: SkillDe
   if (!row) return seenBefore ? 'deleted-by-human' : 'insert';
   if (row.deleted_at) return 'deleted-by-human';
 
+  // Files is authoritative once a version has been published. The boot
+  // fallback seeder must never clobber that newer human/system version while
+  // Files is locked or temporarily unavailable.
+  if (row.use_case_file_id && row.use_case_version_id) return 'kept';
+
   const bundleHash = hashSkillContent(content);
   const liveHash = hashSkillContent(row);
 

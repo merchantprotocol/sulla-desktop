@@ -37,6 +37,8 @@ export interface FilesSearchBody {
   collectionId?: string;
   folder?:       string;
   limit:         number;
+  /** Draft use-case versions must never enter subconscious context. */
+  publishedOnly?: boolean;
 }
 
 export interface FilesSearchRow {
@@ -207,7 +209,7 @@ export function createDefaultFilesRecallClient(context: FilesCallerContext): Fil
     },
     async search(body, signal) {
       const { filesContainerJson } = await load();
-      return filesContainerJson<FilesSearchResponse>('/v1/search', context, { method: 'POST', body: JSON.stringify(body), signal });
+      return filesContainerJson<FilesSearchResponse>('/v1/search', context, { method: 'POST', body: JSON.stringify({ ...body, publishedOnly: true }), signal });
     },
     async readText(fileId, maxBytes, signal) {
       const { filesContainerJson } = await load();
@@ -332,7 +334,7 @@ export async function searchFilesForRecall(options: FilesRecallSearchOptions, cl
     const settled = await Promise.allSettled(scopes.map(async(scope) => {
       searches++;
       filesRecallCounters.searches++;
-      const body: FilesSearchBody = { query, collectionId: scope.collectionId, limit: perAreaLimit };
+      const body: FilesSearchBody = { query, collectionId: scope.collectionId, limit: perAreaLimit, publishedOnly: true };
       if (options.terms.length) body.terms = options.terms;
       const folder = AREA_FOLDER[scope.area];
       if (folder) body.folder = folder;

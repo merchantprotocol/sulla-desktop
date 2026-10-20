@@ -1,12 +1,9 @@
 /**
  * SkillDefinitionService — skills live in the skill_definitions table.
  *
- * SKILL.md folders are an import/export format only:
- *   - importSkillFolders copies folder skills into the table when their slug is
- *     new, and leaves the folders untouched. A row it imported that nobody has
- *     edited in the database follows later edits to its folder (Library edits,
- *     a `git pull` of sulla-resources, a marketplace update); a row edited in
- *     the database never does.
+ * SKILL.md folders are an export/marketplace format only. Runtime activation
+ * comes from published Files versions; the legacy startup folder scan is
+ * intentionally disabled so ~/sulla folders can never become active skills.
  *   - materializeSkill writes a row out to ~/sulla/cache/skills/<slug>/ for
  *     callers that need real files on disk (scripts, html, templates).
  *   - exportSkillToDir writes a row out as a marketplace-shaped folder.
@@ -301,49 +298,11 @@ export async function importSkillFolders(
     onSeen?:     (slug: string) => Promise<void>;
   } = {},
 ): Promise<SkillImportSummary> {
-  const summary: SkillImportSummary = { imported: 0, refreshed: 0, skipped: 0, errors: [] };
-  const claimed = new Set<string>();
-
-  for (const source of sources) {
-    for (const { parsed, sourcePath } of scanSkillDir(source.dir)) {
-      if (claimed.has(parsed.slug) || options.skip?.has(parsed.slug)) {
-        summary.skipped++;
-        continue;
-      }
-      claimed.add(parsed.slug);
-      try {
-        const row = await SkillDefinitionModel.findBySlug(parsed.slug);
-        const action = row && options.insertOnly ? 'skip' : decideFolderImport(parsed, sourcePath, row);
-        const hash = hashSkillContent(parsed.content);
-        if (action === 'import') {
-          const marker = readMarketplaceMarker(sourcePath);
-          await SkillDefinitionModel.create({
-            slug:                  parsed.slug,
-            ...parsed.content,
-            sourceKind:            marker?.templateId ? 'marketplace' : source.sourceKind,
-            sourcePath,
-            sourceHash:            hash,
-            contentHash:           hash,
-            marketplaceTemplateId: marker?.templateId ?? null,
-            marketplaceSlug:       marker?.slug ?? null,
-            marketplaceVersion:    marker?.version ?? null,
-          });
-          summary.imported++;
-        } else if (action === 'refresh') {
-          // Compare-and-set: a database edit that lands mid-import wins.
-          const updated = await SkillDefinitionModel.update(row!.id, { ...parsed.content, sourceHash: hash, contentHash: hash }, row!.updated_at);
-          if (updated) summary.refreshed++;
-          else summary.skipped++;
-        } else {
-          summary.skipped++;
-        }
-        if (options.onSeen) await options.onSeen(parsed.slug);
-      } catch (error) {
-        summary.errors.push(`${ parsed.slug }: ${ error instanceof Error ? error.message : String(error) }`);
-      }
-    }
-  }
-  return summary;
+  // Kept as a compatibility surface for old callers, but deliberately does no
+  // filesystem I/O. Only a published Files version may enter the runtime
+  // index. Explicit marketplace imports use importSkillFolder below.
+  void sources; void options;
+  return { imported: 0, refreshed: 0, skipped: 0, errors: [] };
 }
 
 /**
