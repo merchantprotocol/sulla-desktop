@@ -32,6 +32,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
+- [`agent-patterns/project-files.md`](agent-patterns/project-files.md) — Files-backed project plans, artifact editing, metadata, and lifecycle cleanup
 - [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
 - [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
 - [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/ask_user_question` to pause mid-turn and get an explicit answer or approve/deny from the user

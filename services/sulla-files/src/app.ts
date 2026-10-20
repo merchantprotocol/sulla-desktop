@@ -834,7 +834,9 @@ export function createApp(
       : Buffer.from(String(request.body.content ?? ''), 'utf8');
     if (bytes.byteLength > 12 * 1024 * 1024) throw new HttpError(413, 'agent file exceeds the 12 MiB tool limit');
     const requestedFileId = request.body.fileId === undefined ? undefined : String(request.body.fileId);
+    const expectedVersionId = request.body.expectedVersionId === undefined ? undefined : String(request.body.expectedVersionId);
     if (requestedFileId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedFileId)) throw new HttpError(400, 'valid fileId required');
+    if (expectedVersionId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(expectedVersionId)) throw new HttpError(400, 'valid expectedVersionId required');
     const idempotencyKey = request.body.idempotencyKey === undefined ? undefined : String(request.body.idempotencyKey);
     if (idempotencyKey !== undefined && (!idempotencyKey.trim() || idempotencyKey.length > 512)) throw new HttpError(400, 'idempotencyKey must be 1 to 512 characters');
     const creatorId = actor.jobId ?? actor.agentId!;
@@ -853,6 +855,9 @@ export function createApp(
     if (requestedFile && (requestedFile.collection_id !== collection.id || requestedFile.path !== path)) throw new HttpError(409, 'fileId does not match the requested collection and path');
     if (requestedFile && pathFile && requestedFile.id !== pathFile.id) throw new HttpError(409, 'artifact path belongs to another file');
     const existing = requestedFile ?? pathFile;
+    if (expectedVersionId !== undefined && (!existing || existing.current_version_id !== expectedVersionId)) {
+      throw new HttpError(409, `file version conflict; current version is ${ existing?.current_version_id ?? 'missing' }`);
+    }
     if (existing && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
       throw new HttpError(409, 'artifact path belongs to another creator');
     }

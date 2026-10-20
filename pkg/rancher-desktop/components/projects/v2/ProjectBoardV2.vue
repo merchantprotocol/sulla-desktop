@@ -14,6 +14,8 @@
       @view-change="$emit('view-change', $event)"
     />
 
+    <ProjectFiles v-if="project" :project-id="project.id" />
+
     <div v-if="project" class="filters" aria-label="Board filters">
       <label class="filter"><span>Assignee</span><select v-model="assigneeFilter"><option value="">Anyone</option><option v-for="assignee in assignees" :key="assignee" :value="assignee">{{ assigneeName(assignee) }}</option></select></label>
       <label class="filter"><span>Label</span><select v-model="labelFilter"><option value="">Any</option><option v-for="label in labels" :key="label" :value="label">{{ label }}</option></select></label>
@@ -350,6 +352,7 @@
 </template>
 
 <script setup lang="ts">
+import ProjectFiles from '@pkg/components/projects/ProjectFiles.vue';
 import { computed, nextTick, ref } from 'vue';
 
 import ProjectViewHeaderV2 from './ProjectViewHeaderV2.vue';

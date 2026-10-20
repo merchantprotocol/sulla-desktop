@@ -40,6 +40,7 @@ function extension(kind: ChatArtifactKind, language?: string | null): string {
 }
 
 function artifactPath(artifact: ChatArtifactRecord): string {
+  if (artifact.path?.startsWith('projects/')) return artifact.path;
   const ext = extension(artifact.kind, artifact.language);
   const name = safeSegment(path.basename(artifact.name), 'artifact');
   const fileName = path.extname(name) ? name : `${ name }${ ext }`;
@@ -61,6 +62,26 @@ async function responseError(response: Response): Promise<string> {
 }
 
 export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration {
+  async load(fileId: string, threadId: string) {
+    const response = await filesClient.request(`/v1/agent-files/${ encodeURIComponent(fileId) }`, {}, {
+      authority: { kind: 'agent', agentId: AGENT_ID, threadId },
+    });
+    if (!response.ok) throw new Error(await responseError(response));
+    const result = await response.json() as {
+      file: { id: string; collection_id: string; path: string; mime: string; current_version_id: string };
+      version: { id: string };
+      content_base64: string;
+    };
+    return {
+      fileId: result.file.id,
+      versionId: result.version.id || result.file.current_version_id,
+      collectionId: result.file.collection_id,
+      path: result.file.path,
+      name: path.posix.basename(result.file.path),
+      mime: result.file.mime,
+      content: Buffer.from(result.content_base64, 'base64').toString('utf8'),
+    };
+  }
   async register(artifact: ChatArtifactRecord): Promise<FilesRegistrationResult> {
     const targetPath = artifact.filesPath || artifactPath(artifact);
     const recovered = await this.recoverAfterFailure(artifact, targetPath);
@@ -68,6 +89,7 @@ export class ChatArtifactFilesRegistration implements ArtifactFilesRegistration 
     const input = {
       collectionId: artifact.filesCollectionId ?? undefined,
       fileId: artifact.filesFileId ?? undefined,
+      expectedVersionId: artifact.filesVersionId ?? undefined,
       path: targetPath,
       content: artifact.content,
       mime: mime(artifact),

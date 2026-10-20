@@ -121,6 +121,12 @@ export function initWorkItemsEvents(): void {
     };
   });
 
+  ipcMainProxy.handle('work-items:project-files', async(_event: unknown, projectId: string) => {
+    if (!projectId) return [];
+    const { ChatArtifactModel } = await import('@pkg/agent/database/models/ChatArtifactModel');
+    return ChatArtifactModel.listProjectFiles(projectId);
+  });
+
   ipcMainProxy.handle('work-items:comments', async(_event: unknown, taskId: string) => {
     if (!taskId) return [];
     const projects = await importProjectsApplicationService();

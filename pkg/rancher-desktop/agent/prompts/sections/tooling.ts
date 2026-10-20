@@ -30,7 +30,7 @@ Make parallel tool calls when possible.
 
 ## Sidebar artifacts
 
-Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.`;
+Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.`;
 
     return {
       id:             'tooling',
@@ -68,7 +68,7 @@ Make parallel tool calls when possible.
 
 ## Sidebar artifacts
 
-Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.`;
+Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.`;
 
     return {
       id:             'tooling',
@@ -114,7 +114,7 @@ Make parallel tool calls when possible.
 
 ## Sidebar artifacts
 
-Plans and working docs live in sidebar artifacts. Create one with \`chat/artifact_create\`, read it before editing because the human may have changed it, and keep updating the same artifact with \`chat/artifact_edit\`. Never paste a new copy of the plan into chat.
+Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.
 
 ## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
 

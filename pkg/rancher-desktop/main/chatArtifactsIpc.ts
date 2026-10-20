@@ -20,6 +20,9 @@ export function initChatArtifactsIpc(): void {
   ipcMain.handle('chat-artifacts:get', (_event, input: { threadId: string; idOrName: string }) =>
     service.get(text(input?.threadId), text(input?.idOrName)));
 
+  ipcMain.handle('chat-artifacts:open-file', (_event, input: { threadId: string; fileId: string }) =>
+    service.openFile(text(input?.threadId), text(input?.fileId)));
+
   ipcMain.handle('chat-artifacts:get-by-id', async(_event, input: { artifactId: string }) => {
     const artifact = await ChatArtifactModel.getById(text(input?.artifactId));
     if (!artifact) return null;

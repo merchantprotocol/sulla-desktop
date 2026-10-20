@@ -248,6 +248,7 @@ export interface IpcMainInvokeEvents {
   };
   'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
   'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
+  'chat-artifacts:open-file': (input: { threadId: string; fileId: string }) => import('@pkg/agent/services/ChatArtifactService').CreateArtifactResult;
   'chat-artifacts:save': (input: {
     threadId: string;
     idOrName: string;
@@ -631,6 +632,7 @@ export interface IpcMainInvokeEvents {
     activeAgents: { project_id: string; task_id: string; agent_id: string }[];
   };
   'usage:summary': (options?: { hours?: number; profileId?: string }) => import('@pkg/agent/usage/providerUsage').UsageSummary;
+  'work-items:project-files':    (projectId: string) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:issue-detail':    (taskId: string) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
   'work-items:artifact-evidence': (commentId: string) => { receipt: import('@pkg/agent/database/models/ArtifactReceiptModel').ArtifactReceiptRow; evidence: unknown } | null;

@@ -77,8 +77,15 @@ export interface FilesRegistrationResult {
   path:         string;
 }
 
+export interface FilesFileSnapshot extends FilesRegistrationResult {
+  content: string;
+  name: string;
+  mime: string;
+}
+
 export interface ArtifactFilesRegistration {
   register(artifact: ChatArtifactRecord): Promise<FilesRegistrationResult>;
+  load(fileId: string, threadId: string): Promise<FilesFileSnapshot>;
 }
 
 function required(value: unknown, label: string): string {
@@ -92,6 +99,7 @@ function cleanKind(value: unknown): ChatArtifactKind {
   if (!VALID_KINDS.has(kind)) throw new Error(`Unsupported artifact kind "${ String(value) }".`);
   return kind;
 }
+
 
 function cleanStatus(value: unknown, fallback: ChatArtifactStatus = 'working'): ChatArtifactStatus {
   if (value === undefined || value === null || value === '') return fallback;
@@ -168,6 +176,37 @@ export class ChatArtifactService {
     this.publish(scopedThreadId, artifact, input.focus ?? true);
     this.syncBookmark('created', artifact);
     artifact = await this.syncFiles(artifact);
+    return { artifact, created: true };
+  }
+
+  async openFile(threadId: string, fileId: string, focus = true): Promise<CreateArtifactResult> {
+    const scopedThreadId = required(threadId, 'threadId');
+    if (!this.filesRegistration) throw new Error('Sulla Files is unavailable.');
+    const snapshot = await this.filesRegistration.load(required(fileId, 'fileId'), scopedThreadId);
+    const existing = (await this.store.list(scopedThreadId, true)).find(item => item.filesFileId === fileId);
+    if (existing) {
+      // The Files file is authoritative when reopening it. Refresh an artifact
+      // that was left behind by an earlier open so the sidebar cannot show a
+      // stale snapshot, while retaining the loaded Files version for the next
+      // optimistic write.
+      let artifact = existing;
+      if (existing.content !== snapshot.content) {
+        artifact = await this.mutate(scopedThreadId, existing.id, { author: 'human' }, () => ({ content: snapshot.content }));
+      }
+      const registered = await this.store.recordFilesRegistration(artifact.id, artifact.version, snapshot);
+      artifact = registered ?? artifact;
+      if (!artifact.isOpen) artifact = await this.reopen(scopedThreadId, artifact.id, undefined, 'agent');
+      this.publish(scopedThreadId, artifact, focus);
+      return { artifact, created: false };
+    }
+    const artifact = await this.store.create({
+      threadId: scopedThreadId, name: snapshot.name, kind: snapshot.mime.includes('html') ? 'html' : 'markdown',
+      content: snapshot.content, status: 'viewing', path: snapshot.path, author: 'agent',
+      filesFileId: snapshot.fileId, filesVersionId: snapshot.versionId,
+      filesCollectionId: snapshot.collectionId, filesPath: snapshot.path,
+    });
+    this.publish(scopedThreadId, artifact, focus);
+    this.syncBookmark('created', artifact);
     return { artifact, created: true };
   }
 

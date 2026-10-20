@@ -10,6 +10,8 @@
       @view-change="$emit('view-change', $event)"
     />
 
+    <ProjectFiles v-if="project" :project-id="project.id" />
+
     <div
       v-if="error || mutationError"
       class="ptv2-state error"
@@ -383,6 +385,7 @@
 </template>
 
 <script setup lang="ts">
+import ProjectFiles from '@pkg/components/projects/ProjectFiles.vue';
 import { computed, nextTick, ref } from 'vue';
 
 import ProjectViewHeaderV2 from './ProjectViewHeaderV2.vue';
