@@ -54,7 +54,13 @@ export interface NativeSourceBrokerDependencies {
   ingest:   (input:NativeSourceIngestInput) => Promise<NativeSourceIngestResult>;
   finish:   (operationId:string, result:{ nextSourceRevision?: string; originalSourceRevision?: string; originalSourceHash?: string; currentSourceHash?: string; filesBaseVersionId?: string; currentFilesVersionId?: string; error?: string; conflictFileId?: string; currentSourceRevision?: string }) => Promise<void>;
   logError: (message:string, error:unknown) => void;
+  /** Cheap fstat identity (dev/ino/size/mtime) of a registered source; lets refresh skip re-reading unchanged files. */
+  signature?: (handle:string) => Promise<string | undefined>;
+  now?:       () => number;
 }
+
+/** How often the full source list is walked for refreshes when there is no publication work. */
+export const NATIVE_SOURCE_REFRESH_INTERVAL_MS = 5_000;
 
 class StaleNativeBrokerOperationError extends Error {
   constructor() { super('Native source broker lifecycle changed') }
@@ -66,6 +72,11 @@ export class SullaFilesNativeBroker {
   private readonly operations = new Set<Promise<void>>();
   private readonly actionIds = new Set<string>();
   private readonly refreshIds = new Set<string>();
+  /** handle -> source signature at the last refresh that found the source current. */
+  private readonly refreshedSignatures = new Map<string, string>();
+  private lastSourcesAt = 0;
+  /** True when the last poll found publication work or started a refresh; the caller backs off while false. */
+  lastPollActive = false;
 
   constructor(private readonly dependencies:NativeSourceBrokerDependencies) {}
 
@@ -78,6 +89,8 @@ export class SullaFilesNativeBroker {
   async suspendAndDrain(lockSources:() => Promise<void>):Promise<void> {
     this.generation++;
     this.accepting = false;
+    this.refreshedSignatures.clear();
+    this.lastSourcesAt = 0;
     await lockSources();
     while (this.operations.size) await Promise.allSettled([...this.operations]);
   }
@@ -105,6 +118,8 @@ export class SullaFilesNativeBroker {
   private async pollGeneration(generation:number):Promise<void> {
     try {
       const actions = await this.dependencies.actions();
+      const now = this.dependencies.now?.() ?? Date.now();
+      this.lastPollActive = actions.length > 0;
       this.assertCurrent(generation);
       for (const action of actions) {
         this.assertCurrent(generation);
@@ -118,6 +133,9 @@ export class SullaFilesNativeBroker {
 
         this.track(operation);
       }
+      // Listing every source is the expensive part of a poll; do it only on a slow cadence unless publications are active.
+      if (!actions.length && now - this.lastSourcesAt < NATIVE_SOURCE_REFRESH_INTERVAL_MS) return;
+      this.lastSourcesAt = now;
       const publishingHandles = new Set(actions.map(action => action.handle));
       const sources = await this.dependencies.sources();
 
@@ -125,8 +143,16 @@ export class SullaFilesNativeBroker {
       for (const source of sources) {
         this.assertCurrent(generation);
         if (source.state !== 'active' || publishingHandles.has(source.handle) || this.refreshIds.has(source.fileId)) continue;
+        const signature = await this.dependencies.signature?.(source.handle).catch(() => undefined);
+
+        this.assertCurrent(generation);
+        if (signature && this.refreshedSignatures.get(source.handle) === signature) continue; // unchanged since it was last current
+        this.lastPollActive = true;
         this.refreshIds.add(source.fileId);
         const operation = this.refresh(source, generation)
+          .then(() => {
+            if (signature) this.refreshedSignatures.set(source.handle, signature);
+          })
           .catch(error => {
             if (!(error instanceof StaleNativeBrokerOperationError)) this.dependencies.logError('Native source refresh requires recovery', error);
           })

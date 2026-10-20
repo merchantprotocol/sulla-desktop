@@ -23,6 +23,7 @@ import { registerResidencyRoutes } from './residencyHttp.js';
 import { serverUi } from './serverUi.js';
 import { SharesService } from './shares.js';
 import { Store } from './store.js';
+import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload } from './streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
@@ -129,7 +130,7 @@ export function createApp(
       return response.status(failure.status).json({ code: failure.code, error: failure.message });
     }
   });
-  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest'].includes(request.path) ? next() : jsonParser(request, response, next));
+  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest', '/v1/local/system-areas/ingest'].includes(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
     if (request.path === '/v1/system/audit-events') {
@@ -281,6 +282,12 @@ export function createApp(
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= content.buffer.length) return response.status(416).end();
     response.status(206).setHeader('Content-Range', `bytes ${ start }-${ end }/${ content.buffer.length }`); response.setHeader('Content-Length', end - start + 1); return response.send(content.buffer.subarray(start, end + 1));
   }
+  /** The manifest hash insertVersion would store for these bytes (keyed chunk ids; nothing is written). */
+  async function manifestHashFor(collectionId:string, bytes:Buffer):Promise<string> {
+    const { dedup: dedupKey } = await config.keyring!.keys(collectionId); const chunkIds:string[] = [];
+    for (let offset = 0; offset < Math.max(1, bytes.length); offset += CHUNK_BYTES) chunkIds.push(chunkId(bytes.subarray(offset, Math.min(bytes.length, offset + CHUNK_BYTES)), dedupKey));
+    return createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex');
+  }
   async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null }) {
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
     await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
@@ -384,6 +391,29 @@ export function createApp(
       }));
     response.status(201).json(result);
   } catch (error) { next(error) } });
+  // Read-only system areas: plain internal ingest, no native-source rows, handles, or publication state.
+  app.put('/v1/local/system-areas/ingest', express.raw({ type: '*/*', limit: '64mb' }), async(request, response, next) => { try {
+    const bytes = Buffer.from(request.body as Buffer);
+    const desiredHash = String(request.header('x-sulla-source-hash') ?? '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(desiredHash) || createHash('sha256').update(bytes).digest('hex') !== desiredHash) throw new HttpError(409, 'system-area bytes do not match their declared hash');
+    const collectionId = String(request.query.collectionId ?? '');
+    const path = cleanPath(String(request.query.path ?? ''), false);
+    const collection = await collectionRow(collectionId);
+    if (!isSystemArea(collection.system_area)) throw new HttpError(409, 'system-area ingestion requires a system collection');
+    const mime = request.header('content-type') ?? 'application/octet-stream';
+    const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
+    const result = await mirrorSystemAreaFile(db, {
+      collectionId, path, manifestHash: await manifestHashFor(collectionId, bytes),
+      skipSearchIndex: shouldSkipSearchIndex(request.header(SKIP_SEARCH_INDEX_HEADER), collection.system_area),
+    }, {
+      lockNamespace: (client, id) => lockStoredNamespace(client as pg.PoolClient, id),
+      insertVersion: (client, existing) => insertVersion(client as pg.PoolClient, {
+        collectionId, fileId: existing?.id, path, mime, bytes, actor, createdByType: 'user', createdById: config.userId,
+        message: 'Mirrored from a Sulla system area', baseVersionId: existing?.current_version_id ?? null,
+      }),
+    });
+    response.status(result.unchanged ? 200 : 201).json(result);
+  } catch (error) { next(error) } });
   app.post('/v1/local/native-sources/publications', async(request, response, next) => { try {
     const metadata = nativeMetadata(request);
     const fileId = String(request.body.fileId ?? '');
@@ -423,9 +453,15 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-store');
     response.json(await nativeSourceManager().nativePublicationActions());
   } catch (error) { next(error) } });
-  app.get('/v1/local/native-sources', async(_request, response, next) => { try {
+  app.get('/v1/local/native-sources', async(request, response, next) => { try {
     response.setHeader('Cache-Control', 'private, no-store');
-    response.json(await nativeSourceManager().listNativeSources());
+    const page = await nativeSourceManager().listNativeSources({
+      limit: request.query.limit === undefined ? undefined : Number(request.query.limit),
+      after: typeof request.query.after === 'string' ? request.query.after : undefined,
+      state: typeof request.query.state === 'string' ? request.query.state : undefined,
+    });
+    if (page.length) response.setHeader('x-sulla-next-cursor', page[page.length - 1].cursor);
+    response.json(page);
   } catch (error) { next(error) } });
   app.post('/v1/local/native-sources/revalidate', async(request, response, next) => { try {
     const handles = request.body.handles;

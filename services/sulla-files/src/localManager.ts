@@ -10,6 +10,7 @@ import { copyLockedFile } from './fileOperations.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { NativeOperationJournal } from './nativeOperationJournal.js';
+import { queryNativeSourcePage, type NativeSourcePage, type NativeSourcePageRow } from './nativeSourcePaging.js';
 import { streamFileContent } from './fileStream.js';
 import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
@@ -594,11 +595,9 @@ export class LocalFilesManager {
     }));
   }
 
-  async listNativeSources():Promise<{ fileId:string; versionId:string; collectionId:string; path:string; handle:string; name:string; sourceRevision:string; sourceHash:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> {
-    const rows = await this.db.query(`SELECT n.file_id::text,f.current_version_id::text AS version_id,f.collection_id,f.path,n.source_handle,n.display_name,n.source_revision,n.source_hash,n.state,n.last_error,n.recovery
-      FROM files_native_sources n JOIN files f ON f.id=n.file_id ORDER BY n.created_at`);
-    return rows.rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, collectionId: row.collection_id, path: row.path, handle: row.source_handle, name: row.display_name,
-      sourceRevision: row.source_revision, sourceHash: row.source_hash, state: row.state, lastError: row.last_error ?? undefined, recovery: row.recovery ?? {} }));
+  /** Keyset-paginated native source inventory; see queryNativeSourcePage. */
+  async listNativeSources(page:NativeSourcePage = {}):Promise<NativeSourcePageRow[]> {
+    return queryNativeSourcePage(this.db, page);
   }
 
   async revalidateNativeSessions(handles:string[]):Promise<void> {

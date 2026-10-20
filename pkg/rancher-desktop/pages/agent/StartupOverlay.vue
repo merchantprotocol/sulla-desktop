@@ -125,7 +125,8 @@ onUnmounted(() => {
   z-index: 50;
   display: flex;
   overflow: hidden;
-  background: rgb(13, 17, 23);
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: blur(12px);
 }
 
 .sulla-startup-column {
@@ -149,13 +150,14 @@ onUnmounted(() => {
   flex: 0 0 auto;
   width: calc(100% - 32px);
   max-width: 44rem;
-  max-height: 30%;
   margin: 0 auto 16px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   border-radius: 12px;
-  border: 1px solid var(--border-default, #30363d);
-  background: var(--bg-surface, #161b22);
+  border: 1px solid rgba(26, 35, 50, 0.14);
+  background: #ffffff;
+  --text-primary: #1a2332;
+  --text-secondary: #5b6778;
+  --text-muted: #8a94a3;
   padding: 14px 20px 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px rgba(80, 150, 179, 0.05);
 }
@@ -203,7 +205,7 @@ onUnmounted(() => {
   margin-top: 0.5rem;
   border-radius: 0.75rem;
   border: 1px solid rgba(80, 150, 179, 0.15);
-  background: rgba(80, 150, 179, 0.05);
+  background: rgba(80, 150, 179, 0.08);
   padding: 0.6rem 0.8rem;
 }
 
@@ -223,18 +225,26 @@ onUnmounted(() => {
   color: var(--text-muted, #8b949e);
   margin: 0.375rem 0 0;
 }
+/* The card is white: give the progress panel dark ink and a light track. */
+.sulla-startup-card :deep(.sulla-sp) {
+  --sp-ink: #1a2332;
+  --sp-read: #5b6778;
+  --sp-hair: rgba(26, 35, 50, 0.14);
+  --sp-track: #e3eaf1;
+}
 </style>
 
 <style scoped>
 .theme-noir .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 45%), var(--nx-paper, rgb(13, 17, 23));
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--nx-paper) 108.6957%, transparent);
+  backdrop-filter: blur(22px);
 }
 .theme-noir .sulla-startup-card {
   padding: 14px 22px 16px;
   border: 0;
   border-radius: 16px;
-  background: color-mix(in srgb, var(--nx-surface) 131.5789%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), 0 30px 80px color-mix(in srgb, var(--shadow) 163.6364%, transparent);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.14), 0 20px 50px rgba(0, 0, 0, 0.35);
   animation: startup-noir-enter .5s cubic-bezier(.22, 1, .36, 1) both;
 }
 .theme-noir .sulla-startup-accent { display: none; }
@@ -249,10 +259,10 @@ onUnmounted(() => {
 }
 .theme-noir .sulla-startup-icon svg { width: 18px; height: 18px; }
 .theme-noir-light .sulla-startup-icon { color: var(--nx-accent-2); }
-.theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 18px; color: var(--nx-read-1); }
+.theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 18px; color: #1a2332; }
 .theme-noir .sulla-startup-subtitle,
-.theme-noir .sulla-startup-download-status { color: var(--nx-read-2); font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
-.theme-noir .sulla-startup-download { border: 0; border-radius: 14px; background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
+.theme-noir .sulla-startup-download-status { color: #5b6778; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
+.theme-noir .sulla-startup-download { border: 0; border-radius: 14px; background: rgba(80, 150, 179, 0.08); box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.1); }
 @keyframes startup-noir-enter { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (max-width: 520px) {
   .sulla-startup-card,
