@@ -38,6 +38,8 @@ export interface SystemIngestLaneConfig {
   skipSearchIndex:      boolean;
   /** Pause this lane entirely while the Files service is slow. */
   yieldsToBackpressure: boolean;
+  /** Bound one sweep so large rotating areas never become one in-memory queue. */
+  maxFilesPerSweep?:    number;
 }
 
 /** Every priority and rate-limit knob for the system-area ingest lives here. */
@@ -49,7 +51,7 @@ export const SYSTEM_INGEST_LANES:Readonly<Record<SystemIngestLaneId, SystemInges
     priority: 2, filesPerSecond: 3, bytesPerSecond: 2 * 1024 * 1024, concurrency: 1, order: 'path', idleIntervalMs: 5 * 60_000, skipSearchIndex: true, yieldsToBackpressure: true,
   },
   logs: {
-    priority: 3, filesPerSecond: 1, bytesPerSecond: 2 * 1024 * 1024, concurrency: 1, order: 'newest', idleIntervalMs: 10 * 60_000, skipSearchIndex: true, yieldsToBackpressure: true,
+    priority: 3, filesPerSecond: 1, bytesPerSecond: 2 * 1024 * 1024, concurrency: 1, order: 'newest', idleIntervalMs: 10 * 60_000, skipSearchIndex: true, yieldsToBackpressure: true, maxFilesPerSweep: 1_000,
   },
 };
 
@@ -649,6 +651,12 @@ export class SullaFilesSystemIngestJob {
   /** Readdir walk (plus lstat for newest-first lanes) into an ordered work queue. */
   private async enumerate(lane:Lane, sources:SystemIngestSource[], collectionFor:(source:SystemIngestSource) => string, generation:number):Promise<QueueItem[] | undefined> {
     const items:QueueItem[] = [];
+    const limit = lane.config.maxFilesPerSweep;
+    const trimNewest = () => {
+      if (!limit || items.length <= limit) return;
+      items.sort((left, right) => (right.mtimeMs ?? 0) - (left.mtimeMs ?? 0));
+      items.length = limit;
+    };
     let sinceYield = 0;
     const visit = async(source:SystemIngestSource, collectionId:string, segments:string[]):Promise<boolean> => {
       const entries = await this.readDirectory(path.join(source.root, ...segments));
@@ -658,6 +666,7 @@ export class SullaFilesSystemIngestJob {
           await yieldToEventLoop();
           if (!this.alive(generation) || this.preempted(lane)) return false;
         }
+        if (limit && lane.config.order === 'path' && items.length >= limit) return true;
         const child = [...segments, entry.name];
         if (this.skipEntry(source, entry, child.join('/'))) continue;
         if (entry.isDirectory()) { if (!await visit(source, collectionId, child)) return false; continue }
@@ -667,10 +676,14 @@ export class SullaFilesSystemIngestJob {
           try { item.mtimeMs = (await this.fs.lstat(path.join(source.root, ...child))).mtimeMs } catch { continue }
         }
         items.push(item);
+        // Keep traversal streaming-bounded. A 2x window avoids sorting for
+        // every entry while retaining the newest files across all log dirs.
+        if (limit && lane.config.order === 'newest' && items.length >= limit * 2) trimNewest();
       }
       return true;
     };
     for (const source of sources) if (!await visit(source, collectionFor(source), [])) return undefined;
+    trimNewest();
     if (lane.config.order === 'newest') items.sort((left, right) => (right.mtimeMs ?? 0) - (left.mtimeMs ?? 0));
     return items;
   }

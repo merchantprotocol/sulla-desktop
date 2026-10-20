@@ -204,12 +204,20 @@ export class LocalFilesManager {
   private nativeJournalInstance?:NativeOperationJournal;
   private get nativeJournal():NativeOperationJournal { return this.nativeJournalInstance ??= new NativeOperationJournal(this.db,async(collectionId) => {
     const row=(await this.db.query('SELECT * FROM file_roots WHERE collection_id=$1',[collectionId])).rows[0];
+    const hasNativeCustody=async() => Boolean((await this.db.query('SELECT 1 FROM watched_folder_state WHERE collection_id=$1 LIMIT 1',[collectionId])).rowCount);
     if (!row) {
-      if ((await this.db.query('SELECT 1 FROM watched_folder_state WHERE collection_id=$1 LIMIT 1',[collectionId])).rowCount) throw new Error('Tracked root is missing');
+      if (await hasNativeCustody()) throw new Error('Tracked root is missing');
       return null;
     }
+    // Detach explicitly relinquishes native custody. Keep the row as audit
+    // history, but do not let an obsolete root turn ordinary Files database
+    // operations into native publication attempts.
+    if (!row.enabled || row.state==='detached') return null;
     const root=this.roots.find(root=>root.id===row.id);
-    if (!root || !row.enabled || ['detached','offline'].includes(row.state) || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) throw new Error('Tracked root is unavailable');
+    if (!root || row.state==='offline' || root.path!==row.mount_path || this.rootCollections.get(root.id)!==collectionId) {
+      if (await hasNativeCustody()) throw new Error('Tracked root is unavailable');
+      return null;
+    }
     return { id:root.id,collectionId,mutations:this.rootMutations.get(root.id)! };
   },(fileId,versionId,hash)=>this.verifyNativeVersion(fileId,versionId,hash),async(fileId,versionId)=>{
     const content=await streamFileContent(this.db,this.config,this.store,fileId,versionId,undefined,new AbortController().signal);
