@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 
 import { cosine, PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 
-import type { CollectionSearchScope } from './acl.js';
+export interface CollectionSearchScope { collectionId:string }
 import type pg from 'pg';
 
 export interface SearchInput {
@@ -22,11 +22,8 @@ export interface IndexCoverage { total:number; pending:number; indexing:number; 
 export interface FileSearchResponse { results:any[]; coverage:IndexCoverage }
 
 function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:any[]):string[] {
-  const grants = scopes.map(scope => {
-    const collection = args.push(scope.collectionId); const paths = args.push(scope.paths); const fileIds = args.push(scope.fileIds);
-    return `(f.collection_id=$${ collection } AND ((cardinality($${ paths }::text[])=0 AND cardinality($${ fileIds }::text[])=0) OR f.id::text=ANY($${ fileIds }::text[]) OR EXISTS(SELECT 1 FROM unnest($${ paths }::text[]) p WHERE f.path=p OR starts_with(f.path,p||'/'))))`;
-  });
-  const where = [`(${ grants.join(' OR ') })`, 'f.deleted_at IS NULL', `(f.published_version_id IS NOT NULL OR (f.created_by_type='user' AND f.created_by_id=$${ args.push(scopes[0]?.actorUserId ?? '') }))`, "lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)'", 'NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)'];
+  const collectionIds=args.push(scopes.map(scope=>scope.collectionId));
+  const where = [`f.collection_id=ANY($${collectionIds}::uuid[])`, 'f.deleted_at IS NULL', "lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)'", 'NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)'];
   if (input.folder) where.push(`f.path LIKE $${ args.push(`${ input.folder.replace(/[\\%_]/g, value => `\\${ value }`) }%`) } ESCAPE '\\'`);
   if (input.type) where.push(`f.mime=$${ args.push(input.type) }`);
   if (input.person) where.push(`(f.person_id=$${ args.push(input.person) } OR f.created_by_id=$${ args.length })`);
@@ -49,15 +46,7 @@ export class FileSearch {
   async search(input:SearchInput, granted:CollectionSearchScope[]):Promise<FileSearchResponse> {
     const scopes = input.collectionId ? granted.filter(scope => scope.collectionId === input.collectionId) : granted;
     if (!scopes.length) return { results: [], coverage: { total: 0, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true } };
-    const visibleVersion = (args:any[]) => {
-      const editable = args.push(scopes.filter(scope => scope.draftVisible).map(scope => scope.collectionId));
-      const editPaths = args.push(scopes.flatMap(scope => scope.editPaths.map(path => `${ scope.collectionId }:${ path }`)));
-      const editFiles = args.push(scopes.flatMap(scope => scope.editFileIds));
-      const actor = args.push(scopes[0]?.actorUserId ?? '');
-      return `CASE WHEN f.collection_id::text=ANY($${ editable }::text[]) OR f.id::text=ANY($${ editFiles }::text[])
-        OR EXISTS(SELECT 1 FROM unnest($${ editPaths }::text[]) grant_key WHERE split_part(grant_key,':',1)=f.collection_id::text AND (f.path=substr(grant_key,length(f.collection_id::text)+2) OR starts_with(f.path,substr(grant_key,length(f.collection_id::text)+2)||'/')))
-        OR (f.created_by_type='user' AND f.created_by_id=$${ actor }) THEN f.current_version_id ELSE f.published_version_id END`;
-    };
+    const visibleVersion = (_args:any[]) => 'f.current_version_id';
     const coverageArgs:any[] = []; const coverageWhere = filteredWhere(input, scopes, coverageArgs); const coverageVersion = visibleVersion(coverageArgs);
     const coverageRow = (await this.db.query<any>(`SELECT COUNT(*)::int total,
       COUNT(*) FILTER(WHERE ij.status='pending')::int pending,

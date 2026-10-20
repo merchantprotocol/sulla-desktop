@@ -121,7 +121,6 @@ export class NativeOperationJournal {
           plan.absentAfter=receipt.action==='copy'?[]:[folderPlan.source];
           plan.treesUndo=[folderPlan.source,folderPlan.displaced.source];
           plan.absentUndo=[folderPlan.displaced.target];
-          plan.grants=folderPlan.displaced.grants;
         }
       } else if (receipt.action==='create-folder') plan.treeAfter=receipt.after_state.path;
       const fileLeaf=async(before:any,after:any,kind:Leaf['kind'],stage:string,leaves=plan.leaves) => {
@@ -289,7 +288,6 @@ export class NativeOperationJournal {
         if (!leaf?.published || !leaf.hash) throw failure();
         await this.watch(client,target,record.after.fileId,record.after.path,leaf.hash,leaf.published);
       }
-      plan.grants=this.receiptGrants(receipt);
       plan.committed=await this.capture(client,receipt);
       await client.query("UPDATE files_path_operations SET state='db-committed',plan=$2,updated_at=NOW() WHERE operation_id=$1",[receipt.id,plan]);
     });
@@ -366,10 +364,10 @@ export class NativeOperationJournal {
   }
 
   private async verifyCrossCommitted(plan:CrossPlan,undo:boolean):Promise<void> {
-    const expected=undo?plan.inverseCommitted:plan.committed;
+    const stored=undo?plan.inverseCommitted:plan.committed;
+    const expected=stored ? Object.fromEntries(Object.entries(stored).filter(([key])=>key!=='grants')) as Committed : stored;
     if (!expected) throw failure();
     const actual=await this.captureIds(this.db,expected.fileIds,expected.folderIds);
-    if (expected.grants) actual.grants=await this.captureGrants(this.db,plan.grants);
     if (canonical(expected)!==canonical(actual)) throw failure();
     await this.validateCrossFilesystem(plan,undo);
   }
@@ -595,33 +593,7 @@ export class NativeOperationJournal {
     const fileIds=[...new Set<string>(records.flatMap((r:any)=>[r.before?.fileId,r.after?.fileId]).filter(Boolean))].sort();
     const folderIds=[...new Set<string>((folderPlan?[...folderPlan.folders,...(folderPlan.displaced?.folders??[])]:[{after:receipt.after_state}]).flatMap((r:any)=>[r.before?.folderId,r.after?.folderId]).filter(Boolean))].sort();
     const committed=await this.captureIds(client,fileIds,folderIds);
-    const grants=this.receiptGrants(receipt);
-    if (grants) committed.grants=await this.captureGrants(client,grants);
     return committed;
-  }
-
-  private receiptGrants(receipt:any):any|undefined {
-    const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
-    const groups=[folderPlan?.displaced?.grants,folderPlan?.transferredGrants].filter(Boolean);
-    if (!groups.length) return undefined;
-    return {
-      folderShares:groups.flatMap((group:any)=>group.folderShares??[]),
-      publicLinks:groups.flatMap((group:any)=>group.publicLinks??[]),
-      fileIds:[...new Set<string>(groups.flatMap((group:any)=>group.fileIds??[]))],
-    };
-  }
-
-  private async captureGrants(client:Pick<pg.PoolClient,'query'>,grants:any):Promise<any> {
-    const folderShareIds=(grants.folderShares??[]).map((item:any)=>item.id);
-    const publicLinkIds=(grants.publicLinks??[]).map((item:any)=>item.id);
-    const fileIds=grants.fileIds??[];
-    const signature=async(table:string,column:string,order:string,ids:string[],cast:string) => (await client.query(
-      `SELECT md5(COALESCE(jsonb_agg(to_jsonb(item) ORDER BY item.${order}),'[]'::jsonb)::text) signature FROM ${table} item WHERE item.${column}=ANY($1::${cast}[])`,[ids])).rows[0].signature;
-    return {folderShareIds,publicLinkIds,fileIds,
-      folderSharesSignature:await signature('folder_shares','id','id',folderShareIds,'uuid'),
-      publicLinksSignature:await signature('file_share_links','id','id',publicLinkIds,'text'),
-      fileSharesSignature:await signature('file_shares','file_id','id',fileIds,'uuid'),
-      fileLinksSignature:await signature('file_share_links','file_id','id',fileIds,'uuid')};
   }
 
   private async captureIds(client:Pick<pg.PoolClient,'query'>,fileIds:string[],folderIds:string[]):Promise<Committed> {
@@ -635,10 +607,10 @@ export class NativeOperationJournal {
   }
 
   private async verifyCommitted(root:NativeJournalRoot,plan:Plan,undo:boolean):Promise<void> {
-    const expected=undo?plan.inverseCommitted:plan.committed;
+    const stored=undo?plan.inverseCommitted:plan.committed;
+    const expected=stored ? Object.fromEntries(Object.entries(stored).filter(([key])=>key!=='grants')) as Committed : stored;
     if (!expected) throw failure();
     const actual=await this.captureIds(this.db,expected.fileIds,expected.folderIds);
-    if (expected.grants) actual.grants=await this.captureGrants(this.db,plan.grants);
     if (canonical(expected)!==canonical(actual)) throw failure();
     const leaves=undo?plan.inverse!:plan.leaves;
     const finalTargets=new Set(leaves.filter(l=>['move','copy','restore','mkdir'].includes(l.kind)).map(l=>l.target));

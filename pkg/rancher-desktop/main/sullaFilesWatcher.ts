@@ -12,6 +12,7 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 
+import { resolveSullaLogsDir, resolveSullaConversationsDir } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -103,6 +104,9 @@ class SullaFilesWatcher {
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
   private nativePolling = false;
+  private systemSourcesScanning = false;
+  private systemSourcesLastScan = 0;
+  private readonly systemSourceHandles = new Map<string,string>();
   private nativeEnabled = false;
   private started = false;
   private stopped = false;
@@ -144,6 +148,8 @@ class SullaFilesWatcher {
     this.lockGeneration++;
     this.unlockPermitted = false;
     this.nativePolling = false;
+    this.systemSourceHandles.clear();
+    this.systemSourcesLastScan=0;
     const lock = (async() => {
       // Stop guest admission first so dirty FUSE handles can flush through the
       // still-live broker. Then drain publication work, revoke host handles,
@@ -204,6 +210,7 @@ class SullaFilesWatcher {
         this.nativeBroker.resume();
         this.nativePolling = true;
       }
+      await this.scanSystemSources().catch(error=>console.warn('[SullaFiles] system native sources will retry:',error));
       // The Files service remains usable when the optional guest FUSE adapter
       // cannot start (for example, an older VM kernel lacks /dev/fuse). The
       // mount reports its own error state and can be retried on the next
@@ -212,6 +219,61 @@ class SullaFilesWatcher {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
     }
+  }
+
+  /** Native handles stay in Electron; guests only see Files identities and encrypted snapshots. */
+  private async scanSystemSources():Promise<void> {
+    if (this.systemSourcesScanning || !this.nativePolling || this.stopped) return;
+    this.systemSourcesScanning=true;
+    this.systemSourcesLastScan=Date.now();
+    try {
+      const response=await this.rawLocalRequest('/v1/local/system-areas');
+      if (!response.ok) throw new Error(`System collections unavailable (${response.status})`);
+      const areas=await response.json() as {id:string;systemArea:string}[];
+      const inventoryResponse=await this.rawLocalRequest('/v1/local/native-sources');
+      if (!inventoryResponse.ok) throw new Error('System source inventory unavailable');
+      const inventory=await inventoryResponse.json() as {fileId:string;versionId:string;collectionId:string;path:string;handle:string;sourceHash:string;state:string}[];
+      const gateway=getSullaFilesSourceGateway();
+      for (const source of [{area:'logs',root:resolveSullaLogsDir(),prefix:'app/'},{area:'training-data',root:resolveSullaConversationsDir(),prefix:''}]) {
+        const collection=areas.find(area=>area.systemArea===source.area);
+        if (!collection) throw new Error(`System collection ${source.area} missing`);
+        const walk=async(relative:string):Promise<void> => {
+          const entries=await fs.promises.readdir(path.join(source.root,relative),{withFileTypes:true}).catch((error:NodeJS.ErrnoException)=>{
+            if (error.code==='ENOENT') return [];
+            throw error;
+          });
+          for (const entry of entries) {
+            if (!this.nativePolling || this.stopped) return;
+            if (entry.isSymbolicLink() || /wallet|^(vaults?|master\.key)$/i.test(entry.name)) continue;
+            const rel=relative ? `${relative}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) { await walk(rel); continue }
+            if (!entry.isFile() || (source.area==='training-data' && !entry.name.endsWith('.jsonl'))) continue;
+            const filesPath=source.prefix+rel;
+            const key=`${collection.id}:${filesPath}`;
+            const previous=inventory.find(file=>file.collectionId===collection.id && file.path===filesPath);
+            let handle:string | undefined;
+            try {
+              handle=await gateway.registerExactFile(path.join(source.root,rel));
+              const snapshot=await gateway.read(handle);
+              if (previous?.sourceHash===snapshot.contentHash && previous.state==='active' && this.systemSourceHandles.has(key)) {
+                gateway.revoke(handle); continue;
+              }
+              await this.ingestNativeSource({operationId:crypto.randomUUID(),handle,sourceRevision:snapshot.revision,
+                contentHash:snapshot.contentHash,name:entry.name,mime:entry.name.endsWith('.jsonl')?'application/x-ndjson':'text/plain',
+                bytes:snapshot.bytes,fileId:previous?.fileId,baseVersionId:previous?.versionId,filesPath,collectionId:collection.id,internal:true});
+              const oldHandle=this.systemSourceHandles.get(key);
+              if (oldHandle) gateway.revoke(oldHandle);
+              this.systemSourceHandles.set(key,handle);
+            } catch(error) {
+              if (handle) gateway.revoke(handle);
+              // A rotating/actively-written log can change during snapshot: retry next scan.
+              console.debug('[SullaFiles] system native source snapshot will retry:',error);
+            }
+          }
+        };
+        await walk('');
+      }
+    } finally { this.systemSourcesScanning=false }
   }
 
   private assertUnlockGeneration(generation:number):void {
@@ -516,10 +578,12 @@ class SullaFilesWatcher {
     fileId?:        string;
     baseVersionId?: string;
     filesPath?:     string;
+    collectionId?:  string;
+    internal?:      boolean;
   }):Promise<NativeSourceFileResult> {
-    const collectionResponse = await this.request('/v1/local/native-sources/collection');
-    if (!collectionResponse.ok) throw new Error(`Files collection request failed (${ collectionResponse.status })`);
-    const collection = await collectionResponse.json() as { collectionId?: unknown };
+    const collectionResponse = input.collectionId ? undefined : await this.request('/v1/local/native-sources/collection');
+    if (collectionResponse && !collectionResponse.ok) throw new Error(`Files collection request failed (${ collectionResponse.status })`);
+    const collection = input.collectionId ? {collectionId:input.collectionId} : await collectionResponse!.json() as {collectionId?:unknown};
     if (typeof collection.collectionId !== 'string' || !collection.collectionId) throw new Error('Files returned an invalid native source collection');
     const name = path.basename(input.name).replaceAll('/', '_');
     if (!name || name === '.' || name === '..') throw new Error('Native source name is invalid');
@@ -535,7 +599,9 @@ class SullaFilesWatcher {
     if (input.baseVersionId) headers['x-sulla-files-base-version'] = input.baseVersionId;
     const body = new ArrayBuffer(input.bytes.byteLength);
     new Uint8Array(body).set(input.bytes);
-    const response = await this.request(`/v1/local/native-sources/ingest?${ query }`, { method: 'PUT', headers, body });
+    const response = input.internal
+      ? await this.rawLocalRequest(`/v1/local/native-sources/ingest?${ query }`, {method:'PUT',headers,body})
+      : await this.request(`/v1/local/native-sources/ingest?${ query }`, {method:'PUT',headers,body});
     if (!response.ok) throw new Error(`Native source ingestion failed (${ response.status }): ${ await response.text() }`);
     return await response.json() as NativeSourceFileResult;
   }
@@ -572,6 +638,7 @@ class SullaFilesWatcher {
   private async pollNativePublications():Promise<void> {
     if (!this.nativePolling || this.stopped) return;
     await this.nativeBroker.poll();
+    if (Date.now()-this.systemSourcesLastScan>15_000) await this.scanSystemSources();
   }
 
   async folderForCollection(collectionId?:string):Promise<string> {

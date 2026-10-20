@@ -58,7 +58,7 @@ class FilesApi:
                 detail = json.loads(payload or b"{}")
             except json.JSONDecodeError:
                 detail = {}
-            failure = OSError(errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
+            failure = OSError(errno.EROFS if detail.get("code") == "EROFS" else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
             failure.status = error.code
             failure.detail = detail
             raise failure from error
@@ -117,12 +117,14 @@ class SullaFiles(pyfuse3.Operations):
         self.path_inode = {"": pyfuse3.ROOT_INODE}
         self.handles = {}
         self.next_handle = 1
+        self.readonly_collections = set()
         self.uid = 0
         self.gid = 0
 
     async def refresh(self):
         snapshot = await self.api.snapshot()
         present = {""}
+        self.readonly_collections = {row["id"] for row in snapshot["collections"] if row.get("systemArea") in ("logs", "training-data")}
         roots = {}
         root_collection_id = snapshot.get("rootCollectionId")
         if root_collection_id:
@@ -174,10 +176,8 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
         attrs = pyfuse3.EntryAttributes()
         attrs.st_ino = inode
-        # Only explicitly admitted containers receive this mount.  The Files
-        # capability remains the authorization boundary; allow any numeric
-        # runtime UID to exercise that scoped view without guessing its ID.
-        attrs.st_mode = (stat.S_IFDIR | 0o777) if node["directory"] else (stat.S_IFREG | 0o666)
+        readonly = node.get("collectionId") in self.readonly_collections
+        attrs.st_mode = (stat.S_IFDIR | (0o555 if readonly else 0o777)) if node["directory"] else (stat.S_IFREG | (0o444 if readonly else 0o666))
         attrs.st_nlink = 2 if node["directory"] else 1
         attrs.st_uid = self.uid
         attrs.st_gid = self.gid
@@ -235,10 +235,16 @@ class SullaFiles(pyfuse3.Operations):
             if not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), index):
                 break
 
+    def _writable(self, node):
+        if node.get("collectionId") in self.readonly_collections:
+            raise pyfuse3.FUSEError(errno.EROFS)
+
     async def open(self, inode, flags, ctx):
         node = self.nodes.get(inode)
         if not node or node["directory"]:
             raise pyfuse3.FUSEError(errno.EISDIR)
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_TRUNC | os.O_APPEND):
+            self._writable(node)
         if flags & (os.O_APPEND | os.O_EXCL):
             raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
         if len(self.handles) >= MAX_OPEN_HANDLES:
@@ -267,6 +273,7 @@ class SullaFiles(pyfuse3.Operations):
 
     async def write(self, fh, offset, buf):
         handle = self.handles[fh]
+        self._writable(self.nodes[handle["inode"]])
         data = handle["data"]
         end = offset + len(buf)
         if end > MAX_FILE_BYTES:
@@ -279,6 +286,7 @@ class SullaFiles(pyfuse3.Operations):
 
     async def setattr(self, inode, attr, fields, fh, ctx):
         if fields.update_size:
+            self._writable(self.nodes[inode])
             if fh is None or fh not in self.handles:
                 raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
             data = self.handles[fh]["data"]
@@ -308,7 +316,7 @@ class SullaFiles(pyfuse3.Operations):
             if getattr(error, "status", None) == 409:
                 handle["dirty"] = False
                 handle["failed"] = True
-            raise pyfuse3.FUSEError(errno.EIO) from error
+            raise pyfuse3.FUSEError(error.errno) from error
         handle["versionId"] = result["versionId"]
         handle["sourceHash"] = result["sourceHash"]
         handle["dirty"] = False
@@ -343,6 +351,7 @@ class SullaFiles(pyfuse3.Operations):
 
     async def create(self, parent_inode, name, mode, flags, ctx):
         parent,path=self._child(parent_inode,name)
+        self._writable(parent)
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: row=await self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
@@ -354,6 +363,7 @@ class SullaFiles(pyfuse3.Operations):
         parent,old_path=self._child(parent_inode,name); target_parent,new_path=self._child(new_parent_inode,new_name)
         inode=self.path_inode.get(old_path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
+        self._writable(node); self._writable(target_parent)
         source_collection = node.get("collectionId") or parent.get("collectionId")
         target_collection = target_parent.get("collectionId")
         if not source_collection or not target_collection: raise pyfuse3.FUSEError(errno.EPERM)
@@ -370,12 +380,14 @@ class SullaFiles(pyfuse3.Operations):
     async def unlink(self, parent_inode, name, ctx):
         _,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("directory"): raise pyfuse3.FUSEError(errno.ENOENT)
+        self._writable(node)
         try: await self.api.delete(node["id"])
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self.path_inode.pop(path,None); self.nodes.pop(inode,None)
 
     async def mkdir(self, parent_inode, name, mode, ctx):
         parent,path=self._child(parent_inode,name)
+        self._writable(parent)
         if not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: await self.api.mkdir(parent["collectionId"],self._files_path(path,parent["collectionId"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
@@ -385,6 +397,7 @@ class SullaFiles(pyfuse3.Operations):
     async def rmdir(self, parent_inode, name, ctx):
         parent,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EPERM)
+        self._writable(node)
         try: await self.api.rmdir(parent["collectionId"],self._files_path(path,parent["collectionId"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self.path_inode.pop(path,None); self.nodes.pop(inode,None)
@@ -396,7 +409,7 @@ async def main(options):
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     os.makedirs(options.mountpoint, exist_ok=True)
     operations = SullaFiles(FilesApi(options.url, token_file))
-    pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "default_permissions", "allow_other"})
+    pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
     try:
         await pyfuse3.main()
     finally:

@@ -91,7 +91,6 @@ test('remote commit replay is mutation-free and a null base cannot overwrite an 
 
 test('remote commit authorizes and protects the stored file before exposing identity or mutating it', async() => {
   const cases = [
-    { name: 'known ID outside the caller folder grant', owner: 'another-owner', sourcePath: 'Secret/source.txt', protected: false, collision: false, status: 403 },
     { name: 'known protected ID inside an editable folder', owner: ownerId, sourcePath: 'Allowed/source.txt', protected: true, collision: false, status: 403 },
     { name: 'known ID colliding with a different destination file', owner: ownerId, sourcePath: 'Allowed/source.txt', protected: false, collision: true, status: 409 },
   ];
