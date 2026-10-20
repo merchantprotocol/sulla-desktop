@@ -21,32 +21,16 @@ Returns `{ successBoolean, responseString }`.
 | `do shell script` | **rejected** — security |
 | Single-target rule | the script's `tell application "..."` block must match `target_app` |
 
-## App allowlist — the user gates access
+## Access control
 
-The tool only works for apps the user has **explicitly enabled** in **Computer Use Settings** (in-app UI). The allowlist registry lives at `pkg/rancher-desktop/main/computerUseSettings/appRegistry.ts` and is enforced before execution.
+AppleScript is available only when the human has enabled **Administrative Access** in Preferences → Application. The tool does not maintain a separate per-app allowlist; macOS Automation permissions still apply and may prompt on first use.
 
-If the user hasn't enabled the app:
-```
-"Calendar" is not enabled in Computer Use Settings
-```
+## Permissions model
 
-The agent should tell the user to open Computer Use Settings → enable the app → grant macOS Automation permission when prompted.
+1. **Sulla layer:** Administrative Access must be enabled by the human.
+2. **macOS layer:** System Settings → Privacy & Security → **Automation** controls which apps Sulla can automate. macOS prompts on first use.
 
-### Apps in the registry
-
-**Productivity:** Calendar, Reminders, Notes, Contacts
-**Communication:** Mail, Messages, FaceTime
-**Browsers:** Safari, Google Chrome, Arc
-**Media:** Music, Photos, QuickTime Player, Spotify
-**System:** Finder, System Events, Terminal, iTerm2, System Settings
-**Third-party:** Slack, Things, OmniFocus, Fantastical, Bear
-
-## Permissions model — two layers
-
-1. **Sulla layer:** user enables app in Computer Use Settings
-2. **macOS layer:** System Settings → Privacy & Security → **Automation** → Sulla → toggle the app on. macOS prompts on first use.
-
-If macOS denies, the response includes the error. The Computer Use Settings UI shows status (Granted / Denied / Error / Checking) and has a "Test Permissions" button.
+If macOS denies access, the AppleScript response includes the error.
 
 ## What the agent should know
 
@@ -145,8 +129,6 @@ Always inspect `successBoolean` before using `responseString`. Common failure mo
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `Unknown application: ...` | Not in registry | Tell user; can't use this app |
-| `"X" is not enabled in Computer Use Settings` | User hasn't enabled it | Direct user to Computer Use Settings |
 | `AppleScript error: ...` | Syntax/runtime error | Fix the script |
 | `Both target_app and script are required` | Missing param | Fix the call |
 | Timeout (10s) | Long-running script | Split into smaller scripts |
@@ -170,5 +152,3 @@ Always inspect `successBoolean` before using `responseString`. Common failure mo
 
 - Tool: `pkg/rancher-desktop/agent/tools/applescript/applescript_execute.ts`
 - Manifest: `pkg/rancher-desktop/agent/tools/applescript/manifests.ts`
-- App registry: `pkg/rancher-desktop/main/computerUseSettings/appRegistry.ts`
-- Computer Use Settings UI: see `desktop/computer-use.md`

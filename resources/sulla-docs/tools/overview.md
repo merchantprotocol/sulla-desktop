@@ -68,7 +68,7 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `workflow` | import_workflow, refresh_schedules, catch_up_schedules, set_workflow_status, routine_report, display_workflow | Workflow lifecycle and schedules |
 | `vault` | vault_read_secrets, vault_is_enabled, vault_list_accounts, vault_set_credential, vault_list | Credentials |
 | `agents` | list_agents, check_agent_jobs, stop_agent_job, conversation tools | Agent registry and async job management |
-| `applescript` | execute, computer_use_list, computer_use_enable | macOS app automation |
+| `applescript` | execute, audit_log | macOS app automation |
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
 | `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |

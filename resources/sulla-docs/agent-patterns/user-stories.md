@@ -437,7 +437,7 @@ sulla applescript/execute '{
   "script":"tell application \"Calendar\" to ..."
 }'
 ```
-**Caveat:** the user must have enabled the target app in **Computer Use Settings** AND granted macOS Automation permission. If denied, tell them where to fix it.
+**Caveat:** Administrative Access must be enabled and macOS Automation permission granted for the target app. If denied, tell them where to fix it.
 
 **Sulla's calendar vs macOS Calendar:** `sulla calendar/*` writes to Sulla's DB and routes via the scheduler. AppleScript writes to macOS Calendar (which then syncs via iCloud / Google). Confirm intent.
 

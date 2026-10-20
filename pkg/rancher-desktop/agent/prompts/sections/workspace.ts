@@ -102,7 +102,7 @@ ${ sullaDocs }/
 │   ├── notify.md                       # notify_user + presence detection
 │   ├── slack.md                        # Messaging, user search, threads
 │   ├── agents.md                       # spawn_agent (under meta/) + check_agent_jobs
-│   ├── applescript.md                  # macOS app automation (per-app allowlist)
+│   ├── applescript.md                  # macOS app automation
 │   └── computer-use.md                 # What's shipped vs what's planned
 ├── workflows/
 │   ├── authoring.md                    # ⭐ Build / validate / debug / schedule / restart

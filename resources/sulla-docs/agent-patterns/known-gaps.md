@@ -24,7 +24,6 @@ A third 2026-08-14 pass swept the remaining *absence*-claim rows against the too
 | ✅ Open Settings | `sulla ui/open_tab '{"mode":"settings"}'` | Handled as the separate Preferences window |
 | ✅ Open Twenty CRM | `sulla browser/tab '{"url":"..."}'` | extension web UIs use browser/tab |
 | 🟡 Show me the specific workflow I just created | `ui/open_tab '{"mode":"routines"}'` opens the index | per-item deep-link not exposed yet |
-| 🟡 Open Computer Use Settings pane deep-link | `ui/open_tab '{"mode":"settings"}'` opens Settings | can't pre-select the Computer Use pane |
 
 ---
 
@@ -153,7 +152,7 @@ The `marketplace/*` tools (11, across skill / function / routine / recipe / inte
 | Multi-display interaction | 🟡 | Phase 4 |
 | Computer-use confirmation UI / kill switch | 🟡 | Phase 4 |
 
-**What's available today:** AppleScript-mediated app control (`tools/applescript.md`) for any allowlisted app, plus browser-internal pixel control (`browser/click_at`, `browser/type_at`, `browser/screenshot`). Anything outside those domains is the planned but not-yet-built computer use.
+**What's available today:** AppleScript-mediated app control (`tools/applescript.md`) for any supported app, plus browser-internal pixel control (`browser/click_at`, `browser/type_at`, `browser/screenshot`). Anything outside those domains is the planned but not-yet-built computer use.
 
 ## AppleScript
 
@@ -162,8 +161,6 @@ The `marketplace/*` tools (11, across skill / function / routine / recipe / inte
 | ✅ Audit log of past AppleScript executions | `sulla applescript/audit_log '{"only_failures":true}'` | Every applescript_execute now writes a row to `applescript_audit` (target_app, script, success, duration, error) |
 | 🔴 Run shell from inside AppleScript (`do shell script`) | — | **Blocked for security** — won't change |
 | 🔴 Use `with administrator privileges` | — | **Blocked for security** — won't change |
-| 🟡 AppleScript for an app not in the allowlist | — | Add the app to `pkg/rancher-desktop/main/computerUseSettings/appRegistry.ts` first |
-| 🟡 Open Computer Use Settings UI from chat | — | Settings window opens via `ui/open_tab '{"mode":"settings"}'` but not deep-linked to the Computer Use pane |
 
 ---
 
