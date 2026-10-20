@@ -26,6 +26,8 @@ export class SullaFilesMountManager extends EventEmitter {
   private credentialWrite?: Promise<void>;
   private credentialGeneration = 0;
   private guestPreparationFailure?: string;
+  /** True only after the backend prepared the anchor and no probe has since contradicted it. */
+  private guestAnchorConfirmed = false;
   private statusValue:SullaFilesNativeRuntimeStatus = {
     state: 'disabled', ready: false, generation: 0, sourceGrant: sullaFilesNativeSourceGrant(),
     reason: DISABLED_REASON,
@@ -44,11 +46,25 @@ export class SullaFilesMountManager extends EventEmitter {
    */
   reportGuestPreparation(failureReason?:string):void {
     this.guestPreparationFailure = failureReason;
+    this.guestAnchorConfirmed = !failureReason;
     if (failureReason && sullaFilesNativeSourceRolloutRequested()) this.publish('error', `The Files guest mount is unavailable: ${ failureReason }`);
   }
 
   clearGuest(executor:VMExecutor):void {
-    if (this.executor === executor) this.executor = undefined;
+    if (this.executor === executor) {
+      this.executor = undefined;
+      this.guestAnchorConfirmed = false;
+    }
+  }
+
+  /**
+   * Whether containers may bind /mnt/sulla-files with rslave propagation: the
+   * backend confirmed our shared anchor (or the adapter above it) this
+   * generation. Docker refuses rslave binds of a non-shared path, so callers
+   * omit the bind otherwise and the container still starts.
+   */
+  guestMountAvailable():boolean {
+    return this.guestAnchorConfirmed && !this.guestPreparationFailure;
   }
 
   async start(provider:() => Promise<SullaFilesMountCredentials>):Promise<void> {
@@ -209,6 +225,9 @@ export class SullaFilesMountManager extends EventEmitter {
     // callers then refuse as a missing anchor.
     const probe = await probeFilesAnchor(executor, MOUNT_PATH).catch(() => undefined);
 
+    // A probe can only withdraw confirmation; only the backend's preparation
+    // (which also makes the anchor shared) grants it.
+    if (!probe || probe.state === 'not-mounted' || probe.state === 'unexpected') this.guestAnchorConfirmed = false;
     if (!probe || probe.state === 'not-mounted') return 'none';
     return probe.state;
   }

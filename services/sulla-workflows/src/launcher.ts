@@ -18,7 +18,10 @@ export interface WorkflowLauncher {
 }
 
 export class DockerWorkflowLauncher implements WorkflowLauncher {
-  constructor(private readonly docker = new DockerRuntimeDriver()) {}
+  constructor(
+    private readonly docker = new DockerRuntimeDriver(),
+    private readonly filesGuestMount = config.filesGuestMount,
+  ) {}
 
   async prepareRunner(run: RunLaunch): Promise<string> {
     const safe = run.executionId.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 90);
@@ -41,7 +44,12 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       },
       network:    config.dockerNetwork,
       autoRemove: true,
-      binds:      ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
+      // Docker rejects an rslave bind of a non-shared path, so the Files mount
+      // is bound only when Desktop confirmed its anchor.
+      binds:      [
+        '/var/run/docker.sock:/var/run/docker.sock',
+        ...(this.filesGuestMount ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : []),
+      ],
       tmpfs:      { '/run/sulla-workflows-private': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
     });
     return id;

@@ -3821,6 +3821,11 @@ start_pre() {
     try {
       await prepareSullaFilesGuestAnchor(this);
       getSullaFilesMountManager().reportGuestPreparation();
+      // The workflow manager image cannot ask Desktop; this marker tells it
+      // the anchor exists so its runners may bind /mnt/sulla-files.
+      const workflowManager = compose.services?.workflow_manager;
+
+      if (workflowManager) workflowManager.environment = { ...workflowManager.environment, SULLA_FILES_GUEST_MOUNT: '1' };
 
       return true;
     } catch (error) {
