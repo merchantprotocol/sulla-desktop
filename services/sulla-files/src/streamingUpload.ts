@@ -106,14 +106,17 @@ export async function insertStreamingUpload(
   const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: totalSize })).digest('hex');
   await assertManifestMetadata(client, manifestHash, chunkIds, totalSize);
   for (const chunk of chunks) await assertChunkMetadata(client, input.collectionId, chunk);
+  const agentWrite = Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
+  const createdByType = agentWrite ? 'agent-run' : 'user';
+  const createdById = input.actor.jobId ?? input.actor.agentId ?? input.actor.userId;
   const file = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size)
-    VALUES($1,$2,'user',$3,$4,$5) RETURNING *`, [input.collectionId, input.path, input.actor.userId, input.mime, totalSize])).rows[0];
+    VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [input.collectionId, input.path, createdByType, createdById, input.mime, totalSize])).rows[0];
   const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-    VALUES($1,$2,NULL,$3,$4,'user',$5,$6,$7,NULL) RETURNING *`, [file.id, input.collectionId, manifestHash, totalSize, input.actor.userId, input.message ?? 'Imported into Files', input.actor.deviceId || 'server-web'])).rows[0];
+    VALUES($1,$2,NULL,$3,$4,$5,$6,$7,$8,NULL) RETURNING *`, [file.id, input.collectionId, manifestHash, totalSize, createdByType, createdById, input.message ?? 'Imported into Files', input.actor.deviceId || 'server-web'])).rows[0];
   await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
   await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
   await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]);
   await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
-    VALUES($1,$2,$3,$4,$5,'upload',$6)`, [input.actor.kind === 'capability' ? 'agent-or-device' : 'user', input.actor.userId, input.actor.deviceId || null, file.id, version.id, {}]);
+    VALUES($1,$2,$3,$4,$5,$6,$7)`, [agentWrite ? 'agent-or-device' : 'user', createdById, input.actor.deviceId || null, file.id, version.id, version.publication_status === 'draft' ? 'draft-write' : 'upload', {path:input.path}]);
   return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime };
 }
