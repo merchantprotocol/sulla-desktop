@@ -3405,6 +3405,7 @@ start_pre() {
         container_name: 'sulla_accounts',
         depends_on:     { postgres: { condition: 'service_healthy' } },
         environment:    {
+          NODE_OPTIONS:                                '--max-old-space-size=384',
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
           SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
@@ -3421,6 +3422,7 @@ start_pre() {
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
+        mem_limit:    '512m',
         healthcheck: {
           test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
           interval: '5s',
@@ -3462,6 +3464,7 @@ start_pre() {
         labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
+          NODE_OPTIONS: '--max-old-space-size=512',
           SULLA_VAULT_MODE: 'desktop',
           SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
           SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
@@ -3483,6 +3486,7 @@ start_pre() {
         ports: ['127.0.0.1:30135:8787'],
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
+        mem_limit: '768m',
         healthcheck: { test: ['CMD', 'wget', '--no-check-certificate', '-qO-', 'https://127.0.0.1:8787/healthz'], interval: '10s', timeout: '3s', retries: 5 },
       };
     }
@@ -3510,6 +3514,7 @@ start_pre() {
       container_name: 'sulla_projects',
       depends_on: { postgres: { condition: 'service_healthy' } },
       environment: {
+        NODE_OPTIONS: '--max-old-space-size=512',
         SULLA_PROJECTS_MODE: 'desktop',
         SULLA_PROJECTS_PORT: '8793',
         SULLA_PROJECTS_LOCAL_TOKEN: projectsToken,
@@ -3523,6 +3528,7 @@ start_pre() {
       },
       ports: ['127.0.0.1:30138:8793'],
       restart: 'unless-stopped',
+      mem_limit: '768m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8793/healthz'], interval: '10s', timeout: '3s', retries: 10 },
     };
 
@@ -3559,9 +3565,12 @@ start_pre() {
       depends_on: {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
+        sulla_projects: { condition: 'service_healthy' },
+        sulla_files: { condition: 'service_healthy' },
       },
       env_file: ['/etc/sulla-env'],
       environment: {
+        NODE_OPTIONS: '--max-old-space-size=768',
         SULLA_WORKFLOW_ROLE: 'manager',
         SULLA_PROJECTS_API_URL: 'http://sulla_projects:8793',
         SULLA_PROJECTS_API_TOKEN: projectsToken,
@@ -3576,6 +3585,7 @@ start_pre() {
       ports: ['127.0.0.1:30122:8788'],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
+      mem_limit: '1g',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -3600,6 +3610,7 @@ start_pre() {
       container_name: 'sulla_relay',
       depends_on: { redis: { condition: 'service_healthy' } },
       environment: {
+        NODE_OPTIONS: '--max-old-space-size=384',
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_DEVICE_TOKEN_SECRET: sullaApiToken,
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
@@ -3607,6 +3618,7 @@ start_pre() {
       },
       ports: ['127.0.0.1:30126:8790'],
       restart: 'unless-stopped',
+      mem_limit: '512m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -3634,9 +3646,13 @@ start_pre() {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
         sulla_relay: { condition: 'service_healthy' },
+        sulla_projects: { condition: 'service_healthy' },
+        sulla_files: { condition: 'service_healthy' },
+        ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
       },
       env_file: ['/etc/sulla-env'],
       environment: {
+        NODE_OPTIONS: '--max-old-space-size=768',
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
@@ -3660,6 +3676,7 @@ start_pre() {
         filesTlsBind(true),
       ],
       restart: 'unless-stopped',
+      mem_limit: '1g',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -3684,6 +3701,7 @@ start_pre() {
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
       },
       environment: {
+        NODE_OPTIONS:                      '--max-old-space-size=1536',
         SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
@@ -3729,6 +3747,7 @@ start_pre() {
           : []),
       ],
       restart: 'unless-stopped',
+      mem_limit: '2g',
       healthcheck: {
         test: [
           'CMD', 'node', '-e',
@@ -3774,6 +3793,13 @@ start_pre() {
         cpus:         0.5,
         depends_on:   { sulla_files: { condition: 'service_healthy' } },
         restart:      'unless-stopped',
+        healthcheck: {
+          test: [
+            'CMD', 'python3', '-c',
+            "import os,ssl,urllib.request; assert os.path.ismount('/mnt/sulla-files'); urllib.request.urlopen('https://sulla_files:8792/healthz', context=ssl.create_default_context(cafile='/run/sulla-files-ca/tls.crt'), timeout=2).read(1)",
+          ],
+          interval: '5s', timeout: '3s', retries: 10,
+        },
       };
     }
 
@@ -3922,6 +3948,24 @@ start_pre() {
         run:          (...command) => this.execCommand({ root: true }, ...command),
         checkpoint:   () => this.assertManagedServicesGeneration(generation),
       });
+      const startOptionalService = async(service: string): Promise<void> => {
+        try {
+          await reconcileOptionalService(service);
+        } catch (error) {
+          const fallback = this.#optionalSullaFallbackImages.get(service);
+
+          if (!fallback) throw error;
+          console.warn(`[Sulla] Selected image for ${ service } unavailable; trying ${ fallback.image }`);
+          await this.execCommand({ root: true }, 'docker', 'pull', fallback.image).catch(pullError => {
+            console.warn(`[Sulla] Could not refresh ${ fallback.image }; trying the cached fallback:`, pullError);
+          });
+          this.assertManagedServicesGeneration(generation);
+          await this.execCommand(
+            { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
+            ...composeCommand, 'up', '-d', '--no-deps', '--pull', 'never', service,
+          );
+        }
+      };
 
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
@@ -3962,6 +4006,10 @@ start_pre() {
         }
       }
 
+      if (configuredServices.split(/\s+/).includes('sulla_files_fuse')) {
+        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' });
+      }
+
       // Attempt dependencies before their consumers. Optional failure remains
       // isolated; a failed Vault explicitly suppresses Files for this generation.
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
@@ -3970,62 +4018,52 @@ start_pre() {
       optionalServices.push(
         { service: 'sulla_projects', container: 'sulla_projects' },
         { service: 'sulla_relay', container: 'sulla_relay' },
-        { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'sulla_files', container: 'sulla_files' },
+        { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'tools', container: 'sulla_tools' },
       );
-      // Each optional service is its own progress action ("n of m") so the
-      // startup screen can say which container it is waiting on.
-      for (const [optionalIndex, { service, container }] of optionalServices.entries()) {
-        await this.progressTracker.action(`Starting container ${ service } (${ optionalIndex + 1 } of ${ optionalServices.length })`, 64, async() => {
-          if (service === 'sulla_files' && settingsImpl.getSettings().experimental.sullaVaultV2Enabled &&
-            !this.#activeOptionalSullaServices.has('sulla_vault')) {
-            console.warn('[Sulla] Files unavailable because its configured Vault dependency is not ready');
-            return;
-          }
-          let serviceStarted = false;
-          try {
-            await reconcileOptionalService(service);
-            serviceStarted = true;
-          } catch (error) {
-            if (error instanceof ManagedServicesReconciliationCancelled) throw error;
-            const fallback = this.#optionalSullaFallbackImages.get(service);
-            let unavailableError = error;
+      const orderedOptionalServices = optionalServices.sort((left, right) => {
+        const order = ['sulla_accounts', 'sulla_vault', 'sulla_projects', 'sulla_relay', 'sulla_files',
+          'sulla_files_fuse', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
 
-            if (fallback) {
-              try {
-                console.warn(`[Sulla] Selected image for ${ service } unavailable; trying ${ fallback.image }`);
-                try {
-                  await this.execCommand({ root: true }, 'docker', 'pull', fallback.image);
-                } catch (pullError) {
-                  console.warn(`[Sulla] Could not refresh ${ fallback.image }; trying the cached fallback:`, pullError);
-                }
-                this.assertManagedServicesGeneration(generation);
-                await this.execCommand(
-                  { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
-                  ...composeCommand, 'up', '-d', '--no-deps', '--pull', 'never', service,
-                );
-                this.assertManagedServicesGeneration(generation);
-                serviceStarted = true;
-              } catch (fallbackError) {
-                if (fallbackError instanceof ManagedServicesReconciliationCancelled) throw fallbackError;
-                unavailableError = fallbackError;
-              }
-            }
-            if (!serviceStarted) {
-              console.warn(`[Sulla] Service ${ service } could not be started; continuing startup without it:`, unavailableError);
+        return order.indexOf(left.service) - order.indexOf(right.service);
+      });
+      const reconcileInBackground = async(): Promise<void> => {
+        const bootStatus = new Map<string, string>();
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          for (const { service, container } of orderedOptionalServices) {
+            try {
+              await startOptionalService(service);
+              await this.waitForDockerServiceHealthy(container, 20, generation);
+              this.#activeOptionalSullaServices.add(service);
+              bootStatus.set(service, 'healthy');
+            } catch (error) {
+              if (error instanceof ManagedServicesReconciliationCancelled) return;
+              const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+
+              bootStatus.set(service, `unhealthy (${ reason })`);
+              console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
             }
           }
-          if (!serviceStarted) return;
-          try {
-            await this.waitForDockerServiceHealthy(container, 60, generation);
-            this.#activeOptionalSullaServices.add(service);
-          } catch (healthError) {
-            if (healthError instanceof ManagedServicesReconciliationCancelled) throw healthError;
-            console.warn(`[Sulla] Service ${ service } did not become ready; leaving its selected image in place:`, healthError);
+          if (attempt === 1) {
+            console.log(`[Sulla] Boot services: postgres=healthy, redis=healthy, ${
+              [...bootStatus].map(([service, status]) => `${ service }=${ status }`).join(', ')
+            }`);
           }
-        });
-      }
+          if ([...bootStatus.values()].every(status => status === 'healthy')) return;
+          await new Promise(resolve => setTimeout(resolve, 5_000 * attempt));
+        }
+      };
+
+      // Optional services must never hold the backend STARTED/unlock transition.
+      // Compose health dependencies preserve ordering; bounded retries repair a
+      // cold or transiently broken service after Desktop is already usable.
+      void reconcileInBackground().catch(error => {
+        if (!(error instanceof ManagedServicesReconciliationCancelled)) {
+          console.warn('[Sulla] Optional service background reconciliation stopped:', error);
+        }
+      });
     });
   }
 
@@ -4036,6 +4074,8 @@ start_pre() {
    */
   private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300, generation?: number): Promise<void> {
     const start = Date.now();
+    let delayMs = 500;
+    let lastStatus = 'not created';
     while (Date.now() - start < timeoutSec * 1000) {
       if (generation !== undefined) this.assertManagedServicesGeneration(generation);
       try {
@@ -4043,16 +4083,18 @@ start_pre() {
           { capture: true, root: true }, 'docker', 'inspect', '--format',
           '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', serviceName,
         );
-        if (status.trim() === 'running healthy' || status.trim() === 'running none') {
+        lastStatus = status.trim();
+        if (lastStatus === 'running healthy' || lastStatus === 'running none') {
           console.log(`Docker service ${ serviceName } is ready`);
           return;
         }
       } catch {
         // Service not ready yet
       }
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, delayMs));
+      delayMs = Math.min(delayMs * 2, 5_000);
     }
-    throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s`);
+    throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s (last status: ${ lastStatus })`);
   }
 
   async waitForApiReady(timeoutSec = 120): Promise<void> {

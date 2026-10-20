@@ -13,6 +13,7 @@ services:
     volumes:
       - "sulla_postgres_data:/var/lib/postgresql/data"
     restart: unless-stopped
+    mem_limit: 2g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sulla"]
       interval: 10s
@@ -26,6 +27,7 @@ services:
       - "30117:6379"
     command: redis-server --save "" --appendonly no
     restart: unless-stopped
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -42,6 +44,7 @@ services:
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"
       - "sulla_python_runtime_cache:/opt/sulla/cache/deps"
     restart: unless-stopped
+    mem_limit: 768m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 10s
@@ -57,6 +60,7 @@ services:
       - "/mnt/data/sulla/runtime/functions/catalog:/var/functions:ro"
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"
     restart: unless-stopped
+    mem_limit: 256m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 10s
@@ -73,6 +77,9 @@ services:
       - "/mnt/data/sulla/runtime/functions/invocations:/var/db-functions:ro"
       - "sulla_node_runtime_cache:/opt/sulla/cache/node_modules"
     restart: unless-stopped
+    mem_limit: 768m
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=512"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 10s
