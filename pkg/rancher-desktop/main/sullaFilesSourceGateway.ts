@@ -165,6 +165,14 @@ export class SullaFilesSourceGateway {
     for (const [capability, grant] of this.capabilities) if (grant.handle === handle) this.capabilities.delete(capability);
   }
 
+  /** Cheap change signature (fstat of the pinned descriptor) so pollers can skip re-reading unchanged sources. */
+  async signature(handle:string):Promise<string> {
+    const source = this.sources.get(handle);
+    if (!(this.sessionsEnabled && source?.epoch === this.epoch)) throw new SourceGatewayError(404, 'unknown_source', 'Source handle is unknown or revoked');
+    const info = await source.file.stat({ bigint: true });
+    return `${ info.dev }:${ info.ino }:${ info.size }:${ info.mtimeNs }:${ info.ctimeNs }`;
+  }
+
   async read(handle:string):Promise<SullaFilesSourceSnapshot> {
     return this.withCapacity(() => this.readPinned(handle));
   }
