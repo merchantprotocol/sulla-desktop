@@ -243,7 +243,15 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    // Codex has no separate memory-dir setting. Keep CODEX_HOME (and auth,
+    // config, sessions) unchanged, but relocate its memory sqlite file into
+    // the durable Files system area through a stable symlink.
+    const memorySetup = `mkdir -p /mnt/sulla-files/Sulla/Memory/codex "$HOME/.codex"; ` +
+      `if [ ! -L "$HOME/.codex/memories_1.sqlite" ]; then ` +
+      `if [ -f "$HOME/.codex/memories_1.sqlite" ]; then cp -p "$HOME/.codex/memories_1.sqlite" /mnt/sulla-files/Sulla/Memory/codex/memories_1.sqlite; mv "$HOME/.codex/memories_1.sqlite" "$HOME/.codex/memories_1.sqlite.pre-sulla-memory.$(date +%s)"; ` +
+      `else : > /mnt/sulla-files/Sulla/Memory/codex/memories_1.sqlite; fi; ` +
+      `ln -s /mnt/sulla-files/Sulla/Memory/codex/memories_1.sqlite "$HOME/.codex/memories_1.sqlite"; fi; `;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -721,6 +729,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
 - You are part of a live multi-agent network — Heartbeat and other agents are active
+- Durable agent memory lives in Files under \`Sulla/Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 
     stableParts.push(`<environment>

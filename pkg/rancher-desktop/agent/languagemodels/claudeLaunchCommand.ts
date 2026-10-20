@@ -21,7 +21,16 @@ export function buildClaudeLaunchCommand(envAssignments: string[], claudeArgs: s
   const pidPrefix = pidFile ? `${ buildRemotePidRecordCommand(pidFile) }; ` : '';
   const lockPrefix = exclusiveSession ? buildSessionTakeoverCommand(exclusiveSession) : '';
 
-  return `${ pidPrefix }${ lockPrefix }if command -v stdbuf >/dev/null 2>&1; then ${ envPrefix }exec stdbuf -oL -eL ${ command }; else ${ envPrefix }exec ${ command }; fi`;
+  // Claude only honours project auto-memory beneath ~/.claude/projects.
+  // Point that subtree (not CLAUDE_CONFIG_DIR, which also contains auth and
+  // sessions) at the Files mount before every app-launched run. Existing
+  // ephemeral entries are copied first and retained as a rollback backup.
+  const memorySetup = `mkdir -p /mnt/sulla-files/Sulla/Memory/claude-code/projects "$HOME/.claude"; ` +
+    `if [ ! -L "$HOME/.claude/projects" ]; then ` +
+    `if [ -d "$HOME/.claude/projects" ]; then cp -a "$HOME/.claude/projects/." /mnt/sulla-files/Sulla/Memory/claude-code/projects/ 2>/dev/null || true; mv "$HOME/.claude/projects" "$HOME/.claude/projects.pre-sulla-memory.$(date +%s)"; fi; ` +
+    `ln -s /mnt/sulla-files/Sulla/Memory/claude-code/projects "$HOME/.claude/projects"; fi; `;
+
+  return `${ pidPrefix }${ lockPrefix }${ memorySetup }if command -v stdbuf >/dev/null 2>&1; then ${ envPrefix }exec stdbuf -oL -eL ${ command }; else ${ envPrefix }exec ${ command }; fi`;
 }
 
 /**

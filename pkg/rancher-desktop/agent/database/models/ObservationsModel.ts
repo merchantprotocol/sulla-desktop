@@ -24,6 +24,7 @@ export interface ObservationRecord {
   updated_at: string | Date | null;
   archived:   boolean;
   source:     string | null;
+  file_id:    string | null;
 }
 
 export interface InsertObservationInput {
