@@ -127,3 +127,31 @@ integration('system areas: plain ingest creates no native-source state, is idemp
     assert.equal(unindexed, 1_800);
   } finally { await db.end() }
 });
+
+integration('cleanup migration removes native-source rows of system areas only', async() => {
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 2 });
+  try {
+    await migrate(db);
+    await db.query('TRUNCATE collections CASCADE');
+    await db.query('TRUNCATE files_native_source_operations');
+    const ids = { logs: await collection(db, 'logs'), training: await collection(db, 'training-data'), sulla: await collection(db, 'sulla'), user: await collection(db, null) };
+    for (const [name, collectionId] of Object.entries(ids)) {
+      await db.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size)
+        SELECT $1, $2||'-'||i||'.txt', 'user', 'synthetic-owner', 'text/plain', 1 FROM generate_series(1,50) i`, [collectionId, name]);
+    }
+    await db.query(`INSERT INTO files_native_sources(source_handle,collection_id,file_id,display_name,source_revision,source_hash)
+      SELECT rpad(md5(f.id::text)||md5(f.path),43,'a'), f.collection_id, f.id, f.path, md5(f.path)||md5(f.path||'r'), md5(f.path)||md5(f.path||'h') FROM files f`);
+    await db.query(`INSERT INTO files_native_source_operations(operation_id,source_handle,direction,state,source_revision,source_hash,file_id)
+      SELECT gen_random_uuid(), n.source_handle, 'ingest', 'completed', n.source_revision, n.source_hash, n.file_id FROM files_native_sources n`);
+    const { readFile } = await import('node:fs/promises');
+    await db.query(await readFile(new URL('../migrations/033_drop_system_area_native_sources.sql', import.meta.url), 'utf8'));
+    const remaining = (await db.query(`SELECT c.id::text AS collection, count(n.*)::int AS sources,
+        (SELECT count(*)::int FROM files_native_source_operations o JOIN files f ON f.id=o.file_id WHERE f.collection_id=c.id) AS operations,
+        (SELECT count(*)::int FROM files f WHERE f.collection_id=c.id) AS files
+      FROM collections c LEFT JOIN files_native_sources n ON n.collection_id=c.id GROUP BY c.id`)).rows;
+    const by = Object.fromEntries(remaining.map(row => [row.collection, row]));
+    for (const id of [ids.logs, ids.training, ids.sulla]) assert.deepEqual([by[id].sources, by[id].operations, by[id].files], [0, 0, 50]);
+    assert.deepEqual([by[ids.user].sources, by[ids.user].operations, by[ids.user].files], [50, 50, 50]);
+    report('cleanup migration: 150 system-area native rows + 150 operations removed; 50 user-picked sources and every file kept');
+  } finally { await db.end() }
+});
