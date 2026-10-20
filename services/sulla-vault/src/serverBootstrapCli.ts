@@ -46,8 +46,8 @@ async function main(): Promise<void> {
     process.stdout.write('Server is already bootstrapped; existing data was preserved.\n');
     return;
   }
-  const password = hiddenLine('First admin password: ');
-  const confirmation = hiddenLine('Confirm password: ');
+  const password = hiddenLine('Vault unlock password: ');
+  const confirmation = hiddenLine('Confirm Vault unlock password: ');
   if (password !== confirmation) throw new Error('Passwords do not match');
   if (password.length < 12) throw new Error('Password must contain at least 12 characters');
 

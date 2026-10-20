@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sulla-console, namespace: sulla}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: sulla-console}}
+  template:
+    metadata: {labels: {app: sulla-console}}
+    spec:
+      containers:
+        - name: console
+          image: __SULLA_CONSOLE_IMAGE__
+          ports: [{name: http, containerPort: 8786}]
+          env:
+            - {name: SULLA_CONSOLE_HOST, value: "0.0.0.0"}
+            - {name: SULLA_CONSOLE_PORT, value: "8786"}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sulla-console, namespace: sulla}
+spec:
+  selector: {app: sulla-console}
+  ports: [{name: http, port: 8786, targetPort: http}]

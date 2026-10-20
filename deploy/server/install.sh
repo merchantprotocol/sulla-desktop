@@ -465,8 +465,8 @@ main() {
     fi
     healthy=false; deadline=$((SECONDS + 300))
     while (( SECONDS < deadline )); do
-      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"; projects_id="$("${compose[@]}" ps -q projects 2>/dev/null || true)"
-      if [[ -n "$gateway_id" && -n "$files_id" && -n "$projects_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$projects_id" 2>/dev/null || true)" == healthy ]]; then
+      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; accounts_id="$("${compose[@]}" ps -q accounts 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"; projects_id="$("${compose[@]}" ps -q projects 2>/dev/null || true)"
+      if [[ -n "$gateway_id" && -n "$accounts_id" && -n "$files_id" && -n "$projects_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$accounts_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$projects_id" 2>/dev/null || true)" == healthy ]]; then
         healthy=true
         break
       fi
@@ -477,6 +477,7 @@ main() {
       "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
       fail "Sulla services did not become healthy within 5 minutes"
     fi
+    "${compose[@]}" exec accounts node dist/serverBootstrapCli.js --url http://127.0.0.1:3020 --token-file /run/secrets/accounts-admin --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
     "${compose[@]}" exec vault node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   else
     verify_default_image "$SULLA_VAULT_IMAGE" merchantprotocol/sulla-vault
@@ -497,6 +498,7 @@ main() {
     kube+=(--context "$SULLA_KUBECONTEXT")
     "${kube[@]}" cluster-info >/dev/null 2>&1 || fail "the saved Kubernetes context cannot reach a cluster"
     ./deploy-sulla.sh </dev/null
+    "${kube[@]}" -n sulla exec -it deployment/sulla-accounts -- node dist/serverBootstrapCli.js --url http://127.0.0.1:3020 --token-file /run/sulla-secrets/accounts-admin --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
     "${kube[@]}" -n sulla exec -it deployment/sulla-vault -- node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   fi
   log "Sulla Server is ready: ${SULLA_PUBLIC_URL%/}/console"

@@ -11,6 +11,8 @@ export interface HostedUser {
   enabled: boolean;
 }
 
+const FIRST_OWNER_BOOTSTRAP_ATTRIBUTE = 'sulla.first-owner-bootstrap';
+
 function endpoints(config: AccountsConfig): { token: string; users: string } {
   if (!config.keycloakIssuer) throw new Error('hosted authority is unavailable');
   const issuer = new URL(config.keycloakIssuer);
@@ -67,6 +69,7 @@ export async function getHostedUser(config: AccountsConfig, id: string): Promise
 
 export async function createHostedUser(config: AccountsConfig, input: {
   username: string; email?: string; firstName?: string; lastName?: string; password: string;
+  temporaryPassword?: boolean; firstOwnerBootstrap?: boolean;
 }): Promise<HostedUser> {
   const users = endpoints(config).users;
   const response = await keycloakRequest(config, users, {
@@ -74,7 +77,8 @@ export async function createHostedUser(config: AccountsConfig, input: {
     body: JSON.stringify({
       username: input.username, email: input.email, firstName: input.firstName, lastName: input.lastName,
       enabled: true, emailVerified: false,
-      credentials: [{ type: 'password', value: input.password, temporary: true }],
+      credentials: [{ type: 'password', value: input.password, temporary: input.temporaryPassword ?? true }],
+      ...(input.firstOwnerBootstrap ? { attributes: { [FIRST_OWNER_BOOTSTRAP_ATTRIBUTE]: ['true'] } } : {}),
     }),
   });
   const location = response.headers.get('location');
@@ -82,6 +86,27 @@ export async function createHostedUser(config: AccountsConfig, input: {
   if (!id) throw new Error('Keycloak did not identify the created user');
   const created = await keycloakRequest(config, `${users}/${encodeURIComponent(id)}`);
   return publicUser(await created.json());
+}
+
+export async function findFirstOwnerBootstrapUser(config: AccountsConfig, username: string): Promise<HostedUser | undefined> {
+  const users = endpoints(config).users;
+  const query = new URLSearchParams({ exact: 'true', username });
+  const response = await keycloakRequest(config, `${users}?${query.toString()}`);
+  const matches = await response.json();
+  if (!Array.isArray(matches)) throw new Error('Keycloak returned an invalid user search result');
+  const bootstrapMatches = matches.filter((candidate) => {
+    const user = object(candidate);
+    const attributes = user.attributes;
+    if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) return false;
+    return (attributes as Record<string, unknown>)[FIRST_OWNER_BOOTSTRAP_ATTRIBUTE] instanceof Array &&
+      ((attributes as Record<string, unknown>)[FIRST_OWNER_BOOTSTRAP_ATTRIBUTE] as unknown[]).includes('true');
+  });
+  if (bootstrapMatches.length > 1) throw new Error('Keycloak returned ambiguous first-owner bootstrap users');
+  return bootstrapMatches[0] ? publicUser(bootstrapMatches[0]) : undefined;
+}
+
+export async function deleteHostedUser(config: AccountsConfig, id: string): Promise<void> {
+  await keycloakRequest(config, `${endpoints(config).users}/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function updateHostedUser(config: AccountsConfig, id: string, enabled: boolean): Promise<void> {

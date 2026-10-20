@@ -275,6 +275,8 @@ bearers or delegated grant tokens.
 
 | Method and path | Result |
 | --- | --- |
+| `GET /v1/admin/setup/first-owner` | Protected CLI bootstrap status; returns only `{bootstrapped}` |
+| `POST /v1/admin/setup/first-owner` | Protected, idempotent creation of the first organization and its permanent-password owner/admin identity |
 | `GET /v1/admin/memberships?organizationId=…` | Membership metadata; no local profile/connections/sessions |
 | `PUT /v1/admin/memberships/:id` | Creates/replaces `(issuer, subject, organization)` roles and groups |
 | `DELETE /v1/admin/memberships/:id` | Revokes the membership immediately |
@@ -283,6 +285,14 @@ Admin writes require UUID organization/membership identifiers, an issuer already
 trusted authority registry,
 a non-empty stable subject, and arrays of bounded role/group strings. Revocation deletes the
 authoritative row; no cache can restore it.
+
+The first-owner endpoints use the same private admin file credential and are never mounted on a
+public bootstrap route. The installer checks status before prompting, then sends the password only
+over the container-local Accounts listener. Creation stores one Keycloak identity and one
+organization-scoped `owner`/`admin` membership in a serialized operation. A rerun never changes an
+existing identity or password. An interrupted pre-commit Keycloak identity is marked so the same
+protected operation can remove only that orphan and retry safely. The separate Vault unlock prompt
+continues to derive Vault encryption keys and is not an Accounts credential.
 
 ## PostgreSQL storage
 

@@ -24,7 +24,34 @@ The direct `curl | sudo bash` entry point remains available for source checkouts
 curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/deploy/server/install.sh | sudo bash
 ```
 
-Compose builds the Vault, Files, and Projects images from the exact resolved source commit. Kubernetes defaults to CI-published `sha-<12 characters>` images for that commit and proves their manifests are available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agent and workflow runtime wiring remains outside this server-console kit.
+For a checked-out commit inside the native Sulla VM, start with this server kit rather than the repository's Desktop development Compose file:
+
+```bash
+sudo SULLA_BUNDLE_DIR="$PWD/deploy/server" \
+  SULLA_BUNDLE_SOURCE_SHA="$(git rev-parse HEAD)" \
+  SULLA_SOURCE_SHA="$(git rev-parse HEAD)" \
+  bash deploy/server/install.sh
+```
+
+Compose asks explicitly whether the console shell is `standalone` or `native-lima`. The standalone choice runs the console container and remains the default for ordinary servers. Inside Sulla Desktop's Lima VM, `native-lima` reuses the persistent listener that Desktop already installs at `host.docker.internal:30121`; that listener runs as the unprivileged `sulla-console` user, and Compose does not start a second console container. The server kit does not install this listener. It refuses `native-lima` when the bundled OpenRC service is absent, starts that service when needed, waits at most 30 seconds for its health endpoint, and proves a Docker bridge container can reach it before rolling out the server stack.
+
+The installer writes the real server configuration to `/opt/sulla/server/server.env` and invokes `/opt/sulla/server/compose.yaml`. To restart that generated installation directly in the VM:
+
+```bash
+sudo bash -c 'set -a; . /opt/sulla/server/server.env; set +a; exec /usr/bin/docker -H unix:///run/docker.sock compose --env-file /dev/null -f /opt/sulla/server/compose.yaml up -d'
+```
+
+The repository's root Desktop Compose remains a desktop-mode development runtime. Installing a native shell or setting initial source-directory/port variables does not switch domain services into server mode; the server kit's generated environment and Compose file do that explicitly.
+
+Compose builds the seven server services (Accounts/Keycloak, Vault, Files, Projects, Agents, Workflows, and Tools), the agent runner image, and, in standalone mode, the independent console from the exact resolved source commit. Kubernetes defaults to CI-published `sha-<12 characters>` images for that commit and proves their manifests are available before changing the cluster. A custom pinned image tag or digest is also accepted and its pull is verified by the rollout. Agents and Workflows receive private Accounts service credentials, isolated databases, Redis, the Docker runtime socket, and configured runner images. They also share a separate generated service-token file for their private workload API: Workflows reaches Agents at `http://agents:8789` under Compose (`http://sulla-agents:8789` in Kubernetes), and Agents receives the same secret as `SULLA_WORKFLOWS_SERVICE_TOKEN_FILE`. This token is never reused as an Accounts token or as the installation API token.
+
+The gateway exposes only Accounts `/v1/web`, the Sulla Keycloak realm/resources, each service's `/ui` and public API prefix, and the console. Accounts private/admin/bootstrap paths remain internal. Files' public API is deliberately `/services/files/api/v1/...` and maps to the service's `/v1/...` without adding a second `v1`. The public Accounts/Keycloak origin must be the real external HTTPS origin in server deployments; do not configure a container-local `localhost` URL. Vault, Files, Projects, Agents, and Workflows resolve browser sessions through Accounts with distinct service credentials. The generated Accounts token map uses the service IDs `accounts`, `vault`, `files`, `projects`, `agents`, and `workflows`; resource audiences remain `sulla-accounts` through `sulla-workflows`. Files and Projects do not receive their legacy JWT verification settings when Accounts is configured.
+
+Tools derives the same capability-signing key as Agents and Workflows from the generated installation API token. A Desktop executor is optional: leave both `SULLA_DESKTOP_EXECUTOR_URL` and `SULLA_DESKTOP_EXECUTOR_TOKEN` blank to run the local catalog without host fallback, or configure both together (with a token of at least 32 characters). Tools executes the `files`, `pg`, `redis`, and `project` catalog categories in the server process. Every other target requires a configured executor today: controller operations (the `agents` category and agent-control operations), workflow-manager operations, agent-local filesystem/workspace/exec and Git operations, and all remaining desktop-local categories such as browser, calendar, Docker, Kubernetes, notifications, settings, integrations, and host-app automation. Without an executor those targets fail closed as unconfigured; the kit never invents a host endpoint.
+
+The gateway derives `X-Forwarded-Proto` from the configured public URL and ignores any client-supplied forwarding scheme. If TLS terminates at an ingress or reverse proxy, keep `SULLA_PUBLIC_URL` set to the browser-visible `https://` origin.
+
+The service images and runner images are separate contracts. Compose builds the agent runner locally and records its exact tag in `server.env`; Kubernetes requires an explicitly pinned runner image. The generated Docker network name is passed to both managers instead of assuming a Compose project name. Provider-backed agent execution additionally requires private OpenAI or Anthropic key files configured for the Agents service. The current Workflows image must propagate its server runner environment before runner containers can execute, and workflow nodes that launch agents additionally require its server agent launcher. These are workload-image dependencies, not values the deployment kit can replace with manifest placeholders.
 
 Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physical machines cannot join that private cluster as nodes. A multi-server cluster therefore needs k3s installed natively on Ubuntu, which is what these scripts do.
 
@@ -134,9 +161,9 @@ On the first server:
 sudo ./deploy-sulla.sh
 ```
 
-The installer generates PostgreSQL, JWT, bootstrap, and Projects runtime-role secrets once and saves them in `server.env` with mode `0600`. Projects creates its isolated `sulla_projects` database and runs migrations as the `sulla` owner, while requests use the non-superuser, non-`BYPASSRLS` `sulla_projects_service` role. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for every Deployment, and prints the final Pods, PVCs, and Services. For an existing cluster, the selected context is flattened into a root-readable task kubeconfig and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
+The installer generates PostgreSQL, Vault JWT, bootstrap, Accounts service, shared capability, executor, and Projects runtime-role secrets once and saves them in `server.env` with mode `0600`. Projects creates its isolated `sulla_projects` database and runs migrations as the `sulla` owner, while requests use the non-superuser, non-`BYPASSRLS` `sulla_projects_service` role. The deploy script applies those values through a Kubernetes Secret, renders the selected storage and pinned image settings, waits for every Deployment, and prints the final Pods, PVCs, and Services. For an existing cluster, the selected context is flattened into a root-readable task kubeconfig and used explicitly on every call. Rerunning it preserves the same cluster target, secrets, and database volume. If an unrelated `sulla` namespace already exists, deployment stops before changing its Secrets or PVCs.
 
-Projects is routed at `/projects-api/v1/`; other `/projects-api/` paths, including the container health endpoint, are not exposed. Server requests require a bearer JWT signed with `SULLA_PROJECTS_JWT_SECRET`, issuer `sulla-server`, audience `sulla-projects`, a subject and expiry, an `org_id` or `tenant_id`, and an optional `projects_role` of `viewer`, `editor`, or `admin` (default `viewer`). The install kit configures verification but does not mint user tokens; the server identity layer must issue those claims before external clients can use the API. Keep the signing secret in `server.env` or the Kubernetes Secret, never in client configuration.
+Projects is routed at `/services/projects/api/v1/`; other Projects paths, including the container health endpoint, are not exposed. Browser requests use the Accounts session cookie and Projects resolves organization and role context through its private Accounts credential. The legacy Projects JWT secret and issuer are not injected in server mode.
 
 PostgreSQL stays `ClusterIP`. The wizard can create an Ingress or leave routing to an existing ingress. It prints the real console login URL only after rollout and first-owner bootstrap succeed.
 
