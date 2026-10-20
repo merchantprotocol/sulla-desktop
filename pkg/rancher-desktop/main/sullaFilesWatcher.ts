@@ -1,3 +1,4 @@
+import { traceAsync, traceEvent } from '@pkg/utils/startupTrace';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -194,7 +195,7 @@ class SullaFilesWatcher {
     if (this.lockPromise) await this.lockPromise;
     this.lockGeneration++;
     this.unlockPermitted = true;
-    await this.ensureUnlocked();
+    await traceAsync('files ensureUnlocked', () => this.ensureUnlocked());
   }
 
   private async ensureUnlocked(): Promise<void> {
@@ -203,7 +204,7 @@ class SullaFilesWatcher {
     this.assertUnlockGeneration(generation);
     await this.requireAppUnlocked();
     this.assertUnlockGeneration(generation);
-    const response = await this.rawLocalRequest('/healthz');
+    const response = await traceAsync('files /healthz', () => this.rawLocalRequest('/healthz'));
 
     this.assertUnlockGeneration(generation);
     if (!response.ok) throw new Error('Files service is unavailable');
@@ -214,7 +215,7 @@ class SullaFilesWatcher {
     if (typeof health.locked !== 'boolean') throw new Error('Files service requires a keychain-compatible update');
     if (!health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state)) throw new Error('Files service requires a legacy-preflight-compatible update');
     if (health.locked) {
-      const result = await this.bootstrap.initialize();
+      const result = await traceAsync('files secure bootstrap', () => this.bootstrap.initialize());
 
       this.assertUnlockGeneration(generation);
       if (!result.ok || result.state !== 'unlocked') throw new Error(result.code ?? 'Files secure bootstrap failed');
@@ -224,7 +225,7 @@ class SullaFilesWatcher {
     unlockSullaFilesSourceGateway();
     if (this.nativeEnabled) {
       const handles = getSullaFilesSourceGateway().activeHandles();
-      const revalidated = await this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) });
+      const revalidated = await traceAsync('files native-sources revalidate', () => this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) }));
 
       this.assertUnlockGeneration(generation);
       if (!revalidated.ok) throw new Error('Native source sessions could not be revalidated');
@@ -241,7 +242,8 @@ class SullaFilesWatcher {
       // unlock; it must not make Files unlock fail or block desktop startup.
       // Not awaited: the mount manager retries on its own schedule, and the
       // guest mount must never hold up unlock or startup.
-      getSullaFilesMountManager().start(() => this.fuseMountCredentials()).catch(error => {
+      traceEvent('ensureUnlocked: handing off to mount manager (not awaited)');
+      traceAsync('mount manager start', () => getSullaFilesMountManager().start(() => this.fuseMountCredentials())).catch(error => {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
     }
@@ -347,12 +349,12 @@ class SullaFilesWatcher {
     this.nativeEnabled = sullaFilesNativeSourceRolloutRequested();
     const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
     const registry = getSullaFilesRootRegistry();
-    await registry.startBookmarks();
+    await traceAsync('files startBookmarks', () => registry.startBookmarks());
     app.once('before-quit', () => { registry.stopBookmarks(); this.shutdown().catch(error => console.warn('[SullaFiles] shutdown failed:', error)) }); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
     if (process.platform === 'darwin') {
       try { await spawnFile('/usr/bin/defaults', ['write', 'group.io.sulla.desktop', 'FilesRoot', this.folder]) } catch (error) { console.warn('[SullaFiles] Finder extension root configuration failed:', error) }
     }
-    for (const root of await registry.stored()) {
+    for (const root of await traceAsync('files registry.stored', () => registry.stored())) {
       try {
         const watcher = fs.watch(root.path, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => {
           if (!filename) return;
