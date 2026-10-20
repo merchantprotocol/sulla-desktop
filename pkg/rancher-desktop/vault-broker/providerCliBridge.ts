@@ -126,6 +126,8 @@ export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
   listenHost?:     string;
   /** Optional service hostname visible from the provider container. */
   advertisedHost?: string;
+  /** Map the ephemeral listen port to a caller-reachable HTTP origin. */
+  advertisedOrigin?: (port: number) => string;
 }
 
 export interface ProviderCliOpaqueConfig {
@@ -387,7 +389,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
     throw new Error('Provider CLI bridge did not bind a TCP port');
   }
   const visibleHost = advertisedHost ?? listenHost;
-  const visibleOrigin = `http://${ visibleHost }:${ address.port }`;
+  const visibleOrigin = options.advertisedOrigin?.(address.port) ?? `http://${ visibleHost }:${ address.port }`;
   const endpointBase = `${ visibleOrigin }${ scopedPrefix }`;
   // Codex's Responses provider appends `/responses`; Anthropic's SDK appends
   // `/v1/messages` to its base URL.
