@@ -60,7 +60,7 @@ export class ToolRegistry {
   ];
 
   private categoryDescriptions: Record<string, string> = {
-    applescript:        'Execute AppleScript to control macOS applications (Calendar, Reminders, Mail, Finder, etc.) that the user has enabled in Computer Use Settings.',
+    applescript:        'Execute AppleScript to control macOS applications when Administrative Access is enabled.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     memory:             'Tools for the memory recall subconscious agent — Redis citation index lookup/store, tool discovery, and catalog browsing.',
     observation:        'Observational memory tools for the subconscious observation curator agent.',

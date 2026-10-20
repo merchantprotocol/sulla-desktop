@@ -471,11 +471,6 @@ export interface IpcMainInvokeEvents {
   'secretary-mode:reveal-notes':           (notesPath: string) => { ok: boolean };
   // #endregion
 
-  // #region Computer Use
-  'computer-use:request-permission': (appName: string) => { ok: boolean; status: 'granted' | 'denied' | 'error'; error?: string };
-  'computer-use:health-check':       (appNames: string[]) => Record<string, { ok: boolean; status: string; error?: string }>;
-  // #endregion
-
   // #region Filesystem
   'files-ui:status':        () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:native-runtime': () => import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus;

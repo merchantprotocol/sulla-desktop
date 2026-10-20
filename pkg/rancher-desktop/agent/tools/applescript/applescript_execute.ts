@@ -46,7 +46,7 @@ export function stripFocusSteal(script: string): string {
 
 /**
  * AppleScript Execute Tool — dynamically runs AppleScript to control
- * macOS applications that the user has enabled in Computer Use Settings.
+ * macOS applications when Administrative Access is enabled.
  */
 export class ApplescriptExecuteWorker extends BaseTool {
   name = '';
@@ -67,36 +67,6 @@ export class ApplescriptExecuteWorker extends BaseTool {
       return {
         successBoolean: false,
         responseString:  'Both target_app and script are required.',
-      };
-    }
-
-    // The global BaseTool gate has already required Administrative Access.
-    // AppleScript also requires the human-managed per-app allowlist. Agents
-    // may inspect this setting, but they must never grant themselves access.
-    try {
-      const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
-      const { APP_REGISTRY } = await import('../../../main/computerUseSettings/appRegistry');
-      const appEntry = APP_REGISTRY.find(
-        (app) => app.name.toLowerCase() === String(target_app).toLowerCase(),
-      );
-      if (!appEntry) {
-        return {
-          successBoolean: false,
-          responseString:  `Unknown application: "${ target_app }". Known targets: ${ APP_REGISTRY.map(app => app.name).join(', ') }.`,
-        };
-      }
-      const stored = await SullaSettingsModel.get('computerUse.enabledApps', '{}');
-      const enabledApps: Record<string, boolean> = typeof stored === 'string' ? JSON.parse(stored) : (stored || {});
-      if (!enabledApps[appEntry.bundleId]) {
-        return {
-          successBoolean: false,
-          responseString:  `${ target_app } is disabled in Computer Use Settings. Only the human can enable applications under Preferences → Application → Computer Use.`,
-        };
-      }
-    } catch (error) {
-      return {
-        successBoolean: false,
-        responseString:  `Failed to resolve app permissions: ${ (error as Error).message }`,
       };
     }
 

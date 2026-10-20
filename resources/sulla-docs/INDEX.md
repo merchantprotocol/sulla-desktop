@@ -65,7 +65,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `knowledge.md` — Knowledge Base nodes, Projects associations, scoped recall, and the two-sided tool surface
 - `ledger.md` — historical: `~/sulla/ledger/` markdown archive + leftover `ledger_scoreboard` tool. Not the pick-path.
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
-- `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms
+- `applescript.md` — Drive macOS apps via AppleScript; Administrative Access + macOS Automation perms
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
 - `ui.md` — Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat via `ui/open_tab`
 - `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 6 kinds

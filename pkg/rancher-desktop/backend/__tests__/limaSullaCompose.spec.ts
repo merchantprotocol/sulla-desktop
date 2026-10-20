@@ -58,7 +58,7 @@ jest.unstable_mockModule('@pkg/main/credentialServer/httpCredentialHelperServer'
 jest.unstable_mockModule('@pkg/sulla', () => stubs('afterBackgroundLoaded hookSullaEnd initiateWindowContext ' +
   'instantiateSullaStart markSullaDockerServicesStarted onMainProxyLoad sullaEnd'));
 jest.unstable_mockModule('@pkg/window', () => stubs('centerDialog closeExtension createWindow getWindow openAudioSettings ' +
-  'openCaptureStudio openComputerUseSettings openDenyRootDialog openDialog openDockerDashboard openExtension ' +
+  'openCaptureStudio openDenyRootDialog openDialog openDockerDashboard openExtension ' +
   'openFirstRunDialog openKubernetesErrorMessageWindow openLanguageModelSettings openMain openSudoPrompt ' +
   'openUnmetPrerequisitesDialog openUpdatesWindow openUrlInApp restoreWindow send showMessageBox webRoot windowMapping'));
 jest.unstable_mockModule('@pkg/sudo-prompt', () => ({ exec: noop }));

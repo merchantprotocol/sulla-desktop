@@ -190,11 +190,6 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'process-manager.html'),
       filename: 'process-manager.html',
     },
-    'computer-use-settings': {
-      entry:    path.join(import.meta.dirname, 'entry', 'computer-use-settings.ts'),
-      template: path.join(import.meta.dirname, 'public', 'computer-use-settings.html'),
-      filename: 'computer-use-settings.html',
-    },
     updates: {
       entry:    path.join(import.meta.dirname, 'entry', 'updates.ts'),
       template: path.join(import.meta.dirname, 'public', 'updates.html'),

@@ -257,10 +257,7 @@ The ONE project-state store — a plain board; agents drive the work (the accoun
 → See [`tools/models.md`](models.md)
 
 ## applescript — macOS app automation (5 tools)
-- `sulla applescript/applescript_execute` — Drive a `target_app` via AppleScript (per-app allowlist); every call logged to `applescript_audit`.
-- `sulla applescript/computer_use_list` — List allowlisted apps + enabled state.
-- `sulla applescript/computer_use_enable` — Enable an app target.
-- `sulla applescript/computer_use_disable` — Disable an app target.
+- `sulla applescript/applescript_execute` — Drive a `target_app` via AppleScript when Administrative Access is enabled; every call is logged to `applescript_audit`.
 - `sulla applescript/audit_log` — Query the AppleScript audit log (filter by target_app / only_failures / since).
 
 → See [`tools/applescript.md`](applescript.md), [`tools/computer-use.md`](computer-use.md)

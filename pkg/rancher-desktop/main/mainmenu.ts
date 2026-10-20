@@ -7,7 +7,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { openProcessManager } from '@pkg/window/processManager';
@@ -677,11 +677,6 @@ function getMacApplicationMenu(): MenuItem[] {
           label:       'Audio Settings…',
           accelerator: 'CmdOrCtrl+Alt+U',
           click:       openAudioSettings,
-        },
-        {
-          label:       'Computer Use Settings\u2026',
-          accelerator: 'CmdOrCtrl+Shift+C',
-          click:       openComputerUseSettings,
         },
         { type: 'separator' },
         { role: 'services' },
