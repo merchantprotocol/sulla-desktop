@@ -1283,6 +1283,7 @@ function beginDragPreparation(entries:DisplayEntry[],collectionId:string,anchorK
   return dragPreparation;
 }
 function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
+  if (readOnlyArea.value) { event.preventDefault(); return }
   if (section.value !== 'files' || busy.value || loading.value || !event.dataTransfer) { event.preventDefault(); return }
   const entries=dragEntriesFor(entry);
   const collectionId=snapshot.value?.collection.id;
@@ -1631,6 +1632,7 @@ async function commitRename(entry:DisplayEntry) {
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
 async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
 async function copyToClipboard(mode:'copy' | 'cut') {
+  if (readOnlyArea.value && mode === 'cut') return;
   if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return;
   const collectionId=snapshot.value.collection.id; const entries=[...selectedEntries.value]; const sourceCapability=props.dataSource.capabilities.crossCollectionOperations ?? 'unavailable';
   busy.value=true; operationError.value='';
