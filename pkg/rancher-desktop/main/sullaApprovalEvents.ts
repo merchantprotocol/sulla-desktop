@@ -29,6 +29,23 @@ export function initSullaApprovalEvents(): void {
       if (!window.isDestroyed() && /^(file:|app:)/.test(window.webContents.getURL())) window.webContents.send('decisions:changed', record);
     }
   });
+  // Agent file publish requests: once the human decides in Decide, apply the
+  // decision to Files as the human (agents are not allowed to publish).
+  const filesDecisions = new Set<string>();
+  decisionService.subscribe(record => {
+    const requestId = record.payload?.filesPublishRequestId;
+    if (!requestId || record.kind !== 'approval' || !['approved', 'denied', 'expired'].includes(record.status) || filesDecisions.has(record.id)) return;
+    filesDecisions.add(record.id);
+    const action = record.status === 'approved' ? 'approve' : 'reject';
+    void import('@pkg/main/sullaFilesClient')
+      .then(({ getSullaFilesClient }) => getSullaFilesClient().request(`/v1/files/publish-requests/${ encodeURIComponent(requestId) }/${ action }`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      }))
+      .then(response => {
+        if (!response.ok && response.status !== 409) console.error(`Files publish request ${ requestId } ${ action } failed: HTTP ${ response.status }`);
+      })
+      .catch(error => console.error(`Files publish request ${ requestId } ${ action } failed:`, error));
+  });
   const trusted = (event: Electron.IpcMainInvokeEvent) => {
     if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame ||
         !/^(file:|app:)/.test(event.senderFrame?.url || '')) throw new Error('Only the Desktop application can decide.');
