@@ -829,7 +829,11 @@
     <dialog v-if="folderDetails" ref="folderDialog" class="folder-details" aria-labelledby="folder-details-title" @close="folderDetails = null" @click="onFolderBackdrop">
       <h2 id="folder-details-title">{{ folderDetails.name }}</h2>
       <dl><dt>Type</dt><dd>Folder</dd><dt>Location</dt><dd>{{ folderDetails.path }}</dd><dt>Files</dt><dd>{{ folderDetails.childCount }}</dd><dt>Size</dt><dd>{{ formatBytes(folderDetails.size) }}</dd><dt>Modified</dt><dd>{{ formatDate(folderDetails.updatedAt, true) }}</dd></dl>
+      <p v-if="folderDetails.folderState?.needsDescription" class="folder-guidance-warning">Needs description</p>
+      <label class="folder-guidance-field">Description<textarea v-model="folderDescription" :disabled="busy" maxlength="2000" placeholder="What belongs in this folder?" /></label>
+      <label class="folder-guidance-field">Naming hint<input v-model="folderNamingHint" :disabled="busy" maxlength="500" placeholder="Example: project-YYYY-MM-DD.md" /></label>
       <button class="btn" type="button" @click="folderDialog?.close()">Close</button>
+      <button v-if="dataSource.updateFolderDescription && folderDetails.folderState" class="btn" type="button" :disabled="busy || !folderDescription.trim()" @click="saveFolderGuidance">Save description</button>
       <button class="btn pri" type="button" @click="openPath(folderDetails.path); folderDialog?.close()">Open folder</button>
     </dialog>
     <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
@@ -929,6 +933,7 @@ const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 
 const recentApplications = ref<string[]>([]);
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
+const folderDescription=ref(''); const folderNamingHint=ref('');
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const operationNotice = ref('');
 const editingKey = ref(''); const renameValue = ref(''); let renameCommitting = false;
@@ -1325,7 +1330,8 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   else if (event.key === 'Escape') { event.preventDefault(); clearSelection() }
   else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); openActions(entry, event) }
 }
-async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
+async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; folderDescription.value=entry.folderState?.description??''; folderNamingHint.value=entry.folderState?.namingHint??''; await nextTick(); folderDialog.value?.showModal() }
+async function saveFolderGuidance(){const details=folderDetails.value;const state=details?.folderState;if(!details||!state||!props.dataSource.updateFolderDescription||!folderDescription.value.trim())return;const saved=await runMutation(()=>props.dataSource.updateFolderDescription!(state.folderId,folderDescription.value.trim(),folderNamingHint.value.trim()||undefined));if(saved){folderDialog.value?.close();folderDetails.value=null}}
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
@@ -2387,6 +2393,6 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
   .upl { display: none; }
   .detail-panel { width: calc(100% - 64px); }
 }
-.details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}
+.details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}.folder-guidance-warning{color:var(--warning);font-size:12px}.folder-guidance-field{display:block;margin:14px 0;color:var(--dim);font-size:12px}.folder-guidance-field textarea,.folder-guidance-field input{display:block;box-sizing:border-box;width:100%;margin-top:6px;border:1px solid var(--line-2);border-radius:8px;background:var(--paper);color:var(--text);padding:9px}.folder-guidance-field textarea{min-height:76px;resize:vertical}
 .more-system-areas{border:0;background:transparent;color:var(--muted);text-align:left;padding:6px 12px;font-size:11px;cursor:pointer}
 </style>

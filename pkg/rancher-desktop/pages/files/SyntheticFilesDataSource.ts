@@ -258,7 +258,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     return isFilesOperationState(a) && isFilesOperationState(b) && a.collectionId === b.collectionId && a.fileId === b.fileId && a.path === b.path && a.versionId === b.versionId && a.revision === b.revision && a.deleted === b.deleted;
   }
   private folderState(folder:FilesFolderState, collectionId:string):FilesFolderState {
-    return { collectionId, folderId: folder.folderId, path: folder.path, revision: folder.revision };
+    return { collectionId, folderId: folder.folderId, path: folder.path, revision: folder.revision, description:folder.description, namingHint:folder.namingHint, needsDescription:folder.needsDescription };
   }
   private sameFolderState(a?:FilesFolderState, b?:FilesFolderState) {
     return Boolean(a && b && a.collectionId === b.collectionId && a.folderId === b.folderId && a.path === b.path && a.revision === b.revision);
@@ -360,6 +360,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async chooseUpload(_destination = '') { return 0 }
   async uploadPaths(_paths:string[], _destination = '') { return 0 }
   async createFolder(path:string) { const collection = this.currentCollection(); const value = this.normalizePath(path); if (!this.activeFileAt(collection, value) && !this.activeFolderAt(collection, value)) collection.folders.push({ folderId: this.nextId('synthetic-folder'), path: value, revision: this.nextRevision() }); this.persist() }
+  async updateFolderDescription(folderId:string,description:string,namingHint?:string) { const folder=this.currentCollection().folders.find(item=>item.folderId===folderId); if(folder){folder.description=description;folder.namingHint=namingHint;folder.needsDescription=false;folder.revision=this.nextRevision();this.persist()} }
   async openFolder() {}
   async openFile() {}
   async downloadFile() { return false }

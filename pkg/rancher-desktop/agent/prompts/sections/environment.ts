@@ -32,7 +32,8 @@ For simple text: use markdown.`;
  */
 export function buildEnvironmentDynamic(ctx: PromptBuildContext): string {
   const installedExtensions = ctx.templateVars['{{installed_extensions}}'] || '';
-  return installedExtensions ? installedExtensions : '';
+  const folderMap = ctx.templateVars['{{folder_map}}'] || '';
+  return [folderMap, installedExtensions].filter(Boolean).join('\n\n');
 }
 
 export function buildEnvironmentSection(ctx: PromptBuildContext): PromptSection | null {

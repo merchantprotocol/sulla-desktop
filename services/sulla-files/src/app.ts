@@ -53,6 +53,25 @@ function cleanPath(value:unknown, allowEmpty = true):string {
   return path;
 }
 
+function folderGuidance(value:unknown, field:'description'|'namingHint', required = false):string | null {
+  if (value === undefined || value === null || value === '') {
+    if (required) throw new HttpError(400, `${ field } is required when an agent creates a folder`);
+    return null;
+  }
+  if (typeof value !== 'string') throw new HttpError(400, `${ field } must be a string`);
+  const text=value.trim(); const limit=field==='description'?2000:500;
+  if (!text || text.length>limit) throw new HttpError(400, `${ field } must be between 1 and ${ limit } characters`);
+  return text;
+}
+
+function suggestedFileName(what:string, kind?:string):string {
+  const stem=what.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60) || 'new-file';
+  const normalized=(kind??'').toLowerCase().replace(/^\./,'');
+  const extensions:Record<string,string>={markdown:'md',document:'md',text:'txt',json:'json',yaml:'yaml',csv:'csv',image:'png',screenshot:'png',video:'mp4',audio:'m4a'};
+  const extension=extensions[normalized] ?? (/^[a-z0-9]{1,8}$/.test(normalized)?normalized:'');
+  return extension && !stem.endsWith(`.${ extension }`) ? `${ stem }.${ extension }` : stem;
+}
+
 function numberedPath(path:string, index:number):string {
   const slash = path.lastIndexOf('/');
   const folder = slash >= 0 ? path.slice(0, slash + 1) : '';
@@ -276,7 +295,7 @@ export function createApp(
   async function audit(request:RequestWithIdentity, action:string, file?:any, details:Record<string, unknown> = {}):Promise<void> {
     const actor=identity(request);
     await db.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,org_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [actor.kind==='capability'?'agent-or-device':'user',actor.userId,actor.deviceId||null,file?.id??null,file?.current_version_id??null,action,details.orgId??null,details])
+      [actor.kind==='capability'?'agent-or-device':'user',actor.userId,actor.jobId??actor.agentId??actor.deviceId??null,file?.id??null,file?.current_version_id??null,action,details.orgId??null,details])
       .catch(error=>console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool',error));
   }
   function sendContent(request:express.Request, response:express.Response, content:{ buffer: Buffer; mime: string }, cache = 'private, max-age=300') {
@@ -541,14 +560,14 @@ export function createApp(
     requireFuseExperiment();
     mountIdentity(request, 'list');
     // Every agent run gets a scratch collection up front; only list the ones that hold something.
-    const collections = await db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea" FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+    const collections = await db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
       AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
       ORDER BY explorer_path,id`);
     const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
       f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
       WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
       ORDER BY f.collection_id,f.path`);
-    const folders = await db.query('SELECT id,collection_id,path FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path');
+    const folders = await db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path");
     response.setHeader('Cache-Control', 'private, no-store');
     const root = collections.rows.find(row => row.tree_path === '') ?? collections.rows.find(row => row.is_default);
     response.json({ rootCollectionId: root?.id ?? null, collections: collections.rows, files: files.rows, folders: folders.rows });
@@ -589,7 +608,9 @@ export function createApp(
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const actor=mountIdentity(request,'create',{collectionId,path:folderPath}); await requireCollection(request, collectionId, 'edit');
     await client.query('BEGIN'); await lockStoredNamespace(client,collectionId); await ensureStoredFolder(client,collectionId,folderPath,actor);
-    await client.query('COMMIT'); response.status(201).json({collectionId,path:folderPath});
+    const createdDescription=`Created by ${actor.agentId??actor.jobId??'agent'} on ${new Date().toISOString().slice(0,10)} — needs description`;
+    await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
+    await client.query('COMMIT'); await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
   } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
   app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
@@ -1157,24 +1178,55 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? '');
     if (!collectionId) throw new HttpError(400, 'collectionId is required');
     await requireCollection(request, collectionId, 'view', true, true);
-    const rows = await db.query('SELECT id,path,operation_revision::text AS revision FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL ORDER BY path', [collectionId]);
-    const visible:(string|{folderId:string;path:string;revision:string})[] = [];
+    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL ORDER BY path", [collectionId]);
+    const visible:(string|{folderId:string;path:string;revision:string;description:string|null;namingHint:string|null;needsDescription:boolean})[] = [];
     for (const row of rows.rows) {
-      try { await requirePath(request, collectionId, row.path, 'view'); visible.push(request.query.details==='true'?{folderId:row.id,path:row.path,revision:row.revision}:row.path) }
+      try { await requirePath(request, collectionId, row.path, 'view'); visible.push(request.query.details==='true'?{folderId:row.id,path:row.path,revision:row.revision,description:row.description,namingHint:row.naming_hint,needsDescription:row.needs_description}:row.path) }
       catch (error:any) { if (error.status !== 403) throw error }
     }
     response.json(visible);
   } catch (error) { next(error) } });
+  app.get('/v1/folders/map', async(request:RequestWithIdentity,response,next)=>{ try {
+    const limit=Math.min(40,Math.max(1,Number(request.query.limit??40)||40));
+    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL`);
+    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' ORDER BY c.explorer_path,f.path`);
+    response.json([...roots.rows,...folders.rows].slice(0,limit).map(row=>({collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description')})));
+  } catch(error){next(error)} });
+  app.get('/v1/folders/where', async(request:RequestWithIdentity,response,next)=>{ try {
+    const what=String(request.query.what??'').trim(); if(!what) throw new HttpError(400,'what is required');
+    const kind=String(request.query.kind??''); const project=String(request.query.project??'');
+    const tokens=[what,kind,project].join(' ').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>1);
+    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL`);
+    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)'`);
+    const ranked=[...roots.rows,...folders.rows].map(row=>{const haystack=`${row.name} ${row.path} ${row.description} ${row.naming_hint??''}`.toLowerCase();return{collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description'),score:tokens.reduce((score,token)=>score+(haystack.includes(token)?1:0),0)}}).sort((a,b)=>b.score-a.score||a.path.localeCompare(b.path)).slice(0,10);
+    const suggested=ranked[0]??null; const filename=suggestedFileName(what,kind);
+    response.json({matches:ranked,suggestedFolder:suggested,suggestedFilename:filename,suggestedPath:suggested?[suggested.path,filename].filter(Boolean).join('/'):filename});
+  } catch(error){next(error)} });
+  app.patch('/v1/folders/:id/description', async(request:RequestWithIdentity,response,next)=>{ try {
+    const current=(await db.query('SELECT * FROM file_folders WHERE id=$1 AND deleted_at IS NULL',[request.params.id])).rows[0]; if(!current) throw new HttpError(404,'folder not found');
+    await requirePath(request,current.collection_id,current.path,'edit'); const description=folderGuidance(request.body.description,'description'); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
+    const updated=(await db.query('UPDATE file_folders SET description=$2,naming_hint=$3,updated_at=NOW() WHERE id=$1 RETURNING id AS "folderId",collection_id AS "collectionId",path,operation_revision::text AS revision,description,naming_hint AS "namingHint"',[current.id,description,namingHint])).rows[0];
+    await audit(request,'change-folder-description',undefined,{collectionId:current.collection_id,folderPath:current.path,description,namingHint}); response.json({...updated,needsDescription:false});
+  } catch(error){next(error)} });
+  app.patch('/v1/collections/:id/description', async(request:RequestWithIdentity,response,next)=>{ try {
+    await requireCollection(request,request.params.id,'manage'); const description=folderGuidance(request.body.description,'description'); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
+    const updated=(await db.query('UPDATE collections SET description=$2,naming_hint=$3,updated_at=NOW() WHERE id=$1 RETURNING id,name,description,naming_hint AS "namingHint"',[request.params.id,description,namingHint])).rows[0];
+    await audit(request,'change-collection-description',undefined,{collectionId:request.params.id,description,namingHint}); response.json(updated);
+  } catch(error){next(error)} });
   app.post('/v1/folders', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const collectionId = String(request.body.collectionId ?? '');
     const folderPath = cleanPath(request.body.path, false);
     await requirePath(request, collectionId, folderPath, 'edit');
-    const actor = identity(request);
+    const actor = identity(request); const agentCreated=Boolean(actor.agentId||actor.jobId);
+    const description=folderGuidance(request.body.description,'description',agentCreated); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
     await client.query('BEGIN');
     await lockStoredNamespace(client, collectionId);
     await ensureStoredFolder(client, collectionId, folderPath, actor);
+    if (description) await client.query('UPDATE file_folders SET description=$3,naming_hint=$4,updated_at=NOW() WHERE collection_id=$1 AND path=$2',[collectionId,folderPath,description,namingHint]);
+    if (agentCreated) { const fallback=`Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description`; await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,storedParentPaths(folderPath),fallback]); }
     await client.query('COMMIT');
-    response.status(201).json({ collectionId, path: folderPath });
+    await audit(request,'create-folder',undefined,{collectionId,folderPath,description,namingHint});
+    response.status(201).json({ collectionId, path: folderPath, description, namingHint, needsDescription:false });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
     const collectionId=String(request.body.collectionId??''); const filePath=cleanPath(request.body.path,false);

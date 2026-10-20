@@ -258,6 +258,16 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
     }
   } catch { /* registry not available */ }
 
+  // Compact, DB-backed Files placement guide. Failure is non-fatal while Files is locked.
+  let folderMap = '';
+  try {
+    const { filesContainerJson } = await import('../files/containerClient');
+    const folders=await filesContainerJson<Array<{collectionName:string;path:string;description:string;namingHint?:string;needsDescription?:boolean}>>('/v1/folders/map?limit=38',{});
+    if (folders.length) folderMap=`## Folder map
+Check \`files_where\` before saving. Prefer described folders; if none fits, create a sensible folder with a description.
+${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`:''}: ${folder.description}${folder.namingHint?` (names: ${folder.namingHint})`:''}${folder.needsDescription?' [needs description]':''}`).join('\n')}`;
+  } catch { /* Files may be locked during bootstrap */ }
+
   // Installed extensions
   let installedExtensions = '';
   try {
@@ -291,6 +301,7 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
     '{{skills_index}}':         skillsIndex,
     '{{tool_categories}}':      categoriesText,
     '{{installed_extensions}}':  installedExtensions,
+    '{{folder_map}}':             folderMap,
   };
 }
 

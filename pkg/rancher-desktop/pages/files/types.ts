@@ -173,7 +173,7 @@ export interface FilesOperationCapabilities {
   folderCollisionPolicies:FilesCollisionPolicy[];
   crossCollectionOperations:FilesCrossCollectionCapability;
 }
-export interface FilesFolderState { collectionId?:string; folderId:string; path:string; revision:string }
+export interface FilesFolderState { collectionId?:string; folderId:string; path:string; revision:string; description?:string|null; namingHint?:string|null; needsDescription?:boolean }
 export interface FilesFolderSourceSnapshot {
   collectionId:string;
   path:string;
@@ -424,6 +424,7 @@ export interface FilesDataSource {
   uploadPaths(paths:string[], destination?:string): Promise<number>;
   uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  updateFolderDescription?(folderId:string, description:string, namingHint?:string):Promise<void>;
   createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;

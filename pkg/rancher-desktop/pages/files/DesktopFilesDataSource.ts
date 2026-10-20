@@ -288,6 +288,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+  updateFolderDescription(folderId:string, description:string, namingHint?:string):Promise<void> { return ipcRenderer.invoke('files-ui:update-folder-description', { folderId, description, namingHint }) }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {

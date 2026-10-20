@@ -18,3 +18,7 @@ activates a skill, workflow, agent, function, or recipe. The human activates a
 version with **Publish** in File Manager; publishing an older version is the
 rollback operation. Files outside this path retain the normal human-write
 publishes-immediately behavior.
+
+## Folder placement guidance
+
+Before saving a file, call `files_where` with a short description of what you are saving, its kind, and the project when relevant. Prefer a described folder returned by that tool and follow its naming hint. This is guidance, not a location restriction: if no folder fits, create any sensible folder structure with `files_create_folder`, supplying a useful `description` (and optional `naming_hint`) so the next agent can place related work consistently.
