@@ -248,20 +248,20 @@ sulla meta/spawn_agent '{
 
 ## Where do `agentId` configs live?
 
-Agent configs are database rows in `agent_definitions`, not files under `~/sulla/agents/`. Use `sulla agents/directory` to find a slug. A non-empty `agentId` that matches no enabled agent is rejected with an error; it is not silently run as the default agent.
+Agent definitions are runtime rows in `agent_definitions`, indexed from the published `Sulla/Use Cases/agents/<slug>/agent.json` version in Files. Nothing under `~/sulla/agents/` is read. Use `sulla agents/directory` to find a slug. A non-empty `agentId` that matches no enabled agent is rejected with an error; it is not silently run as the default agent.
 
 ## Hard rules
 
-- **Don't spawn sub-agents in tight loops.** 10 tasks per call, depth 3 — but you can chain calls, and that's how you accidentally DoS yourself.
+- **Don't spawn sub-agents in tight loops.** 10 tasks per call — but you can chain calls, and that's how you accidentally DoS yourself.
 - **`status: "blocked"` is not an error.** Read the unblock_requirement and surface it to the user.
 - **Don't rely on jobIds across restart.** They evaporate. If the work matters durably, write the result to disk or Postgres before the parent agent finishes.
-- **Sub-agents inherit parent metadata** (`isSubAgent: true`, `subAgentDepth`). Don't try to fake these — the depth guard protects you.
+- **Sub-agents inherit parent metadata** (`isSubAgent: true`, `subAgentDepth`). Don't try to fake these. Depth is recorded for tracing and is not enforced in code, so keep chains shallow yourself.
 
 ## Reference
 
 - Tool dir: `pkg/rancher-desktop/agent/tools/agents/`
 - Manifest: `pkg/rancher-desktop/agent/tools/agents/manifests.ts`
-- Agent configs: `~/sulla/agents/`
+- Agent definitions: `Sulla/Use Cases/agents/<slug>/` in Files (see [files-harness.md](../environment/files-harness.md))
 - Channel routing: see `agent-patterns/channels.md`
 
 ### Per-run model and container overrides
@@ -272,4 +272,6 @@ Each task accepts `runLocation: "vm" | "container"`, `model`, and optional `prov
 sulla meta/spawn_agent '{"tasks":[{"model":"gpt-5.4","provider":"codex","runLocation":"container","prompt":"Complete this task"}]}'
 ```
 
-The agent image and canonical container transport support **claude-code** and **codex**. Grok, OpenCode and other providers are rejected explicitly for container runs; there is no VM fallback. The chat agent/model picker has a **Run in container** checkbox scoped to the chat. Existing definition defaults apply until a run location is selected. Container runs retain the Files rslave mount and host aliases; no host home mounts are added. Desktop main/renderer must be rebuilt for these changes; no image rebuild is required.
+Container runs support **claude-code** and **codex** only. Any other provider is rejected for container runs, with no VM fallback. The chat model picker has a **Run in container** checkbox scoped to that chat. Existing definition defaults apply until a run location is selected.
+
+Container runs get `/mnt/sulla-files` through an `rslave` bind mount when the Files mount is available. They reach host services through the `sulla-host-relay` socket on the `sulla-agents` network, not through IP addresses. No host home directory is mounted.

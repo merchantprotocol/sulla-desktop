@@ -39,8 +39,10 @@ FUSE adapter and service. Crypto-wallet data is never admitted to the tree.
 
 There are no agent ACLs, per-file permission gates, allow-all switches or
 scratch-run policies. Agents can read and write non-system files through the
-Files API and FUSE. Authentication is still required: the service token
-`x-sulla-files-token` is not an agent permission policy.
+Files API and FUSE, but every agent write creates a draft version (see
+[Versions, drafts, and approval](#versions-drafts-and-approval)). Authentication
+is still required: the service token `x-sulla-files-token` is not an agent
+permission policy.
 
 Sharing is retained: collection/folder/file sharing, share links and the
 **Shared by me** view are separate from agent permission gating.
@@ -59,11 +61,12 @@ adapter, not by agent ACLs. Audit files are append-only JSONL at
 `Logs/audit/files/<file-id>.jsonl` and `Logs/audit/vault/<secret-id>.jsonl`.
 Each line has `ts`, `actor`, `action`, `subjectKind`, `subjectId`, `path`,
 `result`, `requestId`, `prevHash`, and `hash`; optional `meta` must not contain
-secret values. The writer drains `files_audit_spool` in order and retains
-failed appends for retry. These files supplement existing database audit data.
+secret values. The writer drains `files_audit_spool` in order. These files
+supplement existing database audit data.
 
 Use Cases folders are the file authority; database definitions are runtime
-indexes. See [files-first.md](files-first.md) for the approved design.
+indexes. Agents should follow [files-harness.md](files-harness.md) for the
+working rules. See [files-first.md](files-first.md) for the approved design.
 
 ## Desktop bootstrap
 
@@ -112,5 +115,7 @@ publish as the human identity and reports the outcome to the requesting chat.
 The File Manager shows published content to humans, marks files with an unpublished
 draft as **Draft pending**, and lists each version as Draft, Published, or
 Superseded. A record lock or an active retention policy is enforced by the Files
-service for every caller, including agents and FUSE; modify, rename, and delete
-attempts fail with a lock response (FUSE maps this to `EROFS`/`EPERM`).
+service for every caller, including agents and FUSE. New versions and deletes of
+a locked or retained file fail with HTTP 423 `FILE_LOCKED`. FUSE reports that as
+`EROFS`. Other HTTP 409 conflicts (for example, a checkout held by someone else)
+report as `EPERM`.
