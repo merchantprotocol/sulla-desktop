@@ -34,13 +34,13 @@
             class="sulla-showcase-art"
             aria-hidden="true"
           >
+            <span class="sulla-showcase-ring r1" />
+            <span class="sulla-showcase-ring r2" />
             <svg
               viewBox="0 0 48 48"
-              width="44"
-              height="44"
               fill="none"
               stroke="currentColor"
-              stroke-width="2"
+              stroke-width="1.4"
               stroke-linecap="round"
               stroke-linejoin="round"
             >
@@ -67,6 +67,17 @@
             >
               {{ current.body }}
             </p>
+            <ul
+              class="sulla-showcase-points"
+              data-test="slide-points"
+            >
+              <li
+                v-for="point in current.points"
+                :key="point"
+              >
+                {{ point }}
+              </li>
+            </ul>
           </div>
         </article>
       </Transition>
@@ -158,7 +169,7 @@ export default defineComponent({
   name:  'StartupShowcase',
   props: {
     slides:      { type: Array as PropType<ShowcaseSlide[]>, default: () => SHOWCASE_SLIDES },
-    intervalMs:  { type: Number, default: 6000 },
+    intervalMs:  { type: Number, default: 12000 },
     /** Injected for tests; defaults to the lazy catalog count. */
     countLoader: { type: Function as PropType<() => Promise<number | null>>, default: loadIntegrationCount },
   },
@@ -304,74 +315,128 @@ export default defineComponent({
   --sc-read: var(--nx-read-2, var(--text-secondary, #c9d1d9));
   --sc-accent: var(--nx-accent, #5096b3);
   --sc-hair: var(--nx-hair-strong, rgba(168, 192, 220, 0.16));
-  --sc-surface: var(--nx-surface, var(--bg-surface, #161b22));
 
   position: relative;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  border-radius: 18px;
-  padding: 22px 24px 16px;
-  background: color-mix(in srgb, var(--sc-surface) 88%, transparent);
-  box-shadow: inset 0 0 0 1px var(--sc-hair);
+  height: 100%;
+  min-height: 0;
+  padding: 32px 48px 12px;
   outline: none;
 }
 
 .sulla-showcase:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--sc-hair), 0 0 0 2px var(--sc-accent);
+  box-shadow: inset 0 0 0 2px var(--sc-accent);
 }
 
 .sulla-showcase-viewport {
-  min-height: 132px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
 }
 
 .sulla-showcase-slide {
-  display: flex;
-  gap: 18px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) 3fr;
+  gap: clamp(24px, 5vw, 64px);
+  align-items: center;
+  width: 100%;
+  max-width: 62rem;
+  margin: 0 auto;
 }
 
 .sulla-showcase-art {
-  flex-shrink: 0;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
+  aspect-ratio: 1;
+  width: 100%;
+  max-width: 340px;
+  justify-self: center;
+  border-radius: 32px;
   color: var(--sc-accent);
-  background: color-mix(in srgb, var(--sc-accent) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 28%, transparent);
+  background:
+    radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--sc-accent) 28%, transparent), transparent 62%),
+    color-mix(in srgb, var(--sc-accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 30%, transparent), 0 24px 60px -24px color-mix(in srgb, var(--sc-accent) 55%, transparent);
+  overflow: hidden;
 }
+
+.sulla-showcase-art svg {
+  position: relative;
+  width: 58%;
+  height: 58%;
+}
+
+.sulla-showcase-ring {
+  position: absolute;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 25%, transparent);
+}
+.sulla-showcase-ring.r1 { width: 78%; height: 78%; }
+.sulla-showcase-ring.r2 { width: 104%; height: 104%; }
 
 .sulla-showcase-copy {
   min-width: 0;
 }
 
 .sulla-showcase-eyebrow {
-  margin: 0 0 6px;
+  margin: 0 0 10px;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--sc-read);
+  color: var(--sc-accent);
 }
 
 .sulla-showcase-title {
   margin: 0;
   font-family: 'Playfair Display', Georgia, serif;
   font-weight: 600;
-  font-size: 21px;
-  line-height: 1.2;
-  letter-spacing: -0.015em;
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
   color: var(--sc-ink);
 }
 
 .sulla-showcase-body {
-  margin: 8px 0 0;
+  margin: 14px 0 0;
   font-family: Inter, 'Open Sans', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 16px;
+  line-height: 1.6;
   color: var(--sc-read);
+}
+
+.sulla-showcase-points {
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  font-family: Inter, 'Open Sans', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  color: var(--sc-ink);
+}
+
+.sulla-showcase-points li {
+  position: relative;
+  padding-left: 28px;
+  line-height: 1.4;
+}
+
+.sulla-showcase-points li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sc-accent) 18%, transparent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235096b3' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12.5l4 4 8-9'/%3E%3C/svg%3E") center / 12px no-repeat;
 }
 
 .sulla-showcase-controls {
@@ -379,7 +444,7 @@ export default defineComponent({
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 8px;
 }
 
 .sulla-showcase-arrow {
@@ -447,11 +512,12 @@ export default defineComponent({
   transform: translateX(-12px);
 }
 
-@media (max-width: 520px) {
-  .sulla-showcase { padding: 18px 16px 14px; }
-  .sulla-showcase-slide { flex-direction: column; gap: 12px; }
-  .sulla-showcase-art { width: 48px; height: 48px; }
-  .sulla-showcase-title { font-size: 18px; }
+@media (max-width: 720px) {
+  .sulla-showcase { padding: 20px 20px 8px; }
+  .sulla-showcase-slide { grid-template-columns: 1fr; gap: 16px; }
+  .sulla-showcase-art { max-width: 120px; border-radius: 22px; }
+  .sulla-showcase-body { font-size: 14px; }
+  .sulla-showcase-points { font-size: 14px; margin-top: 12px; gap: 6px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
