@@ -28,6 +28,10 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 
 Make parallel tool calls when possible.
 
+## Use-case files
+
+Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+
 ## Sidebar artifacts
 
 Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.`;
@@ -65,6 +69,10 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 - Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
 
 Make parallel tool calls when possible.
+
+## Use-case files
+
+Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Sidebar artifacts
 
@@ -111,6 +119,10 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 - ❌ NEVER use \`execute_workflow\` for CLI tools — it only handles named Sulla workflows and will always fail otherwise
 
 Make parallel tool calls when possible.
+
+## Use-case files
+
+Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Sidebar artifacts
 

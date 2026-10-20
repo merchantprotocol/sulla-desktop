@@ -26,7 +26,7 @@ export const workflowToolManifests: ToolManifest[] = [
   },
   {
     name:        'import_workflow',
-    description: 'Import an inline YAML workflow definition into Postgres so it can be executed.',
+    description: 'Import an inline YAML workflow definition into Sulla Files as a draft. Only a published version can be executed.',
     category:    'workflow',
     schemaDef:   {
       slug:   { type: 'string', description: 'The workflow slug / id.' },
