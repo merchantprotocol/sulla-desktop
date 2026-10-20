@@ -5,6 +5,9 @@
     class="sulla-startup-overlay"
   >
     <div class="sulla-startup-column">
+      <!-- Feature showcase: the main focus, fills everything above the progress card -->
+      <StartupShowcase class="sulla-startup-showcase" />
+
       <div class="sulla-startup-card">
         <!-- Decorative top accent bar -->
         <div class="sulla-startup-accent" />
@@ -62,9 +65,6 @@
           :fallback-label="progressDescription || 'Initializing system...'"
         />
       </div>
-
-      <!-- Feature showcase: below the progress, never over it -->
-      <StartupShowcase class="sulla-startup-showcase" />
     </div>
   </div>
 </template>
@@ -124,33 +124,39 @@ onUnmounted(() => {
   inset: 0;
   z-index: 50;
   display: flex;
-  align-items: safe center;
-  justify-content: center;
-  overflow-y: auto;
-  padding: 24px 16px;
-  background: rgba(13, 17, 23, 0.85);
-  backdrop-filter: blur(12px);
+  overflow: hidden;
+  background: rgb(13, 17, 23);
 }
 
 .sulla-startup-column {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 16px;
   width: 100%;
-  max-width: 34rem;
-  margin: auto 0;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Showcase owns the window; the progress card is a short strip at the bottom. */
+.sulla-startup-showcase {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sulla-startup-card {
   position: relative;
   box-sizing: border-box;
-  width: 100%;
-  overflow: hidden;
+  flex: 0 0 auto;
+  width: calc(100% - 32px);
+  max-width: 44rem;
+  max-height: 30%;
+  margin: 0 auto 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-radius: 12px;
   border: 1px solid var(--border-default, #30363d);
   background: var(--bg-surface, #161b22);
-  padding: 2rem;
+  padding: 14px 20px 16px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 30px rgba(80, 150, 179, 0.05);
 }
 
@@ -165,13 +171,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 1rem;
+  margin-bottom: 8px;
 }
 
 .sulla-startup-icon {
   display: flex;
-  height: 2.5rem;
-  width: 2.5rem;
+  height: 1.75rem;
+  width: 1.75rem;
   align-items: center;
   justify-content: center;
   border-radius: 0.75rem;
@@ -180,7 +186,7 @@ onUnmounted(() => {
 }
 
 .sulla-startup-title {
-  font-size: 1.125rem;
+  font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary, #e6edf3);
@@ -188,17 +194,17 @@ onUnmounted(() => {
 }
 
 .sulla-startup-subtitle {
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: var(--text-secondary, #b1bac4);
   margin: 0;
 }
 
 .sulla-startup-download {
-  margin-top: 1rem;
+  margin-top: 0.5rem;
   border-radius: 0.75rem;
   border: 1px solid rgba(80, 150, 179, 0.15);
   background: rgba(80, 150, 179, 0.05);
-  padding: 1rem;
+  padding: 0.6rem 0.8rem;
 }
 
 .sulla-startup-download-label {
@@ -221,37 +227,36 @@ onUnmounted(() => {
 
 <style scoped>
 .theme-noir .sulla-startup-overlay {
-  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 32%), color-mix(in srgb, var(--nx-paper) 108.6957%, transparent);
-  backdrop-filter: blur(22px);
+  background: radial-gradient(circle at 50% 30%, color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), transparent 45%), var(--nx-paper, rgb(13, 17, 23));
 }
 .theme-noir .sulla-startup-card {
-  padding: 30px 32px;
+  padding: 14px 22px 16px;
   border: 0;
-  border-radius: 22px;
+  border-radius: 16px;
   background: color-mix(in srgb, var(--nx-surface) 131.5789%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 0 70px color-mix(in srgb, var(--nx-accent) 833.3333%, transparent), 0 30px 80px color-mix(in srgb, var(--shadow) 163.6364%, transparent);
   animation: startup-noir-enter .5s cubic-bezier(.22, 1, .36, 1) both;
 }
 .theme-noir .sulla-startup-accent { display: none; }
-.theme-noir .sulla-startup-header { flex-direction: column; text-align: center; gap: 14px; margin-bottom: 22px; }
+.theme-noir .sulla-startup-header { gap: 12px; margin-bottom: 8px; }
 .theme-noir .sulla-startup-icon {
-  width: 58px;
-  height: 58px;
-  border-radius: 18px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   color: #a8c0dc;
   background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 454.5455%, transparent), color-mix(in srgb, var(--nx-accent) 1666.6667%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 294.1176%, transparent), 0 0 34px color-mix(in srgb, var(--nx-accent) 285.7143%, transparent);
 }
-.theme-noir .sulla-startup-icon svg { width: 26px; height: 26px; }
+.theme-noir .sulla-startup-icon svg { width: 18px; height: 18px; }
 .theme-noir-light .sulla-startup-icon { color: var(--nx-accent-2); }
-.theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 27px; color: var(--nx-read-1); }
+.theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 18px; color: var(--nx-read-1); }
 .theme-noir .sulla-startup-subtitle,
 .theme-noir .sulla-startup-download-status { color: var(--nx-read-2); font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
 .theme-noir .sulla-startup-download { border: 0; border-radius: 14px; background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
 @keyframes startup-noir-enter { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (max-width: 520px) {
   .sulla-startup-card,
-  .theme-noir .sulla-startup-card { padding: 22px 18px; }
+  .theme-noir .sulla-startup-card { padding: 12px 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .theme-noir .sulla-startup-card { animation: none; }
