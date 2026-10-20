@@ -532,6 +532,7 @@ export interface IpcMainInvokeEvents {
   'sulla-files:operation-retry': (input: { operationId:string; request:import('@pkg/pages/files/types').FilesOperationRetry }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-undo': (input: { operationId:string }) => import('@pkg/pages/files/types').FilesOperationReceipt;
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:create-empty-file': (input: { collectionId: string; path: string }) => any;
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
   'sulla-files:stars':           (input: { collectionId: string }) => { fileId?: string; folderPath?: string }[];
