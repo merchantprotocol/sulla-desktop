@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { jest } from '@jest/globals';
 
 import { readBoundedResponse } from '../sullaFilesBoundedResponse';
-import { SullaFilesNativeBroker, type NativeSourceBrokerDependencies } from '../sullaFilesNativeBroker';
+import { NATIVE_SOURCE_REFRESH_INTERVAL_MS, SullaFilesNativeBroker, type NativeSourceBrokerDependencies } from '../sullaFilesNativeBroker';
 
 function deferred<T>() {
   let resolvePromise!:(value:T) => void;
@@ -159,5 +159,67 @@ describe('bounded native publication response', () => {
     } as unknown as Response;
 
     await expect(readBoundedResponse(response, 10)).rejects.toThrow('length changed');
+  });
+});
+
+describe('native source broker polling cost', () => {
+  const source = (handle:string, sourceRevision = 'a'.repeat(64)) => ({
+    fileId: randomUUID(), versionId: randomUUID(), path: `${ handle.slice(0, 4) }.txt`, handle, name: 'n.txt', sourceRevision, state: 'active',
+  });
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  test('an idle poll lists sources at most once per refresh interval and reports no activity', async() => {
+    let now = 1_000_000;
+    const sources = jest.fn(() => Promise.resolve([]));
+    const broker = new SullaFilesNativeBroker(dependencies({ sources, now: () => now }));
+
+    broker.resume();
+    for (let tick = 0; tick < 20; tick++) { await broker.poll(); now += 250 } // 5 s of 250 ms ticks
+    expect(sources).toHaveBeenCalledTimes(1);
+    expect(broker.lastPollActive).toBe(false);
+    now += NATIVE_SOURCE_REFRESH_INTERVAL_MS;
+    await broker.poll();
+    expect(sources).toHaveBeenCalledTimes(2);
+  });
+
+  test('publication work keeps the poll hot', async() => {
+    const broker = new SullaFilesNativeBroker(dependencies({
+      actions: () => Promise.resolve([action()]),
+      content: () => new Promise(() => undefined), // publication stays in flight
+    }));
+
+    broker.resume();
+    await broker.poll();
+    expect(broker.lastPollActive).toBe(true);
+  });
+
+  test('refresh skips re-reading a source whose descriptor signature is unchanged', async() => {
+    let now = 1_000_000;
+    let signature = 'dev:ino:10:1';
+    const read = jest.fn(() => Promise.resolve({ bytes: Buffer.from('x'), contentHash: 'c'.repeat(64), revision: 'a'.repeat(64) }));
+    const broker = new SullaFilesNativeBroker(dependencies({
+      sources:   () => Promise.resolve([source('s'.repeat(43))]),
+      read,
+      signature: () => Promise.resolve(signature),
+      now:       () => now,
+    }));
+
+    broker.resume();
+    await broker.poll();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(broker.lastPollActive).toBe(true);
+
+    now += NATIVE_SOURCE_REFRESH_INTERVAL_MS;
+    await broker.poll();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(1); // unchanged signature: no read
+    expect(broker.lastPollActive).toBe(false);
+
+    signature = 'dev:ino:11:2';
+    now += NATIVE_SOURCE_REFRESH_INTERVAL_MS;
+    await broker.poll();
+    await settle();
+    expect(read).toHaveBeenCalledTimes(2); // changed on disk: read again
   });
 });
