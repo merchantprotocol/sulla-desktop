@@ -18,6 +18,7 @@ Sulla Files is the one place for files. The File Manager tree is mounted at `/mn
 ## 2. Drafts
 
 - **Agent writes are drafts.** Any write by an agent creates a new draft version, wherever it lands. The published version does not change.
+- **Exception: `Sulla/Memory/`.** Durable agent memory publishes immediately so recall can see it. Claude Code project memory lives in `Sulla/Memory/claude-code/<project>`, the Codex memory database is snapshotted to `Sulla/Memory/codex`, and Sulla agents use `Sulla/Memory/sulla`. Saving a memory file is not enough on its own: also record the durable fact with the observation tool.
 - **Human writes publish immediately**, unless the file requires approval or the file is under `Sulla/Use Cases/` (see section 5).
 - **Drafts are visible to agents, not to the runtime.** Read a draft with `sulla files/get` or list versions with `sulla files/versions` (tool `files_versions`). Humans see the published version and a **Draft pending** marker in File Manager.
 
