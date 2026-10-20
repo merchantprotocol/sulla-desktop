@@ -138,7 +138,7 @@ export function createApp(
           JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
           WHERE ai.issuer=$1 AND ai.subject=$2`, [context.issuer, context.subject, context.organizationId]);
         if (!mapped.rows[0]?.user_id) return response.status(403).json({ error:'organization access denied' });
-        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, groupIds:context.groups };
+        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, orgRoles:context.roles, groupIds:context.groups };
         next();
       }).catch((error:unknown) => response.status(Number((error as { status?:number }).status) || 401).json({ error:'unauthorized' }));
       return;
@@ -670,7 +670,7 @@ export function createApp(
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body, request.header('x-sulla-cloud-token') ?? '')) } catch (error) { next(error) } });
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.header('x-sulla-cloud-token') ?? '', typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
-  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const required = effectiveRight(request, 'view'); const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); const files = access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); if ((access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required]) || paths.length || files.length) visible.push({ ...collection, access_role: access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required] ? access.role : null, shared_folders: paths, shared_files: files }); } response.json(visible) } catch (error) { next(error) } });
+  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try { const required = effectiveRight(request, 'view'); const rows = await db.query("SELECT * FROM collections WHERE kind='knowledge' AND published=TRUE AND legacy_source=FALSE ORDER BY name"); const visible:any[] = []; for (const collection of rows.rows) { const access = await grants(request, collection.id); const paths = access.paths.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); const files = access.files.filter(grant => ROLE_LEVEL[grant.role] >= ROLE_LEVEL[required]); if ((access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required]) || paths.length || files.length) visible.push({ ...collection, account_display_name:collection.workspace_scope === 'organization' ? 'Organization workspace' : collection.account_display_name, access_role: access.role && ROLE_LEVEL[access.role] >= ROLE_LEVEL[required] ? access.role : null, shared_folders: paths, shared_files: files }); } response.json(visible) } catch (error) { next(error) } });
   app.post('/v1/collections/default', async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect();
     try {
@@ -678,23 +678,23 @@ export function createApp(
       const actor = identity(request); const orgId = typeof request.body.orgId === 'string' ? request.body.orgId : '';
       if (!orgId) throw new HttpError(400, 'orgId is required');
       requireOrganizationScope(actor, orgId);
-      const membership = await identityDb.query("SELECT 1 FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL", [orgId, actor.userId]);
+      const membership = await identityDb.query("SELECT om.role FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL", [orgId, actor.userId]);
       if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:${ actor.userId }:default-files`]);
-      let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND owner_user_id=$2 AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId, actor.userId])).rows[0];
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:organization-files`]);
+      let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND workspace_scope='organization' AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId])).rows[0];
       if (!collection) {
         const id = randomUUID();
         collection = (await client.query(`INSERT INTO collections
-          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default)
-          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE) RETURNING *`, [id, orgId, actor.userId, {}, {}, { trashDays: 90 }])).rows[0];
+          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default,workspace_scope)
+          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE,'organization') RETURNING *`, [id, orgId, `org:${ orgId }`, {}, {}, { trashDays: 90 }])).rows[0];
         const wrapped = await config.keyring!.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
         collection = { ...collection, encrypted_data_key: wrapped.data, dedup_key_ciphertext: wrapped.dedup };
-        await client.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'user',$2,'manage')", [id, actor.userId]);
       }
       await client.query('COMMIT');
-      response.status(201).json({ ...collection, access_role: 'manage', shared_folders: [], shared_files: [] });
+      const access = await resolveCollectionGrants(db, identityDb, actor, collection.id);
+      response.status(201).json({ ...collection, account_display_name: 'Organization workspace', access_role: access.role, shared_folders: [], shared_files: [] });
     } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
   });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {

@@ -5,6 +5,13 @@ export const ROLE_LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, 
 export interface CollectionGrant { role?: string; paths: { folderPath: string; role: string }[]; files: { fileId: string; role: string }[]; collection: any }
 export interface CollectionSearchScope { collectionId: string; paths: string[]; fileIds: string[]; draftVisible:boolean; editPaths:string[]; editFileIds:string[]; actorUserId:string }
 
+export function organizationCollectionRole(roles:string[]):string | undefined {
+  if (roles.some(role => role === 'owner' || role === 'admin')) return 'manage';
+  if (roles.includes('editor')) return 'edit';
+  if (roles.some(role => role === 'member' || role === 'viewer')) return 'view';
+  return undefined;
+}
+
 // An org-scoped session must never inherit access from membership in another org.
 export function collectionInScope(actor:FilesIdentity, orgId:string|null|undefined):boolean {
   return !actor.orgId || actor.orgId === orgId;
@@ -13,32 +20,36 @@ export function requireOrganizationScope(actor:FilesIdentity, orgId:string|null|
   if (!collectionInScope(actor, orgId)) throw Object.assign(new Error('organization access denied'), { status:403 });
 }
 
-export interface CollectionMembership { orgId:string|null; member:boolean; groups:string[] }
+export interface CollectionMembership { orgId:string|null; member:boolean; groups:string[]; role?:string }
 export async function prepareCollectionMembership(db:pg.Pool, identityDb:pg.Pool|undefined, actor:FilesIdentity, collectionId:string):Promise<CollectionMembership> {
   const collection = (await db.query('SELECT org_id FROM collections WHERE id=$1', [collectionId])).rows[0];
   if (!collection) throw Object.assign(new Error('collection not found'), { status:404 });
   const orgId = collection.org_id;
   requireOrganizationScope(actor, orgId);
   if (!orgId || !identityDb) return { orgId, member:true, groups:[] };
-  const member = await identityDb.query(`SELECT 1 FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$2 AND om.user_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL`, [actor.userId, orgId]);
+  const member = await identityDb.query(`SELECT om.role FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$2 AND om.user_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL`, [actor.userId, orgId]);
   const groups = member.rowCount ? (await identityDb.query(`SELECT gm.group_id::text FROM group_members gm JOIN org_groups g ON g.id=gm.group_id AND g.org_id=$2 WHERE gm.user_id=$1`, [actor.userId,orgId])).rows.map(row => row.group_id) : [];
-  return { orgId,member:Boolean(member.rowCount),groups };
+  return { orgId,member:Boolean(member.rowCount),groups,role:member.rows[0]?.role };
 }
 export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identityDb:pg.Pool | undefined, actor:FilesIdentity, collectionId:string, membership?:CollectionMembership):Promise<CollectionGrant> {
   const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); const collection = result.rows[0];
   if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
   if (!collectionInScope(actor, collection.org_id)) return { paths:[], files:[], collection };
-  let groups:string[] = [];
+  let groups:string[] = []; let membershipRole:string|undefined;
   if (membership) {
     if (membership.orgId !== collection.org_id) throw Object.assign(new Error('collection organization changed'), { status:409 });
     if (!membership.member) return { paths:[],files:[],collection };
-    groups = membership.groups;
+    groups = membership.groups; membershipRole = membership.role;
   } else if (collection.org_id && identityDb) {
-    const member = await identityDb.query(`SELECT 1 FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$2 AND om.user_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL`, [actor.userId, collection.org_id]);
+    const member = await identityDb.query(`SELECT om.role FROM org_members om JOIN users u ON u.id=om.user_id WHERE om.org_id=$2 AND om.user_id=$1 AND om.status='confirmed' AND u.disabled_at IS NULL`, [actor.userId, collection.org_id]);
     if (!member.rowCount) return { paths: [], files: [], collection };
-    if (collection.owner_user_id === actor.userId) return { role: 'manage', paths: [], files: [], collection };
+    membershipRole = member.rows[0]?.role;
     const memberships = await identityDb.query(`SELECT gm.group_id::text FROM group_members gm JOIN org_groups g ON g.id=gm.group_id AND g.org_id=$2 WHERE gm.user_id=$1`, [actor.userId, collection.org_id]);
     groups = memberships.rows.map(row => row.group_id);
+  }
+  if (collection.workspace_scope === 'organization') {
+    const roles = actor.orgId === collection.org_id && actor.orgRoles !== undefined ? actor.orgRoles : membershipRole ? [membershipRole] : [];
+    return { role:organizationCollectionRole(roles),paths:[],files:[],collection };
   }
   if (collection.owner_user_id === actor.userId) return { role: 'manage', paths: [], files: [], collection };
   const acl = await db.query(`SELECT role FROM collection_acl WHERE collection_id=$1 AND ((principal_type='user' AND principal_id=$2) OR (principal_type='group' AND principal_id=ANY($3::text[])))`, [collectionId, actor.userId, groups]);
