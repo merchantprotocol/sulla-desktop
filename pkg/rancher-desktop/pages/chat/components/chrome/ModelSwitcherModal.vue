@@ -9,6 +9,10 @@
         <div class="msearch">
           <input v-model="query" type="text" placeholder="search agents and models…" autofocus>
         </div>
+        <label class="mgroup-head">
+          <input type="checkbox" :checked="controller.thread.value.runLocation === 'container'" @change="setRunLocation">
+          Run in container
+        </label>
         <div class="mlist">
           <template v-if="filteredAgents.length">
             <div class="mgroup-head">
@@ -135,6 +139,10 @@ watch(open, (isOpen) => {
     selector.refreshAgents();
   }
 });
+
+function setRunLocation(event: Event): void {
+  controller.thread.value = { ...controller.thread.value, runLocation: (event.target as HTMLInputElement).checked ? 'container' : 'vm' };
+}
 
 async function pick(option: ModelOption): Promise<void> {
   await selector.selectModel(option);

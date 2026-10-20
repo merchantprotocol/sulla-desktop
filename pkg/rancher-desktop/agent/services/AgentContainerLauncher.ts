@@ -548,6 +548,9 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
+  if (!['claude-code', 'codex'].includes(run.provider)) {
+    throw new Error(`Provider "${ run.provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
+  }
   const image = await ensureAgentImage();
   const runtime = new LimaDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;

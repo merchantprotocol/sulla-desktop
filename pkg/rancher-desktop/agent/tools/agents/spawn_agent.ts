@@ -51,6 +51,9 @@ const CONTRACT_REMINDER = '[Return contract reminder]\nYou ended your turn witho
 
 interface SpawnTask {
   agentId?:   string;
+  model?: string;
+  provider?: string;
+  runLocation?: 'vm' | 'container';
   /** Alias for agentId — the database-backed custom agent slug.
    *  Accepted because callers routinely reach for "agentName"; resolved to the
    *  same selector so a natural-but-wrong key no longer silently no-ops. */
@@ -158,6 +161,14 @@ export class SpawnAgentWorker extends BaseTool {
         };
       }
 
+      if (tasks[i].runLocation !== undefined && !['vm', 'container'].includes(tasks[i].runLocation!)) {
+        return { successBoolean: false, responseString: `Task ${ i }: runLocation must be vm or container.` };
+      }
+      for (const key of ['model', 'provider'] as const) {
+        if (tasks[i][key] !== undefined && (typeof tasks[i][key] !== 'string' || !tasks[i][key]!.trim())) {
+          return { successBoolean: false, responseString: `Task ${ i }: ${ key } must be a non-empty string.` };
+        }
+      }
       const projectTaskId = tasks[i].projectTaskId;
       if (projectTaskId !== undefined && (typeof projectTaskId !== 'string' || !projectTaskId.trim())) {
         return {
@@ -192,7 +203,7 @@ export class SpawnAgentWorker extends BaseTool {
           return { successBoolean: false, responseString: 'A tab launch must come from an active chat thread.' };
         }
         const { resolveRoutableAgent } = await import('../../services/ChatAgentRouting');
-        const routable = selector ? await resolveRoutableAgent(selector) : null;
+        const routable = await resolveRoutableAgent(selector || 'sulla');
         if (!routable) {
           await this.rejectTasks([tasks[i]], `unknown agent "${ selector ?? '' }"`);
           return {
@@ -345,6 +356,7 @@ export class SpawnAgentWorker extends BaseTool {
         focus:           task.focus === true,
         prompt:          `[Agent tab launched by ${ parentName }]\n\n${ task.prompt }\n\n${ contractFooter({ jobId: job.jobId, contract, visibility: 'tab' }) }`,
         activityKeys:    RunActivity.inherit(metadata, job.jobId),
+        runOverrides: { model: task.model, provider: task.provider, runLocation: task.runLocation },
         ownedProjectTaskIds: [...new Set([...inherited, ...(task.projectTaskId ? [task.projectTaskId.trim()] : [])])],
       });
     } catch (err) {
@@ -439,7 +451,7 @@ export class SpawnAgentWorker extends BaseTool {
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const selector = taskAgentSelector(task);
       const label = task.label || selector || `task-${ index }`;
-      const agentConfigChannel = selector || parentChannel;
+      const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
@@ -469,6 +481,16 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         ) as { graph: any; state: any };
         subStateRef = subState;
+        subState.metadata.agent = {
+          ...(subState.metadata.agent ?? {}),
+          ...(task.model ? { model: task.model.trim() } : {}),
+          ...(task.provider ? { provider: task.provider.trim() } : {}),
+          ...(task.runLocation ? { runLocation: task.runLocation } : {}),
+        };
+        if (task.model || task.provider) {
+          const { getAgentOverrideService } = await import('../../languagemodels');
+          if (!await getAgentOverrideService(subState.metadata.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
+        }
 
         // Inject the brief and its return contract.
         subState.messages.push({
@@ -523,7 +545,8 @@ export class SpawnAgentWorker extends BaseTool {
 
         const runLocation = String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
         if (runLocation === 'container') {
-          const provider = String(subState.metadata.agent?.provider ?? '').trim();
+          const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
+          const provider = String(subState.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
           const promptMessage = subState.messages[subState.messages.length - 1];
           if (typeof promptMessage?.content === 'string') {

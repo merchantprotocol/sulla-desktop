@@ -263,3 +263,13 @@ Agent configs are database rows in `agent_definitions`, not files under `~/sulla
 - Manifest: `pkg/rancher-desktop/agent/tools/agents/manifests.ts`
 - Agent configs: `~/sulla/agents/`
 - Channel routing: see `agent-patterns/channels.md`
+
+### Per-run model and container overrides
+
+Each task accepts `runLocation: "vm" | "container"`, `model`, and optional `provider`. These override only the run state, never `agent_definitions`. With `model` and no `agentId`, the default Sulla prompt and tools are used. With an agent ID, its persona and tool restrictions remain intact. Without a provider override, the agent provider (or primary provider) is used.
+
+```sh
+sulla meta/spawn_agent '{"tasks":[{"model":"gpt-5.4","provider":"codex","runLocation":"container","prompt":"Complete this task"}]}'
+```
+
+The agent image and canonical container transport support **claude-code** and **codex**. Grok, OpenCode and other providers are rejected explicitly for container runs; there is no VM fallback. The chat agent/model picker has a **Run in container** checkbox scoped to the chat. Existing definition defaults apply until a run location is selected. Container runs retain the Files rslave mount and host aliases; no host home mounts are added. Desktop main/renderer must be rebuilt for these changes; no image rebuild is required.

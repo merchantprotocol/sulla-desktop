@@ -74,6 +74,7 @@ export interface Thread {
   /** Chat-local inference selection. Never written to global model settings. */
   agentId?:         string | null;
   providerId?:      string | null;
+  runLocation?: 'vm' | 'container';
 }
 
 /** The full saveable state of a live chat session. */
