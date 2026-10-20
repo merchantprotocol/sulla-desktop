@@ -19,7 +19,7 @@ export const agentToolManifests: ToolManifest[] = [
             workspacePath: {
               type:        'string',
               optional:    true,
-              description: 'Container agents only: explicit existing worktree under ~/Sites/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
+              description: 'Container agents only: explicit existing worktree under /mnt/worktrees used to seed the job retained isolated clone. Shared Git metadata is never mounted.',
             },
             label:     { type: 'string', description: 'Optional human-readable label for this task (the tab title for visibility "tab").', optional: true },
             visibility: { type: 'enum', enum: ['hidden', 'tab'], optional: true, description: '"hidden" (default): background worker. "tab": a live chat tab that stays open across turns until the child returns its contract or you stop it. Max 5 open tabs per chat.' },

@@ -4,6 +4,8 @@ Everything Sulla knows and produces lives in the File Manager, so there is one p
 Agents should read these docs from `/mnt/sulla-files/Sulla/Docs/` (the Files FUSE mount), not from the repository path; that keeps the same documentation available in containers and workflows.
 The File Manager tree is mirrored exactly at `/mnt/sulla-files` inside the VM, workflow runners and agent containers.
 
+Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path `/mnt/data/worktrees`). This path is outside the Files roots and is never watched or indexed by Files.
+
 ## Layout
 
 ```
