@@ -1,101 +1,79 @@
 # Sulla Desktop — Path Reference
 
-## ~/sulla/ Directory Tree
+## File Manager and agent paths
 
-Created by `bootstrapSullaHome()` at every app startup.
+Use `/mnt/sulla-files` for the File Manager namespace. See
+[files-first.md](files-first.md) for the approved layout and system areas.
+Agent Git worktrees live at `/mnt/worktrees/<repo>-<branch-slug>`. Lima binds
+`/mnt/data/worktrees` (persistent ext4 storage) at `/mnt/worktrees`.
+These development checkouts are outside Files and are not indexed by it.
 
-```
-~/sulla/
-├── resources/                  # Cloned from merchantprotocol/sulla-resources (GitHub)
-│   ├── skills/                 # Default skills (SKILL.md) — imported into the skill_definitions table
-│   ├── agents/                 # Default agent configs
-│   ├── workflows/
-│   │   ├── draft/
-│   │   ├── production/
-│   │   └── archive/
-│   ├── integrations/           # Default integration docs
-│   └── docs/                   # Documentation (if present)
-│
-├── skills/                     # User skill folders — imported into the skill_definitions table (the runtime source)
-├── agents/                     # User-defined agent configs
-├── workflows/
-│   ├── draft/                  # Work-in-progress workflows
-│   ├── production/             # Active, auto-triggered workflows
-│   └── archive/                # Disabled workflows
-├── integrations/               # User integration configs & auth
-├── functions/                  # User-defined custom functions
-│   └── <slug>/
-│       ├── function.yaml
-│       └── main.py|js|sh
-├── recipes/                    # Marketplace extension configs
-├── routines/                   # Routine template repos (each is a git repo)
-├── projects/                   # Project workspaces and PRDs
-├── logs/                       # Execution logs
-├── training/                   # Training data
-├── conversations/              # Saved conversation history
-├── identity/                   # Persistent identity & goals
-│   ├── human/                  # identity.md, goals.md
-│   ├── business/               # identity.md, goals.md, marketing.md
-│   ├── world/                  # identity.md, goals.md
-│   └── agent/                  # identity.md, goals.md
-└── content/                    # Generated content (social posts, blog drafts, etc.)
-```
+`~/sulla` is an application storage path, not a shared host-home mount.
+`paths.sullaHome` is `<home>/sulla`; `paths.sullaConfig` is `<home>/.sulla`.
+Agent definitions, including prompts, are served from `agent_definitions`;
+folder exports are not the prompt authority.
 
----
+## App resources path
 
-## App Resources Path
+`utils/paths.ts` resolves `paths.resources` to
+`<process.resourcesPath>/resources`, falling back to `<cwd>/resources`.
+For a packaged macOS app this is
+`Sulla Desktop.app/Contents/Resources/resources/`.
+The exact Linux installation prefix is installer-dependent, not `/usr/lib/sulla`
+by contract. App resources are mounted read-only into Lima at the same path.
+Agents should use `/mnt/sulla-files/Sulla/Docs` for the Files-published docs.
 
-| Context | Path |
-|---------|------|
-| Development | `/Users/<user>/Sites/sulla/sulla-desktop/resources/` |
-| Packaged macOS | `Sulla Desktop.app/Contents/Resources/resources/` |
-| Packaged Linux | `/usr/lib/sulla/resources/` |
-| Inside Lima | Same absolute path as host (virtiofs mount) |
+## Electron application paths
 
-**`resources/sulla-docs/`** — This directory. Shipped with the app, mounted into Lima automatically. Agents search here for system documentation.
+| Purpose | macOS | Linux |
+|---------|-------|-------|
+| App home | `~/Library/Application Support/rancher-desktop` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop` |
+| Config | `~/Library/Preferences/rancher-desktop` | `${XDG_CONFIG_HOME:-~/.config}/rancher-desktop` |
+| Logs | `~/Library/Logs/rancher-desktop` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop/logs` |
+| Lima | `~/.rd/lima` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop/lima` |
 
----
+The host home and external volumes are not mounted into Lima. Only app-owned
+transport/cache roots cross that boundary (`backend/lima.ts:getMounts`).
+Postgres data uses the Docker named volume `sulla_postgres_data`, not a
+host `data/sulla-postgres` directory.
 
-## Electron App Data Path
-
-| Platform | Path |
-|----------|------|
-| macOS | `~/Library/Application Support/rancher-desktop/` |
-| Linux | `~/.config/rancher-desktop/` |
-
-Subdirectories:
-- `lima/` — Lima VM disk image and config
-- `data/sulla-postgres/` — PostgreSQL persistent data volume
-- `logs/` — App logs
-
----
-
-## Lima VM Internal Paths
+## Lima VM internal paths
 
 | Path | Contents |
-|------|---------|
-| `/usr/local/bin/sulla` | The `sulla` CLI tool |
-| `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Full PATH for exec commands |
-| `~/sulla/` | Same files as Mac (shared mount) |
-| `~/Library/...` | Same as Mac app data (shared mount) |
+|------|----------|
+| `/usr/local/bin/sulla` | Sulla CLI |
+| `/mnt/sulla-files` | Files FUSE namespace |
+| `/mnt/worktrees` | Persistent agent Git worktrees |
+| `/mnt/data/sulla/runtime/functions/catalog` | Runtime function catalog |
+| `/mnt/data/sulla/runtime/functions/invocations` | Runtime invocation snapshots |
 
----
+CommandRunner keeps the guest-owned HOME and sets
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` for VM execution.
 
-## Function Runtime Ports
+## Function runtime ports
 
-| Runtime | Port |
-|---------|------|
+| Runtime | Desktop endpoint |
+|---------|------------------|
 | Python | `http://127.0.0.1:30118` |
 | Shell | `http://127.0.0.1:30119` |
 | Node.js | `http://127.0.0.1:30120` |
 
----
+Each runtime listens on container port 8080. Bindings are defined in
+`assets/sulla-docker-compose.yaml`; Lima forwards VM ports to the host.
 
-## Database Connections
+## Database connections
 
 | Service | Host | Port | DB | User |
 |---------|------|------|----|------|
 | PostgreSQL | 127.0.0.1 | 30116 | sulla | sulla |
 | Redis | 127.0.0.1 | 30117 | — | — |
 
-Redis has no persistence (`--save "" --appendonly no`).
+Redis runs with `--save "" --appendonly no`.
+
+## Sources
+
+- `pkg/rancher-desktop/utils/paths.ts`
+- `pkg/rancher-desktop/backend/lima.ts`
+- `pkg/rancher-desktop/assets/lima-config.yaml`
+- `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`
+- `pkg/rancher-desktop/agent/tools/util/CommandRunner.ts`

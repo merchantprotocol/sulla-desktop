@@ -1,54 +1,59 @@
 # Sulla Tools — Functions
 
-## function/function_list
-
-List all custom functions installed in `~/sulla/functions/`.
-
-```bash
-exec({ command: "sulla function/function_list '{}'" })
-```
-
-Returns an array of function metadata: `slug`, `name`, `runtime`, `entrypoint`, `inputs`, `outputs`.
+Custom functions are stored in Postgres. Three tools: `function/list`, `function/run`, `function/runs`.
 
 ---
 
-## function/function_run
+## function/list
 
-Execute a custom function by slug.
+List all custom functions stored in Postgres.
 
 ```bash
-exec({ command: "sulla function/function_run '{\"slug\":\"test-python-math\",\"inputs\":{\"n\":15}}'" })
+sulla function/list '{}'
+```
+
+Returns each function's `slug`, `name`, `runtime`, `entrypoint`, `inputs`, and `outputs`.
+
+---
+
+## function/run
+
+Load and run a custom function by slug. The call performs load + invoke in one step and returns the full execution trace.
+
+```bash
+sulla function/run '{"slug":"test-python-math","inputs":{"n":15}}'
 ```
 
 Parameters:
-- `slug` (required): Directory name under `~/sulla/functions/`
-- `inputs` (optional): Key/value object matching the function's declared inputs
-- `version` (optional): Defaults to `"1.0.0"`
+- `slug` (required): the function's slug from `function/list`
+- `inputs` (optional): key/value object matching the function's declared inputs
+- `version` (optional): version string for the runtime loader. Defaults to `"1.0.0"`
 
-The call performs load + invoke in one step. Returns full execution trace:
-```json
-{
-  "slug": "test-python-math",
-  "runtime": "python",
-  "duration_ms": 45,
-  "outputs": {
-    "fibonacci": 610,
-    "primes": [2, 3, 5, 7, 11, 13]
-  }
-}
+Every invocation writes a row to the `function_runs` table.
+
+---
+
+## function/runs
+
+Read the run history.
+
+```bash
+sulla function/runs '{"slug":"test-python-math","only_failures":true}'
 ```
+
+Params: `slug`, `only_failures`, `since` (ISO timestamp), `limit` (default 50), `verbose` (adds inputs and outputs).
 
 ---
 
 ## Runtime Health Check
 
-Verify runtimes are healthy before running functions:
+Confirm runtimes are up before running functions:
 
 ```bash
-exec({ command: "sulla function/function_list '{}'" })
+sulla function/list '{}'
 ```
 
-If this returns functions, the runtimes are up. Ports:
+If this returns functions, the runtime manager is reachable. Ports:
 - Python: `http://127.0.0.1:30118`
 - Shell: `http://127.0.0.1:30119`
 - Node: `http://127.0.0.1:30120`
@@ -57,12 +62,7 @@ If this returns functions, the runtimes are up. Ports:
 
 ## Creating a New Function
 
-See `functions/schema.md` for the complete `function.yaml` spec and `functions/runtimes.md` for handler signatures.
-
-Quick checklist:
-1. Create `~/sulla/functions/<slug>/function.yaml`
-2. Create handler file (`main.py`, `main.js`, or `main.sh`)
-3. Test: `exec({ command: "sulla function/function_run '{\"slug\":\"<slug>\",\"inputs\":{...}}'" })`
+See `functions/schema.md` for the `function.yaml` spec and `functions/runtimes.md` for handler signatures.
 
 ---
 
@@ -70,14 +70,11 @@ Quick checklist:
 
 ```bash
 # Python math function
-exec({ command: "sulla function/function_run '{\"slug\":\"test-python-math\",\"inputs\":{\"n\":20}}'" })
+sulla function/run '{"slug":"test-python-math","inputs":{"n":20}}'
 
 # Node transform function
-exec({ command: "sulla function/function_run '{\"slug\":\"test-node-transform\",\"inputs\":{\"text\":\"Hello World\"}}'" })
+sulla function/run '{"slug":"test-node-transform","inputs":{"text":"Hello World"}}'
 
 # Shell sysinfo function
-exec({ command: "sulla function/function_run '{\"slug\":\"test-shell-sysinfo\",\"inputs\":{\"detail\":\"full\"}}'" })
-
-# Social cache read
-exec({ command: "sulla function/function_run '{\"slug\":\"social-cache-read\",\"inputs\":{\"max_age_days\":7}}'" })
+sulla function/run '{"slug":"test-shell-sysinfo","inputs":{"detail":"full"}}'
 ```

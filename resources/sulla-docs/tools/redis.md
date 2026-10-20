@@ -4,32 +4,32 @@ Sulla's KV / cache / list store. Container `sulla_redis` on port **30117** (host
 
 ## What's stored where
 
-The codebase has been audited — Redis is sparsely used today. Primary namespaces:
+Redis is sparsely used. Primary namespaces:
 
 | Key / namespace | Type | Purpose | Owner |
 |----------------|------|---------|-------|
 | `sulla:bridge:human_presence` | hash | Human presence state (availability, idle minutes, view, channel) | `HumanHeartbeatBridge` |
 | `sulla_settings` | hash | **Cache only** for SullaSettingsModel. Do not read/write with redis_* tools (blocked). | `SullaSettingsModel` |
-| Other namespaces (anticipated) | — | Queues, sessions, locks not actively used yet | — |
+| Other namespaces | — | Queues, sessions, locks not actively used yet | — |
 
-Pub/sub channels: **none active**. Sulla uses WebSocket channels (BackendGraphWebSocketService) for inter-agent comms, not Redis pub/sub. The wire is there (`RedisClient.publish()`) but no active subscribers.
+The server runs with persistence off (`--save "" --appendonly no` in `assets/sulla-docker-compose.yaml`). Restarting the container loses every key.
 
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `sulla redis/redis_get` | Get string value |
-| `sulla redis/redis_set` | Set string value (`{key, value, ttl?}`) |
-| `sulla redis/redis_del` | Delete key(s) (`{keys: [...]}`) |
-| `sulla redis/redis_incr` | Increment int (returns new value) |
-| `sulla redis/redis_decr` | Decrement int |
-| `sulla redis/redis_expire` | Set/update TTL on existing key (`{key, seconds}`) |
-| `sulla redis/redis_ttl` | Get remaining TTL (-1 = no expiry, -2 = missing) |
-| `sulla redis/redis_hget` | Get one hash field (`{key, field}`) |
-| `sulla redis/redis_hset` | Set one hash field (`{key, field, value}`) |
-| `sulla redis/redis_hgetall` | Get all hash fields |
-| `sulla redis/redis_lpop` | Pop first list element |
-| `sulla redis/redis_rpush` | Push values onto end of list (`{key, values: [...]}`) |
+| `sulla redis/get` | Get string value |
+| `sulla redis/set` | Set string value (`{key, value, ttl?}`) |
+| `sulla redis/del` | Delete key(s) (`{keys: [...]}`) |
+| `sulla redis/incr` | Increment int (returns new value) |
+| `sulla redis/decr` | Decrement int |
+| `sulla redis/expire` | Set/update TTL on existing key (`{key, seconds}`) |
+| `sulla redis/ttl` | Get remaining TTL (-1 = no expiry, -2 = missing) |
+| `sulla redis/hget` | Get one hash field (`{key, field}`) |
+| `sulla redis/hset` | Set one hash field (`{key, field, value}`) |
+| `sulla redis/hgetall` | Get all hash fields |
+| `sulla redis/lpop` | Pop first list element |
+| `sulla redis/rpush` | Push values onto end of list (`{key, values: [...]}`) |
 
 **Values are always strings.** JSON-encode/decode objects yourself.
 
@@ -37,7 +37,7 @@ Pub/sub channels: **none active**. Sulla uses WebSocket channels (BackendGraphWe
 
 ### "What's the human's current state?"
 ```bash
-sulla redis/redis_hgetall '{"key":"sulla:bridge:human_presence"}'
+sulla redis/hgetall '{"key":"sulla:bridge:human_presence"}'
 ```
 Returns the full presence hash. Or use the higher-level wrapper:
 ```bash
@@ -46,32 +46,32 @@ sulla bridge/get_human_presence '{}'
 The bridge tool is preferred — it parses and returns a typed object.
 
 ### "Read or write a Sulla Desktop setting"
-**Do not use these Redis tools.** `sulla_settings` is owned by `SullaSettingsModel` (Redis cache → Postgres → file fallback; writes go through both). The agent `redis_*` tools **block** that key at runtime.
+**Do not use these Redis tools.** `sulla_settings` is owned by `SullaSettingsModel`. The `redis_*` tools **block** that key at runtime.
 
 ```bash
-sulla settings/settings_get '{"property":"heartbeatEnabled"}'
-sulla settings/settings_set '{"property":"heartbeatEnabled","value":"true","cast":"boolean"}'
+sulla settings/get '{"property":"heartbeatEnabled"}'
+sulla settings/set '{"property":"heartbeatEnabled","value":"true","cast":"boolean"}'
 ```
 
 ### "Cache this small value with a 1-hour TTL"
 ```bash
-sulla redis/redis_set '{"key":"my-cache:topic-X","value":"...","ttl":3600}'
-sulla redis/redis_get '{"key":"my-cache:topic-X"}'
+sulla redis/set '{"key":"my-cache:topic-X","value":"...","ttl":3600}'
+sulla redis/get '{"key":"my-cache:topic-X"}'
 ```
 
 ### "Increment a counter"
 ```bash
-sulla redis/redis_incr '{"key":"my-app:event-count"}'
+sulla redis/incr '{"key":"my-app:event-count"}'
 ```
 
 ### "Use a list as a simple queue"
 ```bash
-sulla redis/redis_rpush '{"key":"my-queue","values":["item-1","item-2"]}'
-sulla redis/redis_lpop '{"key":"my-queue"}'
+sulla redis/rpush '{"key":"my-queue","values":["item-1","item-2"]}'
+sulla redis/lpop '{"key":"my-queue"}'
 ```
 
 ### "What's in Redis?" (debug)
-There's no `redis_keys` or `redis_scan` tool. Workaround:
+There's no `redis/keys` or `redis/scan` tool. Workaround:
 ```bash
 sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 ```
@@ -79,9 +79,9 @@ sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 
 ## Hard rules
 
-- **Don't write to `sulla:bridge:human_presence` directly.** Let the `HumanPresenceTracker` (frontend) and `HumanHeartbeatBridge` (service) own it. If you corrupt it, the heartbeat will make wrong decisions about whether to act autonomously.
-- **Don't touch `sulla_settings` with redis_*.** That hash is SullaSettingsModel's cache. Raw reads can be stale; raw writes desync Postgres. Use `sulla settings/settings_get` / `settings_set`. The redis_* tools refuse the key.
-- **Don't use Redis as the source of truth for anything durable.** Sulla's Redis runs without persistence — restarting the container loses all keys.
+- **Don't write to `sulla:bridge:human_presence` directly.** Let `HumanHeartbeatBridge` own it. If you corrupt it, the heartbeat will make wrong decisions about whether to act autonomously.
+- **Don't touch `sulla_settings` with redis_*.** That hash is SullaSettingsModel's cache. Raw reads can be stale; raw writes desync Postgres. Use `sulla settings/get` and `sulla settings/set`. The redis tools refuse the key.
+- **Don't use Redis as the source of truth for anything durable.** It has no persistence (see above).
 - **Namespace your keys.** Use prefixes like `agent:<your-purpose>:<key>` so you don't collide with future Sulla internals.
 - **Strings only.** Don't try to store binary data — base64-encode it first.
 
@@ -96,6 +96,7 @@ sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 
 - Tool dir: `pkg/rancher-desktop/agent/tools/redis/`
 - Manifest: `pkg/rancher-desktop/agent/tools/redis/manifests.ts`
-- Connection: `redis://127.0.0.1:30117` (no auth)
+- Blocked-key guard: `pkg/rancher-desktop/agent/tools/redis/settingsGuard.ts`
+- Connection: `pkg/rancher-desktop/agent/database/RedisClient.ts` — default `redis://127.0.0.1:30117` (no auth), overridable with `SULLA_REDIS_URL`
 - Bridge tool wrapper: `pkg/rancher-desktop/agent/tools/bridge/`
 - Presence service: `pkg/rancher-desktop/agent/services/HumanHeartbeatBridge.ts`

@@ -16,7 +16,7 @@ Agent/model provider → tool bridge/MCP HTTP → Main Process → executes tool
 The renderer uses `ipcRenderer.invoke()` for request/response. The main process registers handlers via `ipcMainProxy.handle()`.
 
 Key IPC channels:
-- `browser-tab:*` — Tab create/navigate/destroy/screenshot
+- `browser-tab-view:*` — Tab create/navigate/destroy/screenshot
 - `vault:*` — Credential read/write
 - `get-user-data-path` — App data directory
 - `check-goals-onboarding`, `check-business-onboarding` — Identity file checks
@@ -31,11 +31,10 @@ User chat → Vue renderer → WebSocket → `BackendGraphWebSocketService` → 
 WebSocket message format:
 ```json
 {
-  "kind": "channel_message",
-  "channelId": "sulla-desktop",
-  "threadId": "thread-abc123",
-  "senderId": "user",
-  "message": "do X"
+  "type": "user_message",
+  "timestamp": 0,
+  "channel": "sulla-desktop",
+  "data": { "threadId": "thread-abc123", "content": "do X" }
 }
 ```
 
@@ -79,8 +78,8 @@ When an agent calls `exec({ command: "..." })`, the main process spawns it insid
 
 Environment inside exec:
 ```bash
-HOME=/Users/<user>
+HOME=<guest-owned home>
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
-Timeout: default 120s. Output capped at 200,000 chars.
+Timeout: default 120s. Output capped at 160,000 chars per stdout/stderr stream by `meta/exec`.

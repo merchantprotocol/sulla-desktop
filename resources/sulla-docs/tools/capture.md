@@ -1,6 +1,6 @@
 # Capture Studio Tools
 
-**20 tools** for headless control of Capture Studio — teleprompter, microphone, desktop-audio loopback, screen/window enumeration, screenshots, and now a full recording pipeline (recorder + camera + screen stream + quality). **You can drive all of it from chat** without the user opening the recorder window.
+**19 live tools** for headless control of Capture Studio — teleprompter, microphone, desktop-audio loopback, screen/window enumeration, screenshots, and now a full recording pipeline (recorder + camera + screen stream + quality). **You can drive all of it from chat** without the user opening the recorder window.
 
 ## Recording, camera & screen
 
@@ -8,13 +8,13 @@ The recorder pipeline is now agent-drivable (it used to require opening the Capt
 
 | Tool | Purpose |
 |------|---------|
-| `sulla capture/list_screens '{"kind":"all"}'` | Enumerate capturable displays and/or windows (`kind`: `screen`/`window`/`all`). |
+| `sulla capture/list_screens '{"kind":"all"}'` | Enumerate capturable displays and/or windows (`kind`: `screen`, `window` or `all`). |
 | `sulla capture/screen_set '{"sourceId":"..."}'` | Acquire a screen/window capture stream by `sourceId` (from `list_screens`). |
 | `sulla capture/camera_list` | Enumerate video input devices (webcams, capture cards). |
-| `sulla capture/camera_set` | Acquire a camera stream. |
+| `sulla capture/camera_set '{"deviceId":"...","quality":"720p"}'` | Acquire a camera stream. Both params optional; `quality` is `auto`, `480p`, `720p`, `1080p` or `4k`. |
 | `sulla capture/camera_release` | Stop and release the current camera stream. |
 | `sulla capture/quality_set '{"target":"screen","preset":"1080p"}'` | Set the quality preset (`480p`/`720p`/`1080p`/`4k`/`auto`) for the `screen` or `camera` stream. |
-| `sulla capture/recorder_start` | Start a recording session. |
+| `sulla capture/recorder_start '{"screen":true,"mic":true}'` | Start a recording session. `screen` (true or a `sourceId`), `camera` (true or a `deviceId`), `mic`, `speaker`. Omit all to record whatever Capture Studio already has. |
 | `sulla capture/recorder_stop` | Stop the active recording session. |
 | `sulla capture/recorder_status` | Active? + elapsed seconds, bytes written, session directory, last error. |
 
@@ -60,7 +60,7 @@ Captures whatever the system is playing. Useful for transcribing meeting audio, 
 
 | Tool | Purpose |
 |------|---------|
-| `sulla capture/list_screens '{"kind":"screen"\|"window"\|"all"}'` | Enumerate displays + app windows via Electron's `desktopCapturer`. Returns `{id, name}` pairs. Filter by `kind` (default `all`). |
+| `sulla capture/list_screens '{"kind":"screen"}'` | Enumerate displays + app windows via Electron's `desktopCapturer`. Returns `{id, name}` pairs. Filter by `kind` (default `all`). |
 | `sulla capture/screenshot '{"sourceId":"..."}'` | Full-resolution PNG of the source. Omit `sourceId` for the primary display. Saves to `~/sulla/captures/screenshots/YYYY-MM-DD/` and returns the absolute path — use `meta/read_file` to inspect visually. |
 
 ## Common requests

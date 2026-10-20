@@ -11,13 +11,13 @@ project item (`update_task`, `add_task_comment`).
 ## Leftover tool
 
 ```bash
-sulla ledger/ledger_scoreboard '{"days":7}'
+sulla ledger/scoreboard '{"days":7}'
 ```
 
 Deterministic, zero LLM. Counts leftover markdown outcomes / WORKING rows /
 AUDIT lines. Useful only while an install still has those files. New
-installs should ignore this tool and use `sulla project_report` +
-`sulla list_project_items`.
+installs should ignore this tool and use `sulla project/report` +
+`sulla project/list_project_items`.
 
 ## Layout (archive)
 

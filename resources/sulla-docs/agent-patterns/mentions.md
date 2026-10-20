@@ -35,10 +35,8 @@ When you see `@kind:identifier` in a user message, use the matching inspect tool
 ### `@routine:<slug>`
 ```bash
 cat ~/sulla/routines/<slug>/routine.yaml
-# or — fetch the DB representation (if instantiated):
-sulla meta/execute_workflow '{"workflowId":"<slug>"}'   # actually runs it
 ```
-For non-destructive inspection prefer reading the YAML directly. For "run it", use `meta/execute_workflow`.
+For non-destructive inspection, read the YAML. For "run it", use `meta/execute_workflow`, and only for a slug listed under "Available workflows". Otherwise import it first with `workflow/import_workflow`, which defaults to `production`, so pass `"status":"draft"`.
 
 ### `@skill:<slug>`
 ```bash
@@ -50,10 +48,10 @@ A skill is a prompt+protocol the agent loads to gain a capability. Reading the S
 
 ### `@function:<slug>`
 ```bash
-sulla function/function_list   # confirm presence + metadata
+sulla function/list '{}'                       # confirm presence + metadata
 cat ~/sulla/functions/<slug>/function.yaml
 # run it:
-sulla function/function_run '{"slug":"<slug>","inputs":{…}}'
+sulla function/run '{"slug":"<slug>","inputs":{…}}'
 ```
 
 ### `@recipe:<slug>`
@@ -75,19 +73,20 @@ The integration manifest tells you the available endpoints, auth type, and vault
 ### `@workflow:<id>`
 ```bash
 # Inspect via Postgres:
-sulla pg/pg_query '{"sql":"SELECT * FROM workflows WHERE id = $1","params":["<id>"]}'
-# Restart from checkpoint / resume:
+sulla pg/query '{"sql":"SELECT * FROM workflows WHERE id = $1","params":["<id>"]}'
+# List recent runs, or checkpoints for one run:
+sulla meta/restart_from_checkpoint '{"workflowId":"<id>"}'
 sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 ```
 
 ### `@project:<slug>`
 ```bash
-sulla search_project_items '{"query":"<slug>","kind":"project"}'
-sulla get_project_item '{"id":"<id-from-search>"}'
+sulla project/search_project_items '{"query":"<slug>","kind":"project"}'
+sulla project/get_project_item '{"id":"<id-from-search>"}'
 # PRD (if one exists — specs, not the agenda):
 cat ~/sulla/projects/<slug>/PROJECT.md
 ```
-A `@project` mention is a **Projects project-state project** first (Postgres `work_projects`). Use `sulla *` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
+A `@project` mention is a **Projects project-state project** first (Postgres `work_projects`). Use `sulla project/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
 
 ## Intent inference
 
@@ -105,7 +104,7 @@ If the verb is ambiguous, ask one clarifying question before acting — don't gu
 
 ## Hard rules
 
-- **Always verify the artifact still exists** before acting. `function_list`, reading the manifest, or a `SELECT` on `workflows` will tell you.
+- **Always verify the artifact still exists** before acting. `function/list`, reading the manifest, or a `SELECT` on `workflows` will tell you.
 - **Never manufacture a mention in your reply.** You can talk about an artifact by name in prose, but don't emit `@kind:slug` tokens yourself — those are for the user's input.
 - **A mention is a hint, not a command.** The user may have typed `@function:x` as context while asking something unrelated. Read the whole message before jumping to the tool call.
 

@@ -12,7 +12,7 @@ Examples:
 ```bash
 exec({ command: "sulla github/git_status '{}'" })
 exec({ command: "sulla browser/tab '{\"action\":\"upsert\",\"url\":\"https://example.com\"}'" })
-exec({ command: "sulla function/function_run '{\"slug\":\"my-func\",\"inputs\":{\"n\":10}}'" })
+exec({ command: "sulla function/run '{\"slug\":\"my-func\",\"inputs\":{\"n\":10}}'" })
 exec({ command: "sulla pg/query '{\"sql\":\"SELECT * FROM users LIMIT 5\"}'" })
 exec({ command: "sulla slack/send_message '{\"channel\":\"C01234\",\"text\":\"hello\"}'" })
 ```
@@ -58,24 +58,29 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, ask_user_question, workflow helpers | System, file ops, tool discovery |
 | `browser` | tab, screenshot, eval_js, snapshot, text, form, click, fill, scroll, manage_cookies, background_browse | Web automation |
 | `github` | git_push, git_pull, git_commit, git_add, git_status, git_log, git_diff, git_branch, github_create_pr, github_create_issue | Git & GitHub |
-| `function` | function_list, function_run | Custom function execution |
+| `function` | list, run, runs | Custom function execution |
 | `docker` | docker_ps, docker_logs, docker_run, docker_exec, docker_stop, docker_rm, docker_build | Container management |
-| `slack` | slack_send_message, slack_search_users, slack_thread, slack_connection_health | Messaging |
-| `notify` | notify_user | Desktop notifications |
-| `redis` | redis_get, redis_set, redis_hget, redis_hset, redis_hgetall, redis_lpop, redis_rpush, redis_expire | Key-value store |
-| `pg` | pg_query, pg_queryall, pg_queryone, pg_execute, pg_transaction | PostgreSQL |
+| `slack` | send_message, update, thread, search_users, user, unreact, connection_health | Messaging |
+| `notify` | user, history | Desktop and mobile notifications |
+| `redis` | get, set, del, incr, decr, expire, ttl, hget, hset, hgetall, lpop, rpush | Key-value store |
+| `pg` | query, queryall, queryone, count, execute, transaction | PostgreSQL |
 | `calendar` | create, get, list, list_upcoming, update, cancel, delete | Local events |
 | `workflow` | import_workflow, refresh_schedules, catch_up_schedules, set_workflow_status, routine_report, display_workflow | Workflow lifecycle and schedules |
-| `vault` | vault_read_secrets, vault_is_enabled, vault_list_accounts, vault_set_credential, vault_list | Credentials |
+| `vault` | read_secrets, is_enabled, list_accounts, set_credential, set_active_account, list, autofill, delete_credential | Credentials |
+| `models` | providers, list, usage | AI provider and model inventory (read-only) |
+| `settings` | get, set | Sulla Desktop settings (use these, not raw Redis) |
+| `skills` | skill_list, skill_get, skill_save, skill_disable | Skills stored in the database |
 | `agents` | list_agents, check_agent_jobs, stop_agent_job, conversation tools | Agent registry and async job management |
 | `applescript` | execute, audit_log | macOS app automation |
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
-| `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
+| `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update, diff | Artifact lifecycle for Use Cases (the marketplace) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
-| `project` | list/get/search, create/update project+epic+task, add_task_comment, list_task_comments, archive_project_item, project_report | Projects project-state (Postgres) — the ONE project-state store, accessed through the Sulla CLI catalog |
+| `project` | list/get/search items, create/update project+epic+task, add_task_comment, list_task_comments, archive_project_item, report, task dependencies, pipeline templates, lanes, knowledge links, reconcile_github_pr_mirror | Projects project-state (Postgres) — the ONE project-state store, accessed through the Sulla CLI catalog |
 | `ui` | open_tab | Open Sulla Desktop views from chat (incl. `projects`) |
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
-| `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations | Memory and domain-keyed identity observations |
+| `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations; update_identity_section | Memory and domain-keyed identity observations |
+
+Categories not listed here (files, chat, memory, secretary, lima, kubectl, rdctl, gdrive, bookmarks, rules, reflex, mobile, ledger, and others) are in [`inventory.md`](inventory.md).
 
 ---
 
@@ -104,12 +109,12 @@ Returns a list of tools with their slugs and parameter schemas. Verify a tool ex
 
 Check if an integration is connected:
 ```bash
-exec({ command: "sulla vault/vault_is_enabled '{\"account_type\":\"github\"}'" })
+exec({ command: "sulla vault/is_enabled '{\"account_type\":\"github\"}'" })
 ```
 
-Read credentials:
+Read credentials (masked by default; only pass `include_secrets:true` when the user asked for the secret):
 ```bash
-exec({ command: "sulla vault/vault_read_secrets '{\"account_type\":\"slack\",\"include_secrets\":true}'" })
+exec({ command: "sulla vault/read_secrets '{\"account_type\":\"slack\"}'" })
 ```
 
 Common `account_type` values: `github`, `slack`, `anthropic`, `openai`, `twenty`, `intuit`

@@ -17,11 +17,11 @@ sulla meta/exec '{
 | Field | Default | Notes |
 |-------|---------|-------|
 | `command` (or `cmd`) | required | Shell command. Runs in Lima VM, not host. |
-| `cwd` | `/root` | Working dir inside Lima |
+| `cwd` | none | Working dir inside Lima. Omit it to use the VM default. |
 | `timeout` | 120000 (2 min) | ms; bump for long installs (e.g., 600000 for 10 min) |
 | `stdin` | none | Piped to the command |
 
-**Output cap:** 160KB stdout+stderr combined. Exit 0 = success; non-zero = failure (stderr in `responseString`).
+**Output cap:** 160,000 characters of stdout+stderr combined. Exit 0 = success; non-zero = failure (stderr in `responseString`).
 
 **Important caveats:**
 - Runs in Lima, **not on the host macOS**. `~` is mounted at the same path so file paths work, but env vars from your shell don't carry over. Use `export X=Y && cmd` if you need them.
@@ -43,6 +43,7 @@ sulla meta/exechost '{
 | `cwd` | none | Absolute working dir on the host |
 | `timeout` | 60000 (1 min) | ms |
 | `stdin` | none | Piped to the command |
+| `foreground` | `false` | `open` commands get `-g`, so apps launch without taking focus. Set `true` only when the app must come to the front. |
 
 **VM-first rule (non-negotiable):**
 - Everyday work stays in the Lima VM via regular `exec` / `file_search` / `read_file` and normal repo editing tools.
@@ -64,7 +65,7 @@ sulla meta/browse_tools '{"query":"send message"}'
 sulla meta/browse_tools '{}'                          # everything
 ```
 
-Returns ready-to-run command examples with parameter schemas + credential status. **Always check this before assuming a tool exists** — there are 130+ tools and naming changes happen.
+Returns ready-to-run command examples with parameter schemas + credential status. **Always check this before assuming a tool exists** — there are hundreds of tools and naming changes happen.
 
 ⚠️ The returned strings must be wrapped in `exec()`. They are not directly callable. The output is documentation, not execution.
 
@@ -165,7 +166,7 @@ sulla observation/add_observational_memory '{
 | Field | Notes |
 |-------|-------|
 | `id` | Optional existing observation ID to update in place. Omit only after searching active + archived observations and confirming no existing row should be updated. |
-| `priority` | "high", "medium", "low" — or use the user's symbols 🔴 🟡 🟢. Default 🟡. |
+| `priority` | "high", "medium", "low" — or use the symbols 🔴 🟡 ⚪. Default 🟡. |
 | `content` | One sentence, dense. Verbose entries get truncated by dedup. |
 | `source` | Optional provenance label. |
 
@@ -197,19 +198,20 @@ Use this before every observation write. It ranks active observations by meaning
 sulla observation/list_observations '{"limit":50,"include_archived":false}'
 ```
 
-Lists active observations by priority and recency. Pass `include_archived:true` only for curation, stale-state checks, or duplicate prevention.
+Lists active observations by priority and recency. Optional `priority` filters to one level (e.g. `"high"`). Pass `include_archived:true` only for curation, stale-state checks, or duplicate prevention.
 
 ## Identity observation tools
 
 Identity observations live in the domain-keyed `identity_observations` table. They are different from the short top-N operational memory above: they carry a `domain`, certainty `level`, optional `category`, provenance fields, confidence, and optional `kind`.
 
 Domains currently supported by the live backend:
-- `human`
+- `human` (default)
 - `business`
 - `world`
 - `agent`
 - `environment`
 - `projects`
+- `skills` — `skillSlug` is required here (the exact kebab-case skill slug). It is illegal in every other domain.
 
 Certainty levels:
 - `3` = stated fact from the subject or direct instruction
@@ -265,7 +267,7 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 
 ## Reference
 
-- Tool dirs: `pkg/rancher-desktop/agent/tools/meta/`, `pkg/rancher-desktop/agent/tools/observation/`
-- Manifests: `pkg/rancher-desktop/agent/tools/meta/manifests.ts`, `pkg/rancher-desktop/agent/tools/observation/manifests.ts`
+- Tool dir: `pkg/rancher-desktop/agent/tools/meta/` (observation tools live here too, under category `observation`)
+- Manifest: `pkg/rancher-desktop/agent/tools/meta/manifests.ts`
 - exec implementation: `pkg/rancher-desktop/agent/tools/meta/exec.ts`
-- Memory storage: `SullaSettingsModel` (see `tools/pg.md`)
+- Memory storage: `pkg/rancher-desktop/agent/database/models/ObservationsModel.ts` (Postgres `observations` table, see `tools/pg.md`)

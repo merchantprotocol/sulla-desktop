@@ -141,19 +141,26 @@ git
 | Shell | 30119 | `curl http://127.0.0.1:30119/health` |
 | Node | 30120 | `curl http://127.0.0.1:30120/health` |
 
-If `function/function_list` returns results, all runtimes are up.
+`function_list` reads Postgres only. It does not contact the runtimes, so a successful list doesn't prove they're up. Check the health URLs above.
+
+Inside a workflow, a function node starts an on-demand runtime container from the `sulla-python-runtime`, `sulla-shell-runtime`, or `sulla-node-runtime` image (`services/sulla-workflows/src/runtime.ts`).
 
 ---
 
 ## How Invocation Works
 
-1. Main process reads `~/sulla/functions/<slug>/function.yaml`
-2. Installs dependencies if not cached: POST `/<runtime>/install`
-3. Loads function: POST `/<runtime>/load` with `{name, version}`
-4. Invokes: POST `/<runtime>/invoke` with `{name, version, inputs}`
-5. Returns `{outputs: {...}, duration_ms: N}`
+`function_run` (the tool) does this in one call:
 
-The `function/function_run` tool does steps 2–5 in one call.
+1. Loads the function's files from Postgres (`function_definitions`) and writes them to a temporary folder for this call
+2. Reads `spec.runtime`. Unknown runtimes fail here
+3. If the stored files include a deps file (`requirements.txt`, `package.json`, or `packages.txt`), POST `/<runtime>/install`
+4. POST `/<runtime>/load` with `{name, version}`
+5. If `spec.integrations` is set, resolves vault env vars for this call
+6. POST `/<runtime>/invoke` with `{name, version, inputs}` (plus `env` when vault values resolved)
+7. Removes the temporary folder and POSTs `/<runtime>/unload`
+8. Writes one row to `function_runs`
+
+The runtime returns `{outputs, duration_ms}`. `function_run` returns the trace plus `outputs`.
 
 ---
 
@@ -161,8 +168,8 @@ The `function/function_run` tool does steps 2–5 in one call.
 
 ```
 function_run: { slug: "my-func", inputs: { n: 10 } }
-  ↓ YAML loaded, inputs validated
-  ↓ handler({ n: 10 }) called
+  ↓ function loaded from Postgres
+  ↓ handler({ n: 10 }) called in the runtime
   ↓ handler returns { result: 42 }
-  ↓ Available as {{My Func Node}} in next workflow node
+  ↓ a workflow function node exposes that object as {{My Func Node}}
 ```

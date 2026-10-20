@@ -8,24 +8,26 @@ Useful for: gathering data from multiple sources, batch operations, anything you
 
 | Tool | Canonical category | Purpose |
 |------|--------------------|---------|
-| `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (fire-and-forget or blocking) |
+| `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (hidden worker or visible tab, fire-and-forget or blocking) |
 | `sulla agents/check_agent_jobs` | agents | Inspect job/task status, elapsed time, worker check-ins, and queued-message counts |
 | `sulla agents/send_job_message` | agents | Persist and send new direction to a running worker task |
 | `sulla agents/report_progress` | agents | Worker-only milestone/check-in tool, bound to the current job task |
+| `sulla agents/return_result` | agents | Worker-only: return the delegated task's contract to its parent |
 | `sulla agents/stop_agent_job` | agents | Kill switch — cancel a running async job |
 | `sulla agents/start_agent_conversation` | agents | Deprecated compatibility shim; launches one async `spawn_agent` job |
-| `sulla agents/send_agent_message` | agents | Deprecated; returns guidance to use `spawn_agent` / `check_agent_jobs` |
+| `sulla agents/send_agent_message` | agents | Deprecated; use `send_job_message` with the jobId |
 | `sulla agents/read_agent_conversation` | agents | Temporary read compatibility for pre-migration conversations |
 | `sulla agents/close_agent_conversation` | agents | Temporary close compatibility for pre-migration conversations |
 | `sulla agents/list_agents` | agents | Directory of live named agents you can `<channel:>`-message |
-| `sulla chat/launch_agent_tab` | chat | Open an enabled agent in a visible, background chat tab with a durable return contract |
-| `sulla chat/return_contract` | chat | Validate and return the child tab's structured result, then wake its parent |
+| `sulla agents/directory` | agents | Cards for every enabled custom agent — pick a specialist before `spawn_agent` |
+| `sulla chat/launch_agent_tab` | chat | Alias of `spawn_agent` with `visibility: "tab"` |
+| `sulla chat/return_contract` | chat | Alias of `agents/return_result` for a tab child |
 | `sulla chat/message_tab` | chat | Send a parent follow-up to a running or idle child tab |
 | `sulla chat/list_tab_contracts` | chat | List the current parent thread's child contracts and results |
 
-**Important:** the tool registry resolves tools by **name only** — `sulla agents/spawn_agent` and `sulla anything/spawn_agent` also work because the backend ignores the category segment in the URL. But the canonical surfacing in `sulla meta --help` lists `spawn_agent` under `meta`. Use that form for clarity.
+Use the `meta` form for `spawn_agent` — that is the category the manifest registers it under.
 
-**Pick the surface by visibility:** use `spawn_agent` for a headless worker. Use `launch_agent_tab` when the delegated agent needs a visible transcript, its own Playbook/sidebar artifacts, or room to run its own sub-agents. Use `<channel:NAME>` tags only to message an already-running long-lived agent.
+**Pick the surface by visibility:** use `spawn_agent` (default `visibility: "hidden"`) for a headless worker. Use `visibility: "tab"` (or `chat/launch_agent_tab`) when the delegated agent needs a visible transcript, its own sidebar artifacts, or room to run its own sub-agents. Use `<channel:NAME>` tags only to message an already-running long-lived agent.
 
 ## Visible agent tabs and return contracts
 
@@ -38,7 +40,7 @@ sulla chat/launch_agent_tab '{
 }'
 ```
 
-The new tab opens in the background by default, stays bound to its backend thread across restart, and shows which parent launched it. `focus:true` is available when focus-stealing is intentional. A parent may have at most five open child contracts; nesting stops at depth two.
+The new tab opens in the background by default, stays bound to its backend thread across restart, and shows which parent launched it. `focus:true` is available when focus-stealing is intentional.
 
 The child brief includes its contract id and schema. The child completes the handoff with:
 
@@ -64,13 +66,17 @@ sulla meta/spawn_agent '{
 | Field | Default | Notes |
 |-------|---------|-------|
 | `tasks[].prompt` | required | The task instruction the sub-agent gets |
-| `tasks[].agentId` | parent's `wsChannel` | Which agent config from `~/sulla/agents/`. Defaults to the parent agent's channel. |
+| `tasks[].agentId` | parent's channel | Database-backed agent slug (`agent_definitions`). Must match an enabled agent or the call is rejected. `agentName` is accepted as an alias. |
 | `tasks[].label` | optional | Human-readable name shown in `check_agent_jobs` output |
+| `tasks[].visibility` | `"hidden"` | `"hidden"` = background worker. `"tab"` = live chat tab; max 5 open per chat per the manifest text (not enforced in code — see Limits). |
+| `tasks[].contract` | default contract | `{ name }` or `{ name, schema }`. Default is `{status, summary, output}`. |
+| `tasks[].projectTaskId` | none | Required when the sub-agent works a Projects task. The job owns that task until it ends; launch is refused if another agent owns it. |
+| `tasks[].focus` | `false` | Tab children only: focus the new tab. |
 | `parallel` | `true` | Run tasks concurrently. `false` = serial. |
-| `async` | `true` | Fire-and-forget; return jobId immediately. `false` = block until done. |
+| `async` | `true` | Fire-and-forget; return jobId immediately. `false` = block until done. Tab children never block. |
 
 **Returns:**
-- `async: true` → `{ jobId, taskCount, status: "running" }` — on completion the results WAKE your graph as a new turn (no polling needed); `check_agent_jobs` is the fallback read
+- `async: true` → `{ mode: "async", jobId, taskCount, parallel, message }` — on completion the results WAKE your graph as a new turn (no polling needed); `check_agent_jobs` is the fallback read
 - `async: false` → array of completed task results (blocks until all done)
 
 ## `check_agent_jobs`
@@ -80,7 +86,7 @@ sulla agents/check_agent_jobs '{"jobId":"job_..."}'
 ```
 
 Every response includes a `tasks` array. Each task reports its own status and
-elapsed time, its latest check-in, the last three check-ins, and the count of
+elapsed time, its latest check-in, its recent check-ins, and the count of
 orchestrator messages still waiting for a model-call boundary:
 ```jsonc
 {
@@ -183,8 +189,8 @@ Returns the live named agents (heartbeat, mobile-relay, frontends) with channel,
 ## Limits
 
 - **Max 10 tasks per `spawn_agent` call** — prevents accidental fan-out explosions.
-- **Depth max 3** — a sub-agent that spawns sub-agents that spawn sub-agents will hit the depth guard at level 3.
-- **Job TTL: 1 hour** — auto-expire whether they finished or not. Cleaned up on retrieval.
+- **No depth or open-tab cap in code.** `spawn_agent` records `subAgentDepth` but does not block deeper nesting. Who launches whom is steered by agent prompts.
+- **Job cleanup: 1 hour.** Jobs are removed after retrieval or dismissal, and dismissed rows are deleted after one hour.
 - **Jobs persist across restarts** — `agent_jobs` (Postgres, migration 0043) is the write-through store. A restart marks leftover `running` rows `failed` with `"app restarted mid-job"` so `check_agent_jobs` answers honestly. AbortControllers stay in-memory (a signal cannot survive a restart).
 - **Pre-migration conversations are in-memory only** — temporary read/close compatibility disappears naturally on restart.
 
@@ -242,7 +248,7 @@ sulla meta/spawn_agent '{
 
 ## Where do `agentId` configs live?
 
-`~/sulla/agents/<agentId>/` — each is a directory with a config file describing the agent's system prompt, tools, model, etc. The user can install pre-built ones (forecaster, code-researcher, prompt-engineer, etc.) or author their own. If `agentId` doesn't exist, the system silently defaults to the parent's channel — which usually isn't what you wanted, so verify.
+Agent configs are database rows in `agent_definitions`, not files under `~/sulla/agents/`. Use `sulla agents/directory` to find a slug. A non-empty `agentId` that matches no enabled agent is rejected with an error; it is not silently run as the default agent.
 
 ## Hard rules
 

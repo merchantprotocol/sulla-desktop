@@ -8,7 +8,7 @@ This is one doc per purpose, not per artifact. Specifics live in the per-artifac
 
 > **If you wrote it or changed it, validate it before you say it's done.**
 
-No exceptions for "simple changes." The validators are fast (sub-second for everything except `marketplace/validate` for large routines). The cost of running them is zero; the cost of shipping a broken manifest is a user-reported bug.
+No exceptions for "simple changes." Running a validator costs little. Shipping a broken manifest costs a user-reported bug.
 
 ## The validators, by artifact kind
 
@@ -44,9 +44,11 @@ Step 4 is non-negotiable. Step 5 is a loop, not a single shot — fix all errors
 
 **When writing to the workflows DB**, `meta/validate_sulla_workflow` must pass before the row is set to `status: "production"`. Draft rows with validation errors are tolerable (the user is still iterating); production rows are not.
 
+`workflow/import_workflow` defaults to `production` when `status` is omitted. Always pass `"status":"draft"` while you're still validating.
+
 ## Interpreting validator output
 
-All validators return `{ errors: [], warnings: [] }` or a `ValidationIssue[]` shape:
+`meta/validate_sulla_workflow` returns a list of `ValidationIssue` objects, split into errors and warnings. `marketplace/validate` returns text: either "passes validation" or "has N issue(s)" followed by one line per problem. Read both the same way:
 
 ```json
 {
@@ -61,23 +63,23 @@ All validators return `{ errors: [], warnings: [] }` or a `ValidationIssue[]` sh
 - **`path`** → dotted path into the YAML. Walk it to the offending node and read the `message`.
 - **`message`** → what's wrong. Usually actionable verbatim.
 
-If a validator errors out with `"tool not available"` or similar, it means the relevant runtime isn't up (e.g. function runtimes down for `function_list`). Check `environment/docker.md` for the health-check call rather than skipping validation.
+If a validator errors out with `"tool not available"` or similar, it means the relevant runtime isn't up (e.g. function runtimes down for `function/list`). Check `environment/docker.md` for the health-check call rather than skipping validation.
 
 ## Common validation pitfalls
 
 - **`subtype` ↔ `category` mismatch.** Workflow nodes need both, and they must pair correctly (e.g. `subtype: agent` → `category: agent`, `subtype: router` → `category: routing`). `meta/validate_sulla_workflow` catches this.
 - **Missing required config fields.** Per-subtype required keys are listed in `workflows/node-types.md`. Agent nodes in particular need `agentId`, `agentName`, `additionalPrompt`, `orchestratorInstructions`, `successCriteria`, `completionContract`.
 - **Slug / id / directory disagreement.** A function at `~/sulla/functions/csv-to-json/` must have `slug: csv-to-json`, `id: function-csv-to-json`, and its `entrypoint` must reference a file that actually exists. All three must line up.
-- **Output shape doesn't match `spec.outputs`.** Function validators can't catch this — only `function_run` can. Run the function with a minimal input and confirm the returned keys match `spec.outputs`.
+- **Output shape doesn't match `spec.outputs`.** Function validators can't catch this — only `function/run` can. Run the function with a minimal input and confirm the returned keys match `spec.outputs`.
 - **Unreachable nodes.** Anything downstream of nothing means an edge is missing. Validator reports which node is orphaned.
-- **Trigger required.** Every workflow must have at least one trigger node (`manual`, `schedule`, `chat`, `calendar`, `heartbeat`). Validator enforces.
+- **Trigger required.** Every workflow must have at least one trigger node. The validator accepts `manual`, `schedule`, `calendar`, `heartbeat`, `chat-app`, `sulla-desktop`, `workbench`, and `chat-completions`.
 
 ## What validation does NOT catch
 
 Validation is structural, not semantic. A workflow can be valid-by-schema and still do nothing useful. After validation passes, also:
 
 - **Test-run functions** with a minimal input. Schema doesn't prove the handler works.
-- **Dry-run workflows** via `meta/execute_workflow` when safe to do so — the user agrees it's idempotent or reversible.
+- **Dry-run workflows** with `meta/dry_run_workflow`. It walks the graph and runs nothing. Use `meta/execute_workflow` for a real run, and only when the run is safe to repeat or reverse.
 - **Inspect outputs** from upstream nodes when a node template-references them (`{{Node Label}}`) — a valid graph can still pass the wrong shape between steps.
 
 Semantic testing is per-turn judgment. Structural validation is mechanical — always run it.

@@ -1,6 +1,6 @@
 # Sulla Cloud
 
-The agent should be able to explain Sulla Cloud accurately without inventing features. Pilot phase: first paying customer targeted June 15, 2026. Treat anything not in this doc as "I don't know — let me check."
+The agent should be able to explain Sulla Cloud accurately without inventing features. Sulla Cloud is in a pilot phase. Treat anything not in this doc as "I don't know — let me check."
 
 ## Two products, one ecosystem
 
@@ -26,7 +26,7 @@ The agent should be able to explain Sulla Cloud accurately without inventing fea
 
 **Secretary mode** — local meeting transcription + auto-extracted action items is **shipped today** (`Cmd+Shift+S` to start; see `desktop/secretary-mode.md`). The Cloud-routed Phase 2 — handling incoming conversations regardless of whether the user's machine is on — is the aspirational extension. The wiring (gateway sessions + desktop relay to Cloudflare Workers) is in place.
 
-**Threat-proxy URL filtering** — Quad9/URLhaus/SafeBrowsing/VT scanning. Available in both Desktop and Cloud, but bundled as a value driver in Enterprise Gateway.
+**Threat-proxy URL filtering** — URLhaus and VirusTotal lookups are in the Desktop code (`pkg/rancher-desktop/agent/integrations/native/security.ts`). Whether it's bundled as an Enterprise Gateway value driver is a business decision, not code. The other feeds named in older notes (Quad9, SafeBrowsing) aren't in that file.
 
 ## Pricing tiers (current targets)
 
@@ -62,13 +62,13 @@ Pairing lets Sulla Mobile send work to a paired Cloud (or Desktop) instance. The
 
 Shipped. The user signs up / signs in via the **SullaCloudCard** Vue component — surfaces in:
 - `pkg/rancher-desktop/components/account/SullaCloudCard.vue` — the card itself (sign-in / sign-out, displays tier + status)
-- `pkg/rancher-desktop/components/routines/MarketplaceTab.vue` — embeds the card at the top of Marketplace
+- `pkg/rancher-desktop/components/routines/MarketplaceTab.vue` — embeds the card at the top of the Use Cases tab (the file keeps its old name)
 
 Once signed in, the card fetches status (tier, minutes, pairing) and keeps itself in sync. The agent can direct the user there via:
 ```bash
-sulla ui/open_tab '{"mode":"marketplace"}'
+sulla ui/open_tab '{"mode":"use-cases"}'
 ```
-(and the SullaCloudCard is visible on that tab).
+(`marketplace` also works as an alias, and the SullaCloudCard is visible on that tab).
 
 For settings-window scope:
 ```bash
@@ -81,7 +81,7 @@ sulla ui/open_tab '{"mode":"settings"}'
 - No live billing / usage API (Cloud backend doesn't expose one yet)
 - No tier-upgrade flow tool (user handles in the card UI)
 
-If a user asks about Cloud features, point them at the Marketplace tab — the card shows everything relevant.
+If a user asks about Cloud features, point them at the Use Cases tab — the card shows everything relevant.
 
 ## Hard "do nots"
 
@@ -92,7 +92,6 @@ If a user asks about Cloud features, point them at the Marketplace tab — the c
 
 ## Reference
 
-- Business model summary: `~/.claude/projects/-Users-jonathonbyrdziak-Sites/memory/project_sulla_business_model.md`
-- Relay architecture: `~/.claude/projects/-Users-jonathonbyrdziak-Sites/memory/project_sulla_relay_architecture.md`
-- Desktop vs Cloud: `~/Sites/sulla/docs/desktop-vs-cloud.md` (if present)
 - Identity / goals: `~/sulla/identity/business/identity.md`, `~/sulla/identity/business/goals.md`
+- Cloud card: `pkg/rancher-desktop/components/account/SullaCloudCard.vue`
+- Cloud auth (desktop): `pkg/rancher-desktop/main/sullaCloudAuth.ts`

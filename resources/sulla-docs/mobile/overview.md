@@ -123,14 +123,18 @@ Plus credit packs (50 / 100 / 250 min) — requires an active subscription to pu
 
 - **"What does Sulla Mobile do?"** → AI iPhone receptionist + companion to Desktop. Lead with the receptionist value, not the chat features.
 - **"How do I pair my phone?"** → Sign in on both with the same account. No QR yet.
-- **"Show me my last call"** → No agent tool wraps the mobile API today. Tell them to open the Recents tab on their phone.
+- **"Show me my last call"** → `sulla mobile/list_calls`, then `sulla mobile/get_call '{"id":"<call id>"}'`. Both are read-only.
 - **"How much does it cost?"** → $49.99 Starter (100 min) or $99.99 Pro (250 min). Don't conflate with Sulla Cloud's $99/mo Enterprise Gateway — different products.
 - **"Where do I download it?"** → TestFlight (currently). App Store submission imminent.
 - **"Can I record a call?"** → Recording happens automatically on the backend. UI playback is planned, not yet shipped.
 
+## What the agent can do for Sulla Mobile
+
+Read-only tools in the `mobile` category: `list_calls`, `get_call` (takes `id`), `list_leads`, `list_messages`, and `list_devices`.
+
 ## What the agent can NOT do for Sulla Mobile
 
-- No tool to query mobile call history from Desktop chat
+- No tool to change anything on the mobile side. Every mobile tool is read-only.
 - No tool to send a notification to the paired phone (`notify_user` is desktop-only)
 - No tool to manage the Twilio number from Desktop chat
 - No tool to update the knowledge base from Desktop chat

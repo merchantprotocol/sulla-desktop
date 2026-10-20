@@ -2,7 +2,7 @@
 
 A live meeting transcription + note-taking assistant. Listens to **both sides** of a conversation (mic + system audio), transcribes locally, extracts action items / decisions / insights about every 30 seconds, lets the user ask Sulla questions mid-meeting ("Hey Sulla, …" or the private chat box), and saves the notes as markdown when the session ends.
 
-**Status: SHIPPED.** Local feature. Cloud routing for offline/idle agents is the aspirational Phase 2.
+Local feature. Source code alone does not establish the state of a running installation.
 
 ## What it does
 
@@ -50,11 +50,11 @@ If the microphone permission is denied or transcription can't start (no whisper 
 - **"Can you take notes for this meeting?"** → Run `sulla secretary/start`. It transcribes both sides and extracts action items about every 30 seconds.
 - **"Can I ask you questions during the meeting?"** → Yes — say "Hey Sulla, …" or type in the chat box.
 - **"Where are my meeting notes?"** → `~/sulla/meetings/` — one markdown file per session.
-- **"Does it work when my laptop is closed?"** → Not yet (Cloud-routed Phase 2).
+- **"Does it work when my laptop is closed?"** → Live capture requires Desktop and its audio pipeline to remain running.
 - **"Can you record the audio too?"** → No — transcription only. Use Capture Studio for audio recording.
 - **"Who is 'Caller'?"** → Everything coming through system audio — the other side of the call. Your mic is "You".
 
 ## Known limits
 
 - The last ~2 seconds of speech before END may not be transcribed
-- The agent has no tool to search past meeting notes yet — read the files in `~/sulla/meetings/`
+- There is no past-notes search in `secretary/*`. Use Files search for notes present in File Manager; `~/sulla/meetings/` is the app storage path, not a VM host-home mount.

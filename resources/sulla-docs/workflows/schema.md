@@ -9,12 +9,11 @@ description: "What this workflow does"    # Required
 version: 1                                # Always 1
 createdAt: "2026-04-23T00:00:00.000Z"    # ISO 8601
 updatedAt: "2026-04-23T00:00:00.000Z"    # ISO 8601
-tags:                                     # Optional array of strings
-  - daily
-  - production
-_status: production                       # draft | production | archive
 enabled: true                             # Whether auto-triggers fire
 maxConcurrentRuns: 1                     # Positive integer; active run ceiling
+auto_restart: false                       # Optional boolean
+preflight: { functionRef: my-check }      # Optional; see "Deterministic preflight admission"
+browser: false                            # Optional boolean; see "Scheduled browser opt-in"
 
 nodes:                                    # Required. Array of node objects
   - id: node-001
@@ -32,8 +31,9 @@ edges:                                    # Required. Array of edge objects
   - id: edge-001
     source: node-001                     # Source node ID
     target: node-002                     # Target node ID
-    sourceHandle: null                   # For routers/parallel: route-0, branch-0, etc.
+    sourceHandle: null                   # For routers: route-0, route-1...; conditions; loops
     targetHandle: null                   # For loops: loop-entry, loop-back
+    label: ""                            # Optional
     animated: true                       # Optional visual flag
 
 viewport:                                 # Optional canvas state
@@ -54,6 +54,8 @@ viewport:                                 # Optional canvas state
 
 Filename convention: `<workflow-id>.yaml` or descriptive name like `daily-social-posts.yaml`.
 
+The status that decides whether a workflow runs lives on the database row, set by `workflow/import_workflow` (`status`) or `workflow/set_workflow_status`. Moving a file between these folders does not change the row. The `~/sulla/workflows/` folder is mirrored into the File Manager at `Sulla/Use Cases/workflows/`.
+
 ---
 
 ## Template Syntax
@@ -69,15 +71,17 @@ Templates are resolved at runtime before each node executes.
 {{loop.index}}                 — Current loop iteration (0-based)
 {{loop.currentItem}}           — Current item in for-each loop
 {{loop.currentItem.result}}    — Result field of current loop item
+{{loop.currentItem.label}}     — Label of current loop item
+{{loop.currentItem.nodeId}}    — Node ID of current loop item
 ```
 
-Unresolved variables remain as `{{literal}}` — they do NOT throw errors.
+Only `.result` and `.threadId` resolve on a node reference. Any other field, such as `{{Merge Node.merged}}`, stays as a literal. Unresolved variables remain as `{{literal}}` — they do NOT throw errors.
 
 ---
 
 ## Node ID & Label Rules
 
-- `id`: Must be unique within the workflow. Use kebab-case: `node-sm-twitter`
+- `id`: Must be unique within the workflow. Use `node-<number>` (for example `node-001`). The validator warns on any other pattern.
 - `label`: Used in `{{template}}` references — keep stable, avoid renaming after connections are built
 - `type`: Always `"workflow"` — do not change
 
@@ -88,7 +92,7 @@ Unresolved variables remain as `{{literal}}` — they do NOT throw errors.
 | Node type | sourceHandle values | targetHandle values |
 |-----------|--------------------|--------------------|
 | `router` | `route-0`, `route-1`, `route-N` | — |
-| `parallel` | `branch-0`, `branch-1`, `branch-N` | — |
+| `parallel` | `null` (each outgoing edge is a branch) | — |
 | `condition` | `condition-true`, `condition-false` | — |
 | `loop` | `loop-start`, `loop-exit` | `loop-entry`, `loop-back` |
 | All others | `null` | `null` |

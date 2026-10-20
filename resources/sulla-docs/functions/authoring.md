@@ -1,30 +1,31 @@
 # Function Authoring & Lifecycle
 
-Companion to `schema.md` (full YAML spec), `runtimes.md` (handler signatures), and `examples.md` (working code). This is the **how-to** for building, running, debugging, editing, and deleting custom functions.
+Companion to `schema.md` (full YAML spec), `runtimes.md` (handler signatures), and `examples.md` (working code). This is the **how-to** for building, running, debugging, and editing custom functions.
 
 ## Where functions live
 
+Functions are stored in Postgres (`function_definitions`). `function_list` and `function_run` read from there. Each function also has a folder that is its File Manager copy:
+
 ```
-~/sulla/functions/<slug>/
-  function.yaml                  # required — manifest
-  main.py | main.js | main.sh    # handler code (per runtime)
-  requirements.txt               # python deps (pip)
-  package.json                   # node deps (npm) — required even if no deps
-  packages.txt                   # shell deps (apk)
+~/sulla/functions/<slug>/          # File Manager: Sulla/Use Cases/functions/<slug>/
+  function.yaml                    # required — manifest
+  main.py | main.js | main.sh      # handler code (per runtime)
+  requirements.txt                 # python deps (pip), if any
+  package.json                     # node deps (npm), if any
+  packages.txt                     # shell deps (apk), if any
 ```
 
-The slug must match the directory name, the `id` (as `function-<slug>`), and the `slug` field in `function.yaml`.
-
-Functions are **not** registered anywhere — they're discovered by scanning `~/sulla/functions/` at list time.
+The slug must match the `slug` field in `function.yaml`, the folder name, and the `id` (as `function-<slug>`). Files are the source of truth and the database is the runtime index. See [`environment/files-first.md`](../environment/files-first.md).
 
 ## Tools
 
-| Tool | Purpose |
-|------|---------|
-| `sulla function/function_list` | Enumerate functions in `~/sulla/functions/`. No params. |
-| `sulla function/function_run` | Execute one. Params: `slug`, `inputs?`, `version?` |
+| Command | Purpose |
+|---------|---------|
+| `sulla function/list '{}'` | List functions in Postgres: slug, name, runtime, entrypoint, inputs, outputs |
+| `sulla function/run '{"slug":"..."}'` | Run one. Params: `slug` (required), `inputs` (optional object), `version` (optional, default `1.0.0`) |
+| `sulla function/runs '{}'` | Query run history from `function_runs`. Params: `slug`, `only_failures`, `since`, `limit`, `verbose` |
 
-Everything else (create, edit, delete, view source) is **file-based** — agent uses Read/Write/Edit on the function dir directly.
+Everything else (create, edit, view source) is **file-based.** Use the Read/Write tools on the function folder.
 
 ## Build a function
 
@@ -32,12 +33,12 @@ The canonical flow is **draft → validate → test-run → done**. Skipping val
 
 1. **Gather:** what does the function take in, what does it return, what runtime is best (Python for data work, Node for HTTP/JS, Shell for system glue)?
 2. **Pick a slug** (kebab-case, no spaces, e.g., `csv-to-json`)
-3. **Create the dir:** `mkdir -p ~/sulla/functions/<slug>` — or let the scaffolder do it:
+3. **Scaffold** the starter files:
    ```bash
    sulla marketplace/scaffold '{"kind":"function","slug":"csv-to-json","name":"CSV to JSON","description":"…","runtime":"python"}'
    ```
-   Scaffold produces a manifest + handler + deps file so you only fill in the body.
-4. **Write `function.yaml`** with the required fields:
+   The scaffold writes `function.yaml`, a handler, and a deps file so you only fill in the body. For node it also writes `package.json` with `"type": "module"`.
+4. **Write `function.yaml`:**
    ```yaml
    apiVersion: sulla/v1
    kind: Function
@@ -61,141 +62,122 @@ The canonical flow is **draft → validate → test-run → done**. Skipping val
          description: "Computed values"
      timeout: 60s
      permissions:
-       network: []                # [] = none, ["*"] = all, ["host.com"] = allowlist
+       network: []                # declared only; function_run does not enforce it
    ```
-5. **Write the handler** (signature per runtime — see `runtimes.md`):
+5. **Write the handler** (signature per runtime, see `runtimes.md`):
    - Python: `def handler(inputs: dict) -> dict:`
    - Node: `export async function handler(inputs) { ... }` (ESM, `"type": "module"` in package.json)
    - Shell: read JSON from stdin, write JSON to stdout, exit 0 = success
-6. **Add deps** (only if needed): `requirements.txt`, `package.json`, or `packages.txt` (apk format)
-7. **Validate** (see next section) — non-negotiable before step 8
-8. **Test-run:** `sulla function/function_run '{"slug":"<slug>"}'` (use defaults) or with explicit inputs. A clean validator pass doesn't prove the handler actually works — only a real invocation does.
+6. **Add deps** only if needed: `requirements.txt`, `package.json`, or `packages.txt`
+7. **Validate** (next section). Don't skip this.
+8. **Test-run:** `sulla function/run '{"slug":"<slug>"}'` (defaults) or with explicit `inputs`. Validation doesn't prove the handler works. Only an invocation does.
 
 ## Validate
-
-Every function the agent writes gets validated before the user is told it's ready. See `agent-patterns/validation.md` for the overall policy; this is the function-specific call.
 
 ```bash
 sulla marketplace/validate '{"kind":"function","slug":"<slug>"}'
 ```
 
-What it checks:
-- `function.yaml` exists and parses
-- `slug`, `id` (must be `function-<slug>`), and the directory name all agree
-- `spec.runtime` is one of `python` | `node` | `shell`
-- `spec.entrypoint` references a file that actually exists on disk
-- `spec.inputs` and `spec.outputs` have valid shapes
-- `spec.permissions.network` / `filesystem` / `env` follow the permission schema
-- Runtime-specific deps file is consistent with `spec.runtime` (e.g. Python needs no `package.json`; Node needs `"type": "module"`)
+Errors mean the function won't load. Fix them and re-validate before telling the user it's ready. Warnings are safe to surface and defer. Validation is structural only.
 
-Returns `{ errors: [], warnings: [] }`. **Errors mean the function won't load — fix and re-validate before telling the user it's done.** Warnings (e.g. missing `FUNCTION.md` doc) are safe to surface and defer.
-
-Validation is structural only. After the validator is clean, run `function_run` with a minimal input to prove the handler actually works and returns the shape declared in `spec.outputs`. The validator can't catch a missing `return` statement or a key typo in the output dict — only an invocation can.
+After validation passes, run `function/run` with a minimal input. That's the only check that the handler returns the shape declared in `spec.outputs`. Validation can't catch a missing `return` or a key typo in the output dict.
 
 ## Run
 
 ```bash
-sulla function/function_run '{"slug":"csv-to-json"}'                          # defaults
-sulla function/function_run '{"slug":"csv-to-json","inputs":{"path":"data.csv"}}'
+sulla function/run '{"slug":"csv-to-json"}'                                  # defaults
+sulla function/run '{"slug":"csv-to-json","inputs":{"path":"data.csv"}}'
 ```
 
-Flow inside `function_run`:
-1. Read `~/sulla/functions/<slug>/function.yaml`
-2. Validate `inputs` against `spec.inputs` (types, required, enum, min/max)
-3. If a deps file exists, POST to runtime `/install`
-4. POST to runtime `/load`
-5. POST to runtime `/invoke` with the inputs JSON
-6. Return `{successBoolean, responseString}` — responseString contains a full execution trace and the parsed outputs
+What `function/run` does is listed in [`runtimes.md`](runtimes.md#how-invocation-works). Inputs are passed through as given. `function/run` does not check them against `spec.inputs`.
 
-The runtime caches the loaded function by `slug + version` (default version `1.0.0`). Bump `version` in the call to force a reload after code changes.
+It returns `successBoolean` and `responseString`. The string holds the full trace (runtime, load status, inputs, and outputs). Outputs are also returned as a parsed object.
+
+`function/run` passes `version` to the runtime. The default is `1.0.0`. Pass a new `version` after code changes so the runtime doesn't reuse an old load.
 
 ## Debug a failed function
 
-Errors come back in `responseString` with a category prefix:
+Errors come back in `responseString`, prefixed by the stage that failed:
 
-| Category | Source |
-|----------|--------|
-| `function.yaml not found` | dir or manifest missing |
-| `Failed to parse function.yaml` | YAML syntax error |
-| `Unknown runtime ...` | runtime field is invalid |
-| `Dependency installation failed: HTTP X: ...` | requirements.txt / package.json / packages.txt rejected by runtime |
-| `Load failed: HTTP X: ...` | handler file missing, syntax error, import error |
-| `Invocation failed: HTTP X: ...` | handler threw, returned wrong shape, or timed out |
+| Message prefix | Meaning |
+|----------------|---------|
+| `Function "<slug>" was not found in Postgres` | Slug is wrong, or the files haven't been indexed. Run `function/list`. |
+| `Database lookup failed` | Postgres query failed |
+| `Unknown runtime "..."` | `spec.runtime` is not `python`, `node`, or `shell` |
+| `Dependency installation failed` | The runtime rejected the deps file |
+| `Load failed` | Handler file missing, syntax error, or import error |
+| `Vault lookup failed` | An integration value couldn't be read |
+| `Invocation failed` | The handler threw, returned bad output, or the call failed |
 
-**There's no persistent log file.** Container stdout/stderr is captured in the HTTP response from the runtime. If you need richer logs, write them as part of the handler's return value (e.g., include a `_debug` key) or write to a file the agent can read after.
+**Run history:** every `function/run` writes a row to `function_runs`:
+```bash
+sulla function/runs '{"slug":"csv-to-json","only_failures":true,"verbose":true}'
+```
 
 **Debug flow:**
-1. `function_list` — confirm function exists and parses
-2. `function_run` with same inputs — read the full trace
-3. Open the handler — common bugs: missing return, wrong shape vs `spec.outputs`, missing import
-4. Check `entrypoint` matches the actual function name in the file
-5. For dep failures: `cat ~/sulla/functions/<slug>/requirements.txt` and look for typos / version conflicts
+1. `function/list`: confirm the function exists
+2. `function/run` with the same inputs, and read the full trace
+3. `function/runs` with `verbose: true` for the saved inputs and outputs
+4. Open the handler. Common bugs: missing return, output shape doesn't match `spec.outputs`, missing import
+5. Check that `entrypoint` names a function that exists in the file
+6. For dependency failures, read the deps file in the function folder and look for typos or version conflicts
+
+If you need detail beyond the trace, return it from the handler, for example under a `_debug` key.
 
 ## Test
 
 No dedicated test tool. Strategy:
-- Functions with no required inputs: `function_run '{"slug":"<slug>"}'` to use defaults
-- Otherwise: pass minimal valid inputs
-- For schema-only checks: read `spec.inputs`/`spec.outputs` from the YAML and reason about it
+- Functions with no required inputs: `function/run '{"slug":"<slug>"}'` uses defaults
+- Otherwise, pass minimal valid inputs
 
 ## Edit
 
-No "edit function" tool — modify the files directly:
-- Change handler code: edit `main.py` / `main.js` / `main.sh`
-- Change schema: edit `function.yaml`
-- Change deps: edit `requirements.txt` / `package.json` / `packages.txt`
+Edit the files in the function folder, then bump `version` in the next `function/run` call so the runtime reloads:
+- Handler code: `main.py` / `main.js` / `main.sh`
+- Schema: `function.yaml`
+- Deps: `requirements.txt` / `package.json` / `packages.txt`
 
-The runtime caches by `slug + version`. After code changes, **bump `version`** (or pass an explicit `version` to `function_run`) to force a reload. If you don't, the runtime may reuse the stale cached handler.
+Without a version bump, the runtime may reuse the old cached handler.
 
 ## Delete
 
-No tool. Remove the dir:
-```bash
-rm -rf ~/sulla/functions/<slug>
-```
-Confirm with the user first — function dirs sometimes have their own `.git` history.
+No delete tool exists. Ask the user before removing a function folder. Workflows that reference the slug will fail until it's back.
 
-## Permissions
+## Permissions and secrets
 
 ```yaml
 spec:
-  permissions:
-    network: []                          # [] no network | ["*"] all | ["api.example.com"] allowlist
-    filesystem:
-      - path: /home/user/data
-        mode: read                       # read | write
-    env: ["SLACK_TOKEN"]                 # env vars to expose to handler
+  permissions:                           # declared; not enforced by function/run
+    network: []
   integrations:
     - slug: slack
       env:
-        SLACK_TOKEN: bot_token            # maps env var → vault property
+        SLACK_TOKEN: bot_token           # env var -> vault property
 ```
 
-When `integrations` is set, the runtime injects vault secrets as env vars before invoking the handler. Handler accesses via `os.environ["SLACK_TOKEN"]` (Python) or `process.env.SLACK_TOKEN` (Node). The agent never sees the secret.
+When `integrations` is set, `function/run` injects the vault values as env vars before invoking the handler. It does this only if that integration's `llm_access` setting allows secrets in agent code. If not, it skips the injection and logs a warning. Handler code reads them with `os.environ["SLACK_TOKEN"]` (Python) or `process.env.SLACK_TOKEN` (Node).
 
 ## Runtimes — health check
 
-If `function_list` returns successfully, the runtimes are reachable. If a specific runtime hangs:
-- Python: `http://127.0.0.1:30118`
-- Shell: `http://127.0.0.1:30119`
-- Node: `http://127.0.0.1:30120`
+`function/list` doesn't touch the runtimes. To check them:
+- Python: `http://127.0.0.1:30118/health`
+- Shell: `http://127.0.0.1:30119/health`
+- Node: `http://127.0.0.1:30120/health`
 
-Check container status: `sulla docker/docker_ps '{}'` — look for `python_runtime`, `shell_runtime`, `node_runtime`. If missing, ServiceLifecycleManager owns them — tell the user, don't try to restart from the agent (see `environment/docker.md`).
+If a runtime is down, tell the user. Don't try to restart the containers from the agent. `ServiceLifecycleManager` owns them. See `environment/docker.md`.
 
 ## What the agent does NOT have
 
-- No "create function from template" tool — author by hand
-- No async / fire-and-forget invocation — `function_run` blocks until the handler returns
-- No streaming output — single response when the function completes
-- No persistent run history (each invocation is independent)
+- No "create function from template" tool. Scaffold the files, then write the body by hand.
+- No async or fire-and-forget invocation. `function/run` blocks until the handler returns.
+- No streaming output. You get one response when the function completes.
 
 ## Reference
 
 - Tool manifests: `pkg/rancher-desktop/agent/tools/function/manifests.ts`
 - Run impl: `pkg/rancher-desktop/agent/tools/function/function_run.ts`
 - List impl: `pkg/rancher-desktop/agent/tools/function/function_list.ts`
-- Runtime constants: `pkg/rancher-desktop/agent/tools/function/constants.ts`
-- Path resolver: `resolveSullaFunctionsDir()` in `pkg/rancher-desktop/agent/utils/sullaPaths.ts`
-- Schema: `functions/schema.md`
-- Handler signatures: `functions/runtimes.md`
-- Working examples: `functions/examples.md`
+- Runtime URLs: `pkg/rancher-desktop/agent/tools/function/constants.ts`
+- Schema: [`schema.md`](schema.md)
+- Handler signatures: [`runtimes.md`](runtimes.md)
+- Working examples: [`examples.md`](examples.md)

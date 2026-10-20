@@ -12,8 +12,8 @@ Default to handle-based. Drop to coordinates only when the snapshot can't see th
 ## Scheduled graph controller
 
 Heartbeat and other explicitly browser-capable scheduled graphs receive the
-graph-bound MCP tool `mcp__sulla_native__browser_controller`. This is the
-supported delegation path when the installed Codex Browser skill is present
+graph-bound MCP tool `mcp__sulla_native__browser_controller` (listed in the
+catalog as `sulla browser/controller`). This is the supported delegation path when the installed Codex Browser skill is present
 but its host-app-specific `node_repl` controller cannot run inside Sulla's Lima
 model process.
 
@@ -113,12 +113,6 @@ Options:
 
 **Race note:** if you call `screenshot` immediately after `tab` upsert, retry up to 4× at 400ms intervals — Chromium may have no compositor frame yet.
 
-### `browser/readability-extract` — full reader-mode HTML/MD extraction
-```bash
-sulla browser/readability-extract '{"assetId":"my-tab"}'
-```
-Heavier than `text`; returns structured Mozilla Readability output.
-
 ---
 
 ## Handle-based interaction (preferred)
@@ -142,7 +136,7 @@ sulla browser/fill '{"assetId":"my-tab","handle":"@field-q","value":"...","submi
 sulla browser/press_key '{"assetId":"my-tab","key":"Enter"}'
 sulla browser/press_key '{"assetId":"my-tab","key":"Escape","handle":"@dialog"}'
 ```
-Supported keys: `Enter`, `Escape`, `Tab`, `Backspace`, `Space`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`. Omit `handle` to fire on the focused element.
+Key names are passed straight through to Electron (`Enter`, `Escape`, `Tab`, `ArrowDown`, ...). Single characters are typed as text. Omit `handle` to fire on the focused element.
 
 ### `browser/scroll` — scroll element into view
 ```bash
@@ -282,12 +276,6 @@ sulla browser/search_conversations '{"action":"recent","limit":10}'
 sulla browser/search_conversations '{"action":"get","threadId":"..."}'
 ```
 Searches past chats, browser visits, and workflow executions. Filter `type`: `chat`, `browser`, `workflow`, `graph`.
-
-### `browser/synthesize_tabs` — summarize multiple open tabs
-```bash
-sulla browser/synthesize_tabs '{"assetIds":["a","b","c"]}'
-```
-Cross-tab summary.
 
 ---
 

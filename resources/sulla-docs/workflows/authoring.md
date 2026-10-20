@@ -1,84 +1,83 @@
 # Workflow Authoring & Lifecycle
 
-Companion to `schema.md` (structure), `node-types.md` (every node subtype), and `examples.md` (working patterns). This doc is the **how-to**: design, validate, debug, schedule, restart, list.
+Companion to `schema.md` (structure), `node-types.md` (every node subtype), and `examples.md` (working patterns). This doc is the **how-to**: design, validate, debug, schedule, restart, stop.
 
 ## Where workflows live
 
-Three locations — distinct purposes:
-
 | Location | Purpose | Who writes there |
 |----------|---------|------------------|
-| `~/sulla/routines/<slug>/routine.yaml` | **Template** — shipped or shared, cloned into DB when user clicks "Use template" | Agent (preferred for net-new) |
-| `~/sulla/workflows/<slug>.yaml` | **Flat-file workflow** — loaded directly by WorkflowRegistry at runtime | Agent (legacy / quick scripts) |
-| `workflows` table (Postgres) | **Active workflows** — what the executor actually runs | App / UI write here on template instantiation |
+| `~/sulla/routines/<slug>/routine.yaml` | **Routine source** — scaffolded by `marketplace/scaffold` and imported with `workflow/import_workflow` | Agent (preferred for net-new) |
+| `~/sulla/workflows/{draft,production,archive}/<slug>.yaml` | **Flat-file workflow** — folder per status; mirrored into the File Manager at `Sulla/Use Cases/workflows/` | Agent (legacy / quick scripts) |
+| `workflows` table (Postgres) | **Active workflows** — what the executor and scheduler run | Written by `workflow/import_workflow` and the app |
 
-The agent **does not** write to the DB directly when authoring net-new. Save the YAML, then the user (or app) instantiates it.
-
-Statuses on the DB row: `draft` | `production` | `archive`. Only `production` gets picked up by the scheduler.
+The row's `status` decides what runs: `draft` | `production` | `archive`. Only `production` rows get scheduled. Moving a file between folders does not change the row.
 
 ## Build a workflow — full flow
 
-The canonical flow is **gather → draft → validate → save → test-run → done**. Validation is non-negotiable before save. See `agent-patterns/validation.md` for the overall policy this references.
+The canonical flow is **gather → draft → validate → save → import → test-run → done**. Validation is non-negotiable before import. See `agent-patterns/validation.md` for the overall policy.
 
 1. **Gather requirements in conversation.** Don't start writing YAML until the user has agreed on:
-   - Trigger (manual? schedule? chat? calendar? heartbeat?)
+   - Trigger (manual or schedule — the palette offers only these two)
    - Steps in plain English
    - Routing / conditions / loops
    - Failure mode (abort? continue? retry?)
-2. **Read the authoring skill**: `~/sulla/resources/environment/create-workflow.md` is the canonical authoring doc — schema rules, forbidden patterns, edge handles. Always re-read before writing.
-3. **Draft the YAML** using the structure from `schema.md` and node-types from `node-types.md`. Common gotchas:
-   - Every node needs `type: "workflow"` (the React Flow node type), `position: {x, y}`, and `data: {subtype, category, label, config}`
-   - `subtype` and `category` must match the mapping (e.g., `agent` subtype → `agent` category; `router` subtype → `routing` category)
-   - Required config fields per subtype — `agent` subtype needs `agentId`, `agentName`, `additionalPrompt`, `orchestratorInstructions`, `successCriteria`, `completionContract`
-   - Edges need `id`, `source`, `target`, `sourceHandle`, `targetHandle`, `label`, `animated`
-   - At least one trigger node, all downstream nodes reachable
+2. **Read the authoring skill** before writing. The runtime copy is `~/sulla/resources/skills/create-workflow/SKILL.md`, and the docs mirror is [`create-workflow-skill.md`](create-workflow-skill.md).
+3. **Draft the YAML** using `schema.md` and `node-types.md`. Common gotchas:
+   - Every node needs `type: "workflow"`, `position: {x, y}`, and `data: {subtype, category, label, config}`
+   - `subtype` and `category` must match (e.g., `agent` → `agent`, `router` → `routing`, `desktop-notification` → `io`)
+   - Required config fields per subtype are listed in `node-types.md`. An `agent` node needs all six: `agentId`, `agentName`, `additionalPrompt`, `orchestratorInstructions`, `successCriteria`, `completionContract`
+   - Edges use `id`, `source`, `target`, and optionally `sourceHandle`, `targetHandle`, `label`, `animated`
+   - At least one trigger node, and every downstream node reachable from it
 4. **Validate** — run BOTH validators (see next section). Fix errors, re-run until clean.
-5. **Save** to `~/sulla/routines/<slug>/routine.yaml` (template) or `~/sulla/workflows/<slug>.yaml` (flat-file)
-6. **Test-run** the full graph: `sulla meta/execute_workflow '{"workflowId":"<slug>"}'` — watch the playbook log. A clean validator pass doesn't prove the nodes actually do the right thing; only a real run does.
+5. **Save** the YAML to `~/sulla/routines/<slug>/routine.yaml`.
+6. **Import** it as a draft: `sulla workflow/import_workflow '{"slug":"<slug>","yaml":"<full yaml>","status":"draft"}'`. **Always pass `status: "draft"` while authoring.** The import default is `production`, and a production row is scheduled.
+7. **Test-run** the graph: `sulla meta/execute_workflow '{"workflowId":"<slug>"}'`, then check the run. A clean validator pass doesn't prove the nodes do the right thing; only a real run does.
 
 ## Validate
 
-Workflows get two passes — graph-level and kind-schema-level. **Run both.** Each catches things the other doesn't.
+Run both passes. Each catches things the other doesn't.
 
 ### Pass 1 — graph validator (required)
 
 ```bash
-sulla meta/validate_sulla_workflow '{"filePath":"/Users/.../routine.yaml"}'
+sulla meta/validate_sulla_workflow '{"filePath":"/path/to/routine.yaml"}'
 # or inline:
 sulla meta/validate_sulla_workflow '{"yaml":"...full yaml string..."}'
 ```
 
-**Category note:** workflow tools are registered under `meta`, not under a `workflow/` category — the backend has no `workflow` category. `sulla meta/validate_sulla_workflow`, `sulla meta/execute_workflow`, and `sulla meta/restart_from_checkpoint` are the canonical forms. (The category segment in the URL is ignored by the backend, so `sulla workflow/...` may also resolve, but `sulla workflow --help` returns "Unknown category." Stick with `meta/`.)
-
 What it checks:
-- Top-level keys, including the optional positive-integer `maxConcurrentRuns`
+- Top-level keys. Anything outside the allowed set is an error (for example `_status` or `tags`).
+- `maxConcurrentRuns` is a positive integer when present
 - Node structure (`type: "workflow"`, `position`, `data.{subtype,category,label,config}`)
 - Subtype↔category mapping
 - Required config fields per subtype
-- Edge structure
+- Edge keys
+- `maxAgents`, when set on an agent node, is `1`
 - At least one trigger node
 - Reachability (no orphaned chains downstream of triggers)
 
-### Pass 2 — kind-schema validator (required for routines)
+The validator does not check edge handle values. A wrong `sourceHandle` passes validation, so check handles by hand against `schema.md`.
 
-For workflows saved as routines under `~/sulla/routines/<slug>/`, also run the marketplace kind validator. It catches manifest-level issues the graph validator doesn't look at — slug/id mismatch with the directory, bad top-level YAML keys, required metadata absent.
+### Pass 2 — kind-schema validator (required for routines)
 
 ```bash
 sulla marketplace/validate '{"kind":"workflow","slug":"<slug>"}'
 ```
 
+It checks manifest-level issues the graph validator doesn't look at: slug/id/directory agreement and required metadata.
+
 ### Reading output
 
-Both return `ValidationIssue[]` with `severity: "error"|"warning"`, `path`, `message`. **Errors mean the workflow won't load or will load broken** — fix and re-run until clean before reporting done. Warnings are safe to surface; let the user decide (common ones: orphan branch that might be intentional, slug/filename mismatch in a flat-file workflow).
+Both return `ValidationIssue[]` with `severity: "error"|"warning"`, `path`, `message`. **Errors mean the workflow won't load or will load broken.** Fix and re-run until clean before reporting done. Warnings are safe to surface; let the user decide.
 
 Common fixable errors:
-- `subtype ↔ category mismatch` — pair is wrong (see node-types.md)
-- `missing required config field` — per-subtype list in node-types.md
-- `unreachable node` — an edge is missing
-- `no trigger node` — add a `manual` / `schedule` / `chat` / `calendar` / `heartbeat` trigger
+- `Subtype "x" requires category "y"` — the pair is wrong (see `node-types.md`)
+- `Missing required config field "x"` — see `node-types.md`
+- `Invalid top-level key` — remove the key (see `schema.md`)
+- `no trigger node` — add a `manual` or `schedule` trigger
 - `slug/id/directory disagreement` — these three must line up for routines
 
-Never skip validation with "it's a small change." A bad `sourceHandle` on a router edge will pass eyeball review and fail at the first fork.
+Never skip validation because "it's a small change."
 
 ## Run a workflow
 
@@ -86,12 +85,14 @@ Never skip validation with "it's a small change." A bad `sourceHandle` on a rout
 sulla meta/execute_workflow '{
   "workflowId": "daily-planning",
   "message":    "optional payload to the trigger node",
-  "resume":     false,             # true = resume from last checkpoint
-  "resumeExecutionId": "wfp-..."   # resume a specific past run
+  "resume":     false,
+  "resumeExecutionId": "wfp-..."
 }'
 ```
 
-Returns immediately:
+`resume: true` resumes the latest checkpoint. `resumeExecutionId` targets a specific past run. Only `workflowId`, `message`, and `resume` appear in the published tool manifest.
+
+It returns right away with the run's id and status:
 ```json
 {
   "executionId":  "wfp-1719283859000-abcdef",
@@ -102,75 +103,71 @@ Returns immediately:
 }
 ```
 
-Execution proceeds asynchronously through the playbook. Watch the playbook log to see what's happening (next section).
+The run proceeds asynchronously. Check it with `sulla workflow/routine_report '{"executionId":"wfp-..."}'`, which returns status, timing, errors, and the step-by-step trace from `workflow_checkpoints`.
+
+## Where a run executes
+
+The same `WorkflowPlaybook.ts` engine runs in two places:
+
+- **Workflow service** (`services/sulla-workflows`). A `manager` container (`sulla_workflow_manager`, image `sulla-workflows:local`) exposes the HTTP API. Each execution starts its own **runner** container (`SULLA_WORKFLOW_ROLE=runner`, `SULLA_EXECUTION_ID` set, run token mounted as a file). The manager's routes include `/v1/workflows`, `/v1/runs` (start, list, stop, resume, restart), `/v1/schedules/refresh`, `/v1/schedules/catch-up`, and the `/internal/*` tool and agent callbacks.
+- **In-app controller** (`PlaybookController.ts`). Runs inside the Electron agent process.
+
+Runner containers don't write `~/sulla/logs/playbook-debug.log`. Use `routine_report` and the checkpoints to inspect a run, not that log file.
 
 ## Debug a failing workflow
 
-The agent has three surfaces to inspect:
+### 1. Run report (start here)
+```bash
+sulla workflow/routine_report '{"executionId":"wfp-..."}'
+sulla workflow/routine_report '{"slug":"daily-planning"}'
+```
 
-### 1. Playbook debug log
-**File:** `~/sulla/logs/playbook-debug.log`
-**Format:** one JSON object per line, timestamped. Tags include `workflow_started`, `node_completed`, `node_failed`, `orchestrator_abort`, `workflow_failed`.
+### 2. Playbook debug log (in-app runs only)
+**File:** `~/sulla/logs/playbook-debug.log`. One JSON object per line. Tags written by `PlaybookController.ts` include `workflow_started`, `node_completed`, `orchestrator_abort`, and `workflow_failed`.
 
 ```bash
 grep "<executionId>" ~/sulla/logs/playbook-debug.log
 ```
 
-### 2. Checkpoint records
-**Table:** `workflow_checkpoints` (Postgres). One row per **successful** node. If a node failed, no checkpoint for it.
+### 3. Checkpoints
+Table `workflow_checkpoints` holds one row per **successful** node. A failed node has no checkpoint. Each row has `execution_id`, `node_id`, `node_subtype`, `sequence`, `playbook_state` (JSONB), `node_output`, and `created_at`.
 
-```typescript
-const { WorkflowCheckpointModel } = await import('.../WorkflowCheckpointModel');
-const checkpoints = await WorkflowCheckpointModel.findByExecution(executionId);
-```
-
-Each row: `execution_id`, `node_id`, `node_subtype`, `sequence`, `playbook_state` (JSONB — full state at that moment), `node_output`, `created_at`.
-
-### 3. Recent executions per workflow
-```typescript
-const recent = await WorkflowCheckpointModel.recentExecutions(workflowId, 5);
-// [{ execution_id, node_label, node_id, sequence, created_at }, ...]
+List them with the restart tool:
+```bash
+sulla meta/restart_from_checkpoint '{"executionId":"wfp-..."}'
 ```
 
 **Debug plan:**
-1. Get the executionId from the user (or recent runs)
-2. Grep the playbook log
-3. Pull the checkpoint trail — see what completed
-4. Identify the gap — the failed node is the one **after** the last checkpoint
-5. Inspect `node_output` of the last checkpoint for upstream context the failed node received
-6. Read the workflow definition to see the failed node's config and what it tried to do
+1. Get the executionId from the user, or from the list of recent runs
+2. Run `routine_report` for the status and trace
+3. Find the gap: the failed node is the one **after** the last checkpoint
+4. Check the last checkpoint's `node_output` for what the failed node received
+5. Read the workflow definition to see the failed node's config
 
 ## Restart from checkpoint
 
 ```bash
-# List recent runs:
+# List recent runs of a workflow:
 sulla meta/restart_from_checkpoint '{"workflowId":"daily-planning"}'
 
 # List checkpoints in a run:
 sulla meta/restart_from_checkpoint '{"executionId":"wfp-..."}'
 
-# Restart from a specific node (re-runs that node + everything after).
-# Builds before the stateful CLI dispatcher fix can return a restart id
-# without launching a graph; upgrade before relying on CLI restart.
+# Restart from a specific node (re-runs that node and everything after it):
 sulla meta/restart_from_checkpoint '{
   "executionId": "wfp-...",
   "nodeId":      "the-node-that-failed"
 }'
 ```
 
-Internally:
-1. Finds the checkpoint **before** the named node (`findCheckpointBefore`)
-2. Restores the playbook state from that checkpoint's `playbook_state` JSONB
-3. Generates a new executionId with `-restart-<timestamp>` suffix
-4. Resumes the playbook walker from the target node
+It finds the checkpoint **before** the named node, restores the playbook state from that checkpoint, creates a new execution id with a `-restart-<timestamp>` suffix, and resumes from the target node.
 
 ## Schedule a workflow
 
-Schedules are **not stored in a separate table** — they live in a `schedule` trigger node inside the workflow definition.
+Schedules are **not stored in a separate table.** They come from a `schedule` trigger node inside the definition:
 
-Add a trigger node like:
 ```yaml
-- id: trigger-schedule
+- id: node-001
   type: workflow
   position: { x: 100, y: 100 }
   data:
@@ -178,6 +175,8 @@ Add a trigger node like:
     category: trigger
     label: "Daily 9am"
     config:
+      triggerType: schedule
+      triggerDescription: "Daily at 9am Pacific"
       frequency: daily              # daily | weekly | monthly | hourly | every-minutes
       hour: 9
       minute: 0
@@ -187,66 +186,63 @@ Add a trigger node like:
       timezone: America/Los_Angeles
 ```
 
-Set the workflow row to `status: "production"` and the **WorkflowSchedulerService** picks it up:
-- Builds a 5-field cron from the config (`0 9 * * *` for the example above)
-- Registers via `node-schedule`
-- Fires `executeRoutine(workflowId, triggerMessage)` when cron matches
-
-To inspect what's scheduled:
-```typescript
-WorkflowSchedulerService.getInstance().getScheduledJobs();
-// [{ workflowId, workflowName, cronExpression, timezone, nextInvocation }, ...]
+Set the row to `production` when it's ready:
+```bash
+sulla workflow/set_workflow_status '{"name":"Daily 9am Planning","status":"production"}'
 ```
 
-## List, archive, delete
+`set_workflow_status` re-arms the scheduler right away. Use `sulla workflow/refresh_schedules '{}'` to re-scan production workflows and see the armed cron and next fire time. After a restart, `sulla workflow/catch_up_schedules '{"dryRun":true}'` lists fires that were missed. Drop `dryRun` to dispatch them.
 
-There's **no dedicated list_workflows tool**. Query the model:
-```typescript
-const { WorkflowModel } = await import('.../WorkflowModel');
-const all       = await WorkflowModel.listAll();
-const prod      = await WorkflowModel.listByStatus('production');
-const drafts    = await WorkflowModel.listByStatus('draft');
-const archived  = await WorkflowModel.listByStatus('archive');
+## Status, archive, delete
+
+- **Change status:** `sulla workflow/set_workflow_status '{"id":"...","status":"draft|production|archive"}'` (or `name` instead of `id`). Setting `archive` deregisters the schedule.
+- **Enable or disable:** same tool, with `enabled`.
+- **Delete:** no delete tool is published. Ask the user before removing a row or folder.
+
+## Stop, pause, resume
+
+```bash
+sulla meta/stop_workflow '{"executionId":"wfp-...","reason":"..."}'
+sulla meta/pause_workflow '{"executionId":"wfp-...","reason":"..."}'
+sulla meta/resume_workflow '{"executionId":"wfp-..."}'
 ```
 
-To archive: set `status: 'archive'` on the row. The scheduler refreshes and deregisters its cron.
-To delete: remove the row. Checkpoints and history rows are preserved for audit.
+These are cooperative. They set a Redis flag that the controller checks on each step. If the orchestrator is inside a long sub-agent or LLM call, the stop takes effect when that call returns. An agent can also end a run itself by putting `<ABORT_WORKFLOW>reason</ABORT_WORKFLOW>` in its response.
 
-## Stop a running workflow
-
-There's no public stop tool. The PlaybookController watches for an abort instruction in the orchestrating agent's response — if the agent emits `⛔ ABORT` or `Workflow aborted: <reason>`, the controller flips status to `aborted` and stops processing the frontier. Outside that, the workflow runs to completion.
-
-If the user wants a hard kill, the only option today is restarting the Sulla Desktop app — which is a heavy hammer. Tell them so.
+For an immediate hard kill, restart Sulla Desktop. Tell the user that's the only hard stop.
 
 ## Status model
 
-**Workflow playbook status:** `running` | `completed` | `failed` | `aborted`
-**Per-node status (real-time WebSocket events only, not persisted per-node):** `pending` | `running` | `completed` | `failed` | `skipped` | `waiting`
+**Playbook status:** `running` | `completed` | `failed` | `aborted`
 
-Per-node errors are NOT stored in the DB — they're logged to `playbook-debug.log` and emitted as `node_failed` WebSocket events at runtime.
+**Per-node status** (sent as WebSocket events): `pending` | `running` | `completed` | `failed` | `skipped` | `waiting`
 
 ## Output flow between nodes
 
-Resolved at runtime by `resolveTemplate()` in WorkflowPlaybook.ts:
+Resolved at runtime by `resolveTemplate()` in `WorkflowPlaybook.ts`:
 
 ```
-{{trigger}}        — trigger node's input payload
-{{Node Label}}     — output of node by its display label
-{{node-id}}        — output of node by its id
-{{loop.current}}   — current loop iteration value
-{{loop.index}}     — current loop iteration index
+{{trigger}}                    — trigger node's input payload
+{{Node Label}}                 — output of node by its display label
+{{node-id}}                    — output of node by its id
+{{Node Label.result}}          — the node's result
+{{Node Label.threadId}}        — thread id from a sub-agent run
+{{loop.index}}                 — current loop iteration index (0-based)
+{{loop.currentItem.result}}    — current item's result, in for-each loops
 ```
 
-See `node-types.md` for per-subtype output shapes.
+Any other field stays as a literal. See `schema.md` for the full list and `node-types.md` for per-subtype output shapes.
 
 ## Reference
 
-- Authoring skill (canonical): `~/sulla/resources/environment/create-workflow.md`
+- Authoring skill mirror: [`create-workflow-skill.md`](create-workflow-skill.md)
 - Tool manifests: `pkg/rancher-desktop/agent/tools/workflow/manifests.ts`
 - Validator: `pkg/rancher-desktop/agent/tools/workflow/validate_sulla_workflow.ts`
 - Execute: `pkg/rancher-desktop/agent/tools/workflow/execute_workflow.ts`
 - Restart: `pkg/rancher-desktop/agent/tools/workflow/restart_from_checkpoint.ts`
+- Import and status: `pkg/rancher-desktop/agent/tools/workflow/import_workflow.ts`, `set_workflow_status.ts`
 - Scheduler: `pkg/rancher-desktop/agent/services/WorkflowSchedulerService.ts`
 - Playbook engine: `pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts`
-- Controller: `pkg/rancher-desktop/agent/controllers/PlaybookController.ts`
+- In-app controller: `pkg/rancher-desktop/agent/controllers/PlaybookController.ts`
+- Workflow service (manager and runner): `services/sulla-workflows/src/manager.ts`, `runner.ts`, `launcher.ts`
 - Models: `WorkflowModel`, `WorkflowCheckpointModel`, `WorkflowHistoryModel` under `pkg/rancher-desktop/agent/database/models/`

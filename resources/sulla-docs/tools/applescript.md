@@ -1,16 +1,18 @@
 # AppleScript
 
-Drive native macOS apps via AppleScript. **Shipped today.** Single tool: `sulla applescript/applescript_execute`.
+Drive native macOS apps via AppleScript. Tools: `sulla applescript/execute` (run a script), `sulla applescript/audit_log` (read past runs), and the `computer_use_*` target tools (see below).
 
 ## The tool
 
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":  "Calendar",
   "action_type": "read",            # "read" or "write" — declare your intent
   "script":      "tell application \"Calendar\" to get name of every calendar"
 }'
 ```
+
+Params: `target_app` (required), `script` (required), `action_type` (required, `read` or `write`), `foreground` (optional, default false).
 
 Returns `{ successBoolean, responseString }`.
 
@@ -19,11 +21,23 @@ Returns `{ successBoolean, responseString }`.
 | Timeout | 10 s per script (hardcoded) |
 | Output cap | 100 KB |
 | `do shell script` | **rejected** — security |
+| Background run | `activate` lines and `tell application "X" to activate` are stripped unless `foreground: true`, so the user's focus stays put |
 | Single-target rule | the script's `tell application "..."` block must match `target_app` |
+
+Every call writes an audit row. Read them with `sulla applescript/audit_log '{"target_app":"Mail","only_failures":true}'` (params: `limit`, `target_app`, `only_failures`, `since`).
 
 ## Access control
 
-AppleScript is available only when the human has enabled **Administrative Access** in Preferences → Application. The tool does not maintain a separate per-app allowlist; macOS Automation permissions still apply and may prompt on first use.
+AppleScript is available only when the human has enabled **Administrative Access** in Preferences → Application. Each target app can also be enabled or disabled in Computer Use Settings. `applescript/execute` enables a target on the fly when it needs one. macOS Automation permissions still apply and may prompt on first use.
+
+### Computer Use targets
+
+| Tool | Params |
+|------|--------|
+| `sulla applescript/computer_use_list '{}'` | List every reachable target app and its enabled state. Use it to find valid `target_app` values. |
+| `sulla applescript/computer_use_enable '{"app":"Mail"}'` | Enable a target in Computer Use Settings. `app` or `bundleId`. |
+| `sulla applescript/computer_use_disable '{"app":"Mail"}'` | Disable a target. `app` or `bundleId`. |
+
 
 ## Permissions model
 
@@ -37,25 +51,25 @@ If macOS denies access, the AppleScript response includes the error.
 ### Read examples (low risk)
 ```bash
 # Calendar — what's on this week
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Calendar","action_type":"read",
   "script":"tell application \"Calendar\" to get summary of every event of calendar \"Personal\" whose start date > (current date)"
 }'
 
 # Mail — top 10 unread
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Mail","action_type":"read",
   "script":"tell application \"Mail\" to get subject of (messages 1 thru 10 of inbox whose read status is false)"
 }'
 
 # Music — what's playing
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Music","action_type":"read",
   "script":"tell application \"Music\" to if player state is playing then return name of current track & \" — \" & artist of current track"
 }'
 
 # Finder — list files
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Finder","action_type":"read",
   "script":"tell application \"Finder\" to get name of every file of folder \"Downloads\" of home folder"
 }'
@@ -64,19 +78,19 @@ sulla applescript/applescript_execute '{
 ### Write examples (higher risk — confirm with user first if non-trivial)
 ```bash
 # Reminders — add a task
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Reminders","action_type":"write",
   "script":"tell application \"Reminders\" to make new reminder at list \"Inbox\" with properties {name:\"Call dentist\", due date:date \"Friday April 25, 2026 9:00 AM\"}"
 }'
 
 # Mail — compose (does NOT auto-send unless explicit)
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Mail","action_type":"write",
   "script":"tell application \"Mail\" to set newMsg to make new outgoing message with properties {subject:\"Hi\", content:\"Hello\", visible:true}\nset addrs to make new to recipient at end of to recipients of newMsg with properties {address:\"x@y.com\"}\nactivate"
 }'
 
 # Slack — set status
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Slack","action_type":"write",
   "script":"tell application \"System Events\" to tell process \"Slack\" to set status to \"In a meeting\""
 }'
@@ -91,7 +105,7 @@ sulla applescript/applescript_execute '{
 ## Common requests
 
 ### "Add this to my calendar"
-Parse the user's intent into start/end ISO times and a title. Use the AppleScript above. **Or** — prefer the `sulla calendar/calendar_create` tool, which writes to Sulla's own DB and routes through the scheduler. Use AppleScript only when the user explicitly wants the event in macOS Calendar (which then syncs via iCloud / Google).
+Parse the user's intent into start/end ISO times and a title. Use the AppleScript above. **Or** — prefer the `sulla calendar/create` tool, which writes to Sulla's own DB and routes through the scheduler. Use AppleScript only when the user explicitly wants the event in macOS Calendar (which then syncs via iCloud / Google).
 
 ### "Send a quick email to X"
 Compose with `visible:true` so the user reviews before sending. Don't auto-send unless the user said "send it now."
@@ -101,7 +115,7 @@ The Music / Spotify read scripts above. Quick win.
 
 ### "Open this file"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Finder","action_type":"write",
   "script":"tell application \"Finder\" to open POSIX file \"/Users/.../doc.pdf\""
 }'
@@ -109,7 +123,7 @@ sulla applescript/applescript_execute '{
 
 ### "Toggle Dark Mode"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"System Events","action_type":"write",
   "script":"tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
 }'
@@ -117,7 +131,7 @@ sulla applescript/applescript_execute '{
 
 ### "What's in my Reminders?"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Reminders","action_type":"read",
   "script":"tell application \"Reminders\" to get name of every reminder of list \"Inbox\" whose completed is false"
 }'
@@ -137,7 +151,6 @@ Always inspect `successBoolean` before using `responseString`. Common failure mo
 ## Hard rules
 
 - **`do shell script` is rejected.** Don't try.
-- **`with administrator privileges` is rejected.** Same.
 - **Single target app per call** — your `tell application "..."` must match `target_app`.
 - **Don't use Sulla as a privilege-escalation shortcut.** AppleScript is for app automation, not for bypassing security boundaries.
 - **Output is capped at 100KB** — for big reads (all emails, all files), paginate or filter.
