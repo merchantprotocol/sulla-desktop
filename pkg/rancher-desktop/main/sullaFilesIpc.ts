@@ -1,10 +1,12 @@
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 
-import { app, BrowserWindow, dialog, protocol, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, protocol, shell, webContents, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
@@ -304,7 +306,7 @@ async function authorizedReference(input:{ fileId:string; versionId?:string }):P
   return { file, versionId };
 }
 
-async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+async function materializeReference(input:{ fileId:string; versionId?:string }):Promise<string> {
   const { file, versionId } = await authorizedReference(input);
   const cacheParent = await fs.promises.realpath(paths.cache);
   const cacheRoot = path.join(cacheParent, 'files-open');
@@ -331,8 +333,41 @@ async function openReference(input:{ fileId:string; versionId?:string }):Promise
   openedFileCopies.delete(key);
   openedFileCopies.set(key, copy);
   if (openedFileCopies.size > 256) openedFileCopies.delete(openedFileCopies.keys().next().value!);
-  const error = await shell.openPath(target);
+  return target;
+}
+
+async function openReference(input:{ fileId:string; versionId?:string }):Promise<void> {
+  const error = await shell.openPath(await materializeReference(input));
   if (error) throw new Error(error);
+}
+
+const runFile = promisify(execFile);
+const recentAppsPath = () => path.join(app.getPath('userData'), 'files-open-with.json');
+async function recentApplications():Promise<Record<string, string[]>> {
+  try { const value = JSON.parse(await fs.promises.readFile(recentAppsPath(), 'utf8')); return value && typeof value === 'object' ? value : {} } catch { return {} }
+}
+async function saveRecentApplications(value:Record<string, string[]>):Promise<void> {
+  const target = recentAppsPath(); const temp = `${ target }.${ process.pid }.tmp`;
+  await fs.promises.mkdir(path.dirname(target), { recursive:true }); await fs.promises.writeFile(temp, JSON.stringify(value), { mode:0o600 }); await fs.promises.rename(temp, target);
+}
+function fileExtension(name:string):string { return path.extname(name).toLowerCase() || '<none>' }
+async function openWithApplication(event:IpcMainInvokeEvent, input:{ fileId:string; versionId?:string; application?:string }):Promise<{ application?:string; recentApplications:string[] }> {
+  const { file } = await authorizedReference(input); const extension = fileExtension(String(file.path || 'file'));
+  let application = input.application;
+  if (!application) {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options:OpenDialogOptions = { title:'Open with application', defaultPath:'/Applications', properties:['openFile'], filters:[{ name:'Applications', extensions:['app'] }] };
+    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (picked.canceled || !picked.filePaths[0]) return { recentApplications:(await recentApplications())[extension] ?? [] };
+    application = picked.filePaths[0];
+  }
+  if (process.platform !== 'darwin' || !application.endsWith('.app')) throw new Error('Open with is currently available for macOS applications.');
+  const applicationInfo = await fs.promises.lstat(application);
+  if (!path.isAbsolute(application) || !applicationInfo.isDirectory() || applicationInfo.isSymbolicLink()) throw new Error('Choose a valid macOS application.');
+  const target = await materializeReference(input);
+  await runFile('/usr/bin/open', ['-a', application, target]);
+  const settings = await recentApplications(); settings[extension] = [application, ...(settings[extension] ?? []).filter(item => item !== application)].slice(0, 5); await saveRecentApplications(settings);
+  return { application, recentApplications:settings[extension] };
 }
 
 function validOpenedCopy(copy:OpenedFileCopy):boolean {
@@ -642,6 +677,9 @@ export function initSullaFilesIpc():void {
     await json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'DELETE' });
   });
   ipcMain.handle('files-ui:open-file', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
+  ipcMain.handle('files-ui:open-default', (_event, input:{ fileId:string; versionId?:string }) => openReference(input));
+  ipcMain.handle('files-ui:open-with', (event, input:{ fileId:string; versionId?:string; application?:string }) => openWithApplication(event, input));
+  ipcMain.handle('files-ui:recent-apps', async(_event, input:{ name:string }) => (await recentApplications())[fileExtension(input.name)] ?? []);
   ipcMain.handle('files-ui:reveal-file', (_event, input:{ fileId:string; versionId?:string }) => revealReference(input));
   ipcMain.handle('files-ui:download-file', (event, input:{ fileId:string; versionId?:string; name:string }) => downloadReference(event, input));
   ipcMain.handle('files-ui:download-files', (event, input:{ fileId:string; versionId?:string; name:string }[]) => downloadReferences(event, input));

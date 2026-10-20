@@ -17,7 +17,7 @@
           S
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
-      <div v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="tree-roots" aria-label="File tree roots">
+      <div v-if="visibleCollections.length" class="tree-roots" aria-label="Pinned file tree roots">
         <div class="grp">Folders</div>
         <button v-for="collection in visibleCollections" :key="collection.id" type="button"
           :class="{ on: collection.id === snapshot?.collection.id }" :disabled="busy || loading"
@@ -60,10 +60,6 @@
         /><span>{{ folder.split('/').at(-1) }}</span></a>
       </template>
 
-      <button class="more-system-areas" :aria-expanded="showSystemAreas" type="button" @click="toggleSystemAreas">
-        <span>{{ showSystemAreas ? 'Less' : 'More' }}</span>
-      </button>
-      <template v-if="showSystemAreas"><a v-for="collection in systemCollections" :key="collection.id" href="#" :class="{ on: collection.id === snapshot?.collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="collection.systemArea === 'logs' ? icons.doc : icons.code" /><span>{{ collection.name }}</span></a></template>
       <div class="sep" />
       <section
         class="favorites"
@@ -262,6 +258,21 @@
           </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
+            <select
+              v-if="snapshot?.availableCollections?.length"
+              :value="snapshot.collection.id"
+              aria-label="Browse collection"
+              :disabled="busy || loading"
+              @change="selectCollection(($event.target as HTMLSelectElement).value)"
+            ><option v-for="collection in snapshot.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option></select>
+            <button
+              v-if="snapshot?.collection.id"
+              class="btn sm ghost"
+              type="button"
+              :aria-pressed="currentCollectionPinned"
+              :title="currentCollectionPinned ? 'Remove this collection from the sidebar' : 'Pin this collection to the sidebar'"
+              @click="setCollectionPinned(snapshot.collection.id, !currentCollectionPinned)"
+            >{{ currentCollectionPinned ? 'Unpin from sidebar' : 'Pin to sidebar' }}</button>
             <button
               v-if="snapshot?.collection.memberCount !== undefined"
               class="btn sm ghost"
@@ -403,6 +414,13 @@
         </div>
         <div v-if="busy && !operationReceipt" class="operation-panel" role="status">Working…</div>
 
+        <nav v-if="section === 'files'" class="path-breadcrumbs" aria-label="Current folder path">
+          <button type="button" :class="{ current: !currentPath }" data-drop-path="" @dragover.prevent="onNavigationDragOver('', $event)" @drop.prevent="onNavigationDrop('', $event)" @click="openRoot">{{ rootLabel }}</button>
+          <template v-for="(crumb, index) in crumbs" :key="crumb.path">
+            <span aria-hidden="true">›</span><button type="button" :class="{ current: index === crumbs.length - 1 }" :data-drop-path="crumb.path" @dragover.prevent="onNavigationDragOver(crumb.path, $event)" @drop.prevent="onNavigationDrop(crumb.path, $event)" @click="openPath(crumb.path)">{{ crumb.label }}</button>
+          </template>
+        </nav>
+
         <div
           v-if="loading"
           class="state-panel"
@@ -533,6 +551,7 @@
                   </td>
                   <td>
                     <div class="name">
+                      <button v-if="entry.folder" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
                       <span
                         class="fi"
                         :class="entry.kindClass"
@@ -703,7 +722,12 @@
           <div v-if="actionTarget" ref="actionMenu" class="action-menu" role="menu" :aria-label="`Actions for ${actionTarget.name}`" :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }" @keydown="onMenuKeydown" @contextmenu.prevent @click.stop @dblclick.stop>
             <b>{{ actionTarget.name }}</b>
             <button v-if="section !== 'trash' && actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
-            <button v-else-if="section !== 'trash'" role="menuitem" type="button" @click="runTargetAction('native-open')">Open</button>
+            <template v-else-if="section !== 'trash'">
+              <button role="menuitem" type="button" @click="runTargetAction('open-sulla')">Open in Sulla</button>
+              <button role="menuitem" type="button" @click="runTargetAction('native-open')">Open with default app</button>
+              <div v-if="recentApplications.length" class="menu-subsection"><small>Open with</small><button v-for="application in recentApplications" :key="application" role="menuitem" type="button" @click="openWithApplication(application)">{{ application.split('/').at(-1)?.replace(/\.app$/, '') }}</button></div>
+              <button role="menuitem" type="button" @click="openWithApplication()">Open with…</button>
+            </template>
             <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal in folder</button>
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button v-if="section !== 'trash' || !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
@@ -734,22 +758,6 @@
           </div>
         </Teleport>
 
-        <div
-          v-if="!loading && !error && section === 'files'"
-          class="drop"
-        >
-          <span
-            class="ico"
-            v-html="icons.upload"
-          /><div><b>{{ uploadHeading }}</b><small>{{ dropCopy }}</small></div><button
-            class="btn"
-            type="button"
-            :disabled="busy || readOnlyArea || !dataSource.capabilities.upload"
-            @click="upload"
-          >
-            Choose files
-          </button>
-        </div>
       </div>
     </main>
 
@@ -772,7 +780,7 @@
       v-if="dragging && dataSource.capabilities.upload"
       class="drop-overlay"
     >
-      <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
+      <span v-html="icons.upload" /><strong>Drop to add to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
     </div>
     <Teleport to="body">
       <div v-if="quickLookEntry" ref="quickLookDialog" class="quick-look" role="dialog" aria-modal="true" :aria-label="`Quick Look: ${quickLookEntry.name}`" @click.self="closeQuickLook">
@@ -856,7 +864,7 @@ const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigati
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
 interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
@@ -928,6 +936,7 @@ const dragTargets = ref<ExplorerTarget[]>([]); const dragPointer = ref({ x: 0, y
 const dragSnapshots = new Map<string, DragSnapshot>(); const dragSnapshotRequests = new Map<string, DragSnapshotRequest>(); const dragSnapshotGenerations = new Map<string, number>(); let dragPreparation:DragPreparation | undefined; let dragPreparationGeneration=0; let dragSourceCollectionId = ''; let dragSourceCapability:FilesCrossCollectionCapability = 'unavailable';
 const selectionAnchor = ref<string | null>(null);
 const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 0, y: 0 }); let menuTrigger:HTMLElement | null = null;
+const recentApplications = ref<string[]>([]);
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
@@ -946,7 +955,8 @@ const uploadLog = ref<{ name: string; percent: number; done: boolean }[]>([]);
 // In-progress upload first, then the ones already finished in this batch (the stream only reports the current file).
 const uploadItems = computed(() => [...uploadLog.value.filter(item => !item.done), ...uploadLog.value.filter(item => item.done).reverse()]);
 const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details' | 'versions'>('details');
-const dragging = ref(false); const favoriteDropActive = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const dragging = ref(false); let externalDragDepth = 0; let internalDragActive = false; const favoriteDropActive = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
+const expandedFolders = ref(new Set<string>());
 const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>([]);
 const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
@@ -972,11 +982,22 @@ const folderFavorites = computed(() => {
       available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
     }));
 });
-const showSystemAreas = ref(localStorage.getItem('sulla:files:show-system-areas') === 'true');
-const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
-const systemCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea === 'logs' || collection.systemArea === 'training-data') ?? []);
+function loadPinnedCollectionIds():Set<string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem('sulla:files:pinned-collections') ?? '[]');
+    return new Set(Array.isArray(stored) ? stored.filter((id):id is string => typeof id === 'string') : []);
+  } catch { return new Set() }
+}
+const pinnedCollectionIds = ref(loadPinnedCollectionIds());
+const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => pinnedCollectionIds.value.has(collection.id)) ?? []);
+const currentCollectionPinned = computed(() => Boolean(snapshot.value?.collection.id && pinnedCollectionIds.value.has(snapshot.value.collection.id)));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
-function toggleSystemAreas() { showSystemAreas.value = !showSystemAreas.value; localStorage.setItem('sulla:files:show-system-areas', String(showSystemAreas.value)); }
+function setCollectionPinned(collectionId:string, pinned:boolean) {
+  const next = new Set(pinnedCollectionIds.value);
+  if (pinned) next.add(collectionId); else next.delete(collectionId);
+  pinnedCollectionIds.value = next;
+  localStorage.setItem('sulla:files:pinned-collections', JSON.stringify([...next]));
+}
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1023,7 +1044,6 @@ const sections = computed(() => [
 ]);
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
 const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
-const uploadHeading = computed(() => `Drop files here to upload to ${ pageTitle.value }`);
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Files sync to the server and are versioned on every change.' : 'Files are encrypted and versioned in Sulla.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
@@ -1144,13 +1164,30 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     return sortDirection.value === 'asc' ? result : -result;
   });
 });
-const groups = computed(() => [
-  { label: 'Folders', entries: visibleEntries.value.filter(entry => entry.folder) },
-  { label: 'Files', entries: visibleEntries.value.filter(entry => !entry.folder) },
-].filter(group => group.entries.length));
-const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
-const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
-const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
+function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
+  const prefix = `${ folder.path }/`; const files = activeFiles.value; const folders = new Map<string, FilesFolderState | undefined>(); const entries:DisplayEntry[] = [];
+  for (const file of files) {
+    if (!file.path.startsWith(prefix)) continue;
+    const relative = file.path.slice(prefix.length); const parts = relative.split('/');
+    if (parts.length > 1 || file.mime === 'inode/directory') folders.set(parts[0], folders.get(parts[0]));
+    else entries.push({ ...toDisplay(file), depth });
+  }
+  for (const item of snapshot.value?.folders ?? []) {
+    const folderPath = typeof item === 'string' ? item : item.path;
+    if (!folderPath.startsWith(prefix) || folderPath === folder.path) continue;
+    const name = folderPath.slice(prefix.length).split('/')[0]; const direct = `${ prefix }${ name }`;
+    if (!folders.has(name) || folderPath === direct) folders.set(name, typeof item === 'string' ? undefined : item);
+  }
+  const folderEntries = [...folders].map(([name, state]) => ({ ...folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`)), state), depth }));
+  const sorted = [...folderEntries, ...entries].sort((a, b) => a.folder === b.folder ? a.name.localeCompare(b.name, undefined, { numeric:true }) : a.folder ? -1 : 1);
+
+  return sorted.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [entry, ...childrenForFolder(entry, depth + 1)] : [entry]);
+}
+const displayedEntries = computed(() => visibleEntries.value.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [{ ...entry, depth:0 }, ...childrenForFolder(entry, 1)] : [{ ...entry, depth:0 }]));
+const groups = computed(() => [{ label: currentPath.value ? 'Contents' : 'Files and folders', entries:displayedEntries.value }].filter(group => group.entries.length));
+const allVisibleSelected = computed(() => Boolean(displayedEntries.value.length) && displayedEntries.value.every(entry => selectedKeys.value.has(entry.key)));
+const selectedFileForShare = computed(() => displayedEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
+const selectedEntries = computed(() => displayedEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
 const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
    (clipboard.value.sourceCapability !== 'unavailable' && props.dataSource.capabilities.crossCollectionOperations !== 'unavailable' &&
@@ -1303,16 +1340,18 @@ async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-async function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
+function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else selectEntry(entry) }
+function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
-function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
-function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
-function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
+function isExternalFileDrag(event:DragEvent) { return !internalDragActive && !event.dataTransfer?.types.includes('application/x-sulla-files') && Boolean(event.dataTransfer?.types.includes('Files')) }
+function onBrowserDragEnter(event:DragEvent) { if (isExternalFileDrag(event) && props.dataSource.capabilities.upload) { externalDragDepth++; dragging.value = true } }
+function onBrowserDragOver(event:DragEvent) { if (isExternalFileDrag(event) && props.dataSource.capabilities.upload) dragging.value = true }
+function onDragLeave(_event:DragEvent) { if (!dragging.value) return; externalDragDepth = Math.max(0, externalDragDepth - 1); if (!externalDragDepth) dragging.value = false }
 async function onDrop(event:DragEvent) {
   if (readOnlyArea.value) { clearInternalDrag(); return }
-  dragging.value = false;
+  dragging.value = false; externalDragDepth = 0;
   if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
   if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
@@ -1376,6 +1415,7 @@ function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
     operationNotice.value='Drag within this collection now. Drag again after the exact folder source snapshot is ready to move it to another collection.';
   } else operationNotice.value='';
   draggedKeys.value = new Set(entries.map(item => item.key));
+  internalDragActive = true; dragging.value = false; externalDragDepth = 0;
   // A running gesture keeps these exact targets; late readiness only serves the next gesture.
   dragTargets.value = entries.map(item => item.folder && !missingFolders.length ? preparedDragSnapshot(item,preparation) ?? toTarget(item) : toTarget(item));
   dragSourceCollectionId=collectionId;
@@ -1474,7 +1514,7 @@ async function setFolderFavorite(path:string, favorite:boolean) {
 }
 function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
 async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability) }
-function clearInternalDrag() { cancelHoverOpen(); draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
+function clearInternalDrag() { cancelHoverOpen(); internalDragActive=false; draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -1492,7 +1532,7 @@ function syncIcon(entry:FilesItem) { return ({ synced: icons.syncLocal, syncing:
 function syncText(entry:FilesItem) { return ({ synced: snapshot.value?.status.location === 'server' ? 'Stored on Sulla Server' : 'Stored in Sulla', syncing: 'Syncing', 'online-only': 'Online only', conflict: 'Conflict' } as Record<string, string>)[entrySync(entry)] ?? 'Stored in Sulla' }
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
-function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(visibleEntries.value.map(entry => entry.key)) }
+function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(displayedEntries.value.map(entry => entry.key)) }
 async function toggleStar(id:string) { if (!snapshot.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
 function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
 async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
@@ -1500,7 +1540,7 @@ async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent)
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   menuTrigger = event.currentTarget as HTMLElement; const rect = menuTrigger.getBoundingClientRect();
   menuPosition.value = event instanceof MouseEvent && event.type === 'contextmenu' ? { x: event.clientX, y: event.clientY } : { x: rect.left, y: rect.bottom };
-  actionTarget.value = entry; await nextTick(); const menu = actionMenu.value; if (!menu) return;
+  actionTarget.value = entry; recentApplications.value = !entry.folder && props.dataSource.recentAppsForFile ? await props.dataSource.recentAppsForFile(entry.name).catch(() => []) : []; await nextTick(); const menu = actionMenu.value; if (!menu) return;
   const bounds = menu.getBoundingClientRect();
   menuPosition.value = { x: Math.max(4, Math.min(menuPosition.value.x, window.innerWidth - bounds.width - 4)), y: Math.max(4, Math.min(menuPosition.value.y, window.innerHeight - bounds.height - 4)) };
   menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
@@ -1819,10 +1859,11 @@ async function authoritativeTrashEntries(pending:(DisplayEntry & { trashItem:Fil
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
 function emptyTrash() { return purgeEntries(trashItems.value.map(toTrashDisplay), true) }
-async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
+async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
-  if (action === 'native-open') { await activate(target); return }
+  if (action === 'open-sulla') { selectEntry(target); return }
+  if (action === 'native-open') { await runMutation(() => (props.dataSource.openFileWithDefaultApp ?? props.dataSource.openFile).call(props.dataSource,target.id,target.currentVersionId), false); return }
   if (action === 'reveal') {
     if (!props.dataSource.capabilities.nativeReveal || !props.dataSource.revealFile) return;
     try {
@@ -1845,11 +1886,13 @@ async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'refer
   else if (action === 'online-only' || action === 'keep-local') { const operation = action === 'online-only' ? props.dataSource.makeOnlineOnly : props.dataSource.keepOnMac; if (!operation) return; await runMutation(() => operation.call(props.dataSource, target.id)) }
   else await trashSelected();
 }
+async function openWithApplication(application?:string) { const target=actionTarget.value; if (!target || target.folder || !props.dataSource.openFileWithApp) return; closeActions(); await runMutation(async() => { const result=await props.dataSource.openFileWithApp!(target.id,target.currentVersionId,application); recentApplications.value=result.recentApplications },false) }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
 function closeMenuOnResize() { closeActions(false); closeBackgroundActions(); stopPointerGesture?.() }
 function onKeydown(event:KeyboardEvent) {
   if (!quickLookDialog.value?.contains(event.target as Node) && !browserSurface.value?.contains(event.target as Node) && !actionMenu.value?.contains(event.target as Node) && !backgroundActionMenu.value?.contains(event.target as Node)) return;
   const target = event.target as HTMLElement | null; const editable = target?.matches('input,textarea,select,[contenteditable="true"]'); const modifier = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
+  if (event.key === 'Escape' && dragging.value) { dragging.value=false; externalDragDepth=0; return }
   if (editable) { if (event.key === 'Escape') (target as HTMLElement).blur(); return }
   if (quickLookEntry.value) {
     if (event.key === 'Tab') { const controls = [...(quickLookDialog.value?.querySelectorAll<HTMLElement>('button:not(:disabled),video,audio,iframe') ?? [])]; const index = controls.indexOf(document.activeElement as HTMLElement); if (controls.length) { event.preventDefault(); controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus() } }
@@ -2260,11 +2303,20 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .state-icon :deep(svg) { width: 38px; height: 38px; }
 .error-state .state-icon { color: var(--bad); }
 .loader { display: inline-block; width: 22px; height: 22px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
-.drop-overlay { position: absolute; z-index: 30; inset: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1.5px dashed var(--accent-line); border-radius: var(--r); color: var(--accent-2); background: color-mix(in srgb, var(--paper) 90%, transparent); backdrop-filter: blur(12px); }
+.drop-overlay { position: absolute; z-index: 30; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 2px dashed var(--accent-line); color: var(--accent-2); background: color-mix(in srgb, var(--paper) 90%, transparent); backdrop-filter: blur(12px); pointer-events: none; }
 .drop-overlay > span { display: grid; width: 48px; height: 48px; }
 .drop-overlay > span :deep(svg) { width: 48px; height: 48px; }
 .drop-overlay strong { margin-top: 12px; color: var(--text); font-size: 15px; font-weight: 600; }
 .drop-overlay p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.path-breadcrumbs { display:flex; align-items:center; gap:6px; min-height:36px; margin:8px 0; padding:6px 10px; overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:var(--paper-2); }
+.path-breadcrumbs button { flex:none; padding:3px 5px; border:0; border-radius:5px; color:var(--muted); background:transparent; font:12px var(--mono); }
+.path-breadcrumbs button:hover { color:var(--text); background:var(--card); }
+.path-breadcrumbs button.current { color:var(--text); font-weight:700; }
+.path-breadcrumbs span { color:var(--dim); }
+.disclosure { width:20px; height:22px; padding:0; border:0; color:var(--muted); background:transparent; font-size:18px; line-height:1; flex:none; }
+.disclosure-spacer { display:inline-block; width:20px; flex:none; }
+.menu-subsection { padding:4px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.menu-subsection small { display:block; padding:3px 10px; color:var(--dim); }
 
 /* Detail panel (opened with double-click or the row ⋯ button) */
 .detail-panel { position: absolute; z-index: 8; top: 0; right: 0; bottom: 0; width: min(390px, 42vw); overflow: auto; border-left: 1px solid var(--line); background: var(--card-solid); box-shadow: var(--shadow-lg); }

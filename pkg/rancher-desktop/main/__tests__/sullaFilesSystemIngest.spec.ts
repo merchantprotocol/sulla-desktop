@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,6 +54,12 @@ class MemoryFs implements SystemIngestFs {
   }
 
   link(file:string):void { this.add(file, { type: 'link' }) }
+
+  readFile(file:string):Promise<Buffer> {
+    const node = this.nodes.get(file);
+    if (node?.type !== 'file') return Promise.reject(new Error('gone'));
+    return Promise.resolve(Buffer.from(node.content));
+  }
 
   readdir(directory:string):Promise<SystemIngestDirent[]> {
     if (this.nodes.get(directory)?.type !== 'dir') return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
@@ -116,15 +121,10 @@ class FakeFiles {
     return {
       sources:        () => sources,
       fetchAreas:     () => Promise.resolve([{ id: 'c-logs', systemArea: 'logs' }, { id: 'c-train', systemArea: 'training-data' }, { id: 'c-sulla', systemArea: 'sulla' }]),
-      gateway:        {
-        registerExactFile: file => {
-          const handle = crypto.randomBytes(32).toString('base64url');
-          this.handles.set(handle, file);
-          return Promise.resolve(handle);
-        },
-        read: async handle => {
-          const file = this.handles.get(handle);
-          if (!file) throw new Error('unknown_source');
+      fs:             {
+        readdir:  directory => this.memory.readdir(directory),
+        lstat:    file => this.memory.lstat(file),
+        readFile: async file => {
           this.reads.push(file);
           this.inflight++;
           this.maxInflight = Math.max(this.maxInflight, this.inflight);
@@ -133,11 +133,8 @@ class FakeFiles {
           } finally { this.inflight-- }
           const node = this.memory.nodes.get(file);
           if (node?.type !== 'file') throw new Error('gone');
-          const bytes = Buffer.from(node.content);
-          const contentHash = crypto.createHash('sha256').update(bytes).digest('hex');
-          return { bytes, contentHash, revision: contentHash };
+          return Buffer.from(node.content);
         },
-        revoke: handle => { this.handles.delete(handle) },
       },
       ingest: async(request:SystemIngestRequest) => {
         this.onIngest?.(request);
@@ -151,7 +148,6 @@ class FakeFiles {
         return { unchanged: false };
       },
       active: () => true,
-      fs:     this.memory,
       ...extra,
     };
   }

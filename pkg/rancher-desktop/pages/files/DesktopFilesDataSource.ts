@@ -315,6 +315,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder', this.collectionId) }
   openFile(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', { fileId, versionId }) }
+  openFileWithDefaultApp(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-default', { fileId, versionId }) }
+  openFileWithApp(fileId:string, versionId?:string, application?:string):Promise<{ application?:string; recentApplications:string[] }> { return ipcRenderer.invoke('files-ui:open-with', { fileId, versionId, application }) }
+  recentAppsForFile(name:string):Promise<string[]> { return ipcRenderer.invoke('files-ui:recent-apps', { name }) }
   revealFile(fileId:string, versionId?:string):Promise<FilesRevealResult> { return ipcRenderer.invoke('files-ui:reveal-file', { fileId, versionId }) }
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean> { return ipcRenderer.invoke('files-ui:download-file', { fileId, versionId, name }) }
   downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> { return ipcRenderer.invoke('files-ui:download-files', items) }

@@ -83,6 +83,7 @@ export interface SystemIngestStat {
 export interface SystemIngestFs {
   readdir(directory:string):Promise<SystemIngestDirent[]>;
   lstat(file:string):Promise<SystemIngestStat>;
+  readFile(file:string):Promise<Buffer>;
 }
 
 export interface SystemIngestSnapshot {
@@ -105,11 +106,6 @@ export interface SystemIngestRequest {
 export interface SystemIngestDeps {
   sources():        SystemIngestSource[];
   fetchAreas():     Promise<{ id: string; systemArea: string }[]>;
-  gateway: {
-    registerExactFile(file:string):Promise<string>;
-    read(handle:string):Promise<SystemIngestSnapshot>;
-    revoke(handle:string):void;
-  };
   /** `unchanged` means Files already held exactly these bytes as the current version (no new version). */
   ingest(request:SystemIngestRequest):Promise<{ unchanged?: boolean } | void>;
   /** Files native sessions are live (unlocked, native polling, not stopped). */
@@ -235,8 +231,24 @@ interface Lane {
 type PassOutcome = 'idle' | 'budget' | 'busy' | 'customer' | 'backpressure' | 'cancelled' | 'error';
 
 const nodeFs:SystemIngestFs = {
-  readdir: directory => fs.promises.readdir(directory, { withFileTypes: true }),
-  lstat:   file => fs.promises.lstat(file),
+  readdir:  directory => fs.promises.readdir(directory, { withFileTypes: true }),
+  lstat:    file => fs.promises.lstat(file),
+  readFile: async file => {
+    const handle = await fs.promises.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('System-area input must be a bounded regular file');
+      const bytes = Buffer.alloc(stat.size + 1);
+      let length = 0;
+      while (length < bytes.length) {
+        const result = await handle.read(bytes, length, bytes.length - length);
+        if (!result.bytesRead) break;
+        length += result.bytesRead;
+      }
+      if (length !== stat.size) throw new Error('System-area file changed while it was being read');
+      return bytes.subarray(0, length);
+    } finally { await handle.close() }
+  },
 };
 
 const SENSITIVE_NAME = /wallet|^(vaults?|master\.key)$/i;
@@ -754,13 +766,21 @@ export class SullaFilesSystemIngestJob {
 
   private async ingestFile(lane:Lane, work:WorkItem, generation:number):Promise<void> {
     const { item, stat, key, filesPath, absolute, cachedHash } = work;
-    const gateway = this.deps.gateway;
     let ingestStarted:number | undefined;
     try {
-      // The gateway gives a bounded, no-follow, identity-checked read; the handle never leaves this function.
-      const handle = await gateway.registerExactFile(absolute);
-      let snapshot:SystemIngestSnapshot;
-      try { snapshot = await gateway.read(handle) } finally { gateway.revoke(handle) }
+      // System areas are app-owned inputs. Read them in Electron main instead
+      // of registering native sources, whose security-scoped bookmarks are
+      // intended only for files explicitly selected by the user.
+      const bytes = await this.fs.readFile(absolute);
+      const after = await this.fs.lstat(absolute);
+      if (!after.isFile() || after.isSymbolicLink() || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ino !== stat.ino) {
+        throw new Error('System-area file changed while it was being read');
+      }
+      const snapshot:SystemIngestSnapshot = {
+        bytes,
+        contentHash: crypto.createHash('sha256').update(bytes).digest('hex'),
+        revision:    `${ after.ino }:${ after.size }:${ after.mtimeMs }`,
+      };
       if (cachedHash === snapshot.contentHash) {
         // Touched but identical (for example a re-saved doc): refresh the stat, send nothing.
         this.record(key, lane.id, stat, snapshot.contentHash);

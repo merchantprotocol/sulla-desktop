@@ -430,6 +430,9 @@ export interface FilesDataSource {
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
+  openFileWithDefaultApp?(fileId:string, versionId?:string): Promise<void>;
+  openFileWithApp?(fileId:string, versionId?:string, application?:string): Promise<{ application?:string; recentApplications:string[] }>;
+  recentAppsForFile?(name:string):Promise<string[]>;
   /** Reveals an authorized tracked original when available, otherwise a verified downloaded copy. */
   revealFile?(fileId:string, versionId?:string): Promise<FilesRevealResult>;
   downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean>;
