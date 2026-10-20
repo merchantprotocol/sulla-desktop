@@ -93,7 +93,10 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
     await db.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES
       ('user','owner','file',$1,'created_by','owner'),('file',$1,'agent-run','run-1','created_by','owner')`, [legacyFile]);
 
+    await db.query("UPDATE file_versions SET created_at=created_at + interval '123 microseconds'");
+    await db.query("UPDATE audit_log SET at=at + interval '456 microseconds'");
     const importer = new LegacyFilesImporter(db, sourceRoot, chunkRoot, legacySigningKey);
+    await db.query('UPDATE file_versions SET size=$2 WHERE id=$1', [wrongSizeVersion, legacyPlain.length]);
     await assert.rejects(importer.run(nativeMaster, [legacyMaster]), (error:unknown) => {
       return error instanceof Error && 'stage' in error && 'reason' in error &&
         error.stage === 'conversion' && error.reason === 'CHUNK_VERIFICATION_FAILED';
@@ -109,6 +112,7 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
     await db.query('DELETE FROM files WHERE id=$1', [unavailableFile]);
     await db.query('DELETE FROM manifests WHERE hash=$1', [unavailableManifest]);
     await rm(join(chunkRoot, emptyLegacyCollection), { recursive: true });
+    await db.query('UPDATE file_versions SET size=$2 WHERE id=$1', [wrongSizeVersion, legacyPlain.length + 1]);
     await assert.rejects(importer.run(nativeMaster, [legacyMaster]), (error:unknown) => {
       return error instanceof Error && 'stage' in error && 'reason' in error &&
         error.stage === 'conversion' && error.reason === 'VERSION_SIZE_VERIFICATION_FAILED';
