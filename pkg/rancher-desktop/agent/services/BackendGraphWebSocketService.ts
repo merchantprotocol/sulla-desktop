@@ -360,6 +360,10 @@ export class BackendGraphWebSocketService {
         };
       }
 
+      if (metadata?.runLocation === 'vm' || metadata?.runLocation === 'container') {
+        state.metadata.agent = { ...(state.metadata.agent ?? {}), runLocation: metadata.runLocation };
+      }
+
       // Notify frontend of the threadId so it can maintain the conversation
       if (isNewThread) {
         this.wsService.send(channelId, {
@@ -453,7 +457,18 @@ export class BackendGraphWebSocketService {
       state.metadata.waitingForUser = false;
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
-      await graph.execute(state, startNode);
+      if (state.metadata.agent?.runLocation === 'container') {
+        const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
+        const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+        const lifecycle = await createAgentContainerLifecycle({
+          jobId: `chat-${ threadId }`, taskIndex: 0,
+          provider: state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok'),
+          model: state.metadata.agent?.model, state, signal: runAbort.signal,
+        });
+        try { await lifecycle.execute(() => graph.execute(state, startNode)) } finally { await lifecycle.close() }
+      } else {
+        await graph.execute(state, startNode);
+      }
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave

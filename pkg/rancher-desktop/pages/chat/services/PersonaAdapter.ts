@@ -308,6 +308,7 @@ export class PersonaAdapter {
     const resolved = await Promise.all(mapped);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
     const selection = {
+      ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
       ...(inputSource ? { inputSource } : {}),
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),

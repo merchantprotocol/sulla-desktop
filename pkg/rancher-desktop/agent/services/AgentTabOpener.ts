@@ -97,6 +97,7 @@ export interface OpenAgentTabInput {
   prompt:           string;
   /** Dead-run keys the child's activity must touch. */
   activityKeys:     string[];
+  runOverrides?: { model?: string; provider?: string; runLocation?: 'vm' | 'container' };
   ownedProjectTaskIds: string[];
 }
 
@@ -105,6 +106,16 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   const { state } = await GraphRegistry.getOrCreateAgentGraph(input.childAgent.graphAgentId, input.childThreadId);
   applyThreadAgentRoute(state, input.childAgent);
   const meta = state.metadata as any;
+  meta.agent = { ...(meta.agent ?? {}), ...Object.fromEntries(Object.entries(input.runOverrides ?? {}).filter(([, value]) => value !== undefined)) };
+  if (input.runOverrides?.model || input.runOverrides?.provider) {
+    const { getAgentOverrideService } = await import('../languagemodels');
+    if (!await getAgentOverrideService(meta.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
+  }
+  if (meta.agent?.runLocation === 'container') {
+    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+    const provider = meta.agent.provider || await SullaSettingsModel.get('primaryProvider', 'grok');
+    if (!['claude-code', 'codex'].includes(provider)) throw new Error(`Provider "${ provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
+  }
   meta.activityKeys = input.activityKeys;
   meta.ownedProjectTaskIds = input.ownedProjectTaskIds;
   meta.delegatedJobId = input.jobId;
