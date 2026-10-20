@@ -23,12 +23,10 @@ export function lifecycleFields(file:any) {
   };
 }
 
-export function canViewDraft(role:string | undefined, actor:FilesIdentity, file:any):boolean {
-  return role === 'edit' || role === 'manage' || (file.created_by_type === 'user' && file.created_by_id === actor.userId);
-}
+export function canViewDraft(_role:string | undefined, _actor:FilesIdentity, _file:any):boolean { return true }
 
-export function lifecycleCapabilities(role:string | undefined, draftVisible:boolean) {
-  return { canEdit: role === 'edit' || role === 'manage', canManage: role === 'manage', canViewDraft: draftVisible, canPublish: role === 'manage' };
+export function lifecycleCapabilities(_role:string | undefined, draftVisible:boolean) {
+  return {canEdit:true,canManage:true,canViewDraft:draftVisible,canPublish:true};
 }
 
 export async function authorizedVersionId(db:pg.Pool, file:any, draftVisible:boolean, requested?:string):Promise<string> {
@@ -70,7 +68,6 @@ export async function drainPendingChunkGc(db:pg.Pool, deleteChunk:(collectionId:
 export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool, deps:{
   identity(request:RequestWithIdentity):FilesIdentity;
   requireFile(request:RequestWithIdentity, fileId:string, right:Right):Promise<any>;
-  role(request:RequestWithIdentity, file:any):Promise<string | undefined>;
   audit(request:RequestWithIdentity, action:string, file?:any, details?:Record<string, unknown>):Promise<void>;
   deleteChunk(collectionId:string, chunkId:string):Promise<void>;
   disposeTrashReceipt?(receiptId:string):Promise<{state:'none'|'complete'|'recovery-required';error?:string}>;
@@ -248,7 +245,6 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
       if (!/^\d+$/.test(expectedRevision) || expectedRevision!==String(file.operation_revision) || expectedTombstone!==String(file.current_version_id)) throw httpError(409,'Trash changed; refresh before permanent disposal');
       const active = (await client.query('SELECT files_retention_active(f) active FROM files f WHERE id=$1', [file.id])).rows[0]?.active;
       if (active || file.disposal_status !== 'approved') throw httpError(409, 'approved disposal with no active retention or lock is required');
-      if ((await client.query('SELECT 1 FROM file_share_links WHERE file_id=$1 AND revoked_at IS NULL LIMIT 1', [file.id])).rowCount) throw httpError(409, 'active share links must be revoked before disposal');
       const receipt=(await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash' AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[file.id,file.current_version_id])).rows[0];
       let retained=false;
       if (receipt?.state==='completed') {
@@ -268,20 +264,10 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
       const audit = await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,action,details)
         VALUES($1,$2,$3,'disposal-purge',$4) RETURNING id`, [actor.kind === 'capability' ? 'agent-or-device' : 'user', actor.userId, actor.deviceId || null, { fileId: file.id, collectionId: file.collection_id, path: file.path, versionIds, physicalChunkGc: chunks.rowCount ? 'pending' : 'not-required' }]);
       await client.query(`INSERT INTO file_purge_tombstones(collection_id,file_id,path,lifecycle_generation,audience)
-        SELECT $1,$2,$3,$4,jsonb_build_object(
-          'users',to_jsonb(ARRAY(SELECT DISTINCT principal FROM (
-            SELECT owner_user_id principal FROM collections WHERE id=$1
-            UNION SELECT principal_id FROM collection_acl WHERE collection_id=$1 AND principal_type='user'
-            UNION SELECT principal_id FROM folder_shares WHERE collection_id=$1 AND principal_type='user' AND ($3=folder_path OR starts_with($3,folder_path||'/'))
-            UNION SELECT principal_id FROM file_shares WHERE file_id=$2 AND principal_type='user') users)),
-          'groups',to_jsonb(ARRAY(SELECT DISTINCT principal FROM (
-            SELECT principal_id principal FROM collection_acl WHERE collection_id=$1 AND principal_type='group'
-            UNION SELECT principal_id FROM folder_shares WHERE collection_id=$1 AND principal_type='group' AND ($3=folder_path OR starts_with($3,folder_path||'/'))
-            UNION SELECT principal_id FROM file_shares WHERE file_id=$2 AND principal_type='group') groups)))
+        VALUES($1,$2,$3,$4,'{}'::jsonb)
         ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),audience=EXCLUDED.audience,purged_at=NOW()`, [file.collection_id, file.id, file.path, Number(file.lifecycle_generation) + 1]);
       await client.query('DELETE FROM journal WHERE file_id=$1', [file.id]);
       await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [file.id]);
-      await client.query('DELETE FROM file_share_links WHERE file_id=$1', [file.id]);
       await client.query('UPDATE files SET current_version_id=NULL,draft_version_id=NULL,published_version_id=NULL WHERE id=$1', [file.id]);
       await client.query('DELETE FROM files WHERE id=$1', [file.id]);
       let queued = 0;

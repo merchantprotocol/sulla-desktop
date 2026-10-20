@@ -345,7 +345,7 @@ export class LegacyFilesImporter {
           await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
           trace.mark('publish-lock');
           await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['sulla-files-legacy-import']);
-          await client.query('LOCK TABLE collections, files, file_versions, manifests, collection_acl, folder_shares, edges, journal, audit_log IN SHARE ROW EXCLUSIVE MODE');
+          await client.query('LOCK TABLE collections, files, file_versions, manifests, edges, journal, audit_log IN SHARE ROW EXCLUSIVE MODE');
           trace.mark('publish-master-verification');
           await verifyNativeMaster(client, nativeMaster);
           trace.mark('publish-identity-verification');
@@ -639,11 +639,6 @@ export class LegacyFilesImporter {
         JOIN files shadow ON shadow.id=fm.shadow_file_id LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=source.current_version_id
         WHERE shadow.current_version_id IS DISTINCT FROM vm.shadow_version_id LIMIT 1`);
     if (currentConflict.rowCount) throw new Error('Legacy Files current-version mapping is incomplete');
-    trace.mark('access-publication');
-    await client.query(`INSERT INTO collection_acl(collection_id,principal_type,principal_id,role,created_at)
-        SELECT m.shadow_collection_id,a.principal_type,a.principal_id,a.role,a.created_at FROM collection_acl a JOIN files_legacy_collection_map m ON m.source_collection_id=a.collection_id ON CONFLICT DO NOTHING`);
-    await client.query(`INSERT INTO folder_shares(collection_id,folder_path,principal_type,principal_id,role,created_by,created_at,updated_at)
-        SELECT m.shadow_collection_id,s.folder_path,s.principal_type,s.principal_id,s.role,s.created_by,s.created_at,s.updated_at FROM folder_shares s JOIN files_legacy_collection_map m ON m.source_collection_id=s.collection_id ON CONFLICT DO NOTHING`);
     trace.mark('graph-publication');
     await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,props,created_by,created_at)
         SELECT e.src_type,CASE WHEN e.src_type='file' THEN COALESCE(src.shadow_file_id::text,e.src_id) ELSE e.src_id END,

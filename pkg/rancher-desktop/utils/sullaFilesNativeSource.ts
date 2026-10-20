@@ -11,8 +11,7 @@ export interface SullaFilesNativeRuntimeStatus {
 }
 
 /**
- * Test-phase rollout: every agent receives the mount. Authorization is
- * centralized in the Files service policy hook for later per-agent grants.
+ * Every agent receives the Files mount; the service authenticates callers.
  */
 export const SULLA_FILES_NATIVE_SOURCE_READY = true;
 

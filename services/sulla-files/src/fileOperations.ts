@@ -75,7 +75,7 @@ export async function applyDatabaseFileOperations(db:pg.Pool, action:'move' | 'c
         await client.query('UPDATE file_folders SET path=$3,updated_at=NOW() WHERE collection_id=$1 AND path=$2', [folder.collectionId, folder.sourcePath, folder.targetPath]);
       }
       for (const folder of folderMoves) {
-        for (const table of ['file_stars', 'folder_shares', 'file_share_links']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [folder.collectionId, folder.sourcePath, folder.targetPath]);
+        for (const table of ['file_stars']) await client.query(`UPDATE ${ table } SET folder_path=$3||substr(folder_path,length($2)+1) WHERE collection_id=$1 AND folder_path IS NOT NULL AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [folder.collectionId, folder.sourcePath, folder.targetPath]);
       }
       for (const folder of storedFolders) await ensureStoredFolder(client, folder.collectionId, folder.targetPath, actor);
     }
