@@ -65,6 +65,7 @@ describe('searchFilesForRecall', () => {
     expect(calls.find(c => c.collectionId === 'c-logs')!.folder).toBe('app/');
     expect(calls.find(c => c.collectionId === 'c-train')!.folder).toBeUndefined();
     expect(calls.every(c => c.limit === 6)).toBe(true);
+    expect(calls.every(c => c.publishedOnly === true)).toBe(true);
     expect(out.hits.map(h => [h.id, h.area])).toEqual([['b', 'logs'], ['a', 'conversations']]);
   });
 

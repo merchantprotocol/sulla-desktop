@@ -15,6 +15,7 @@ export interface SearchInput {
   to?:           string;
   terms?:        string[];
   limit?:        number;
+  publishedOnly?: boolean;
 }
 
 interface Candidate { file_id: string; path: string; mime: string; size: string; updated_at: string; created_by_id: string; content: string | null; signal: number }
@@ -29,6 +30,8 @@ function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:a
   if (input.person) where.push(`(f.person_id=$${ args.push(input.person) } OR f.created_by_id=$${ args.length })`);
   if (input.from) where.push(`f.updated_at >= $${ args.push(input.from) }`);
   if (input.to) where.push(`f.updated_at <= $${ args.push(input.to) }`);
+  // Recall must never surface unpublished drafts (e.g. a draft SKILL.md under Use Cases).
+  if (input.publishedOnly) where.push('f.published_version_id IS NOT NULL AND f.current_version_id = f.published_version_id');
   return where;
 }
 
