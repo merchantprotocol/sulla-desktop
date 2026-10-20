@@ -42,7 +42,8 @@ export {
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
 const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_RELAY_EVENT_LINE_BYTES = 512 * 1024;
+// Sulla Cloud relay events carry a <=1 MiB frame as an escaped JSON string.
+const MAX_RELAY_EVENT_LINE_BYTES = 4 * 1024 * 1024;
 
 export interface VaultRelayEvent {
   sequence: number;
@@ -248,9 +249,11 @@ export class LocalVaultBrokerClient {
     ref: BrokerRelayCreateRequest['ref'],
     signal?: AbortSignal,
     approvalId?: string,
+    params?: BrokerRelayCreateRequest['params'],
   ): Promise<BrokerRelayCreateResponse> {
     const request: BrokerRelayCreateRequest = { claims: claimsFromContext(ctx), operation, ref };
     if (approvalId) (request as BrokerRelayCreateRequest & { approvalId?: string }).approvalId = approvalId;
+    if (params) request.params = params;
     const response = await this.transport(`${ this.endpoint }/v1/broker/relay/session`, {
       method:  'POST',
       headers: await this.serviceHeaders(true),

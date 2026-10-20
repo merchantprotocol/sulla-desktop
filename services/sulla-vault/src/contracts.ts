@@ -194,9 +194,11 @@ export interface HumanBackupImportRequest { backupPassword: string; backup: Huma
 
 export interface BrokerRelayCreateRequest {
   claims:    BrokerClaims;
-  operation: 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway';
+  operation: 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
   ref:       BrokerCredentialRef;
   approvalId?: string;
+  /** Opaque routing ids for `sulla-cloud.relay` only; never credentials. */
+  params?:   { room: string; deviceId: string };
 }
 export interface BrokerRelayCreateResponse { relayId: string; expiresAt: number }
 export interface BrokerRelaySendRequest { sequence?: number; type: string; payload: unknown }
