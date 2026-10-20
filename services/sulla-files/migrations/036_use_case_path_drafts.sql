@@ -1,4 +1,4 @@
--- Human edits inside Sulla/Use Cases are drafts too. Publication is the explicit
+-- Human edits inside the Sulla system collection's Use Cases tree are drafts too. Publication is the explicit
 -- human-controlled activation step, just like agent-authored versions.
 CREATE OR REPLACE FUNCTION files_prepare_version_lifecycle() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE target files%ROWTYPE; latest_major INTEGER; latest_minor INTEGER;
@@ -17,7 +17,7 @@ BEGIN
   IF NEW.version_kind='major' THEN NEW.major_version:=latest_major+1; NEW.minor_version:=0;
   ELSE NEW.major_version:=latest_major; NEW.minor_version:=latest_minor+1; END IF;
   IF NEW.publication_status IS NULL THEN
-    NEW.publication_status:=CASE WHEN NEW.created_by_type='agent-run' OR target.require_approval OR target.path LIKE 'Sulla/Use Cases/%' THEN 'draft' ELSE 'published' END;
+    NEW.publication_status:=CASE WHEN NEW.created_by_type='agent-run' OR target.require_approval OR EXISTS (SELECT 1 FROM collections c WHERE c.id=target.collection_id AND c.system_area='sulla' AND target.path LIKE 'Use Cases/%') THEN 'draft' ELSE 'published' END;
   END IF;
   IF NEW.deleted THEN NEW.publication_status:='superseded'; END IF;
   RETURN NEW;
