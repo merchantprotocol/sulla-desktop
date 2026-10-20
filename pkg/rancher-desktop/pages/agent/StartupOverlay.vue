@@ -4,88 +4,80 @@
     v-if="showOverlay || props.forceVisible"
     class="sulla-startup-overlay"
   >
-    <div class="sulla-startup-card">
-      <!-- Decorative top accent bar -->
-      <div class="sulla-startup-accent" />
+    <div class="sulla-startup-column">
+      <div class="sulla-startup-card">
+        <!-- Decorative top accent bar -->
+        <div class="sulla-startup-accent" />
 
-      <!-- Icon + Title -->
-      <div class="sulla-startup-header">
-        <div class="sulla-startup-icon">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M12 8V4" /><path d="M8 4h8" /><rect
-              x="6"
-              y="8"
-              width="12"
-              height="10"
-              rx="2"
-            /><path d="M9 18v2" /><path d="M15 18v2" /><path d="M9.5 12h.01" /><path d="M14.5 12h.01" /><path d="M10 15h4" />
-          </svg>
+        <!-- Icon + Title -->
+        <div class="sulla-startup-header">
+          <div class="sulla-startup-icon">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 8V4" /><path d="M8 4h8" /><rect
+                x="6"
+                y="8"
+                width="12"
+                height="10"
+                rx="2"
+              /><path d="M9 18v2" /><path d="M15 18v2" /><path d="M9.5 12h.01" /><path d="M14.5 12h.01" /><path d="M10 15h4" />
+            </svg>
+          </div>
+          <div>
+            <h2 class="sulla-startup-title">
+              Starting Sulla
+            </h2>
+            <p class="sulla-startup-subtitle">
+              {{ snapshot?.ready ? 'Ready' : 'Getting everything ready' }}
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 class="sulla-startup-title">
-            Starting Sulla
-          </h2>
-          <p class="sulla-startup-subtitle">
-            {{ progressDescription || 'Initializing system...' }}
+
+        <!-- Model download progress -->
+        <div
+          v-if="modelDownloading"
+          class="sulla-startup-download"
+        >
+          <p class="sulla-startup-download-label">
+            Downloading: <strong class="sulla-startup-download-name">{{ modelName }}</strong>
+          </p>
+          <p class="sulla-startup-download-status">
+            {{ modelDownloadStatus }}
           </p>
         </div>
-      </div>
 
-      <!-- Model download progress -->
-      <div
-        v-if="modelDownloading"
-        class="sulla-startup-download"
-      >
-        <p class="sulla-startup-download-label">
-          Downloading: <strong class="sulla-startup-download-name">{{ modelName }}</strong>
-        </p>
-        <p class="sulla-startup-download-status">
-          {{ modelDownloadStatus }}
-        </p>
-      </div>
-
-      <!-- K8s progress bar -->
-      <div
-        v-if="progressMax > 0"
-        class="sulla-startup-track"
-      >
-        <div
-          class="sulla-startup-fill"
-          :style="{ width: (progressCurrent / progressMax * 100) + '%' }"
+        <!-- Unified startup progress (backend + service lifecycle) -->
+        <StartupProgressPanel
+          :snapshot="snapshot"
+          :fallback-percent="progressMax > 0 ? progressCurrent / progressMax * 100 : 0"
+          :fallback-label="progressDescription || 'Initializing system...'"
         />
       </div>
-      <div
-        v-else
-        class="sulla-startup-track"
-      >
-        <div class="sulla-startup-fill sulla-progress-indeterminate" />
-      </div>
 
-      <!-- Percentage label -->
-      <div
-        v-if="progressMax > 0"
-        class="sulla-startup-percent"
-      >
-        {{ Math.round(progressCurrent / progressMax * 100) }}%
-      </div>
+      <!-- Feature showcase: below the progress, never over it -->
+      <StartupShowcase class="sulla-startup-showcase" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 
+import StartupProgressPanel from './StartupProgressPanel.vue';
+import StartupShowcase from './StartupShowcase.vue';
 import { useStartupProgress } from './useStartupProgress';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const props = withDefaults(defineProps<{ forceVisible?: boolean }>(), { forceVisible: false });
 
@@ -104,31 +96,56 @@ const {
   dispose,
 } = useStartupProgress();
 
+const snapshot = ref<StartupProgressSnapshot | null>(null);
+
+function onStartupProgress(_event: unknown, next: StartupProgressSnapshot) {
+  snapshot.value = next;
+}
+
 onMounted(() => {
   start();
+  ipcRenderer.on('startup-progress', onStartupProgress);
+  ipcRenderer.invoke('startup-progress').then((initial) => {
+    // A broadcast may have landed first; keep whichever is further along.
+    if (initial && (!snapshot.value || initial.percent >= snapshot.value.percent)) snapshot.value = initial;
+  }).catch(() => undefined);
 });
 
 onUnmounted(() => {
+  ipcRenderer.removeListener('startup-progress', onStartupProgress);
   dispose();
 });
 </script>
 
 <style scoped>
 .sulla-startup-overlay {
+  box-sizing: border-box;
   position: fixed;
   inset: 0;
   z-index: 50;
   display: flex;
-  align-items: center;
+  align-items: safe center;
   justify-content: center;
+  overflow-y: auto;
+  padding: 24px 16px;
   background: rgba(13, 17, 23, 0.85);
   backdrop-filter: blur(12px);
 }
 
+.sulla-startup-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  width: 100%;
+  max-width: 34rem;
+  margin: auto 0;
+}
+
 .sulla-startup-card {
   position: relative;
+  box-sizing: border-box;
   width: 100%;
-  max-width: 28rem;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--border-default, #30363d);
@@ -172,7 +189,7 @@ onUnmounted(() => {
 
 .sulla-startup-subtitle {
   font-size: 0.875rem;
-  color: var(--text-muted, #8b949e);
+  color: var(--text-secondary, #b1bac4);
   margin: 0;
 }
 
@@ -200,41 +217,6 @@ onUnmounted(() => {
   color: var(--text-muted, #8b949e);
   margin: 0.375rem 0 0;
 }
-
-.sulla-startup-track {
-  margin-top: 1.25rem;
-  height: 4px;
-  width: 100%;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--bg-surface-hover, #21262d);
-}
-
-.sulla-startup-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-primary, #5096b3);
-  transition: width 500ms ease-out;
-  width: 40%;
-}
-
-.sulla-startup-percent {
-  margin-top: 0.5rem;
-  text-align: right;
-  font-size: 0.75rem;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim, #6e7681);
-}
-
-@keyframes sulla-indeterminate {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(250%); }
-}
-
-.sulla-progress-indeterminate {
-  animation: sulla-indeterminate 1.5s ease-in-out infinite;
-}
 </style>
 
 <style scoped>
@@ -243,8 +225,7 @@ onUnmounted(() => {
   backdrop-filter: blur(22px);
 }
 .theme-noir .sulla-startup-card {
-  max-width: 30rem;
-  padding: 34px;
+  padding: 30px 32px;
   border: 0;
   border-radius: 22px;
   background: color-mix(in srgb, var(--nx-surface) 131.5789%, transparent);
@@ -265,36 +246,14 @@ onUnmounted(() => {
 .theme-noir-light .sulla-startup-icon { color: var(--nx-accent-2); }
 .theme-noir .sulla-startup-title { font-family: 'Playfair Display', Georgia, serif; font-size: 27px; color: var(--nx-read-1); }
 .theme-noir .sulla-startup-subtitle,
-.theme-noir .sulla-startup-download-status,
-.theme-noir .sulla-startup-percent { color: var(--nx-read-4); font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
+.theme-noir .sulla-startup-download-status { color: var(--nx-read-2); font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; }
 .theme-noir .sulla-startup-download { border: 0; border-radius: 14px; background: color-mix(in srgb, var(--nx-hair-strong) 457.1429%, transparent); box-shadow: inset 0 0 0 1px var(--nx-hair); }
-.theme-noir .sulla-startup-track {
-  position: relative;
-  height: 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 128.2051%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 160%, transparent), 0 0 22px color-mix(in srgb, var(--nx-accent) 1250%, transparent);
-}
-.theme-noir .sulla-startup-fill {
-  position: relative;
-  overflow: hidden;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent-2) 200%, transparent);
-}
-.theme-noir .sulla-startup-fill::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--nx-read-1) 166.6667%, transparent) 50%, transparent 75%);
-  transform: translateX(-100%);
-  animation: startup-noir-shimmer 1.7s ease-in-out infinite;
-}
 @keyframes startup-noir-enter { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
-@keyframes startup-noir-shimmer { to { transform: translateX(100%); } }
+@media (max-width: 520px) {
+  .sulla-startup-card,
+  .theme-noir .sulla-startup-card { padding: 22px 18px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .theme-noir .sulla-startup-card,
-  .theme-noir .sulla-startup-fill::after,
-  .theme-noir .sulla-progress-indeterminate { animation: none; }
+  .theme-noir .sulla-startup-card { animation: none; }
 }
 </style>
