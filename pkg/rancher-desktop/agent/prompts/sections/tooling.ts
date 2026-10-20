@@ -30,7 +30,7 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Sidebar artifacts
 
@@ -72,7 +72,7 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Sidebar artifacts
 
@@ -122,7 +122,7 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under `Sulla/Use Cases/<type>/<slug>/` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call `files_request_publish` with its `file_id` and `version_id`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Sidebar artifacts
 
