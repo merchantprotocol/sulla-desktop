@@ -3547,7 +3547,9 @@ start_pre() {
       // runners. Runners retain the image's unprivileged `node` user and are
       // granted only the socket GID discovered by the manager.
       user: 'root',
-      command: ['dist/services/sulla-workflows/src/manager.js'],
+      // The image ENTRYPOINT ends in `setpriv … "$@"`, so this replaces CMD
+      // and must name the interpreter or the .js file is exec'd directly (126).
+      command: ['node', 'dist/services/sulla-workflows/src/manager.js'],
       depends_on: {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },

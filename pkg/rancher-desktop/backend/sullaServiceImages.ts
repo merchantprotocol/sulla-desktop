@@ -11,26 +11,13 @@ export interface SullaServiceImage {
   image: string;
 }
 
-function publishedTag(appVersion: string): string {
-  const version = appVersion.trim().replace(/^v/, '');
-  const developmentCommit = /(?:^|-)dev\.([0-9a-f]{7,40})(?:$|[.+-])/i.exec(version)?.[1];
-
-  if (developmentCommit) {
-    return `sha-${ developmentCommit.slice(0, 7).toLowerCase() }`;
-  }
-  if (/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    return version;
-  }
-
-  return 'latest';
-}
-
 export function resolveSullaServiceImage(
   name: SullaServiceImageName,
   sourceRoot: string,
-  appVersion: string,
+  _appVersion: string,
   override?: string,
   fileExists: typeof fs.existsSync = fs.existsSync,
+  pinnedTag: string | undefined = process.env.SULLA_SERVICE_IMAGE_TAG,
 ): SullaServiceImage {
   const dockerfile = path.join('services', name, 'Dockerfile');
 
@@ -45,7 +32,9 @@ export function resolveSullaServiceImage(
     return { image: override };
   }
 
-  const tag = name === 'sulla-files' || name === 'sulla-files-fuse' ? 'latest' : publishedTag(appVersion);
+  // CI publishes `latest` on every push to main; managed services track it.
+  // SULLA_SERVICE_IMAGE_TAG pins a specific tag (e.g. a release) for all services.
+  const tag = pinnedTag?.trim() || 'latest';
 
   return { image: `ghcr.io/merchantprotocol/${ name }:${ tag }` };
 }
