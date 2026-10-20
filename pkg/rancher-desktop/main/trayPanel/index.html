@@ -9,11 +9,14 @@
     <link rel="stylesheet" href="files.css" />
   </head>
   <body>
-    <div id="app">
+    <div id="app" class="files-mode">
       <div class="app-layout">
         <!-- ─── Sidebar ──────────────────────────────────────── -->
         <nav class="sidebar">
-          <button class="sidebar-btn active" data-panel="agent" title="Sulla">
+          <button class="sidebar-btn active" data-panel="files" title="Files">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/><path d="M8 13h8M12 10v6"/></svg>
+          </button>
+          <button class="sidebar-btn" data-panel="agent" title="Sulla">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
           </button>
           <button class="sidebar-btn" data-panel="status" title="Status">
@@ -21,9 +24,6 @@
           </button>
           <button class="sidebar-btn" data-panel="extensions" title="Extensions">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><path d="M7 7h.01"/></svg>
-          </button>
-          <button class="sidebar-btn" data-panel="files" title="Files">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/><path d="M8 13h8M12 10v6"/></svg>
           </button>
           <div class="sidebar-spacer"></div>
           <button class="sidebar-btn sidebar-bottom" data-panel="settings" title="Settings">
@@ -59,7 +59,7 @@
           </div>
 
           <!-- ═══ Sulla panel (primary) ═════════════════════════ -->
-          <div id="panel-agent" class="panel active">
+          <div id="panel-agent" class="panel">
             <div class="header">
               <span class="title">Sulla</span>
             </div>
@@ -98,7 +98,7 @@
           </div>
 
           <!-- ═══ Files panel (ported from mockups/files/04-tray.html) ═══ -->
-          <div id="panel-files" class="panel">
+          <div id="panel-files" class="panel active">
             <div class="hd"><span id="files-sync-dot" class="st"></span><div class="n"><b id="files-sync-title">Sulla Files</b><small id="files-sync-detail">Checking sync…</small></div><button id="files-pause-toggle" class="btn ico" title="Pause sync"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button><button id="files-preferences" class="btn ico" title="Preferences"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button></div>
             <div class="prog"><i id="files-progress-bar"></i></div>
 
