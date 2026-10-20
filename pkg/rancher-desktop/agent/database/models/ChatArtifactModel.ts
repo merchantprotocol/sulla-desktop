@@ -54,6 +54,10 @@ export interface CreateChatArtifactInput {
   language?: string | null;
   path?:     string | null;
   author:    ChatArtifactAuthor;
+  filesFileId?: string | null;
+  filesVersionId?: string | null;
+  filesCollectionId?: string | null;
+  filesPath?: string | null;
 }
 
 export interface MutateChatArtifactInput {
@@ -119,6 +123,18 @@ export class ChatArtifactModel {
     return rows.map(mapArtifact);
   }
 
+  static async listProjectFiles(projectId: string): Promise<ChatArtifactRecord[]> {
+    const rows = await postgresClient.query<ChatArtifactRow>(
+      `SELECT * FROM chat_artifacts
+        WHERE is_deleted = false AND files_file_id IS NOT NULL
+          AND content LIKE $1
+        ORDER BY updated_at DESC`,
+      [`%\n  id: ${ JSON.stringify(projectId) }\n%`],
+    );
+
+    return rows.map(mapArtifact);
+  }
+
   static async get(threadId: string, idOrName: string, includeDeleted = false): Promise<ChatArtifactRecord | null> {
     const row = await postgresClient.queryOne<ChatArtifactRow>(
       `SELECT * FROM chat_artifacts
@@ -147,10 +163,12 @@ export class ChatArtifactModel {
       const id = newId();
       const result = await client.query<ChatArtifactRow>(
         `INSERT INTO chat_artifacts
-          (id, thread_id, name, kind, content, status, language, path)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          (id, thread_id, name, kind, content, status, language, path,
+           files_file_id, files_version_id, files_collection_id, files_path, files_artifact_version, files_registration_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, CASE WHEN $9::text IS NULL THEN 'pending' ELSE 'synced' END)
          RETURNING *`,
-        [id, input.threadId, input.name, input.kind, input.content, input.status, input.language ?? null, input.path ?? null],
+        [id, input.threadId, input.name, input.kind, input.content, input.status, input.language ?? null, input.path ?? null,
+          input.filesFileId ?? null, input.filesVersionId ?? null, input.filesCollectionId ?? null, input.filesPath ?? null],
       );
       const row = result.rows[0];
 

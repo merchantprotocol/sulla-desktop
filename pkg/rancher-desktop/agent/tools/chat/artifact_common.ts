@@ -37,7 +37,8 @@ export abstract class ChatArtifactTool extends BaseTool {
     ];
     if (includeContent) lines.push('content:', artifact.content);
     if (artifact.filesRegistrationStatus === 'synced') {
-      lines.push(`Files: ${ artifact.filesPath }`, `fileId: ${ artifact.filesFileId }`, `fileVersionId: ${ artifact.filesVersionId }`);
+      const reference = `sulla-file://${ artifact.filesFileId }?version=${ encodeURIComponent(artifact.filesVersionId ?? '') }&path=${ encodeURIComponent(artifact.filesPath ?? artifact.name) }&name=${ encodeURIComponent(artifact.name) }`;
+      lines.push(`Files: ${ artifact.filesPath }`, `fileId: ${ artifact.filesFileId }`, `fileVersionId: ${ artifact.filesVersionId }`, `inlineReference: ${ reference }`);
     } else if (artifact.filesRegistrationStatus === 'error') {
       lines.push(`Files registration failed: ${ artifact.filesRegistrationError ?? 'Unknown error' }`, 'The artifact is still saved in this chat. Retry after Files is available.');
     } else {

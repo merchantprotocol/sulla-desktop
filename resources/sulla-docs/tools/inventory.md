@@ -128,7 +128,8 @@ sulla <category> --help          # what THIS install exposes right now
 - `sulla chat/route_agent` — Select an enabled agent persona for the current chat.
 - `sulla chat/set_heartbeat` — Configure this chat's independent heartbeat; graph runs pause it and restart a full interval afterward.
 - `sulla chat/artifact_list` — List open artifacts, optionally including closed ones.
-- `sulla chat/artifact_create` — Create a markdown, HTML, or code artifact; an existing name is updated in place.
+- `sulla chat/artifact_create` — Create a markdown, HTML, or code artifact. For project plans/specs/notes/reports, pass project metadata to create the canonical Files-backed `projects/<project-slug>/` document with YAML frontmatter.
+- `sulla chat/artifact_open` — Open an existing Sulla Files file in the sidebar; edits save new versions to that same file with optimistic conflict protection.
 - `sulla chat/artifact_read` — Read the current content and version, including human edits.
 - `sulla chat/artifact_update` — Fully replace content and/or update name, status, or code metadata.
 - `sulla chat/artifact_edit` — Apply atomic exact-once find/replace edits, ideal for ticking plan items.
