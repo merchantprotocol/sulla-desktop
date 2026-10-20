@@ -61,6 +61,9 @@ export interface AgentDefinition {
   /** Hash of the managed content the built-in seeder last wrote. */
   builtin_hash:            string | null;
   run_location:            AgentRunLocation;
+  /** Files identity of the published package currently projected into this row. */
+  use_case_file_id?:       string | null;
+  use_case_version_id?:    string | null;
   created_at:              string;
   updated_at:              string;
 }
@@ -212,6 +215,8 @@ function rowToDefinition(row: any): AgentDefinition {
     is_builtin:              row.is_builtin === true,
     builtin_hash:            row.builtin_hash == null ? null : String(row.builtin_hash),
     run_location:            row.run_location === 'vm' ? 'vm' : DEFAULT_AGENT_RUN_LOCATION,
+    use_case_file_id:        row.use_case_file_id == null ? null : String(row.use_case_file_id),
+    use_case_version_id:     row.use_case_version_id == null ? null : String(row.use_case_version_id),
     created_at:              toIso(row.created_at),
     updated_at:              toIso(row.updated_at),
   };

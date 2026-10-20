@@ -13,15 +13,12 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { SullaFilesSystemIngestJob, type SystemIngestRequest, type SystemIngestStatus } from './sullaFilesSystemIngest';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
+import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 
 import {
   resolveSullaConversationsDir,
   resolveSullaDocsDir,
-  resolveSullaFunctionsDir,
   resolveSullaLogsDir,
-  resolveSullaUserAgentsDir,
-  resolveSullaUserSkillsDir,
-  resolveSullaUserWorkflowsDir,
 } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
@@ -38,12 +35,7 @@ const NATIVE_POLL_ACTIVE_MS = 250;
 const NATIVE_POLL_IDLE_MAX_MS = 2_000;
 const NATIVE_SOURCE_PAGE_SIZE = 500;
 const NATIVE_SOURCE_MAX_PAGES = 40;
-const USE_CASE_SOURCES = [
-  { type: 'skills', root: resolveSullaUserSkillsDir() },
-  { type: 'workflows', root: resolveSullaUserWorkflowsDir() },
-  { type: 'agents', root: resolveSullaUserAgentsDir() },
-  { type: 'functions', root: resolveSullaFunctionsDir() },
-] as const;
+
 
 export interface SullaFilesStatus {
   state:             'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
@@ -148,7 +140,7 @@ class SullaFilesWatcher {
   private customerServicePending = false;
   private customerStatusAt = 0;
   private customerStatusRefreshing = false;
-  private readonly useCaseWatchers = new Map<string,fs.FSWatcher>();
+  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.rawLocalRequest(endpoint, init));
   private nativeEnabled = false;
   private started = false;
   private stopped = false;
@@ -182,14 +174,6 @@ class SullaFilesWatcher {
     // Read-only inputs, in priority order of their lanes (P1 Sulla, P2 training data, P3 logs).
     sources: () => [
       { area: 'sulla', lane: 'sulla', root: resolveSullaDocsDir(), prefix: 'Docs/', filter: () => true, ignore: rel => ignored(rel, DEFAULT_IGNORES) },
-      ...USE_CASE_SOURCES.map(source => ({
-        area:   'sulla',
-        lane:   'sulla' as const,
-        root:   source.root,
-        prefix: `Use Cases/${ source.type }/`,
-        filter: () => true,
-        ignore: (rel:string) => ignored(rel, DEFAULT_IGNORES),
-      })),
       { area: 'training-data', lane: 'training', root: resolveSullaConversationsDir(), prefix: '', filter: name => name.endsWith('.jsonl') },
       { area: 'logs', lane: 'logs', root: resolveSullaLogsDir(), prefix: 'app/', filter: () => true },
     ],
@@ -219,6 +203,7 @@ class SullaFilesWatcher {
 
   async lockService(): Promise<void> {
     if (this.lockPromise) return this.lockPromise;
+    this.useCases.stop();
     this.lockGeneration++;
     this.unlockPermitted = false;
     this.nativePolling = false;
@@ -249,6 +234,7 @@ class SullaFilesWatcher {
     this.unlocking++;
     try { await traceAsync('files ensureUnlocked', () => this.ensureUnlocked()) } finally { this.unlocking-- }
     this.startBackgroundIngest();
+    this.useCases.start();
   }
 
   /**
@@ -373,22 +359,12 @@ class SullaFilesWatcher {
     if (pauseUntil > Date.now()) await this.pauseFor(pauseUntil - Date.now());
     else if (pauseUntil) await SullaSettingsModel.set('sullaFilesPauseUntil', 0, 'number');
     if (this.nativeEnabled) {
-      for (const source of USE_CASE_SOURCES) {
-        try {
-          const watcher = fs.watch(source.root, { recursive: process.platform !== 'linux', persistent: false }, () => {
-            this.systemIngest.nudge('sulla');
-          });
-          this.useCaseWatchers.set(source.type, watcher);
-        } catch (error) {
-          console.warn(`[SullaFiles] ${ source.type } use-case watcher unavailable; periodic scans remain active:`, error);
-        }
-      }
       this.nativeTimer = setInterval(() => this.pollNativePublications().catch(error => console.debug('[SullaFiles] native publication poll failed:', error)), 250);
       this.nativeTimer.unref();
     }
   }
 
-  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; for (const watcher of this.useCaseWatchers.values()) watcher.close(); this.useCaseWatchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void {
     if (this.rescanTimer) clearTimeout(this.rescanTimer);
     this.rescanTimer = setTimeout(() => {

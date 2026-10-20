@@ -38,6 +38,8 @@ export interface SkillDefinition {
   marketplace_slug:        string | null;
   marketplace_version:     string | null;
   marketplace_author:      string | null;
+  use_case_file_id?:       string | null;
+  use_case_version_id?:    string | null;
   created_at:              string;
   updated_at:              string;
 }
@@ -138,6 +140,8 @@ export function rowToSkillDefinition(row: any): SkillDefinition {
     marketplace_slug:        toNullableString(row.marketplace_slug),
     marketplace_version:     toNullableString(row.marketplace_version),
     marketplace_author:      toNullableString(row.marketplace_author),
+    use_case_file_id:        toNullableString(row.use_case_file_id),
+    use_case_version_id:     toNullableString(row.use_case_version_id),
     created_at:              toIso(row.created_at),
     updated_at:              toIso(row.updated_at),
   };

@@ -116,6 +116,7 @@ import { up as up_0126, down as down_0126 } from './0126_settle_abandoned_workfl
 import { up as up_0127, down as down_0127 } from './0127_create_conversation_messages';
 import { up as up_0128, down as down_0128 } from './0128_conversation_message_kinds';
 import { up as up_0129, down as down_0129 } from './0129_drop_system_area_native_sources';
+import { up as up_0130, down as down_0130 } from './0130_use_case_file_index';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -233,4 +234,5 @@ export const migrationsRegistry = [
   { name: '0127_create_conversation_messages', up: up_0127, down: down_0127 },
   { name: '0128_conversation_message_kinds', up: up_0128, down: down_0128 },
   { name: '0129_drop_system_area_native_sources', up: up_0129, down: down_0129 },
+  { name: '0130_use_case_file_index', up: up_0130, down: down_0130 },
 ] as const;
