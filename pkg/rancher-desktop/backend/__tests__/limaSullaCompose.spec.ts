@@ -172,4 +172,10 @@ describe.each([
     expect(compose.services.sulla_files.volumes).toContain('sulla-files-folder:/data/files');
     expect(compose.volumes).toHaveProperty('sulla-files-folder');
   });
+
+  test('workflow manager command names the interpreter after the setpriv entrypoint', async() => {
+    const { compose } = await generate();
+
+    expect(compose.services.workflow_manager.command).toEqual(['node', 'dist/services/sulla-workflows/src/manager.js']);
+  });
 });
