@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 import type { VMExecutor } from '@pkg/backend/backend';
+import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 import { sullaFilesNativeSourceGrant, sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
@@ -9,9 +10,20 @@ const console = Logging.background;
 const COMPOSE_FILE = '/tmp/sulla-docker-compose.yml';
 const RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 const TOKEN_FILE = `${ RUNTIME_ROOT }/token`;
-const MOUNT_PATH = '/mnt/sulla-files';
+const MOUNT_PATH = SULLA_FILES_GUEST_MOUNT_PATH;
 const TOKEN_REFRESH_MS = 4 * 60_000;
 const DISABLED_REASON = 'The Files mount is unavailable.';
+const HEALTH_CHECK_MS = 60_000;
+const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
+const RETRY_STEADY_MS = 5 * 60_000;
+
+/** Backoff for the n-th consecutive failed attempt (0-based): 5s, 10s, 20s, 40s, 60s, then every 5 minutes. */
+export function sullaFilesMountRetryDelay(failures:number):number {
+  return RETRY_DELAYS_MS[failures] ?? RETRY_STEADY_MS;
+}
+
+/** Re-runs the backend's guest preparation and brings dependent compose services up to date. */
+export type SullaFilesGuestRecovery = () => Promise<void>;
 
 export interface SullaFilesMountCredentials {
   token:        string;
@@ -21,9 +33,22 @@ export class SullaFilesMountManager extends EventEmitter {
   private executor?: VMExecutor;
   private credentialProvider?: () => Promise<SullaFilesMountCredentials>;
   private refreshTimer?: NodeJS.Timeout;
+  private healthTimer?: NodeJS.Timeout;
+  private retryTimer?: NodeJS.Timeout;
+  private retryFailures = 0;
+  private recoverGuest?: SullaFilesGuestRecovery;
+  /** Files is unlocked and wants the mount; false while locked or shutting down. */
+  private wanted = false;
+  /** Bumped by lock/backend teardown so scheduled or in-flight attempts stand down. */
+  private lifecycle = 0;
+  private recovering = false;
+  private lastLoggedFailure?: string;
   private operation?: Promise<void>;
   private credentialWrite?: Promise<void>;
   private credentialGeneration = 0;
+  private guestPreparationFailure?: string;
+  /** True only after the backend prepared the anchor and no probe has since contradicted it. */
+  private guestAnchorConfirmed = false;
   private statusValue:SullaFilesNativeRuntimeStatus = {
     state: 'disabled', ready: false, generation: 0, sourceGrant: sullaFilesNativeSourceGrant(),
     reason: DISABLED_REASON,
@@ -31,13 +56,43 @@ export class SullaFilesMountManager extends EventEmitter {
 
   status():SullaFilesNativeRuntimeStatus { return { ...this.statusValue } }
 
-  configureGuest(executor:VMExecutor):void {
+  configureGuest(executor:VMExecutor, recover?:SullaFilesGuestRecovery):void {
     this.executor = executor;
+    this.recoverGuest = recover;
     if (!sullaFilesNativeSourceRolloutRequested()) this.publish('disabled', DISABLED_REASON);
   }
 
+  /**
+   * Record the outcome of the backend's guest anchor preparation. A failure
+   * leaves the adapter out of compose, so start() reports it instead of trying.
+   */
+  reportGuestPreparation(failureReason?:string):void {
+    this.guestPreparationFailure = failureReason;
+    this.guestAnchorConfirmed = !failureReason;
+    if (!failureReason || !sullaFilesNativeSourceRolloutRequested()) return;
+    this.publish('error', `The Files guest mount is unavailable: ${ failureReason }`);
+    // A recovery attempt in flight schedules its own follow-up.
+    if (!this.recovering) this.scheduleRetry(`The Files guest mount is unavailable: ${ failureReason }`);
+  }
+
   clearGuest(executor:VMExecutor):void {
-    if (this.executor === executor) this.executor = undefined;
+    if (this.executor === executor) {
+      this.executor = undefined;
+      this.recoverGuest = undefined;
+      this.guestAnchorConfirmed = false;
+      ++this.lifecycle;
+      this.cancelRetry();
+    }
+  }
+
+  /**
+   * Whether containers may bind /mnt/sulla-files with rslave propagation: the
+   * backend confirmed our shared anchor (or the adapter above it) this
+   * generation. Docker refuses rslave binds of a non-shared path, so callers
+   * omit the bind otherwise and the container still starts.
+   */
+  guestMountAvailable():boolean {
+    return this.guestAnchorConfirmed && !this.guestPreparationFailure;
   }
 
   async start(provider:() => Promise<SullaFilesMountCredentials>):Promise<void> {
@@ -45,18 +100,75 @@ export class SullaFilesMountManager extends EventEmitter {
       this.publish('disabled', DISABLED_REASON);
       return;
     }
-    await this.serialize(async() => {
-      if (this.statusValue.ready) return;
+    // Unlock (re)starts the schedule from the first, shortest delay.
+    this.wanted = true;
+    this.credentialProvider = provider;
+    this.retryFailures = 0;
+    this.cancelRetry();
+    const lifecycle = this.lifecycle;
+
+    await this.serialize(() => this.attempt(lifecycle));
+  }
+
+  /**
+   * One serialized attempt to bring the mount up. Failures never escape: they
+   * publish 'error' with a reason and schedule the next retry, so a failed
+   * preparation or start never stays failed for the session.
+   */
+  private async attempt(lifecycle:number):Promise<void> {
+    if (lifecycle !== this.lifecycle || !this.wanted || this.statusValue.ready) return;
+    const provider = this.credentialProvider;
+
+    try {
+      if (!provider) throw new Error('Files mount credential custody is unavailable');
+      if (this.guestPreparationFailure || !this.guestAnchorConfirmed) {
+        if (!this.recoverGuest) {
+          throw new Error(`The Files guest mount is unavailable: ${ this.guestPreparationFailure ?? 'the guest anchor is not prepared' }`);
+        }
+        this.recovering = true;
+        try { await this.recoverGuest() } finally { this.recovering = false }
+        if (lifecycle !== this.lifecycle) return;
+        if (!this.guestMountAvailable()) {
+          throw new Error(`The Files guest mount is unavailable: ${ this.guestPreparationFailure ?? 'the guest anchor is not prepared' }`);
+        }
+      }
       await this.startInternal(provider);
-    });
+      this.retryFailures = 0;
+      if (this.lastLoggedFailure) console.log('[SullaFiles] Files guest mount recovered');
+      this.lastLoggedFailure = undefined;
+    } catch (error) {
+      if (lifecycle !== this.lifecycle || !this.wanted) return;
+      const reason = error instanceof Error ? error.message : String(error);
+
+      if (this.statusValue.state !== 'error' || this.statusValue.reason !== reason) this.publish('error', reason);
+      this.scheduleRetry(reason);
+    }
+  }
+
+  private scheduleRetry(reason:string):void {
+    if (!this.wanted || this.retryTimer) return;
+    const delay = sullaFilesMountRetryDelay(this.retryFailures++);
+    const lifecycle = this.lifecycle;
+
+    if (reason !== this.lastLoggedFailure) {
+      console.warn(`[SullaFiles] Files guest mount unavailable: ${ reason }; retrying in ${ Math.round(delay / 1000) }s`);
+      this.lastLoggedFailure = reason;
+    }
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.serialize(() => this.attempt(lifecycle)).catch(() => undefined);
+    }, delay);
+    this.retryTimer.unref?.();
+  }
+
+  private cancelRetry():void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
   }
 
   private async startInternal(provider:() => Promise<SullaFilesMountCredentials>):Promise<void> {
     const executor = this.executor;
-    if (!executor) {
-      this.publish('error', 'The guest backend is not ready for the Files mount.');
-      return;
-    }
+    if (!executor) throw new Error('The guest backend is not ready for the Files mount.');
     this.credentialProvider = provider;
     const credentialGeneration = ++this.credentialGeneration;
     this.publish('starting');
@@ -91,6 +203,11 @@ export class SullaFilesMountManager extends EventEmitter {
   }
 
   async stop():Promise<void> {
+    // Lock drains the mount: no further retries, and an attempt already in
+    // flight finishes first (serialized) and then sees the new lifecycle.
+    this.wanted = false;
+    ++this.lifecycle;
+    this.cancelRetry();
     await this.serialize(async() => {
       if (this.statusValue.state === 'disabled' && !this.executor) return;
       await this.stopInternal();
@@ -123,6 +240,11 @@ export class SullaFilesMountManager extends EventEmitter {
     const mountedBeforeUnmount = await this.mountState(executor);
     if (mountedBeforeUnmount === 'adapter') {
       await executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-u', MOUNT_PATH).catch(() => undefined);
+      // fusermount3 ships with fuse3, which the guest may lack; root can
+      // unmount a FUSE filesystem with plain (BusyBox or util-linux) umount.
+      if (await this.mountState(executor) === 'adapter') {
+        await executor.execCommand({ root: true, expectFailure: true }, 'umount', MOUNT_PATH).catch(() => undefined);
+      }
     }
     const mountState = await this.mountState(executor);
     await executor.execCommand(
@@ -168,16 +290,40 @@ export class SullaFilesMountManager extends EventEmitter {
     this.refreshTimer = setInterval(() => {
       this.refreshCredentials(generation).catch(error => {
         if (generation !== this.credentialGeneration) return;
-        console.warn('[SullaFiles] FUSE capability refresh failed:', error);
-        this.stop().catch(stopError => console.warn('[SullaFiles] FUSE shutdown after capability failure failed:', stopError));
+        this.runtimeFailure(generation, `FUSE capability refresh failed: ${ error instanceof Error ? error.message : String(error) }`);
       });
     }, TOKEN_REFRESH_MS);
-    this.refreshTimer.unref();
+    this.refreshTimer.unref?.();
+    // Notice an adapter that disappears (container exit, external unmount).
+    this.healthTimer = setInterval(() => {
+      const executor = this.executor;
+
+      if (!executor || generation !== this.credentialGeneration || !this.statusValue.ready) return;
+      // An unreadable mount table is not evidence the adapter is gone.
+      probeFilesAnchor(executor, MOUNT_PATH).then((probe) => {
+        if (probe.state !== 'adapter') this.runtimeFailure(generation, 'The guest Files adapter mount disappeared');
+      }, () => undefined);
+    }, HEALTH_CHECK_MS);
+    this.healthTimer.unref?.();
+  }
+
+  /** A live mount failed: drain what is left of it and recover on the retry schedule. */
+  private runtimeFailure(generation:number, reason:string):void {
+    this.serialize(async() => {
+      if (generation !== this.credentialGeneration || !this.wanted) return;
+      this.clearRefresh();
+      ++this.credentialGeneration;
+      await this.stopGuest().catch(() => undefined);
+      this.publish('error', reason);
+      this.scheduleRetry(reason);
+    }).catch(() => undefined);
   }
 
   private clearRefresh():void {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.healthTimer) clearInterval(this.healthTimer);
     this.refreshTimer = undefined;
+    this.healthTimer = undefined;
   }
 
   private async isAdapterMounted(executor:VMExecutor):Promise<boolean> {
@@ -185,16 +331,15 @@ export class SullaFilesMountManager extends EventEmitter {
   }
 
   private async mountState(executor:VMExecutor):Promise<'adapter' | 'anchor' | 'none' | 'unexpected'> {
-    const record = await executor.execCommand(
-      { root: true, capture: true, expectFailure: true }, 'findmnt', '--mountpoint', MOUNT_PATH,
-      '--noheadings', '--output', 'FSTYPE,SOURCE',
-    ).catch(() => '');
-    if (!record.trim()) return 'none';
-    const [fileSystem, source] = record.trim().split(/\s+/, 2);
+    // An unreadable mount table is treated as "nothing mounted", which the
+    // callers then refuse as a missing anchor.
+    const probe = await probeFilesAnchor(executor, MOUNT_PATH).catch(() => undefined);
 
-    if (fileSystem === 'fuse.sulla-files' && source === 'sulla-files') return 'adapter';
-    if (!fileSystem.startsWith('fuse.') && (source === MOUNT_PATH || source.endsWith(`[${ MOUNT_PATH }]`) || source.endsWith('[/sulla-files]'))) return 'anchor';
-    return 'unexpected';
+    // A probe can only withdraw confirmation; only the backend's preparation
+    // (which also makes the anchor shared) grants it.
+    if (!probe || probe.state === 'not-mounted' || probe.state === 'unexpected') this.guestAnchorConfirmed = false;
+    if (!probe || probe.state === 'not-mounted') return 'none';
+    return probe.state;
   }
 
   private async serialize(action:() => Promise<void>):Promise<void> {

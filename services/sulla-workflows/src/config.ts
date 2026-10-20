@@ -57,6 +57,8 @@ export const config = {
   workflowImage:        process.env.SULLA_WORKFLOW_IMAGE ?? 'sulla-workflows:local',
   dockerNetwork:        process.env.SULLA_DOCKER_NETWORK ?? 'sulla_default',
   launcher:             process.env.SULLA_WORKFLOW_LAUNCHER ?? 'docker',
+  // Desktop sets this only after it prepared the shared /mnt/sulla-files anchor.
+  filesGuestMount:      process.env.SULLA_FILES_GUEST_MOUNT === '1',
   localToken,
   accountsUrl:          accountsUrl.replace(/\/$/, ''),
   accountsServiceId,

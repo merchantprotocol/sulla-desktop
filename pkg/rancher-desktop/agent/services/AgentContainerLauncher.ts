@@ -44,6 +44,7 @@ import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/b
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -97,6 +98,15 @@ export interface AgentContainerLifecycle {
 }
 
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
+
+/**
+ * The Files guest mount bind, only when the backend confirmed the shared
+ * anchor this generation. Docker rejects an rslave bind of a path that is not
+ * a shared or slave mount, so without the anchor the agent starts without it.
+ */
+export function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): string[] {
+  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : [];
+}
 
 function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
@@ -597,7 +607,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       `${ workspacePath }:${ workspacePath }:rw`,
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      '/mnt/sulla-files:/mnt/sulla-files:rslave',
+      ...sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
       name:   containerName,
@@ -881,7 +891,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      '/mnt/sulla-files:/mnt/sulla-files:rslave',
+      ...sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
       name:   containerName,

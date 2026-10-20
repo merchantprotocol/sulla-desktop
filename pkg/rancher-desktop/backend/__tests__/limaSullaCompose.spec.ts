@@ -14,6 +14,9 @@ const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-deskto
 // compose definition plus the dependency versions lima.ts reads at load.
 const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
 const flags = { vaultV2: false, fuse: false };
+// The guest's /proc/self/mountinfo; BusyBox Alpine has no usable findmnt.
+const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false };
+const mountReports: (string | undefined)[] = [];
 const noop = () => undefined;
 const stubs = (names: string, extra: Record<string, unknown> = {}) => ({
   ...Object.fromEntries(names.split(' ').map(name => [name, noop])), ...extra,
@@ -47,7 +50,12 @@ jest.unstable_mockModule('@pkg/utils/sullaFilesNativeSource', () => ({
 }));
 jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ refreshVaultPinnedSessions: () => Promise.resolve() }));
 jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({ refreshFilesPinnedSessions: () => Promise.resolve() }));
-jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager getSullaFilesMountManager'));
+jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager', {
+  getSullaFilesMountManager: () => ({
+    reportGuestPreparation: (reason?: string) => { mountReports.push(reason) },
+    guestMountAvailable:    () => mountReports.length > 0 && mountReports[mountReports.length - 1] === undefined,
+  }),
+}));
 jest.unstable_mockModule('@pkg/main/mainEvents', () => stubs('NoMainEventsHandlerError', {
   default: { on: noop, emit: noop, handle: noop, invoke: noop },
 }));
@@ -68,7 +76,7 @@ const { ACCOUNTS_SECRETS_DIRECTORY, findHostBindMounts } = await import('../sull
 
 interface Recorded { command: string[]; options: any }
 
-async function generate() {
+function fakeBackend() {
   const backend: any = new LimaBackend('x86_64' as any, () => ({}) as any);
   const commands: Recorded[] = [];
   const copies: [string, string][] = [];
@@ -80,7 +88,13 @@ async function generate() {
     commands.push({ command: args, options });
 
     if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
-    if (args[0] === 'findmnt') return Promise.resolve('ext4 /dev/vdb1[/mnt/sulla-files]\n');
+    if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
+    if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
+      return guest.catFails ? Promise.reject(new Error('cat failed')) : Promise.resolve(guest.mountinfo);
+    }
+    if (args[0] === 'mount' && args[1] === '--bind') {
+      guest.mountinfo += '612 22 0:20 /mnt/sulla-files /mnt/sulla-files rw,relatime shared:300 - tmpfs tmpfs rw\n';
+    }
 
     return Promise.resolve('');
   };
@@ -97,9 +111,15 @@ async function generate() {
     bootstrapToken: 'b', controlToken: 'c', approvalToken: 'a', brokerToken: 'k', filesToken: 'f',
   });
 
+  return { backend, commands, copies, compose: () => yaml.parse(written) };
+}
+
+async function generate() {
+  const { backend, commands, copies, compose } = fakeBackend();
+
   await backend.prepareSullaComposeFile();
 
-  return { compose: yaml.parse(written), commands, copies };
+  return { compose: compose(), commands, copies };
 }
 
 function volumeSource(volume: any): string | undefined {
@@ -121,6 +141,9 @@ beforeEach(() => {
 
   for (const key of Object.keys(assetStub)) if (key !== 'alpineLimaISO') delete assetStub[key];
   Object.assign(assetStub, fresh);
+  guest.mountinfo = '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n';
+  guest.catFails = false;
+  mountReports.length = 0;
 });
 
 describe.each([
@@ -177,5 +200,76 @@ describe.each([
     const { compose } = await generate();
 
     expect(compose.services.workflow_manager.command).toEqual(['node', 'dist/services/sulla-workflows/src/manager.js']);
+  });
+});
+
+describe('guest Files mount preparation never blocks compose generation', () => {
+  beforeEach(() => { Object.assign(flags, { vaultV2: false, fuse: true }) });
+  const filesBinds = (compose: any) => Object.entries<any>(compose.services)
+    .filter(([, service]) => (service.volumes ?? []).some((v: any) => typeof v === 'string' && v.startsWith('/mnt/sulla-files:')))
+    .map(([name]) => name).sort();
+
+  test('BusyBox guest without findmnt: binds once, makes shared, keeps the adapter', async() => {
+    const { compose, commands } = await generate();
+    const mounts = commands.filter(c => c.command[0] === 'mount').map(c => c.command.join(' '));
+
+    expect(mounts).toEqual(['mount --bind /mnt/sulla-files /mnt/sulla-files', 'mount --make-shared /mnt/sulla-files']);
+    expect(compose.services).toHaveProperty('sulla_files_fuse');
+    expect(filesBinds(compose)).toEqual(['sulla_files_fuse', 'workflow_manager']);
+    expect(mountReports).toEqual([undefined]);
+    expect(compose.services.workflow_manager.environment.SULLA_FILES_GUEST_MOUNT).toBe('1');
+  });
+
+  test.each([
+    ['an unexpected FUSE mount', () => { guest.mountinfo += '720 22 0:61 / /mnt/sulla-files rw - fuse.sshfs u@h:/x rw\n' }, /Refusing to reuse/],
+    ['an unreadable mount table', () => { guest.catFails = true }, /cat failed/],
+  ])('%s: omits the adapter and its binds, reports, and still writes compose', async(_label, arrange, reason) => {
+    arrange();
+    const { compose, commands } = await generate();
+
+    expect(compose.services).not.toHaveProperty('sulla_files_fuse');
+    expect(compose.services).toHaveProperty('sulla_files');
+    expect(filesBinds(compose)).toEqual([]);
+    expect(commands.some(c => c.command[0] === 'mount')).toBe(false);
+    expect(compose.services.workflow_manager.environment).not.toHaveProperty('SULLA_FILES_GUEST_MOUNT');
+    expect(mountReports).toEqual([expect.stringMatching(reason)]);
+  });
+});
+
+describe('runtime recovery of the guest Files mount', () => {
+  beforeEach(() => { Object.assign(flags, { vaultV2: false, fuse: true }) });
+
+  test('recoverSullaFilesGuestMount restores the adapter, the consumer bind and marker, and recreates workflow_manager', async() => {
+    const foreign = '720 22 0:61 / /mnt/sulla-files rw - fuse.sshfs u@h:/x rw\n';
+    const { backend, commands, compose } = fakeBackend();
+
+    guest.mountinfo += foreign;
+    await backend.prepareSullaComposeFile();
+    expect(compose().services).not.toHaveProperty('sulla_files_fuse');
+    expect(compose().services.workflow_manager.environment).not.toHaveProperty('SULLA_FILES_GUEST_MOUNT');
+
+    // The foreign mount goes away; a retry re-runs the same preparation.
+    guest.mountinfo = guest.mountinfo.replace(foreign, '');
+    commands.length = 0;
+    await backend.recoverSullaFilesGuestMount();
+    const recovered = compose();
+
+    expect(recovered.services).toHaveProperty('sulla_files_fuse');
+    expect(recovered.services.workflow_manager.volumes).toContain('/mnt/sulla-files:/mnt/sulla-files:rslave');
+    expect(recovered.services.workflow_manager.environment.SULLA_FILES_GUEST_MOUNT).toBe('1');
+    expect(commands.map(c => c.command.join(' '))).toEqual(expect.arrayContaining([
+      'mount --bind /mnt/sulla-files /mnt/sulla-files',
+      'mount --make-shared /mnt/sulla-files',
+      'docker compose -f /tmp/sulla-docker-compose.yml -p sulla up -d --no-deps workflow_manager',
+    ]));
+    expect(mountReports).toEqual([expect.stringMatching(/Refusing to reuse/), undefined]);
+  });
+
+  test('recoverSullaFilesGuestMount throws while preparation still fails, without touching consumers', async() => {
+    const { backend, commands } = fakeBackend();
+
+    guest.catFails = true;
+    await expect(backend.recoverSullaFilesGuestMount()).rejects.toThrow(/cat failed/);
+    expect(commands.some(c => c.command.includes('workflow_manager'))).toBe(false);
   });
 });

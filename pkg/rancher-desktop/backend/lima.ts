@@ -64,6 +64,7 @@ import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
+import { SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchor } from '@pkg/backend/guestMountInfo';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
 import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
@@ -325,6 +326,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #managedServicesReconciliation?: Promise<void>;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
+  #lastFilesGuestMountFailure?: string;
   #sullaCredentialsReady = false;
   #sullaCredentialsWaiters = new Set<() => void>();
 
@@ -3044,7 +3046,7 @@ start_pre() {
       } else {
         await this.reconcileSullaDockerEnvironment(generation);
         markSullaDockerServicesStarted();
-        getSullaFilesMountManager().configureGuest(this);
+        getSullaFilesMountManager().configureGuest(this, () => this.recoverSullaFilesGuestMount());
       }
       this.assertManagedServicesGeneration(generation);
       await instantiateSullaStart(() => this.assertManagedServicesGeneration(generation));
@@ -3736,7 +3738,9 @@ start_pre() {
       },
     };
 
-    if (sullaFilesNativeSourceRolloutRequested()) {
+    // The guest Files mount is optional: if its anchor cannot be prepared the
+    // adapter is left out of compose and Desktop keeps booting without it.
+    if (sullaFilesNativeSourceRolloutRequested() && await this.prepareSullaFilesGuestMount(compose)) {
       const fuseImage = resolveSullaServiceImage(
         'sulla-files-fuse', process.cwd(), Electron.app.getVersion(), process.env.SULLA_FILES_FUSE_IMAGE,
       );
@@ -3771,29 +3775,6 @@ start_pre() {
         depends_on:   { sulla_files: { condition: 'service_healthy' } },
         restart:      'unless-stopped',
       };
-      await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', '/var/lib/sulla/files-fuse');
-      await this.execCommand({ root: true }, 'install', '-d', '-m', '0755', '/mnt/sulla-files');
-      let anchor = await this.execCommand(
-        { root: true, capture: true, expectFailure: true }, 'findmnt', '--mountpoint', '/mnt/sulla-files',
-        '--noheadings', '--output', 'FSTYPE,SOURCE',
-      ).catch(() => '');
-      if (!anchor.trim()) {
-        await this.execCommand({ root: true }, 'mount', '--bind', '/mnt/sulla-files', '/mnt/sulla-files');
-        anchor = await this.execCommand(
-          { root: true, capture: true }, 'findmnt', '--mountpoint', '/mnt/sulla-files',
-          '--noheadings', '--output', 'FSTYPE,SOURCE',
-        );
-      }
-      const [anchorFileSystem, anchorSource] = anchor.trim().split(/\s+/, 2);
-      const adapterPresent = anchorFileSystem === 'fuse.sulla-files' && anchorSource === 'sulla-files';
-      if (!adapterPresent && (anchorFileSystem.startsWith('fuse.') ||
-          !(anchorSource === '/mnt/sulla-files' || anchorSource.endsWith('[/mnt/sulla-files]') || anchorSource.endsWith('[/sulla-files]')))) {
-        throw new Error(`Refusing to reuse unexpected Files propagation mount (${ anchorFileSystem } ${ anchorSource })`);
-      }
-      // A surviving adapter sits above the owned anchor. The mount manager
-      // drains it before the new generation and then validates the revealed
-      // anchor; never change propagation on the live FUSE mount itself.
-      if (!adapterPresent) await this.execCommand({ root: true }, 'mount', '--make-shared', '/mnt/sulla-files');
     }
 
     // Modify dynamic values like passwords
@@ -3831,6 +3812,71 @@ start_pre() {
   /**
    * Runs docker-compose up -d to start all Sulla services in detached mode.
    */
+  /**
+   * Prepare the optional guest Files propagation anchor. Never throws: on any
+   * failure (including the refusal to reuse an unexpected mount) the feature is
+   * turned off for this generation, consumers lose their /mnt/sulla-files
+   * binds, and the mount manager reports the reason.
+   */
+  private async prepareSullaFilesGuestMount(compose: any): Promise<boolean> {
+    try {
+      await prepareSullaFilesGuestAnchor(this);
+      this.#lastFilesGuestMountFailure = undefined;
+      getSullaFilesMountManager().reportGuestPreparation();
+      // The workflow manager image cannot ask Desktop; this marker tells it
+      // the anchor exists so its runners may bind /mnt/sulla-files.
+      const workflowManager = compose.services?.workflow_manager;
+
+      if (workflowManager) workflowManager.environment = { ...workflowManager.environment, SULLA_FILES_GUEST_MOUNT: '1' };
+
+      return true;
+    } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+
+      // Retries regenerate compose; log a failure once, not on every attempt.
+      if (reason !== this.#lastFilesGuestMountFailure) console.log(`[Sulla] Files guest mount unavailable: ${ reason }`);
+      this.#lastFilesGuestMountFailure = reason;
+      getSullaFilesMountManager().reportGuestPreparation(reason);
+      for (const service of Object.values<any>(compose.services ?? {})) {
+        if (!Array.isArray(service?.volumes)) continue;
+        service.volumes = service.volumes.filter((volume: any) => {
+          const source = typeof volume === 'string' ? volume.split(':')[0] : volume?.source;
+
+          return source !== SULLA_FILES_GUEST_MOUNT_PATH;
+        });
+      }
+
+      return false;
+    }
+  }
+
+  /**
+   * Runtime recovery for the Files guest mount, called by the mount manager's
+   * retry loop. Re-runs the same idempotent preparation by regenerating the
+   * compose file (which restores the adapter service and the consumers'
+   * /mnt/sulla-files binds once the anchor exists), then brings
+   * workflow_manager up to that definition. The mount manager itself starts
+   * sulla_files_fuse. Throws when preparation still fails.
+   */
+  async recoverSullaFilesGuestMount(): Promise<void> {
+    const generation = this.#managedServicesGeneration;
+
+    // Never race a startup reconciliation; it regenerates compose itself.
+    await this.#managedServicesReconciliation?.catch(() => undefined);
+    this.assertManagedServicesGeneration(generation);
+    await this.prepareSullaComposeFile();
+    this.assertManagedServicesGeneration(generation);
+    if (!getSullaFilesMountManager().guestMountAvailable()) {
+      throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
+    }
+    await reconcileComposeService({
+      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
+      service:        'workflow_manager',
+      run:            (...command) => this.execCommand({ root: true }, ...command),
+      checkpoint:     () => this.assertManagedServicesGeneration(generation),
+    });
+  }
+
   private async applySullaCompose(generation: number): Promise<void> {
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Verifying compose file', 62.5, async() => {
