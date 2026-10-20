@@ -1316,10 +1316,12 @@ export default defineComponent({
           </div>
           <!-- Primary Provider -->
           <div class="setting-group">
-            <label class="setting-label">Primary Provider</label>
+            <label class="setting-label" for="provider-primary">Primary Provider</label>
             <select
+              id="provider-primary"
               v-model="primaryProvider"
-              class="model-select"
+              class="model-select provider-select"
+              aria-label="Primary provider"
             >
               <option
                 v-for="provider in availableProviders"
@@ -1329,16 +1331,6 @@ export default defineComponent({
                 {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
-            <div class="noir-segment-row">
-              <label
-                v-for="provider in availableProviders"
-                :key="`primary-${provider.id}`"
-                :class="{ 'is-current': primaryProvider === provider.id }"
-              >
-                <input v-model="primaryProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
-              </label>
-            </div>
             <div class="setting-description connection-picker" role="group" aria-label="primary connection">
               <template v-if="slotAccountError.primary">
                 <span class="provider-hint" role="alert">{{ slotAccountError.primary }}</span>
@@ -1429,8 +1421,10 @@ export default defineComponent({
               </label>
             </div>
             <select
+              id="provider-secondary"
               v-model="secondaryProvider"
-              class="model-select"
+              class="model-select provider-select"
+              aria-label="Secondary provider"
             >
               <option
                 v-for="provider in availableProviders"
@@ -1440,16 +1434,6 @@ export default defineComponent({
                 {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
-            <div class="noir-segment-row">
-              <label
-                v-for="provider in availableProviders"
-                :key="`secondary-${provider.id}`"
-                :class="{ 'is-current': secondaryProvider === provider.id }"
-              >
-                <input v-model="secondaryProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
-              </label>
-            </div>
             <div class="setting-description connection-picker" role="group" aria-label="secondary connection">
               <template v-if="slotAccountError.secondary">
                 <span class="provider-hint" role="alert">{{ slotAccountError.secondary }}</span>
@@ -1537,10 +1521,12 @@ export default defineComponent({
 
           <!-- Subconscious Provider -->
           <div class="setting-group">
-            <label class="setting-label">Subconscious Provider</label>
+            <label class="setting-label" for="provider-subconscious">Subconscious Provider</label>
             <select
+              id="provider-subconscious"
               v-model="subconsciousProvider"
-              class="model-select"
+              class="model-select provider-select"
+              aria-label="Subconscious provider"
             >
               <option value="default">
                 Use Primary Provider
@@ -1553,20 +1539,9 @@ export default defineComponent({
                 {{ provider.name }}{{ provider.connected ? '' : ' (not connected)' }}
               </option>
             </select>
-            <div class="noir-segment-row">
-              <label :class="{ 'is-current': subconsciousProvider === 'default' }">
-                <input v-model="subconsciousProvider" type="radio" value="default">
-                <span>Primary</span>
-              </label>
-              <label
-                v-for="provider in availableProviders"
-                :key="`subconscious-${provider.id}`"
-                :class="{ 'is-current': subconsciousProvider === provider.id }"
-              >
-                <input v-model="subconsciousProvider" type="radio" :value="provider.id">
-                <span>{{ provider.name }}<small v-if="!provider.connected" class="provider-hint"> (not connected)</small></span>
-              </label>
-            </div>
+            <p v-if="providerIsDisconnected(subconsciousProvider)" class="setting-description provider-hint" role="status">
+              Not connected. Connect it in Integrations before relying on it.
+            </p>
             <div class="setting-description connection-picker" role="group" aria-label="subconscious connection">
               <template v-if="slotAccountError.subconscious">
                 <span class="provider-hint" role="alert">{{ slotAccountError.subconscious }}</span>
@@ -2042,10 +2017,12 @@ export default defineComponent({
 
           <!-- Provider Setting -->
           <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !heartbeatEnabled }">
-            <label class="setting-label">Heartbeat Provider</label>
+            <label class="setting-label" for="provider-heartbeat">Heartbeat Provider</label>
             <select
+              id="provider-heartbeat"
               v-model="heartbeatProvider"
-              class="model-select"
+              class="model-select provider-select"
+              aria-label="Heartbeat provider"
               :disabled="!heartbeatEnabled && currentTheme === 'noir-dark'"
             >
               <option value="default">
@@ -2066,10 +2043,12 @@ export default defineComponent({
 
           <!-- Subconscious Provider Setting -->
           <div class="setting-group noir-dependent" :class="{ 'is-dimmed': !heartbeatEnabled }">
-            <label class="setting-label">Subconscious Provider</label>
+            <label class="setting-label" for="provider-subconscious-hb">Subconscious Provider</label>
             <select
+              id="provider-subconscious-hb"
               v-model="subconsciousProvider"
-              class="model-select"
+              class="model-select provider-select"
+              aria-label="Subconscious provider"
               :disabled="!heartbeatEnabled && currentTheme === 'noir-dark'"
             >
               <option value="default">
@@ -3441,8 +3420,42 @@ export default defineComponent({
   line-height: 1.55;
 }
 
-.theme-noir .noir-models-pane .model-select {
+.theme-noir .noir-models-pane .model-select:not(.provider-select) {
   display: none;
+}
+
+/* Provider chooser dropdown: one control that scales to any number of providers. */
+.provider-select,
+.theme-noir .model-select.provider-select {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  height: 40px;
+  padding: 0 40px 0 14px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  font-size: 13.5px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1.5l5 5 5-5' fill='none' stroke='%238a8f98' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+}
+
+.theme-noir .model-select.provider-select {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
+  border-radius: 12px;
+}
+
+.provider-select:focus-visible,
+.theme-noir .model-select.provider-select:focus-visible {
+  outline: 2px solid var(--nx-accent, var(--primary));
+  outline-offset: 2px;
+}
+
+.provider-select option {
+  background-color: var(--bg-input, var(--input-bg, #1a1d21));
+  color: var(--text-primary, var(--input-text, #e6e8eb));
 }
 
 .provider-hint {
