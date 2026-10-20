@@ -20,9 +20,13 @@ export class IndexingQueue {
   private timer?:            NodeJS.Timeout;
   private running = false;
   private stopped = false;
-  private vectorTable?:      boolean;
 
-  constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
+  /**
+   * `vectors.columnReady` (see VectorSearchUpgrade) says file_search_chunks.embedding
+   * exists and pgvector works. Without it chunks are stored text-only (full-text
+   * search keeps working) and the upgrade re-embeds them from content later.
+   */
+  constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string, private readonly vectors?:{ readonly columnReady:boolean }) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
     if (this.embedder.dim !== 512) throw new Error(`Expected 512-dimensional Potion model, got ${ this.embedder.dim }`);
   }
@@ -64,12 +68,6 @@ export class IndexingQueue {
     this.wake();
   }
 
-  private async hasVectorTable():Promise<boolean> {
-    if (this.vectorTable !== undefined) return this.vectorTable;
-    this.vectorTable = Boolean((await this.db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
-    return this.vectorTable;
-  }
-
   private async drain():Promise<void> {
     if (this.stopped || this.running) return;
     this.running = true;
@@ -105,11 +103,14 @@ export class IndexingQueue {
         }
         await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [file.id, job.version_id]);
         if (extracted.status === 'indexed' && extracted.text) {
+          const withVector = Boolean(this.vectors?.columnReady);
           for (const [ordinal, content] of chunks(extracted.text).entries()) {
-            const embedding = this.embedder.embed(content);
-            const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
-              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, JSON.stringify(Array.from(embedding))]);
-            if (await this.hasVectorTable()) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::vector)', [inserted.rows[0].id, vectorLiteral(embedding)]);
+            if (withVector) {
+              await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding)
+                VALUES($1,$2,$3,$4,$5::vector)`, [file.id, job.version_id, ordinal, content, vectorLiteral(this.embedder.embed(content))]);
+            } else {
+              await client.query('INSERT INTO file_search_chunks(file_id,version_id,ordinal,content) VALUES($1,$2,$3,$4)', [file.id, job.version_id, ordinal, content]);
+            }
           }
         }
         await client.query('UPDATE files SET search_text=$2,extracted_at=NOW(),extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5 WHERE id=$1', [file.id, extracted.text, extracted.status, extracted.reasonCode, extracted.reason]);

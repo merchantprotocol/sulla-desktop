@@ -11,7 +11,7 @@ describe(resolveSullaServiceImage, () => {
   });
 
   test('every managed service tracks latest regardless of app version', () => {
-    const names = ['sulla-accounts', 'sulla-agent', 'sulla-files', 'sulla-files-fuse', 'sulla-projects', 'sulla-relay', 'sulla-tools', 'sulla-vault', 'sulla-workflows'] as const;
+    const names = ['sulla-accounts', 'sulla-agent', 'sulla-files', 'sulla-files-fuse', 'sulla-postgres', 'sulla-projects', 'sulla-relay', 'sulla-tools', 'sulla-vault', 'sulla-workflows'] as const;
 
     for (const name of names) {
       for (const version of ['1.6.1', '1.6.1-dev.a893f36', '?']) {

@@ -27,6 +27,7 @@ import { Store } from './store.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { VectorSearchUpgrade } from './vectorUpgrade.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
@@ -54,7 +55,8 @@ const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   : undefined;
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);
-const indexer = new IndexingQueue(db, storedIndexSource(db, config), embedder);
+const vectorUpgrade = new VectorSearchUpgrade(db, embedder);
+const indexer = new IndexingQueue(db, storedIndexSource(db, config), embedder, vectorUpgrade);
 const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer) : undefined;
 const residency = manager && config.filesRoot && config.serverUrl && vaultAuthority && keyRecovery && config.keyring instanceof FilesKeyring
   ? new FileResidencyManager(
@@ -73,7 +75,7 @@ const residency = manager && config.filesRoot && config.serverUrl && vaultAuthor
   )
   : undefined;
 const enrichment = config.mode === 'desktop' && config.filesRoot ? new RecordingEnrichmentQueue(db, config.filesRoot) : undefined;
-const search = new FileSearch(db, embedder);
+const search = new FileSearch(db, embedder, vectorUpgrade);
 let initialization:Promise<void> | undefined;
 
 const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
@@ -103,6 +105,8 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
     }
     reportStage('indexer');
     await indexer.start();
+    // Background, never awaited: pgvector backfill/reclaim/HNSW (see vectorUpgrade.ts).
+    void vectorUpgrade.start();
     if (enrichment) {
       reportStage('enrichment');
       await enrichment.start();
@@ -111,7 +115,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
   return initialization;
 };
 const lock = async() => {
-  await Promise.all([manager?.close(), indexer.close(), enrichment?.close()]);
+  await Promise.all([manager?.close(), indexer.close(), enrichment?.close(), vectorUpgrade.stop()]);
   initialization = undefined;
 };
 const recover = keyRecovery && vaultAuthority

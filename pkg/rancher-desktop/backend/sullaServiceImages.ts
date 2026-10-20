@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export type SullaServiceImageName = 'sulla-accounts' | 'sulla-agent' | 'sulla-files' | 'sulla-files-fuse' | 'sulla-projects' | 'sulla-relay' | 'sulla-tools' | 'sulla-vault' | 'sulla-workflows';
+export type SullaServiceImageName = 'sulla-accounts' | 'sulla-agent' | 'sulla-files' | 'sulla-files-fuse' | 'sulla-postgres' | 'sulla-projects' | 'sulla-relay' | 'sulla-tools' | 'sulla-vault' | 'sulla-workflows';
 
 export interface SullaServiceImage {
   build?: {

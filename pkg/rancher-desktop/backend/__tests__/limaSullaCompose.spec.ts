@@ -15,7 +15,7 @@ const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-deskto
 const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
 const flags = { vaultV2: false, fuse: false };
 // The guest's /proc/self/mountinfo; BusyBox Alpine has no usable findmnt.
-const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false };
+const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false, postgresImage: 'present' as 'present' | 'pullable' | 'missing' };
 const mountReports: (string | undefined)[] = [];
 const noop = () => undefined;
 const stubs = (names: string, extra: Record<string, unknown> = {}) => ({
@@ -87,6 +87,12 @@ function fakeBackend() {
 
     commands.push({ command: args, options });
 
+    if (args[0] === 'docker' && args[1] === 'image' && args[2] === 'inspect') {
+      return guest.postgresImage === 'present' ? Promise.resolve('sha256:test\n') : Promise.reject(new Error('No such image'));
+    }
+    if (args[0] === 'timeout' && args.includes('pull')) {
+      return guest.postgresImage === 'missing' ? Promise.reject(new Error('limactl exited with code 1')) : Promise.resolve('');
+    }
     if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
     if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
     if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
@@ -143,6 +149,7 @@ beforeEach(() => {
   Object.assign(assetStub, fresh);
   guest.mountinfo = '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n';
   guest.catFails = false;
+  guest.postgresImage = 'present';
   mountReports.length = 0;
 });
 
@@ -271,5 +278,68 @@ describe('runtime recovery of the guest Files mount', () => {
     guest.catFails = true;
     await expect(backend.recoverSullaFilesGuestMount()).rejects.toThrow(/cat failed/);
     expect(commands.some(c => c.command.includes('workflow_manager'))).toBe(false);
+  });
+});
+
+describe('postgres image selection', () => {
+  const pgvector = 'ghcr.io/merchantprotocol/sulla-postgres:latest';
+  const pulls = (commands: Recorded[]) => commands.filter(({ command }) => command.includes('pull'));
+
+  test('uses the pgvector image already in the VM without pulling it again', async() => {
+    const { compose, commands } = await generate();
+
+    expect(compose.services.postgres.image).toBe(pgvector);
+    expect(pulls(commands)).toEqual([]);
+  });
+
+  test('pulls the pgvector image before Postgres starts when it is not in the VM yet', async() => {
+    guest.postgresImage = 'pullable';
+    const { compose, commands } = await generate();
+
+    expect(compose.services.postgres.image).toBe(pgvector);
+    expect(pulls(commands).map(({ command }) => command)).toEqual([['timeout', '300', 'docker', 'pull', pgvector]]);
+    expect(pulls(commands)[0].options.root).toBe(true);
+  });
+
+  test('falls back to the stock postgres:16-alpine image when the pull fails, keeping the same data volume', async() => {
+    guest.postgresImage = 'missing';
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      const { compose } = await generate();
+
+      expect(compose.services.postgres.image).toBe('postgres:16-alpine');
+      expect(compose.services.postgres.volumes).toEqual(assetCompose.services.postgres.volumes);
+      expect(log.mock.calls.filter(([line]) => String(line).includes('Postgres image')).length).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test('the pgvector and fallback definitions differ only in their image (same volume, PGDATA, user)', async() => {
+    const { image: vectorImage, ...withVector } = (await generate()).compose.services.postgres;
+
+    guest.postgresImage = 'missing';
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    try {
+      const { image: fallbackImage, ...fallback } = (await generate()).compose.services.postgres;
+
+      expect([vectorImage, fallbackImage]).toEqual([pgvector, 'postgres:16-alpine']);
+      expect(withVector).toEqual(fallback);
+      expect(withVector.volumes).toEqual(['sulla_postgres_data:/var/lib/postgresql/data']);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test('a later generation on the same backend does not pull again once the image is in use', async() => {
+    guest.postgresImage = 'pullable';
+    const { backend, commands } = fakeBackend();
+
+    await backend.prepareSullaComposeFile();
+    await backend.prepareSullaComposeFile();
+    expect(pulls(commands)).toHaveLength(1);
+    expect(commands.filter(({ command }) => command.includes('inspect'))).toHaveLength(1);
   });
 });

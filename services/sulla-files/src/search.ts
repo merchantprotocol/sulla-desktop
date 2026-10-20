@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 
-import { cosine, PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
+import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
+import type { VectorSearchStatus } from './vectorUpgrade.js';
 
 export interface CollectionSearchScope { collectionId:string }
 import type pg from 'pg';
@@ -32,15 +33,56 @@ function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:a
   return where;
 }
 
+/**
+ * Nearest chunks pulled from HNSW before the authorization/path filters run.
+ * Also the HNSW ef_search, so one index probe yields the whole pool.
+ */
+export const SEMANTIC_POOL = 400;
+const SEMANTIC_LIMIT = 60;
+
+export interface VectorSearchSource { readonly columnReady:boolean; status():VectorSearchStatus }
+
 export class FileSearch {
   private readonly embedder: PotionEmbedder;
-  private vectorTable?:      boolean;
-  constructor(private readonly db:pg.Pool, model:PotionEmbedder | string) { this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model }
+  /**
+   * Semantic retrieval runs in SQL on file_search_chunks.embedding once that
+   * column exists (VectorSearchUpgrade). Without pgvector, search is full-text only.
+   */
+  constructor(private readonly db:pg.Pool, model:PotionEmbedder | string, private readonly vectors?:VectorSearchSource) { this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model }
 
-  private async hasVectorTable():Promise<boolean> {
-    if (this.vectorTable !== undefined) return this.vectorTable;
-    this.vectorTable = Boolean((await this.db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
-    return this.vectorTable;
+  vectorStatus():VectorSearchStatus { return this.vectors?.status() ?? { vectorSearch: 'unavailable', phase: 'not-configured' } }
+
+  private async semanticCandidates(input:SearchInput, scopes:CollectionSearchScope[], vector:Float32Array):Promise<Candidate[]> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL hnsw.ef_search = ${ SEMANTIC_POOL }`);
+      // strict_order: if the scan must continue (fallback below), keep exact distance order.
+      await client.query("SET LOCAL hnsw.iterative_scan = 'strict_order'");
+      const select = 'f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id';
+      // 1) Nearest chunks from the HNSW index alone (a single-table ORDER BY ... LIMIT,
+      //    the shape the planner reliably serves from the index), then the same
+      //    filters as keyword search. Exact whenever >= 60 rows survive the filters.
+      const pooledArgs:any[] = []; const pooledWhere = filteredWhere(input, scopes, pooledArgs);
+      const q = pooledArgs.push(vectorLiteral(vector));
+      let rows = (await client.query<Candidate>(`WITH nearest AS MATERIALIZED (
+          SELECT sc.file_id,sc.version_id,sc.content,sc.embedding <=> $${ q }::vector distance
+          FROM file_search_chunks sc WHERE sc.embedding IS NOT NULL ORDER BY sc.embedding <=> $${ q }::vector LIMIT ${ SEMANTIC_POOL })
+        SELECT ${ select },n.content,1-n.distance signal
+        FROM nearest n JOIN files f ON f.id=n.file_id JOIN file_versions v ON v.id=f.current_version_id AND v.id=n.version_id
+        WHERE ${ pooledWhere.join(' AND ') } ORDER BY n.distance LIMIT ${ SEMANTIC_LIMIT }`, pooledArgs)).rows;
+      // 2) Filters rejected too much of the pool (narrow folder/collection/type):
+      //    filter inside the scan instead. Small tables land here too; both are cheap.
+      if (rows.length < SEMANTIC_LIMIT) {
+        const args:any[] = []; const where = filteredWhere(input, scopes, args); const p = args.push(vectorLiteral(vector));
+        rows = (await client.query<Candidate>(`SELECT ${ select },sc.content,1-(sc.embedding <=> $${ p }::vector) signal
+          FROM files f JOIN file_versions v ON v.id=f.current_version_id JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=v.id
+          WHERE ${ where.join(' AND ') } AND sc.embedding IS NOT NULL
+          ORDER BY sc.embedding <=> $${ p }::vector LIMIT ${ SEMANTIC_LIMIT }`, args)).rows;
+      }
+      await client.query('COMMIT');
+      return rows.map(row => ({ ...row, signal: Number(row.signal) }));
+    } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error } finally { client.release() }
   }
 
   async search(input:SearchInput, granted:CollectionSearchScope[]):Promise<FileSearchResponse> {
@@ -67,22 +109,8 @@ export class FileSearch {
       WHERE ${ keywordWhere.join(' AND ') } AND sc.search_vector @@ websearch_to_tsquery('simple',$${ keywordArgs.length })
       ORDER BY signal DESC,f.updated_at DESC LIMIT 60`, keywordArgs);
 
-    const vector = this.embedder.embed(input.query);
-    let semantic:Candidate[];
-    const semanticArgs:any[] = []; const semanticWhere = filteredWhere(input, scopes, semanticArgs); const semanticVersion = visibleVersion(semanticArgs);
-    if (await this.hasVectorTable()) {
-      semanticArgs.push(vectorLiteral(vector));
-      semantic = (await this.db.query<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
-        1-(sv.embedding <=> $${ semanticArgs.length }::vector) signal
-        FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id JOIN file_search_vectors sv ON sv.chunk_id=sc.id
-        WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=${ semanticVersion }
-        ORDER BY sv.embedding <=> $${ semanticArgs.length }::vector LIMIT 60`, semanticArgs)).rows;
-    } else {
-      const bounded = (await this.db.query<any>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
-        FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=v.id
-        ORDER BY f.updated_at DESC LIMIT 800`, semanticArgs)).rows;
-      semantic = bounded.map(row => ({ ...row, signal: cosine(vector, row.embedding_json) })).sort((a, b) => b.signal - a.signal).slice(0, 60);
-    }
+    let semantic:Candidate[] = [];
+    if (this.vectors?.columnReady) semantic = await this.semanticCandidates(input, scopes, this.embedder.embed(input.query));
     semantic = semantic.filter(row => row.signal >= 0.2);
 
     const fused = new Map<string, any>();

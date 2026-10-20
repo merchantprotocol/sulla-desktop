@@ -36,6 +36,7 @@ import * as K8s from './k8s';
 import { replaceLimaMounts } from './limaMounts';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
+import { selectSullaPostgresImage, type SullaPostgresImageSelection } from './sullaPostgresImage';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
@@ -323,6 +324,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
+  /** Kept once the pgvector image is in use; a fallback is retried on the next generation. */
+  #sullaPostgresImage?: SullaPostgresImageSelection;
   #managedServicesReconciliation?: Promise<void>;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
@@ -3350,6 +3353,27 @@ start_pre() {
   private async prepareSullaComposeFile(): Promise<void> {
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
 
+    // Postgres: prefer the pgvector image, never start without a database
+    // (see sullaPostgresImage.ts). Same data volume either way. No source
+    // build, and always the `latest` tag: the image is published only when
+    // services/sulla-postgres changes, so a SULLA_SERVICE_IMAGE_TAG commit pin
+    // would name a tag that does not exist and force the fallback.
+    if (compose.services?.postgres) {
+      const preferred = resolveSullaServiceImage(
+        'sulla-postgres', process.cwd(), Electron.app.getVersion(), process.env.SULLA_POSTGRES_IMAGE, () => false, 'latest',
+      ).image;
+
+      if (this.#sullaPostgresImage?.source !== 'local' || this.#sullaPostgresImage.image !== preferred) {
+        this.#sullaPostgresImage = await selectSullaPostgresImage({
+          preferred,
+          run: (...command) => this.execCommand({ root: true }, ...command),
+        });
+        // A pull succeeded: later generations only need to see it present.
+        if (this.#sullaPostgresImage.source === 'pulled') this.#sullaPostgresImage = { ...this.#sullaPostgresImage, source: 'local' };
+      }
+      compose.services.postgres.image = this.#sullaPostgresImage.image;
+    }
+
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
     for (const service of ['python_runtime', 'shell_runtime', 'node_runtime']) {
@@ -3924,7 +3948,9 @@ start_pre() {
       });
 
       // Postgres and Redis are stable data services. Compose pulls them only when
-      // missing; Desktop does not force-refresh their upstream image tags.
+      // missing; Desktop does not force-refresh their image tags. The Postgres
+      // image was already chosen (pgvector, or the stock fallback) and pulled
+      // while the compose file was prepared.
       await this.execCommand(
         { root: true }, ...composeCommand, 'up', '-d',
         'postgres', 'redis',

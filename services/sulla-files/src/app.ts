@@ -336,7 +336,7 @@ export function createApp(
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status())));
+  app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status(), search?.vectorStatus())));
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
     response.json((await db.query('SELECT id,system_area AS \"systemArea\" FROM collections WHERE system_area IS NOT NULL')).rows);

@@ -1,5 +1,8 @@
 services:
   postgres:
+    # Fallback only. Desktop (backend/sullaPostgresImage.ts) swaps in the
+    # pgvector image ghcr.io/merchantprotocol/sulla-postgres when it is present
+    # or pullable, and keeps this stock image when it is not.
     image: postgres:16-alpine
     container_name: sulla_postgres
     ports:
