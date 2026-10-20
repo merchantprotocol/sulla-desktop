@@ -97,30 +97,6 @@
           : 'Sulla keeps starting without them. Restarting Sulla tries them again.' }}
       </p>
     </div>
-
-    <ol
-      v-if="(snapshot?.feed.length ?? 0) > 0"
-      class="sulla-sp-feed"
-      aria-label="Recently finished"
-      data-test="feed"
-    >
-      <li
-        v-for="item in snapshot!.feed"
-        :key="item.key"
-        :class="`is-${item.status}`"
-        data-test="feed-item"
-      >
-        <span
-          class="sulla-sp-mark"
-          aria-hidden="true"
-        >{{ item.status === 'done' ? '✓' : item.status === 'failed' ? '!' : '–' }}</span>
-        <span class="sulla-sp-feed-label">{{ item.label }}<span
-          v-if="item.status !== 'done'"
-          class="sulla-sp-visually-hidden"
-        > ({{ item.status }})</span></span>
-        <span class="sulla-sp-feed-time">{{ formatDuration(item.durationMs) }}</span>
-      </li>
-    </ol>
   </div>
 </template>
 

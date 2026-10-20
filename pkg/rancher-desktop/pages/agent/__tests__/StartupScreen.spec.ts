@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('StartupProgressPanel', () => {
-  it('renders stage, step, step count, elapsed time and the activity feed', async() => {
+  it('renders stage, step, step count, elapsed time, and no checklist', async() => {
     const t0 = 1_000_000;
     const now = t0 + 65_000;
     const w = mount(StartupProgressPanel, { props: { snapshot: snapshotAt(t0), now: () => now } });
@@ -53,11 +53,8 @@ describe('StartupProgressPanel', () => {
     expect(w.get('[data-test="step"]').text()).toBe('Unlocking Files');
     expect(w.get('[data-test="step-meta"]').text()).toContain('Step 3 of 3');
     expect(w.get('[data-test="elapsed"]').text()).toBe('1m 05s');
-    const feed = w.findAll('[data-test="feed-item"]').map(li => li.text());
-
-    expect(feed[0]).toContain('Starting the vault');
-    expect(feed[0]).toContain('900ms');
-    expect(feed[1]).toContain('Connecting to the database');
+    // The finished-steps checklist is gone: it only added a scrollbar.
+    expect(w.find('[data-test="feed"]').exists()).toBe(false);
     // 65 s on the Files step: the slow note explains what it is doing.
     expect(w.get('[data-test="slow-note"]').text()).toMatch(/taking a while.*background/s);
     w.unmount();
