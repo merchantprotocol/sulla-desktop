@@ -91,7 +91,10 @@ export async function filesContainerRequest(path:string, context:FilesCallerCont
   const { api, request } = filesApi();
   const target = new URL(path, api);
   if (target.origin !== api.origin) throw new Error('Files endpoint must use the trusted local service origin');
-  const servicePassword = await SullaSettingsModel.getServicePassword();
+  // The catalog runs in sulla_tools, where the Electron fallback-settings
+  // path does not exist. Desktop supplies the already-established service
+  // secret explicitly; Desktop-local callers continue using the settings model.
+  const servicePassword = process.env.SULLA_FILES_CAPABILITY_SECRET || await SullaSettingsModel.getServicePassword();
   // The Files service owns user identity. Never trust a caller-supplied subject
   // for local ACL decisions, including tool contexts restored from old threads.
   const sub = await localPrincipal(api, request, servicePassword);

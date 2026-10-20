@@ -21,6 +21,9 @@ export class SettingsSetWorker extends BaseTool {
         responseString: 'property is required.',
       };
     }
+    if (property === 'hostAccess' || property === 'computerUse.enabledApps') {
+      return { successBoolean: false, responseString: 'Host and application permissions can only be changed by the human in Preferences.' };
+    }
     if (isProtectedSetting(property)) {
       // Cloud sync / remote access switches are the owner's decision and are
       // changed only in Settings → Sulla Cloud. An agent (possibly steered by

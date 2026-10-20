@@ -1,12 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
-import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostAccess';
 import { runCommand } from '../util/CommandRunner';
-import { broadcastComputerUseSettingsChanged } from './_broadcast';
-
-/** Terminal-emulator targets that give an agent a host shell. Driving these
- *  is "host machine access" and is gated by the application.hostAccess
- *  setting — unlike Mail/Notes/Calendar automation, which is not. */
-const TERMINAL_EMULATOR_APPS = new Set(['terminal', 'iterm2', 'iterm']);
 
 /**
  * Rewrite a Terminal `do script` bridge invocation so it (1) reuses a single
@@ -77,44 +70,28 @@ export class ApplescriptExecuteWorker extends BaseTool {
       };
     }
 
-    // ── Host-access gate ────────────────────────────────────────
-    // Driving a terminal emulator via osascript is a host shell escape.
-    // Block it unless the user has enabled host machine access.
-    if (TERMINAL_EMULATOR_APPS.has(String(target_app).toLowerCase()) && !await isHostAccessEnabled()) {
-      return {
-        successBoolean: false,
-        responseString:  HOST_ACCESS_DISABLED_MESSAGE,
-      };
-    }
-
-    // ── Verify the app is a known AppleScript target, auto-enabling
-    //    it if the user hasn't flipped it on yet. Agent-driven enable
-    //    reflects implicit consent — the user asked us to do the thing
-    //    ("connect to my mail"), so we enable and proceed. The toggle
-    //    stays on for subsequent calls. Unknown apps still hard-fail.
-    let autoEnabled = false;
+    // The global BaseTool gate has already required Administrative Access.
+    // AppleScript also requires the human-managed per-app allowlist. Agents
+    // may inspect this setting, but they must never grant themselves access.
     try {
       const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
       const { APP_REGISTRY } = await import('../../../main/computerUseSettings/appRegistry');
-
       const appEntry = APP_REGISTRY.find(
-        (a) => a.name.toLowerCase() === target_app.toLowerCase(),
+        (app) => app.name.toLowerCase() === String(target_app).toLowerCase(),
       );
       if (!appEntry) {
         return {
           successBoolean: false,
-          responseString:  `Unknown application: "${ target_app }". Known targets: ${ APP_REGISTRY.map(a => a.name).join(', ') }.`,
+          responseString:  `Unknown application: "${ target_app }". Known targets: ${ APP_REGISTRY.map(app => app.name).join(', ') }.`,
         };
       }
-
       const stored = await SullaSettingsModel.get('computerUse.enabledApps', '{}');
       const enabledApps: Record<string, boolean> = typeof stored === 'string' ? JSON.parse(stored) : (stored || {});
-
       if (!enabledApps[appEntry.bundleId]) {
-        enabledApps[appEntry.bundleId] = true;
-        await SullaSettingsModel.set('computerUse.enabledApps', JSON.stringify(enabledApps), 'string');
-        broadcastComputerUseSettingsChanged();
-        autoEnabled = true;
+        return {
+          successBoolean: false,
+          responseString:  `${ target_app } is disabled in Computer Use Settings. Only the human can enable applications under Preferences → Application → Computer Use.`,
+        };
       }
     } catch (error) {
       return {
@@ -171,10 +148,9 @@ export class ApplescriptExecuteWorker extends BaseTool {
 
       const body = res.stdout.trim() || '(no output)';
       await writeAuditRow({ target_app, script, action_type, success: true, durationMs: Date.now() - startedMs, responseChars: body.length });
-      const prefix = autoEnabled ? `[Auto-enabled "${ target_app }" in Computer Use Settings.]\n` : '';
       return {
         successBoolean: true,
-        responseString:  prefix + body,
+        responseString:  body,
       };
     } catch (error) {
       const msg = (error as Error).message;
