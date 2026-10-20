@@ -1,8 +1,10 @@
-import { BaseTool, ToolResponse } from '../base';
+import { ToolResponse } from '../base';
+import { FilesTool, writeUseCaseDraft } from '../files/common';
+import { draftResponse } from '../useCaseDraft';
 import { getMarketplaceClient } from './MarketplaceClient';
 import { KINDS_HELP, normalizeKind } from './types';
 
-export class MarketplaceDownloadWorker extends BaseTool {
+export class MarketplaceDownloadWorker extends FilesTool {
   name = '';
   description = '';
 
@@ -31,25 +33,16 @@ export class MarketplaceDownloadWorker extends BaseTool {
           responseString: `Installed package ${ listing.name } v${ result.version } in Postgres.${ result.warnings?.length ? `\n${ result.warnings.join('\n') }` : '' }`,
         };
       }
-      const { listing, result } = await getMarketplaceClient().install(kind!, slug, { overwrite });
-
-      if (result.alreadyInstalled) {
-        const outdated = result.version !== listing.version;
-
-        return {
-          successBoolean: true,
-          responseString: `${ listing.name } is already installed (v${ result.version }) at ${ result.path }.` +
-            (outdated ? `\nv${ listing.version } is available — run \`sulla marketplace/update '{"kind":"${ input.kind }","slug":"${ slug }"}'\`.` : ''),
-        };
+      const fetched = await getMarketplaceClient().fetchLatest(kind!, slug);
+      const { readBundleFiles } = await import('@pkg/main/marketplace/databaseInstaller');
+      const files = readBundleFiles(fetched.rootPath) as Record<string, string>;
+      const type = kind === 'workflow' ? 'workflows' : `${ kind }s` as 'agents' | 'skills' | 'workflows' | 'functions' | 'recipes';
+      try {
+        const written = await writeUseCaseDraft(this, input, type, fetched.listing.slug, files);
+        return { successBoolean: true, responseString: draftResponse(type, fetched.listing.slug, files, written).responseString };
+      } finally {
+        fetched.cleanup();
       }
-
-      return {
-        successBoolean: true,
-        responseString: (result.updated
-          ? `Updated ${ listing.name } v${ result.previousVersion } → v${ result.version } at ${ result.path }`
-          : `Installed ${ listing.name } v${ result.version } (${ result.kind }) at ${ result.path }`) +
-          (result.warnings?.length ? `\nWarning: ${ result.warnings.join('\nWarning: ') }` : ''),
-      };
     } catch (err) {
       return { successBoolean: false, responseString: `Marketplace install failed: ${ (err as Error).message }` };
     }

@@ -26,6 +26,7 @@ import { Store } from './store.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload } from './streamingUpload.js';
+import { isUseCasePath } from './useCasePaths.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import type { FilesLifecycle } from './lifecycle.js';
@@ -292,6 +293,7 @@ export function createApp(
   }
   async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null }) {
     const agentWrite = input.createdByType === 'agent-run' || Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
+    const collection = await collectionRow(input.collectionId, client);
     const createdByType = agentWrite ? 'agent-run' : (input.createdByType ?? 'user');
     const createdById = input.createdById ?? input.actor.jobId ?? input.actor.agentId ?? input.actor.userId;
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
@@ -312,8 +314,8 @@ export function createApp(
       }
     } else file = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [input.collectionId, input.path, createdByType, createdById, input.mime, input.bytes.length])).rows[0];
     const parent = input.baseVersionId === undefined ? file.current_version_id : input.baseVersionId;
-    const version = (await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.deviceId || 'server-web'])).rows[0];
+    const version = (await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id,publication_status)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4,$11) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.deviceId || 'server-web', isUseCasePath(collection, input.path) ? 'draft' : null])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
     if (version.publication_status === 'draft') await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'draft-write',$6)`, [agentWrite?'agent-or-device':'user',createdById,input.actor.deviceId||null,file.id,version.id,{path:input.path,message:input.message}]);
     await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime };
@@ -863,6 +865,7 @@ export function createApp(
   app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
+    if (collection.system_area === 'sulla' && !path.startsWith('Use Cases/')) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts');
     await requirePath(request, collection.id, path, 'edit');
     const bytes = request.body.contentBase64 !== undefined
       ? Buffer.from(String(request.body.contentBase64), 'base64')
@@ -893,7 +896,8 @@ export function createApp(
     if (expectedVersionId !== undefined && (!existing || existing.current_version_id !== expectedVersionId)) {
       throw new HttpError(409, `file version conflict; current version is ${ existing?.current_version_id ?? 'missing' }`);
     }
-    if (existing && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
+    const useCaseDraft = collection.system_area === 'sulla' && path.startsWith('Use Cases/');
+    if (existing && !useCaseDraft && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
       throw new HttpError(409, 'artifact path belongs to another creator');
     }
     if (versionId) {
@@ -922,6 +926,13 @@ export function createApp(
   app.post('/v1/agent-files/ensure', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
+  } catch (error) { next(error) } });
+  // Agents write Use Case drafts into the Sulla system collection; /v1/local/* is desktop-only.
+  app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
+    identity(request);
+    const row = (await db.query("SELECT id FROM collections WHERE system_area='sulla' LIMIT 1")).rows[0];
+    if (!row) throw new HttpError(404, 'Sulla collection is not initialized');
+    response.json({ collectionId: row.id });
   } catch (error) { next(error) } });
   app.get('/v1/agent-files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');

@@ -9,3 +9,12 @@ Use-case definitions live in Sulla Files under `Sulla/Use Cases/<type>/<slug>/`,
 - **Locks and retention apply.** Use the Files API so permissions, locks, retention, audit, and provenance are enforced. Never bypass the Files service with direct Postgres writes.
 
 Built-in app-shipped definitions use the same namespace and are read-only to agents; app releases may update them.
+
+## Use Case publishing
+
+Files under `Sulla/Use Cases/<type>/<slug>/` are versioned drafts whether the
+writer is an agent or a human (File Manager, upload, or FUSE). A draft never
+activates a skill, workflow, agent, function, or recipe. The human activates a
+version with **Publish** in File Manager; publishing an older version is the
+rollback operation. Files outside this path retain the normal human-write
+publishes-immediately behavior.

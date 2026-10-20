@@ -11,7 +11,7 @@ export interface UseCaseDraftFile {
   path: string;
 }
 
-/** Write a use-case definition into the agent scratch Files collection.
+/** Write a use-case definition into the Sulla system collection.
  * Files creates these versions as drafts; only files_request_publish can make
  * one active, published version.
  */
@@ -22,13 +22,14 @@ export async function writeUseCaseDraft(
   slug: string,
   files: Record<string, string>,
 ): Promise<UseCaseDraftFile[]> {
-  const collection = await tool.agentFilesJson<{ collectionId: string }>('/v1/agent-files/ensure', input, { method: 'POST', body: '{}' });
+  const { collectionId } = await tool.agentFilesJson<{ collectionId: string }>('/v1/agent-files/use-case-collection', input);
+  const collection = { id: collectionId };
   const result: UseCaseDraftFile[] = [];
   for (const [name, content] of Object.entries(files)) {
-    const path = `Sulla/Use Cases/${ type }/${ slug }/${ name }`;
+    const path = `Use Cases/${ type }/${ slug }/${ name }`;
     const written = await tool.agentFilesJson<{ fileId: string; versionId: string; path: string }>('/v1/agent-files', input, {
       method: 'POST',
-      body: JSON.stringify({ collectionId: collection.collectionId, path, content, mime: name.endsWith('.json') ? 'application/json' : name.endsWith('.yaml') || name.endsWith('.yml') ? 'text/yaml' : 'text/markdown', message: `Draft ${ type.slice(0, -1) } ${ slug }` }),
+      body: JSON.stringify({ collectionId: collection.id, path, content, mime: name.endsWith('.json') ? 'application/json' : name.endsWith('.yaml') || name.endsWith('.yml') ? 'text/yaml' : 'text/markdown', message: `Draft ${ type.slice(0, -1) } ${ slug }` }),
     });
     result.push(written);
   }
