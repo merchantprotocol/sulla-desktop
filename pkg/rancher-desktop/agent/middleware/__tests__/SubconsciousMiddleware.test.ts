@@ -135,6 +135,18 @@ jest.unstable_mockModule('../../services/SubagentDirectory', () => ({
   buildSubagentDirectoryContext: buildSubagentDirectoryContextMock,
 }));
 
+// Files transport fake: the real FilesRecallService runs on top of it, so the
+// middleware → gate → /v1/search → <related_files> path is exercised end to end.
+const filesContainerJsonMock: any = jest.fn(() => Promise.reject(new Error('Files is locked; secure bootstrap is required')));
+jest.unstable_mockModule('../../files/containerClient', () => ({
+  filesContainerJson:    filesContainerJsonMock,
+  filesContainerRequest: jest.fn(() => Promise.reject(new Error('unused'))),
+}));
+const findBySlugMock: any = jest.fn(() => Promise.resolve(null));
+jest.unstable_mockModule('../../services/AgentDefinitionService', () => ({
+  agentDefinitionService: { findBySlug: findBySlugMock },
+}));
+
 function stateWithMessages(count: number): any {
   return {
     messages: Array.from({ length: count }, (_, i) => ({
@@ -628,5 +640,125 @@ describe('subagent directory', () => {
     await runSubconsciousMiddleware(state, { includeObservations: false });
 
     expect(state.metadata.subagentDirectoryContext).toBe('');
+  });
+});
+
+describe('Files recall through the subconscious middleware', () => {
+  const COLLECTIONS = [
+    { id: 'c-train', systemArea: 'training-data', name: 'Training Data' },
+    { id: 'c-sulla', systemArea: 'sulla', name: 'Sulla' },
+    { id: 'c-logs', systemArea: 'logs', name: 'Logs' },
+  ];
+  const searchBodies: any[] = [];
+
+  beforeEach(async() => {
+    const { resetFilesRecallState } = await import('../../memory/FilesRecallService');
+    resetFilesRecallState();
+    delete settings.subconsciousRecallMode;
+    delete settings.subconsciousFilesRecall;
+    recallRankedMemoriesMock.mockReset().mockResolvedValue(null);
+    countActiveMock.mockReset().mockResolvedValue(0);
+    recallThreadsMock.mockReset().mockResolvedValue([]);
+    findBySlugMock.mockReset().mockResolvedValue(null);
+    searchBodies.length = 0;
+    filesContainerJsonMock.mockReset().mockImplementation((path: string, _ctx: any, init: any = {}) => {
+      if (path === '/v1/collections') return Promise.resolve(COLLECTIONS);
+      if (path === '/v1/search') {
+        const body = JSON.parse(init.body);
+        searchBodies.push(body);
+        return Promise.resolve({
+          results: body.collectionId === 'c-train'
+            ? [{ id: 'file-77', title: 'thread-77.jsonl', path: 'thread-77.jsonl', updated_at: '2026-09-12T09:00:00Z', snippet: '{"role":"user","content":"We chose pgvector with an HNSW index for Files search"}', why: 'keyword and meaning match', size: 900 }]
+            : [],
+          coverage: { complete: true, partial: 0 },
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${ path }`));
+    });
+  });
+
+  async function carrierFor(state: any): Promise<string> {
+    const { BaseNode } = await import('../../nodes/BaseNode');
+    class TestNode extends BaseNode<any> {
+      execute(currentState: any) { return Promise.resolve({ state: currentState, decision: { type: 'end' as const } }) }
+      inject(currentState: any) { this.injectSubconsciousAssistantContext(currentState) }
+    }
+    new TestNode('test-node', 'TestNode').inject(state);
+    return state.messages.find((m: any) => m.metadata?.source === 'subconscious_context')?.content ?? '';
+  }
+
+  it('injects "From your Files" snippets with provenance when the gate fires on a history question', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'Remember what we decided about the Files search index?' }], metadata: { threadId: 'thread-now' } };
+
+    await runSubconsciousMiddleware(state, { includeObservations: true });
+
+    expect(searchBodies.map(b => b.collectionId)).toEqual(['c-train']);
+    expect(searchBodies[0].limit).toBe(6);
+    expect(state.metadata.filesContext).toContain('From your Files');
+    expect(state.metadata.filesContext).toContain('[Past conversation] 2026-09-12 · thread-77.jsonl (file_id file-77; keyword and meaning match)');
+    expect(state.metadata.filesContext).toContain('We chose pgvector with an HNSW index for Files search');
+    const carrier = await carrierFor(state);
+    expect(carrier.match(/<related_files>/g)).toHaveLength(1);
+    expect(carrier).toContain('file_id file-77');
+  });
+
+  it('makes zero Files calls and leaves the prompt carrier without a Files block when the gate does not fire', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'Write a haiku about autumn leaves' }], metadata: { threadId: 'thread-now', filesContext: 'stale' } };
+
+    await runSubconsciousMiddleware(state, { includeObservations: true });
+
+    expect(filesContainerJsonMock).not.toHaveBeenCalled();
+    expect(state.metadata.filesContext).toBe('');
+    expect(await carrierFor(state)).not.toContain('<related_files>');
+  });
+
+  it('changes the carrier ONLY by the <related_files> block (setting on vs off, same turn)', async() => {
+    recallThreadsMock.mockResolvedValue([
+      { thread_id: 'old-9', title: 'Index choice', summary: 'Talked about search.', last_seen: '2026-09-10T00:00:00Z', matched_terms: ['index'], score: 3 },
+    ]);
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const make = (): any => ({ messages: [{ role: 'user', content: 'Remember what we decided about the Files search index?' }], metadata: { threadId: 'thread-now' } });
+
+    const on = make();
+    await runSubconsciousMiddleware(on, { includeObservations: true });
+    settings.subconsciousFilesRecall = false;
+    const off = make();
+    await runSubconsciousMiddleware(off, { includeObservations: true });
+
+    const withFiles = await carrierFor(on);
+    const withoutFiles = await carrierFor(off);
+    expect(withFiles).toContain('<related_files>');
+    expect(withoutFiles).toContain('<conversation_context>');
+    expect(withoutFiles).not.toContain('<related_files>');
+    expect(withFiles.replace(/\n\n<related_files>[\s\S]*?<\/related_files>/, '')).toBe(withoutFiles);
+  });
+
+  it('silently skips Files when it is locked, and the turn still completes with its other context', async() => {
+    filesContainerJsonMock.mockReset().mockRejectedValue(new Error('Files is locked; secure bootstrap is required'));
+    recallThreadsMock.mockResolvedValue([
+      { thread_id: 'old-9', title: 'Index choice', summary: null, last_seen: '2026-09-10T00:00:00Z', matched_terms: ['index'], score: 3 },
+    ]);
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = { messages: [{ role: 'user', content: 'Remember what we decided about the Files search index?' }], metadata: { threadId: 'thread-now' } };
+
+    await expect(runSubconsciousMiddleware(state, { includeObservations: true })).resolves.toBeUndefined();
+
+    expect(state.metadata.filesContext).toBe('');
+    expect(state.metadata.conversationContext).toContain('thread old-9');
+  });
+
+  it('never searches from a spawned sub-agent run, and honours a per-agent opt-out', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const nested: any = { messages: [{ role: 'user', content: 'Remember what we decided about the Files search index?' }], metadata: { threadId: 't-sub', isSubAgent: true } };
+    await runSubconsciousMiddleware(nested, { includeObservations: true });
+    expect(filesContainerJsonMock).not.toHaveBeenCalled();
+
+    findBySlugMock.mockResolvedValue({ config: { filesRecall: false } });
+    const optedOut: any = { messages: [{ role: 'user', content: 'Remember what we decided about the Files search index?' }], metadata: { threadId: 't-agent', agentId: 'quiet-agent' } };
+    await runSubconsciousMiddleware(optedOut, { includeObservations: true });
+    expect(filesContainerJsonMock).not.toHaveBeenCalled();
+    expect(optedOut.metadata.filesContext).toBe('');
   });
 });

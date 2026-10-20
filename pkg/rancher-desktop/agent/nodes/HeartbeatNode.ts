@@ -115,6 +115,7 @@ export class HeartbeatNode extends BaseNode {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
       await runSubconsciousMiddleware(state, {
         includeObservations: shouldInjectObservations,
+        turnKind:            'heartbeat',
       });
     }
 
