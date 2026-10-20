@@ -16,12 +16,8 @@ decisionService.subscribe(record => {
   pending.add(key);
   void (async() => {
     try {
-      if (record.status === 'approved') {
-        await filesContainerJson(`/v1/files/${ encodeURIComponent(payload.fileId) }/versions/${ encodeURIComponent(payload.versionId) }/publish`, { thread_id: record.conversationId }, {
-          method: 'POST',
-          body: JSON.stringify({ requestId: payload.filesPublishRequestId }),
-        });
-      }
+      // The Files approve/reject call itself runs as the human in
+      // main/sullaApprovalEvents.ts; agent identities cannot publish.
       const send = notify.get(key);
       if (send) await send(record.status === 'approved' ? 'File version publish approved.' : `File version publish request ${ record.status }.`);
     } finally {
