@@ -23,6 +23,20 @@ interface ServiceDefinition {
 
 type StopMode = 'full' | 'restart';
 
+/** Emitted as 'startup:step' for each service during startAll(), alongside the existing logs. */
+export interface LifecycleStepEvent {
+  name:        string;
+  status:      'start' | 'ready' | 'failed' | 'skipped';
+  durationMs?: number;
+  error?:      string;
+}
+
+/** Emitted as 'startup:begin' when startAll() has its order. */
+export interface LifecycleBeginEvent {
+  order:          string[];
+  alreadyStarted: string[];
+}
+
 export class ServiceLifecycleManager extends EventEmitter {
   private services = new Map<string, ServiceDefinition>();
   private started = new Set<string>();
@@ -85,6 +99,7 @@ export class ServiceLifecycleManager extends EventEmitter {
 
     this._startOrder = order;
     console.log(`[Lifecycle] Starting services: ${ order.join(' → ') }`);
+    this.emitStep('startup:begin', { order: [...order], alreadyStarted: order.filter(n => this.started.has(n)) });
 
     for (const name of order) {
       assertCurrent?.();
@@ -105,6 +120,7 @@ export class ServiceLifecycleManager extends EventEmitter {
 
       if (unmet.length > 0) {
         console.warn(`[Lifecycle] Skipping '${ name }' — unmet dependencies: ${ unmet.join(', ') }`);
+        this.emitStep('startup:step', { name, status: 'skipped', durationMs: 0, error: `Needs ${ unmet.join(', ') }` });
         continue;
       }
 
@@ -112,9 +128,11 @@ export class ServiceLifecycleManager extends EventEmitter {
 
       try {
         console.log(`[Lifecycle] Starting '${ name }'...`);
+        this.emitStep('startup:step', { name, status: 'start' });
         await svc.start();
       } catch (err: any) {
         console.error(`[Lifecycle] '${ name }' failed to start (${ Date.now() - t }ms):`, err.message || err);
+        this.emitStep('startup:step', { name, status: 'failed', durationMs: Date.now() - t, error: String(err?.message || err) });
         // Don't throw — allow independent services to continue
         continue;
       }
@@ -133,6 +151,7 @@ export class ServiceLifecycleManager extends EventEmitter {
       // still owns teardown if the generation changed during the await.
       assertCurrent?.();
       console.log(`[Lifecycle] '${ name }' ready (${ Date.now() - t }ms)`);
+      this.emitStep('startup:step', { name, status: 'ready', durationMs: Date.now() - t });
       this.emit('service:ready', name);
     }
 
@@ -183,6 +202,15 @@ export class ServiceLifecycleManager extends EventEmitter {
     }
 
     console.log(`[Lifecycle] Shutdown complete (${ mode })`);
+  }
+
+  /** Progress events must never break startup, so listener errors are contained. */
+  private emitStep(event: 'startup:begin' | 'startup:step', payload: LifecycleBeginEvent | LifecycleStepEvent): void {
+    try {
+      this.emit(event, payload);
+    } catch (err: any) {
+      console.warn(`[Lifecycle] ${ event } listener failed:`, err?.message || err);
+    }
   }
 
   isShuttingDown(): boolean {

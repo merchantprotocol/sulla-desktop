@@ -271,6 +271,7 @@ export interface IpcMainInvokeEvents {
   'show-message-box-rd':       (options: Electron.MessageBoxOptions, modal?: boolean) => any;
   'api-get-credentials':       () => { user: string, password: string, port: number };
   'k8s-progress':              () => Readonly<{ current: number, max: number, description?: string, transitionTime?: Date }>;
+  'startup-progress':          () => import('@pkg/utils/startupProgress').StartupProgressSnapshot;
 
   // #region main/update (centralized UpdateManager)
   'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
@@ -1281,6 +1282,7 @@ export interface IpcRendererEvents {
       transitionTime?: Date;
     }>
   ) => void;
+  'startup-progress':   (snapshot: import('@pkg/utils/startupProgress').StartupProgressSnapshot) => void;
   'k8s-check-state':    (state: import('@pkg/backend/k8s').State) => void;
   'k8s-current-engine': (
     engine: import('@pkg/config/settings').ContainerEngine

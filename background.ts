@@ -25,6 +25,7 @@ import * as K8s from '@pkg/backend/k8s';
 import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
+import { getStartupProgressHub as getStartupProgressHubInstance } from '@pkg/main/startupProgressHub';
 import * as threatProxy from '@pkg/main/threat-proxy';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
@@ -135,6 +136,10 @@ clearLoggingDirectory();
 const SNAPSHOT_OPERATION = 'Snapshot operation in progress';
 
 const ipcMainProxy = getIpcMainProxy(console);
+/** One startup progress model for every window: backend tracker + service lifecycle. */
+function getStartupProgressHub() {
+  return getStartupProgressHubInstance(snapshot => window.send('startup-progress', snapshot));
+}
 const k8smanager = newK8sManager();
 const diagnostics: DiagnosticsManager = new DiagnosticsManager();
 const firstRunCoordinator = new FirstRunCoordinator();
@@ -1658,6 +1663,10 @@ ipcMainProxy.handle('k8s-progress', () => {
   return k8smanager.progress;
 });
 
+ipcMainProxy.handle('startup-progress', () => {
+  return getStartupProgressHub().snapshot();
+});
+
 ipcMainProxy.handle('service-fetch', (_, namespace) => {
   return k8smanager.kubeBackend.listServices(namespace);
 });
@@ -2053,6 +2062,7 @@ function newK8sManager() {
   const mgr = K8sFactory(arch);
 
   mgr.on('state-changed', async(state: K8s.State) => {
+    getStartupProgressHub().onBackendState(String(state));
     try {
       mainEvents.emit('k8s-check-state', mgr);
 
@@ -2087,6 +2097,7 @@ function newK8sManager() {
 
   mgr.on('progress', () => {
     window.send('k8s-progress', mgr.progress);
+    getStartupProgressHub().onBackendProgress(mgr.progress);
   });
 
   mgr.on('show-notification', (notificationOptions: Electron.NotificationConstructorOptions) => {

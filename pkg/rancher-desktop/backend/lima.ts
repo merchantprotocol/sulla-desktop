@@ -3974,53 +3974,57 @@ start_pre() {
         { service: 'sulla_files', container: 'sulla_files' },
         { service: 'tools', container: 'sulla_tools' },
       );
-      for (const { service, container } of optionalServices) {
-        if (service === 'sulla_files' && settingsImpl.getSettings().experimental.sullaVaultV2Enabled &&
-          !this.#activeOptionalSullaServices.has('sulla_vault')) {
-          console.warn('[Sulla] Files unavailable because its configured Vault dependency is not ready');
-          continue;
-        }
-        let serviceStarted = false;
-        try {
-          await reconcileOptionalService(service);
-          serviceStarted = true;
-        } catch (error) {
-          if (error instanceof ManagedServicesReconciliationCancelled) throw error;
-          const fallback = this.#optionalSullaFallbackImages.get(service);
-          let unavailableError = error;
+      // Each optional service is its own progress action ("n of m") so the
+      // startup screen can say which container it is waiting on.
+      for (const [optionalIndex, { service, container }] of optionalServices.entries()) {
+        await this.progressTracker.action(`Starting container ${ service } (${ optionalIndex + 1 } of ${ optionalServices.length })`, 64, async() => {
+          if (service === 'sulla_files' && settingsImpl.getSettings().experimental.sullaVaultV2Enabled &&
+            !this.#activeOptionalSullaServices.has('sulla_vault')) {
+            console.warn('[Sulla] Files unavailable because its configured Vault dependency is not ready');
+            return;
+          }
+          let serviceStarted = false;
+          try {
+            await reconcileOptionalService(service);
+            serviceStarted = true;
+          } catch (error) {
+            if (error instanceof ManagedServicesReconciliationCancelled) throw error;
+            const fallback = this.#optionalSullaFallbackImages.get(service);
+            let unavailableError = error;
 
-          if (fallback) {
-            try {
-              console.warn(`[Sulla] Selected image for ${ service } unavailable; trying ${ fallback.image }`);
+            if (fallback) {
               try {
-                await this.execCommand({ root: true }, 'docker', 'pull', fallback.image);
-              } catch (pullError) {
-                console.warn(`[Sulla] Could not refresh ${ fallback.image }; trying the cached fallback:`, pullError);
+                console.warn(`[Sulla] Selected image for ${ service } unavailable; trying ${ fallback.image }`);
+                try {
+                  await this.execCommand({ root: true }, 'docker', 'pull', fallback.image);
+                } catch (pullError) {
+                  console.warn(`[Sulla] Could not refresh ${ fallback.image }; trying the cached fallback:`, pullError);
+                }
+                this.assertManagedServicesGeneration(generation);
+                await this.execCommand(
+                  { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
+                  ...composeCommand, 'up', '-d', '--no-deps', '--pull', 'never', service,
+                );
+                this.assertManagedServicesGeneration(generation);
+                serviceStarted = true;
+              } catch (fallbackError) {
+                if (fallbackError instanceof ManagedServicesReconciliationCancelled) throw fallbackError;
+                unavailableError = fallbackError;
               }
-              this.assertManagedServicesGeneration(generation);
-              await this.execCommand(
-                { root: true }, 'env', `${ fallback.env }=${ fallback.image }`,
-                ...composeCommand, 'up', '-d', '--no-deps', '--pull', 'never', service,
-              );
-              this.assertManagedServicesGeneration(generation);
-              serviceStarted = true;
-            } catch (fallbackError) {
-              if (fallbackError instanceof ManagedServicesReconciliationCancelled) throw fallbackError;
-              unavailableError = fallbackError;
+            }
+            if (!serviceStarted) {
+              console.warn(`[Sulla] Service ${ service } could not be started; continuing startup without it:`, unavailableError);
             }
           }
-          if (!serviceStarted) {
-            console.warn(`[Sulla] Service ${ service } could not be started; continuing startup without it:`, unavailableError);
+          if (!serviceStarted) return;
+          try {
+            await this.waitForDockerServiceHealthy(container, 60, generation);
+            this.#activeOptionalSullaServices.add(service);
+          } catch (healthError) {
+            if (healthError instanceof ManagedServicesReconciliationCancelled) throw healthError;
+            console.warn(`[Sulla] Service ${ service } did not become ready; leaving its selected image in place:`, healthError);
           }
-        }
-        if (!serviceStarted) continue;
-        try {
-          await this.waitForDockerServiceHealthy(container, 60, generation);
-          this.#activeOptionalSullaServices.add(service);
-        } catch (healthError) {
-          if (healthError instanceof ManagedServicesReconciliationCancelled) throw healthError;
-          console.warn(`[Sulla] Service ${ service } did not become ready; leaving its selected image in place:`, healthError);
-        }
+        });
       }
     });
   }
