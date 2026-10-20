@@ -3,7 +3,9 @@
 // agentPolicy is stored twice: inside the ciphertext (source of truth for the owner) and as
 // plaintext items.agent_policy so the server can refuse agent use without decrypting.
 
-export type VaultItemType = 'login' | 'note' | 'card' | 'identity' | 'apiKey';
+import type { VaultItemCustomField } from './customFields.js';
+
+export type VaultItemType ='login' | 'note' | 'card' | 'identity' | 'apiKey';
 
 export type UriMatch = 'domain' | 'host' | 'startsWith' | 'exact' | 'never';
 
@@ -29,7 +31,10 @@ export interface VaultItemPlaintext {
   totp?:            string;
   uris?:            VaultItemUri[];
   notes?:           string;
+  /** Legacy name/value pairs (no editor UI); broker lookups still read them by name. */
   fields?:          VaultCustomField[];
+  /** User-defined typed fields. Types, limits and validation live in customFields.ts. */
+  customFields?:    VaultItemCustomField[];
   card?:            { holder?: string; brand?: string; number?: string; expMonth?: string; expYear?: string; code?: string };
   identity?:        Record<string, string>;
   passwordHistory?: { password: string; changedAt: string }[];
