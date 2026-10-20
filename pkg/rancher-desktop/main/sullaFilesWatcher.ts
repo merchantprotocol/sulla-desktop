@@ -239,7 +239,9 @@ class SullaFilesWatcher {
       // cannot start (for example, an older VM kernel lacks /dev/fuse). The
       // mount reports its own error state and can be retried on the next
       // unlock; it must not make Files unlock fail or block desktop startup.
-      await getSullaFilesMountManager().start(() => this.fuseMountCredentials()).catch(error => {
+      // Not awaited: the mount manager retries on its own schedule, and the
+      // guest mount must never hold up unlock or startup.
+      getSullaFilesMountManager().start(() => this.fuseMountCredentials()).catch(error => {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
     }

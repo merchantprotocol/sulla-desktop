@@ -75,7 +75,9 @@ export function classifyFilesAnchor(entries: MountInfoEntry[], path: string = SU
   const entry = entries.filter(candidate => candidate.mountPoint === path).pop();
 
   if (!entry) return { state: 'not-mounted' };
-  if (entry.fsType === 'fuse.sulla-files' && entry.source === 'sulla-files') return { state: 'adapter', entry };
+  // The adapter's mount shows as plain `fuse` (no subtype) in /proc/self/mountinfo
+  // on the VM kernel; accept the subtype form too.
+  if ((entry.fsType === 'fuse' || entry.fsType === 'fuse.sulla-files') && entry.source === 'sulla-files') return { state: 'adapter', entry };
   // Our own anchor: a non-FUSE bind of the directory onto itself. Any other
   // FUSE filesystem (fuse, fuse.*, fuseblk) is never reused.
   if (!entry.fsType.startsWith('fuse') &&

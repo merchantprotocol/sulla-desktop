@@ -109,6 +109,27 @@ function busyboxGuest(initial: string, options: { catFails?: boolean } = {}) {
   return { exec, commands, mounts: () => commands.filter(command => command[0] === 'mount').map(command => command.join(' ')) };
 }
 
+// Captured from the user's live Lima VM (read-only): the adapter's mount has the
+// plain `fuse` filesystem type, NOT `fuse.sulla-files`.
+const LIVE_ANCHOR = '390 923 0:26 /mnt/sulla-files /mnt/sulla-files rw,relatime shared:1 - tmpfs tmpfs rw,mode=755,inode64';
+const LIVE_ADAPTER = '928 390 0:225 / /mnt/sulla-files rw,nosuid,nodev,relatime shared:35 - fuse sulla-files rw,user_id=0,group_id=0,allow_other';
+
+describe('the adapter mount as the real VM reports it', () => {
+  test('plain `fuse` with source sulla-files is recognised as our adapter', () => {
+    expect(classifyFilesAnchor(parseMountInfo(`${ BASE }\n${ LIVE_ANCHOR }\n${ LIVE_ADAPTER }`)).state).toBe('adapter');
+  });
+
+  test('the fuse.sulla-files subtype form is still recognised', () => {
+    expect(classifyFilesAnchor(parseMountInfo(`${ BASE }\n${ ROOT_BIND }\n${ ADAPTER }`)).state).toBe('adapter');
+  });
+
+  test('a foreign fuse mount (other source) is still refused', () => {
+    const foreignPlainFuse = '720 22 0:61 / /mnt/sulla-files rw,nosuid,nodev - fuse some-other-daemon rw,user_id=0';
+    expect(classifyFilesAnchor(parseMountInfo(`${ BASE }\n${ foreignPlainFuse }`)).state).toBe('unexpected');
+    expect(classifyFilesAnchor(parseMountInfo(`${ BASE }\n${ FOREIGN_FUSE }`)).state).toBe('unexpected');
+  });
+});
+
 describe('prepareSullaFilesGuestAnchor against a BusyBox guest', () => {
   test('not mounted: binds, accepts the anchor and makes it shared', async() => {
     const guest = busyboxGuest(BASE);
