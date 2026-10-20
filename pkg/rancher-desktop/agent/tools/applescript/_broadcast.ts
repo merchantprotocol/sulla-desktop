@@ -1,11 +1,9 @@
 /**
  * Broadcast `computer-use:settings-changed` to every renderer window so
  * the Computer Use Settings page (and anything else listening) can
- * reactively refresh when an agent tool flips an app on/off.
+ * reactively refresh when an agent revokes app access.
  *
- * Kept as a tiny helper so all three write sites (applescript_execute
- * auto-enable, computer_use_enable, computer_use_disable) broadcast the
- * exact same channel.
+ * Agents can revoke access, but only the human can enable applications.
  */
 export function broadcastComputerUseSettingsChanged(): void {
   try {

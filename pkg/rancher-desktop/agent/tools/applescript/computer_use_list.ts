@@ -5,9 +5,7 @@ import { BaseTool, ToolResponse } from '../base';
 
 /**
  * List every AppleScript target the user's Computer Use Settings
- * exposes, annotated with its current enabled/disabled state. The
- * agent uses this to discover what targets exist before calling
- * applescript_execute (which will auto-enable on the fly anyway).
+ * exposes, annotated with its current human-managed enabled/disabled state.
  */
 export class ComputerUseListWorker extends BaseTool {
   name = '';

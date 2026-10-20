@@ -6,10 +6,8 @@ import { broadcastComputerUseSettingsChanged } from './_broadcast';
 
 /**
  * Flip off a Computer Use Settings target. Future applescript_execute
- * calls against this app will auto-re-enable it unless the user has
- * intentionally disabled it via the settings UI — so this tool is
- * primarily useful when the agent wants to clean up after itself or
- * respond to a "stop using X" request.
+ * calls against this app will remain blocked until the human enables it
+ * again in Preferences.
  */
 export class ComputerUseDisableWorker extends BaseTool {
   name = '';

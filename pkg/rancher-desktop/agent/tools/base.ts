@@ -1,5 +1,6 @@
 // src/tools/base.ts
 import { ToolResult } from '../types';
+import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 
 import type { ToolExecutionContext } from './executionContext';
 
@@ -250,6 +251,13 @@ export abstract class BaseTool<TState = any> {
     const signals = [this.approvalSignal, metadata?.options?.abort?.signal].filter(Boolean) as AbortSignal[];
     const signal = signals.length ? AbortSignal.any(signals) : undefined;
     try {
+      if (toolRequiresHostAccess(this.metadata.category, this.name)) {
+        const { isHostAccessEnabled, HOST_ACCESS_DISABLED_MESSAGE } = await import('./util/hostAccess');
+        if (!await isHostAccessEnabled()) {
+          return { toolName: this.name, success: false, error: HOST_ACCESS_DISABLED_MESSAGE };
+        }
+      }
+
       const { decisionService } = await import('../services/DecisionService');
       if (this.name !== 'ask_user_question' && await decisionService.requiresApproval(this.name)) {
         const { record, result } = await decisionService.request({

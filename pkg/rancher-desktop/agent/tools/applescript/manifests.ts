@@ -3,7 +3,7 @@ import type { ToolManifest } from '../registry';
 export const applescriptToolManifests: ToolManifest[] = [
   {
     name:        'applescript_execute',
-    description: 'Execute AppleScript to interact with macOS applications (Calendar, Reminders, Mail, Notes, Safari, Finder, Music, and more). Always specify the target app name. For write operations (creating, sending, deleting), set action_type to "write". If the target app is not yet enabled in Computer Use Settings, this tool auto-enables it on the fly — the user asking "connect to my mail" is implicit consent. Call applescript/computer_use_list first if you want to see every available target. Scripts run in the BACKGROUND by default: `activate`, `tell application "X" to activate` and `set frontmost ... to true` are stripped so the user is never pulled to another Space or out of a full-screen app. Only set foreground:true when the app truly must be in front (e.g. System Events keystrokes/clicks), and check the user is idle first.',
+    description: 'Execute AppleScript to interact with macOS applications (Calendar, Reminders, Mail, Notes, Safari, Finder, Music, and more). Always specify the target app name. For write operations (creating, sending, deleting), set action_type to "write". The target app must already be enabled by the human in Computer Use Settings, and Administrative Access must be enabled. Call applescript/computer_use_list first if you want to see every available target. Scripts run in the BACKGROUND by default: `activate`, `tell application "X" to activate` and `set frontmost ... to true` are stripped so the user is never pulled to another Space or out of a full-screen app. Only set foreground:true when the app truly must be in front (e.g. System Events keystrokes/clicks), and check the user is idle first.',
     category:    'applescript',
     schemaDef:   {
       target_app:  { type: 'string', description: 'The macOS application name to control (e.g. "Calendar", "Reminders", "Mail", "Finder")' },
@@ -23,19 +23,8 @@ export const applescriptToolManifests: ToolManifest[] = [
     loader:         () => import('./computer_use_list'),
   },
   {
-    name:        'computer_use_enable',
-    description: 'Explicitly enable an AppleScript target in Computer Use Settings. Not strictly required before applescript_execute — that tool auto-enables on the fly — but useful when the agent wants to pre-warm a whole workflow or respond to "turn on X".',
-    category:    'applescript',
-    schemaDef:   {
-      app:      { type: 'string', optional: true, description: 'App name (e.g. "Mail", "Calendar"). One of app or bundleId is required.' },
-      bundleId: { type: 'string', optional: true, description: 'macOS bundle id (e.g. "com.apple.mail"). One of app or bundleId is required.' },
-    },
-    operationTypes: ['update'],
-    loader:         () => import('./computer_use_enable'),
-  },
-  {
     name:        'computer_use_disable',
-    description: 'Flip off a Computer Use Settings target. Note that applescript_execute auto-re-enables targets when it needs them, so disabling is mainly a response to an explicit "stop using X" from the user.',
+    description: 'Disable a Computer Use Settings target. Agents can remove access but cannot enable or auto-enable applications.',
     category:    'applescript',
     schemaDef:   {
       app:      { type: 'string', optional: true, description: 'App name. One of app or bundleId is required.' },

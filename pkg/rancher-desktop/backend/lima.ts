@@ -3639,6 +3639,7 @@ start_pre() {
         SULLA_PROJECTS_API_TOKEN: projectsToken,
         SULLA_FILES_API_URL:     'https://sulla_files:8792',
         SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
+        SULLA_FILES_CAPABILITY_SECRET: sullaServicePassword,
         ...(vaultIdentities ? {
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
