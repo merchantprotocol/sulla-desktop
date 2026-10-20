@@ -29,6 +29,8 @@ import { insertStreamingUpload } from './streamingUpload.js';
 import { isUseCasePath } from './useCasePaths.js';
 import { isSullaWritablePath } from './systemPaths.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
+import { createIncrementalBackup, verifyIncrementalRestore } from './backup/incremental.js';
+import { openBackupDestination, type BackupDestinationConfig } from './backup/destinations.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
@@ -373,6 +375,31 @@ export function createApp(
   }
 
   app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status())));
+  app.get('/v1/local/backups', async(_request,response,next)=>{ try {
+    const destinations=(await db.query(`SELECT id,kind,label,config,enabled,created_at,updated_at FROM files_backup_destinations ORDER BY created_at`)).rows;
+    const status=(await db.query(`SELECT DISTINCT ON(destination_id) destination_id,state,started_at,finished_at,error_message,snapshot_id
+      FROM files_backup_runs ORDER BY destination_id,started_at DESC`)).rows;
+    response.json({destinations:destinations.map(item=>({...item,status:status.find(run=>run.destination_id===item.id)})),retention:{hourly:24,daily:30,weekly:12}});
+  } catch(error){next(error)} });
+  app.post('/v1/local/backups/destinations',async(request,response,next)=>{ try {
+    const kind=request.body?.kind; const label=String(request.body?.label??'').trim(); const destination=request.body?.config as BackupDestinationConfig; const fields=destination as any;
+    if (!['local','nas','s3'].includes(kind) || destination?.kind!==kind || !label) throw new HttpError(400,'Invalid backup destination');
+    if (kind==='local' && (!fields.root || !fields.root.startsWith('/') || fields.root==='/Users' || fields.root.startsWith('/Users/'))) throw new HttpError(400,'Local backup destination must be an absolute non-home VM path');
+    if (kind==='nas' && (!['smb','nfs'].includes(fields.protocol) || !fields.share)) throw new HttpError(400,'Invalid NAS backup destination');
+    if (kind==='s3') { const endpoint=new URL(fields.endpoint); if(endpoint.protocol!=='https:' || !fields.bucket || !fields.vaultCredentialId) throw new HttpError(400,'S3 backups require HTTPS, a bucket, and Vault credentials') }
+    const id=randomUUID(); const row=(await db.query(`INSERT INTO files_backup_destinations(id,kind,label,config) VALUES($1,$2,$3,$4) RETURNING *`,[id,kind,label,destination])).rows[0]; response.status(201).json(row);
+  } catch(error){next(error)} });
+  app.post('/v1/local/backups/:id/run',async(request,response,next)=>{ const runId=randomUUID(); try {
+    const destination=(await db.query('SELECT * FROM files_backup_destinations WHERE id::text=$1 AND enabled=TRUE',[request.params.id])).rows[0]; if(!destination) throw new HttpError(404,'Backup destination not found');
+    await db.query(`INSERT INTO files_backup_runs(id,destination_id,state) VALUES($1,$2,'running')`,[runId,destination.id]);
+    const objectStore=await openBackupDestination(destination.config);
+    try {
+      const created=await createIncrementalBackup(config,objectStore,'manual'); await verifyIncrementalRestore(config,objectStore,created.key);
+      const snapshotId=created.manifest.manifest.id; await db.query(`INSERT INTO files_backup_snapshots(id,destination_id,tier,manifest_key,manifest_sha256,created_at,verified_at,restore_verified_at)
+        VALUES($1,$2,'manual',$3,$4,$5,NOW(),NOW())`,[snapshotId,destination.id,created.key,createHash('sha256').update(JSON.stringify(created.manifest)).digest('hex'),created.manifest.manifest.createdAt]);
+      await db.query(`UPDATE files_backup_runs SET state='verified',finished_at=NOW(),snapshot_id=$2 WHERE id=$1`,[runId,snapshotId]); response.json({snapshotId,uploaded:created.uploaded,reused:created.reused,verified:true});
+    } finally { await objectStore.close() }
+  } catch(error:any){ await db.query(`UPDATE files_backup_runs SET state='failed',finished_at=NOW(),error_code=$2,error_message=$3 WHERE id=$1`,[runId,error?.code??'backup-failed',String(error?.message??'Backup failed').slice(0,1000)]).catch(()=>undefined); next(error) } });
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
     response.json((await db.query('SELECT id,system_area AS \"systemArea\" FROM collections WHERE system_area IS NOT NULL')).rows);

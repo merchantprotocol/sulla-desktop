@@ -663,6 +663,9 @@ export function initSullaFilesIpc():void {
     return getSullaFilesRootRegistry().update(id, updates);
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
+  ipcMain.handle('files-backups:list', () => json('/v1/local/backups'));
+  ipcMain.handle('files-backups:add', (_event,input:{kind:'local'|'nas'|'s3';label:string;config:Record<string,unknown>}) => json('/v1/local/backups/destinations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}));
+  ipcMain.handle('files-backups:run', (_event,id:string) => json(`/v1/local/backups/${ encodeURIComponent(id) }/run`,{method:'POST'}));
   ipcMain.handle('files-ui:set-paused', (_event, paused:boolean) => getSullaFilesWatcher().setPaused(paused));
   ipcMain.handle('files-ui:open-folder', () => {
     throw new Error('Files are stored securely in Sulla. Download a file or selected files to export copies to Finder.');
