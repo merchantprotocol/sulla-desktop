@@ -9,9 +9,9 @@ const AREAS = [
   { key: 'sulla', name: 'Sulla', explorerPath: 'Sulla', folders: [
     { path: 'Docs' }, { path: 'Use Cases/skills' }, { path: 'Use Cases/workflows' }, { path: 'Use Cases/agents' },
     { path: 'Use Cases/functions' }, { path: 'Use Cases/recipes' }, { path: 'Projects' }, { path: 'Identity' },
-    { path: 'Memory', description: 'Durable agent memory. Memory files publish immediately and are mirrored into observations.' },
+    { path: 'Memory', description: 'Durable agent memory. Memory files are live as soon as they are written (no publish step). Record durable facts as observations too.' },
     { path: 'Memory/claude-code', description: 'Claude Code project memory files.' },
-    { path: 'Memory/codex', description: 'Codex CLI memory database and exports.' },
+    { path: 'Memory/codex', description: 'Codex CLI memory database snapshot.' },
     { path: 'Memory/sulla', description: 'Memories written by Sulla agents and services.' },
   ] },
 ] as const;
