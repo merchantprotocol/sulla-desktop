@@ -24,6 +24,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
@@ -138,6 +139,25 @@ async function loadSession(): Promise<CloudSession | null> {
   };
 }
 
+type SessionIdentity = Pick<CloudSession, 'userId' | 'activeContractorId' | 'contractors'>;
+
+/**
+ * Non-secret session identity. Under the container vault the app may read
+ * only account metadata (tokens stay in the vault), so the identity comes
+ * from the account id, which saveSession keys by userId.
+ */
+async function loadSessionIdentity(): Promise<SessionIdentity | null> {
+  if (!usesContainerVaultAuthority()) {
+    const session = await loadSession();
+    return session ? { userId: session.userId, activeContractorId: session.activeContractorId, contractors: session.contractors } : null;
+  }
+  const accounts = await getIntegrationService().getAccounts(INTEGRATION_ID);
+  const account = accounts.find(a => a.active) ?? accounts[0];
+  if (!account) return null;
+  // Today userId === activeContractorId (single-contractor server response).
+  return { userId: account.account_id, activeContractorId: account.account_id, contractors: [] };
+}
+
 async function clearSession(): Promise<void> {
   const svc = getIntegrationService();
   const accounts = await svc.getAccounts(INTEGRATION_ID);
@@ -157,14 +177,14 @@ async function clearLegacySettings(): Promise<void> {
 
 // ── Status ──────────────────────────────────────────────────
 
-function findActiveContractor(session: CloudSession): CloudContractor | null {
+function findActiveContractor(session: SessionIdentity): CloudContractor | null {
   return session.contractors.find(c => c.id === session.activeContractorId)
     ?? session.contractors[0]
     ?? null;
 }
 
 async function buildStatus(lastError?: string): Promise<AuthStatus> {
-  const session = await loadSession();
+  const session = await loadSessionIdentity();
   if (!session) {
     return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
   }
@@ -402,7 +422,7 @@ export async function getCurrentAccessToken(): Promise<string> {
  * as a fallback when an inbound payload doesn't embed contractor_id.
  */
 export async function getActiveContractorId(): Promise<string> {
-  const session = await loadSession();
+  const session = await loadSessionIdentity();
   return session?.activeContractorId ?? '';
 }
 
@@ -411,7 +431,7 @@ export async function getActiveContractorId(): Promise<string> {
  * or an empty string if not signed in.
  */
 export async function getCurrentUserId(): Promise<string> {
-  const session = await loadSession();
+  const session = await loadSessionIdentity();
   return session?.userId ?? '';
 }
 
@@ -722,7 +742,7 @@ export function initSullaCloudAuthEvents(): void {
 
     while (true) {
       try {
-        const session = await loadSession();
+        const session = await loadSessionIdentity();
         if (session) {
           await getDesktopRelayClient().setPairedUserId(session.userId);
           // Always connected while signed in: registration, heartbeat,

@@ -38,6 +38,8 @@ mockModules({
   '@pkg/agent/services/WebSocketClientService':    { getWebSocketClientService: () => mockWsService },
   '@pkg/main/ipcMain':                             { getIpcMainProxy: jest.fn() },
   '@pkg/main/sullaCloudAuth':                      mockAuth,
+  // Legacy (server-mode) transport; the vault path is covered in desktopRelayVault.spec.ts.
+  '@pkg/main/cloudRelayTransport':                 { cloudRelayUsesVault: () => false, VaultRelaySocket: class {} },
   '@pkg/main/deviceIdentity':                      { getDesktopDeviceId: jest.fn<() => Promise<string>>().mockResolvedValue('desktop-1') },
   '@pkg/main/sync/syncMirror':                     {
     claudeMessageExists: jest.fn<() => Promise<boolean>>().mockResolvedValue(false),

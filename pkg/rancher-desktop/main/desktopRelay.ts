@@ -37,6 +37,7 @@ import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import { cloudRelayUsesVault, VaultRelaySocket, type RelayFailureKind, type RelaySocketLike } from '@pkg/main/cloudRelayTransport';
 import {
   describeTurnForAgent,
   normalizeMobileContent,
@@ -55,7 +56,10 @@ const RELAY_URL = 'wss://sulla-workers.merchantprotocol.workers.dev';
 // mobile-originated chats. Must match the constant in that file.
 const MOBILE_RELAY_CHANNEL = 'mobile-relay';
 const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS  = 30_000;
+const RECONNECT_MAX_MS = 5 * 60_000;
+// While the vault is locked, re-check this often (a cheap local status call)
+// so the relay reconnects promptly after unlock without exponential delay.
+const VAULT_LOCKED_RETRY_MS = 5_000;
 // Heartbeat + watchdog tuned for Cloudflare Workers: the DO auto-responds to
 // "ping" with "pong" via setWebSocketAutoResponse without waking from
 // hibernation. A 20s ping interval + 45s silence watchdog keeps the pipe
@@ -115,13 +119,26 @@ interface Status {
 interface ShareRequest {
   requestId:  string;
   controller: AbortController;
-  socket:     WebSocket;
+  socket:     RelaySocketLike;
   generation: number;
+}
+
+function describeFailure(kind: RelayFailureKind): string {
+  switch (kind) {
+  case 'vault_locked': return 'Vault is locked — relay waits for unlock';
+  case 'signed_out': return 'Sulla Cloud sign-in required — relay cannot authenticate';
+  case 'denied': return 'Vault policy denied the Sulla Cloud relay';
+  default: return 'Sulla Cloud relay unavailable — retrying with backoff';
+  }
 }
 
 // Exported for tests only — production code must go through getDesktopRelayClient().
 export class DesktopRelayClient {
-  private ws: WebSocket | null = null;
+  private ws: RelaySocketLike | null = null;
+  /** Last logged connection state; logs only on change to avoid retry spam. */
+  private loggedState = '';
+  /** Failure kind of the last vault relay attempt; picks the next backoff. */
+  private lastFailure: RelayFailureKind | null = null;
   private deviceId = '';
   private currentRoom: string | null = null;
   private reconnectDelay = RECONNECT_BASE_MS;
@@ -256,12 +273,21 @@ export class DesktopRelayClient {
     this.currentRoom = room;
     this.reconnectDelay = RECONNECT_BASE_MS;
     this.openSocket().catch((err) => {
-      console.warn('[DesktopRelay] openSocket failed:', err);
+      this.noteState('error', `openSocket failed: ${ err?.message || err }`);
       // A throw here (e.g. token/DB read during boot) previously left the
       // relay dead until app restart — the reconnect loop only armed itself
       // once a socket existed. Hand the failure to the same backoff machinery.
       this.scheduleReconnect();
     });
+  }
+
+  /** Log one line per connection-state change; repeats of the same state stay quiet. */
+  private noteState(state: string, detail: string): void {
+    const key = `${ state }:${ detail }`;
+    if (key === this.loggedState) return;
+    this.loggedState = key;
+    if (state === 'connected') console.log(`[DesktopRelay] ${ detail }`);
+    else console.warn(`[DesktopRelay] ${ detail }`);
   }
 
   private disconnect() {
@@ -300,9 +326,7 @@ export class DesktopRelayClient {
    */
   private forceReconnect(reason: string) {
     if (this.intentionallyClosed) return;
-    if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
-      console.warn(`[DesktopRelay] Forcing reconnect — ${ reason }${ this.failedAttempts > 1 ? ` (attempt ${ this.failedAttempts }, logging every 20th)` : '' }`);
-    }
+    if (this.connected) this.noteState('reconnecting', `Forcing reconnect — ${ reason }`);
     this.teardownLiveness();
     this.abortShareRequests();
     if (this.ws) {
@@ -326,29 +350,32 @@ export class DesktopRelayClient {
     // the latest may create a socket.
     const gen = ++this.openGeneration;
 
-    const token = await getCurrentAccessToken();
-    // The machine may have gone to sleep (or the user unpaired) while we
-    // were awaiting the token read — don't open a socket nobody wants.
-    if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
-    if (!token) {
-      this.lastError = 'Not signed in — relay cannot authenticate';
-      console.warn('[DesktopRelay] No access token — skipping connect. Sign in first.');
-      this.broadcastStatus();
-      // Retry later; a successful sign-in will re-trigger via setPairedUserId.
-      this.scheduleReconnect();
-      return;
+    let ws: RelaySocketLike;
+    if (cloudRelayUsesVault()) {
+      // Container vault: the vault owns the session token and opens the
+      // relay socket itself; this process never sees the credential.
+      this.deviceId = await getDesktopDeviceId();
+      if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
+      ws = new VaultRelaySocket(room, this.deviceId);
+    } else {
+      const token = await getCurrentAccessToken();
+      // The machine may have gone to sleep (or the user unpaired) while we
+      // were awaiting the token read — don't open a socket nobody wants.
+      if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
+      if (!token) {
+        this.lastError = 'Not signed in — relay cannot authenticate';
+        this.noteState('signed_out', 'No access token — waiting for sign-in');
+        this.broadcastStatus();
+        // Retry later; a successful sign-in will re-trigger via setPairedUserId.
+        this.scheduleReconnect();
+        return;
+      }
+
+      this.deviceId = await getDesktopDeviceId();
+      if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
+      // Never log this URL: it carries the token.
+      ws = new WebSocket(`${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(this.deviceId) }&token=${ encodeURIComponent(token) }`);
     }
-
-    this.deviceId = await getDesktopDeviceId();
-    if (this.suspended || this.intentionallyClosed || gen !== this.openGeneration) return;
-    const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&deviceId=${ encodeURIComponent(this.deviceId) }&token=${ encodeURIComponent(token) }`;
-
-    // Log without the token to avoid leaking into local log files.
-    if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
-      console.log(`[DesktopRelay] Connecting: ${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop`);
-    }
-
-    const ws = new WebSocket(url);
     this.ws = ws;
 
     // If the socket doesn't open in time, give up and reconnect. Without
@@ -369,13 +396,10 @@ export class DesktopRelayClient {
       if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
       this.connected = true;
       this.lastError = '';
+      this.lastFailure = null;
       this.reconnectDelay = RECONNECT_BASE_MS;
       this.lastInboundAt = Date.now();
-      if (this.failedAttempts > 1) {
-        console.log(`[DesktopRelay] Connected — room=${ room } (recovered after ${ this.failedAttempts } attempts)`);
-      } else {
-        console.log(`[DesktopRelay] Connected — room=${ room }`);
-      }
+      this.noteState('connected', `Connected — room=${ room }${ this.failedAttempts > 1 ? ` (recovered after ${ this.failedAttempts } attempts)` : '' }`);
       this.failedAttempts = 0;
       this.broadcastStatus();
 
@@ -424,19 +448,17 @@ export class DesktopRelayClient {
       this.ws = null;
       this.connected = false;
       this.teardownLiveness();
-      if (this.failedAttempts <= 1) {
-        console.log('[DesktopRelay] Socket closed');
-      }
+      this.recordFailure(ws);
+      this.noteState('closed', this.lastFailure ? describeFailure(this.lastFailure) : 'Socket closed');
       this.broadcastStatus();
       if (!this.intentionallyClosed) this.scheduleReconnect();
     });
 
     ws.addEventListener('error', (e: any) => {
       if (this.ws !== ws) return;
-      this.lastError = e?.message || 'WebSocket error';
-      if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
-        console.warn('[DesktopRelay] Error:', this.lastError);
-      }
+      this.recordFailure(ws);
+      this.lastError = this.lastFailure ? describeFailure(this.lastFailure) : (e?.message || 'WebSocket error');
+      this.noteState(this.lastFailure ?? 'error', this.lastError);
       this.broadcastStatus();
       // Some runtimes don't fire `close` after `error`, especially on
       // half-open sockets. Force the reconnect path so we never sit idle
@@ -445,21 +467,23 @@ export class DesktopRelayClient {
     });
   }
 
+  /** Capture a vault relay failure kind (if any) for status and backoff. */
+  private recordFailure(ws: RelaySocketLike): void {
+    if (ws instanceof VaultRelaySocket && ws.failure) this.lastFailure = ws.failure;
+  }
+
   private scheduleReconnect() {
     if (this.reconnectTimer || !this.currentRoom || this.suspended) return;
-    const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
-    // During a long outage the 30s-capped backoff retries ~120×/hour and each
-    // cycle used to log 3-4 lines (>1,000 pairs observed in one log). Log the
-    // first attempt of an outage, then every 20th.
+    // A locked vault is polled at a short fixed interval so unlock reconnects
+    // promptly; every other failure backs off exponentially (cap 5 min).
+    const delay = this.lastFailure === 'vault_locked' ? VAULT_LOCKED_RETRY_MS : this.reconnectDelay;
+    if (this.lastFailure !== 'vault_locked') this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
+    // Retry quietly; noteState() logs only when the failure state changes.
     this.failedAttempts++;
-    if (this.failedAttempts === 1 || this.failedAttempts % 20 === 0) {
-      console.log(`[DesktopRelay] Reconnecting in ${ delay }ms${ this.failedAttempts > 1 ? ` (attempt ${ this.failedAttempts })` : '' }`);
-    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.openSocket().catch((err) => {
-        console.warn('[DesktopRelay] openSocket failed:', err);
+        this.noteState('error', `openSocket failed: ${ err?.message || err }`);
         // Without rescheduling here, a single throw (e.g. the VM's Postgres
         // still waking when getCurrentAccessToken reads the session) killed
         // the reconnect loop permanently — the relay then stayed dead until
@@ -662,7 +686,7 @@ export class DesktopRelayClient {
     return this.isActiveShareRequest(request);
   }
 
-  private abortShareRequests(socket?: WebSocket, generation?: number): void {
+  private abortShareRequests(socket?: RelaySocketLike, generation?: number): void {
     for (const [requestId, request] of this.shareRequests) {
       if (socket && (request.socket !== socket || (generation !== undefined && request.generation !== generation))) continue;
       request.controller.abort();
