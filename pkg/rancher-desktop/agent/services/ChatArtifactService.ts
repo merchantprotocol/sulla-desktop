@@ -100,10 +100,6 @@ function cleanKind(value: unknown): ChatArtifactKind {
   return kind;
 }
 
-function stampProjectFile(content: string): string {
-  if (!content.startsWith('---\n') || !/^project:\n  id: /m.test(content)) return content;
-  return content.replace(/^updated: .*$/m, `updated: ${ JSON.stringify(new Date().toISOString()) }`);
-}
 
 function cleanStatus(value: unknown, fallback: ChatArtifactStatus = 'working'): ChatArtifactStatus {
   if (value === undefined || value === null || value === '') return fallback;
@@ -189,7 +185,17 @@ export class ChatArtifactService {
     const snapshot = await this.filesRegistration.load(required(fileId, 'fileId'), scopedThreadId);
     const existing = (await this.store.list(scopedThreadId, true)).find(item => item.filesFileId === fileId);
     if (existing) {
-      const artifact = existing.isOpen ? existing : await this.reopen(scopedThreadId, existing.id, undefined, 'agent');
+      // The Files file is authoritative when reopening it. Refresh an artifact
+      // that was left behind by an earlier open so the sidebar cannot show a
+      // stale snapshot, while retaining the loaded Files version for the next
+      // optimistic write.
+      let artifact = existing;
+      if (existing.content !== snapshot.content) {
+        artifact = await this.mutate(scopedThreadId, existing.id, { author: 'human' }, () => ({ content: snapshot.content }));
+      }
+      const registered = await this.store.recordFilesRegistration(artifact.id, artifact.version, snapshot);
+      artifact = registered ?? artifact;
+      if (!artifact.isOpen) artifact = await this.reopen(scopedThreadId, artifact.id, undefined, 'agent');
       this.publish(scopedThreadId, artifact, focus);
       return { artifact, created: false };
     }
