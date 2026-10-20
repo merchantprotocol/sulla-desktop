@@ -1,5 +1,5 @@
-import { normalizeFilesIndexCoverage, type FilesDataSource, type FilesDetail, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings } from './types';
-import { filesDetail, filesItem, filesVersion, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
+import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -8,6 +8,8 @@ import type { IpcRendererEvent } from 'electron';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 
 interface RemoteCapabilities {
+  orgSharing: boolean;
+  publicLinks: boolean;
   onlineOnly: boolean;
   keepOnComputer: boolean;
   authenticatedRemote: boolean;
@@ -76,6 +78,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
     versionHistory:  true,
     restoreVersions: true,
     trash:           true,
+    orgSharing:      false,
+    publicLinks:     false,
     onlineOnly:      false,
     keepOnComputer:  false,
     authenticatedRemote:false,
@@ -120,6 +124,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   private resetRemoteCapabilities():void {
     Object.assign(this.capabilities, {
+      orgSharing:         false,
+      publicLinks:        false,
       onlineOnly:         false,
       keepOnComputer:     false,
       authenticatedRemote:false,
@@ -134,6 +140,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       .then((capabilities) => {
         if (generation !== this.capabilitiesGeneration) return;
         Object.assign(this.capabilities, capabilities, {
+          orgSharing: capabilities.orgSharing && ['manage', 'owner'].includes(accessRole),
           onlineOnly: capabilities.onlineOnly && primaryRoot,
           keepOnComputer: capabilities.keepOnComputer && primaryRoot,
           authenticatedRemote: capabilities.authenticatedRemote && primaryRoot,
@@ -145,6 +152,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
       .catch(() => {
         if (generation !== this.capabilitiesGeneration) return;
         Object.assign(this.capabilities, {
+          orgSharing:         false,
+          publicLinks:        false,
           onlineOnly:         false,
           keepOnComputer:     false,
           authenticatedRemote:false,
@@ -219,14 +228,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
         id:              collection.id,
         name:            collection.name,
         home:            collection.home,
+        orgId:           collection.org_id,
         retentionPolicy: collection.retention_policy ?? {},
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
         desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),
+        memberCount:     collection.member_count === undefined ? undefined : Number(collection.member_count),
         accountName:     collection.account_display_name,
         accountRole:     collection.access_role,
         ownerUserId:     collection.owner_user_id,
         systemArea:      (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
+        sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
       },
       availableCollections,
       files: this.files,
@@ -346,5 +358,53 @@ export class DesktopFilesDataSource implements FilesDataSource {
   keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
   makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }
   residencyStatus(fileId:string):Promise<{ desiredState:'local' | 'online-only'; state:string; lastError:string | null }> { return ipcRenderer.invoke('files-ui:residency-status', { fileId }) }
+  createPublicLink(fileId:string, options:ShareLinkOptions):Promise<ShareLink> {
+    return ipcRenderer.invoke('files-ui:create-link', { fileId, ...options });
+  }
 
+  updatePublicLink(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink> {
+    return ipcRenderer.invoke('files-ui:update-link', { id, options });
+  }
+
+  listPublicLinks():Promise<ShareLink[]> { return ipcRenderer.invoke('files-ui:list-links') }
+  revokePublicLink(id:string):Promise<void> { return ipcRenderer.invoke('files-ui:revoke-link', id) }
+  restorePublicLink(id:string, password?:string):Promise<ShareLink> { return ipcRenderer.invoke('files-ui:restore-link', { id, password }) }
+  shareActivity(id?:string):Promise<ShareActivity[]> { return ipcRenderer.invoke('files-ui:link-activity', id) }
+
+  async listFolderShares(collectionId:string):Promise<FolderShare[]> {
+    const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId });
+    return shares.map(share => folderShare(share, collectionId));
+  }
+
+  async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare> {
+    const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role });
+    return folderShare(share, collectionId, { folderPath, principalType, principalId, role });
+  }
+
+  unshareFolder(share:FolderShare):Promise<void> {
+    return ipcRenderer.invoke('sulla-files:unshare', share);
+  }
+
+  async listFileShares(fileId:string):Promise<FileAccessList> {
+    const access = await ipcRenderer.invoke('sulla-files:file-shares', { fileId });
+    return fileAccessList(access, fileId, this.collectionId);
+  }
+
+  async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare> {
+    const share = await ipcRenderer.invoke('sulla-files:share-file', { fileId, principalType, principalId, role });
+    return fileShare(share, fileId, { principalType, principalId, role });
+  }
+
+  async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare> {
+    const share = await ipcRenderer.invoke('sulla-files:update-file-share', { fileId, shareId, role });
+    return fileShare(share, fileId);
+  }
+
+  unshareFile(fileId:string, shareId:string):Promise<void> {
+    return ipcRenderer.invoke('sulla-files:unshare-file', { fileId, shareId });
+  }
+
+  listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }> {
+    return ipcRenderer.invoke('sulla-files:members', { orgId });
+  }
 }

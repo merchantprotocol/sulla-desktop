@@ -42,6 +42,24 @@
         class="cnt"
         :class="{ warn: entry.warn }"
       >{{ entry.count }}</span></a>
+      <template v-if="sharedFolders.length">
+        <div class="grp">
+          Shared folders
+        </div>
+        <a
+          v-for="folder in sharedFolders"
+          :key="folder"
+          href="#"
+          :class="{ on: section === 'files' && currentPath === folder }"
+          @dragover.prevent="onNavigationDragOver(folder, $event)"
+          @drop.prevent="onNavigationDrop(folder, $event)"
+          @click.prevent="openPath(folder)"
+        ><span
+          class="sv"
+          v-html="icons.folderLine"
+        /><span>{{ folder.split('/').at(-1) }}</span></a>
+      </template>
+
       <button class="more-system-areas" :aria-expanded="showSystemAreas" type="button" @click="toggleSystemAreas">
         <span>{{ showSystemAreas ? 'Less' : 'More' }}</span>
       </button>
@@ -157,7 +175,7 @@
           </template>
           <b v-else>{{ rootLabel }}</b>
         </div>
-        <label class="search"><span
+        <label v-if="section !== 'sharedByMe'" class="search"><span
           class="si"
           v-html="icons.search"
         /><input
@@ -165,7 +183,7 @@
           v-model="query"
           placeholder="Search files, folders, transcripts and screenshot text"
         ><kbd>⌘K</kbd></label>
-        <div class="acts">
+        <div v-if="section !== 'sharedByMe'" class="acts">
           <button
             v-if="!readOnlyArea && (dataSource.capabilities.upload || dataSource.capabilities.durableOperations)"
             class="btn"
@@ -206,9 +224,12 @@
         </div>
       </div>
 
-      <div class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
+      <div v-if="section === 'sharedByMe'" class="content">
+        <SharedByMe :data-source="dataSource" />
+      </div>
+      <div v-else class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
         <div class="toolbar">
-          <div v-if="section === 'files'" class="history-controls">
+          <div v-if="section === 'files' && !readOnlyArea" class="history-controls">
             <button
               class="folder-up"
               type="button"
@@ -240,7 +261,33 @@
             <span v-html="icons.arrowLeft" />
           </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
-
+          <div class="right">
+            <button
+              v-if="snapshot?.collection.memberCount !== undefined"
+              class="btn sm ghost"
+              type="button"
+              :disabled="!dataSource.capabilities.orgSharing"
+              title="Share this folder with an organization member"
+              @click="shareCurrentFolder"
+            >
+              <span
+                class="bi"
+                v-html="icons.users"
+              /> Shared with {{ snapshot.collection.memberCount }}
+            </button>
+            <button
+              class="btn sm"
+              type="button"
+              :disabled="!dataSource.capabilities.publicLinks || !selectedFileForShare"
+              title="Copy a public Sulla Cloud link for the selected file"
+              @click="shareSelectedFile"
+            >
+              <span
+                class="bi"
+                v-html="icons.share"
+              /> Share
+            </button>
+          </div>
         </div>
         <div v-if="snapshot?.status.indexing" class="operation-error" :class="{ 'index-complete': snapshot.status.indexing.complete }">
           Index: {{ indexSummary }}
@@ -323,7 +370,7 @@
             <button class="btn sm" type="button" :disabled="busy || !canPaste" @click="pasteClipboard">Paste</button>
           </template>
           <button class="btn sm" type="button" :disabled="busy || selectedEntries.every(entry => entry.folder)" @click="downloadSelected">Download</button>
-          <template v-if="section === 'trash'"><button class="btn sm" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="restoreSelected">Restore</button><button class="btn sm danger" type="button" :disabled="busy || !dataSource.purgeTrashItem" @click="purgeSelected">Delete permanently</button></template><button v-else class="btn sm danger" type="button" :disabled="busy || readOnlyArea" @click="trashSelected">Move to Trash</button>
+          <template v-if="section === 'trash'"><button class="btn sm" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="restoreSelected">Restore</button><button class="btn sm danger" type="button" :disabled="busy || !dataSource.purgeTrashItem" @click="purgeSelected">Delete permanently</button></template><button v-else class="btn sm danger" type="button" :disabled="busy" @click="trashSelected">Move to Trash</button>
         </div>
         </div>
         <div v-if="operationError" class="operation-error" role="alert">
@@ -560,8 +607,17 @@
                     <div
                       v-else
                       class="actions"
-                    ><button
+                    >
+                      <button
                         v-if="section !== 'trash'"
+                        class="btn ico"
+                        type="button"
+                        :disabled="!dataSource.capabilities.publicLinks || entry.folder"
+                        title="Copy public link"
+                        @click.stop="shareEntry(entry)"
+                        v-html="icons.share"
+                      /><button
+                        v-if="section !== 'trash' && !readOnlyArea"
                         class="btn ico"
                         type="button"
                         :title="starred.has(entry.id) ? 'Unstar' : 'Star'"
@@ -651,6 +707,7 @@
             <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal in folder</button>
             <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
             <button v-if="section !== 'trash' || !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
+            <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
             <template v-if="section !== 'trash' && !readOnlyArea">
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('rename')">Rename</button>
               <button role="menuitem" type="button" :disabled="busy" @click="runTargetAction('move')">Move</button>
@@ -660,7 +717,7 @@
               <button v-if="!actionTarget.folder && dataSource.capabilities.onlineOnly && (entrySync(actionTarget) === 'online-only' ? dataSource.keepOnMac : dataSource.makeOnlineOnly)" role="menuitem" type="button" :disabled="busy" @click="runTargetAction(entrySync(actionTarget) === 'online-only' ? 'keep-local' : 'online-only')">{{ entrySync(actionTarget) === 'online-only' ? 'Keep on this computer' : 'Make online only' }}</button>
               <button v-if="dataSource.capabilities.trash" role="menuitem" type="button" class="danger" :disabled="busy" @click="runTargetAction('trash')">Move to Trash</button>
             </template>
-            <template v-else-if="section === 'trash' && !readOnlyArea">
+            <template v-else>
               <button role="menuitem" type="button" :disabled="busy || !dataSource.restoreTrashItem" @click="runTargetAction('restore')">Restore</button>
               <button role="menuitem" type="button" class="danger" :disabled="busy || !dataSource.purgeTrashItem" @click="runTargetAction('purge')">Delete permanently</button>
             </template>
@@ -678,7 +735,7 @@
         </Teleport>
 
         <div
-          v-if="!loading && !error && section === 'files' && !readOnlyArea"
+          v-if="!loading && !error && section === 'files'"
           class="drop"
         >
           <span
@@ -705,13 +762,14 @@
       :data-source="dataSource"
       :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
       @close="selected = null"
+      @share="shareEntry(selected)"
       @restored="selected = null; refresh(true)"
       @trash-outcome="onTrashDetailOutcome"
       @open-linked="openLinked"
     />
 
     <div
-      v-if="dragging && !readOnlyArea && dataSource.capabilities.upload"
+      v-if="dragging && dataSource.capabilities.upload"
       class="drop-overlay"
     >
       <span v-html="icons.upload" /><strong>Drop files here to upload to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
@@ -776,6 +834,7 @@
       <button class="btn" type="button" @click="folderDialog?.close()">Close</button>
       <button class="btn pri" type="button" @click="openPath(folderDetails.path); folderDialog?.close()">Open folder</button>
     </dialog>
+    <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
   </div>
 </template>
 
@@ -783,6 +842,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 
 import FileDetail from './FileDetail.vue';
+import ShareSheet from './ShareSheet.vue';
+import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
 import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
@@ -793,7 +854,7 @@ import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './compos
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
-type Section = 'files' | 'recent' | 'starred' | 'agent' | 'trash';
+type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
@@ -815,6 +876,7 @@ const icons = {
   arrowLeft:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   plus:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   upload:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M4 19h16"/></svg>',
+  share:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/></svg>',
   list:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>',
   grid:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>',
   more:       '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>',
@@ -887,6 +949,7 @@ const selected = ref<DisplayEntry | null>(null); const detailTab = ref<'details'
 const dragging = ref(false); const favoriteDropActive = ref(false); let refreshTimer:ReturnType<typeof setInterval> | undefined;
 const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]>([]);
 const starred = ref(new Set<string>());
+const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
 const trashItems = computed(() => snapshot.value?.trash ?? []);
@@ -894,6 +957,7 @@ const totalBytes = computed(() => activeFiles.value.reduce((sum, file) => sum + 
 const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
 const storagePercent = computed(() => quotaBytes.value ? Math.min(100, Math.max(1, totalBytes.value / quotaBytes.value * 100)) : 0);
 const storageWhere = computed(() => snapshot.value?.status.serverConfigured ? 'on server' : 'on this Mac');
+const sharedFolders = computed(() => snapshot.value?.collection.sharedFolders ?? []);
 const folderFavorites = computed(() => {
   const folders = new Set((snapshot.value?.folders ?? []).map(folder => typeof folder === 'string' ? folder : folder.path));
 
@@ -911,9 +975,9 @@ const folderFavorites = computed(() => {
 const showSystemAreas = ref(localStorage.getItem('sulla:files:show-system-areas') === 'true');
 const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
 const systemCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => collection.systemArea === 'logs' || collection.systemArea === 'training-data') ?? []);
-const otherCollections = computed(() => visibleCollections.value.filter(collection=>collection.id!==snapshot.value?.collection.id));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
 function toggleSystemAreas() { showSystemAreas.value = !showSystemAreas.value; localStorage.setItem('sulla:files:show-system-areas', String(showSystemAreas.value)); }
+const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
 const retentionLabel = computed(() => snapshot.value?.collection.retentionPolicy?.mode === 'none' ? 'No automatic disposal' : snapshot.value?.collection.retentionPolicy?.mode ? `Retention: ${ snapshot.value.collection.retentionPolicy.mode }` : `Trash is recoverable for ${ retentionDays.value } days`);
@@ -931,7 +995,7 @@ const syncLine = computed(() => {
   return `All files synced${ status.lastSyncAt ? ` · ${ timeAgo(status.lastSyncAt) }` : '' }`;
 });
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
-const rootLabel = computed(() => ({ files: snapshot.value?.collection.name || 'My Files', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
+const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
 const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
 const parentFolderLabel = computed(() => currentPath.value.split('/').filter(Boolean).at(-2) ?? rootLabel.value);
 const parentPath = computed(() => currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
@@ -950,13 +1014,15 @@ const accountLine = computed(() => {
 const agentCount = computed(() => new Set(activeFiles.value.filter(file => file.createdByType === 'agent-run').map(file => file.createdById)).size);
 const sections = computed(() => [
   { id: 'files' as Section, label: 'My Files', icon: icons.folderLine, count: 0, warn: false },
+  { id: 'shared' as Section, label: 'Shared with me', icon: icons.users, count: sharedFolders.value.length, warn: false },
+  { id: 'sharedByMe' as Section, label: 'Shared by me', icon: icons.share, count: 0, warn: false },
   { id: 'recent' as Section, label: 'Recent', icon: icons.clock, count: 0, warn: false },
   { id: 'starred' as Section, label: 'Starred', icon: icons.star, count: 0, warn: false },
   { id: 'agent' as Section, label: 'Agent files', icon: icons.agent, count: agentCount.value, warn: true },
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: trashItems.value.length, warn: trashItems.value.some(item => item.currentTombstone.undo.state === 'recovery-required') },
 ]);
-const emptyTitle = computed(() => ({ files: 'This folder is empty', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
-const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
+const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
+const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
 const uploadHeading = computed(() => `Drop files here to upload to ${ pageTitle.value }`);
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Files sync to the server and are versioned on every change.' : 'Files are encrypted and versioned in Sulla.');
 const filters = computed(() => [
@@ -1039,6 +1105,7 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
   if (section.value === 'agent') files = files.filter(file => file.createdByType === 'agent-run');
   if (section.value === 'starred') files = files.filter(file => starred.value.has(file.id));
   if (section.value === 'recent') files = [...files].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 50);
+  if (section.value === 'shared') files = files.filter(file => sharedFolders.value.some(folder => file.path.startsWith(`${ folder }/`)));
   const search = query.value.trim().toLowerCase();
   const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value);
   const prefix = currentPath.value && section.value === 'files' ? `${ currentPath.value }/` : '';
@@ -1082,8 +1149,9 @@ const groups = computed(() => [
   { label: 'Files', entries: visibleEntries.value.filter(entry => !entry.folder) },
 ].filter(group => group.entries.length));
 const allVisibleSelected = computed(() => Boolean(visibleEntries.value.length) && visibleEntries.value.every(entry => selectedKeys.value.has(entry.key)));
+const selectedFileForShare = computed(() => visibleEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
 const selectedEntries = computed(() => visibleEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
-const canPaste = computed(() => Boolean(!readOnlyArea.value && snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
+const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
    (clipboard.value.sourceCapability !== 'unavailable' && props.dataSource.capabilities.crossCollectionOperations !== 'unavailable' &&
     clipboard.value.targets.every(target => !target.folder || /^[0-9a-f]{64}$/.test(target.sourceSubtreeSignature ?? ''))))));
@@ -1167,6 +1235,16 @@ async function newFile() {
 }
 async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
 async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
+function shareEntry(entry:DisplayEntry | null) {
+  if (busy.value || !entry || entry.folder || !props.dataSource.createPublicLink || !snapshot.value) return;
+  const capture = /(^|\/)(screenshots?|recordings?|captures?)(\/|$)/i.test(entry.path);
+  shareTarget.value = { id: entry.id, name: entry.name, folder: false, path: entry.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId, assetKind: entry.agent ? 'artifact' : capture ? 'capture' : 'file' };
+}
+function shareSelectedFile() { shareEntry(selectedFileForShare.value ?? null) }
+function shareCurrentFolder() {
+  if (busy.value || !snapshot.value?.collection.orgId || !props.dataSource.shareFolder || !props.dataSource.listMembers || !currentPath.value || !props.dataSource.capabilities.orgSharing) return;
+  shareTarget.value = { id: `folder:${ currentPath.value }`, name: currentPath.value.split('/').at(-1) || 'My Files', folder: true, path: currentPath.value, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
+}
 async function togglePause() { const paused = syncState.value !== 'paused'; await runMutation(async() => { await props.dataSource.setPaused(paused) }) }
 function currentLocation():ExplorerLocation { return { collectionId: snapshot.value?.collection.id ?? '', section: section.value, path: currentPath.value } }
 function applyLocation(location:ExplorerLocation) {
@@ -1223,6 +1301,8 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
 }
 async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; await nextTick(); folderDialog.value?.showModal() }
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
+function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
+
 async function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else await runMutation(() => props.dataSource.openFile(entry.id, entry.currentVersionId), false) }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
@@ -1231,8 +1311,9 @@ function onBrowserDragEnter(event:DragEvent) { if (!draggedKeys.value.size && ev
 function onBrowserDragOver(event:DragEvent) { if (!draggedKeys.value.size && event.dataTransfer?.types.includes('Files') && props.dataSource.capabilities.upload) dragging.value = true }
 function onDragLeave(event:DragEvent) { if (!event.currentTarget || !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) dragging.value = false; }
 async function onDrop(event:DragEvent) {
+  if (readOnlyArea.value) { clearInternalDrag(); return }
   dragging.value = false;
-  if (readOnlyArea.value || busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
+  if (busy.value || loading.value || section.value !== 'files' || selected.value) { clearInternalDrag(); return }
   if (dragTargets.value.length) { const targets = dragTargets.value.map(target => operationTarget(target, currentPath.value)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability); return }
   if (!event.dataTransfer?.types.includes('Files')) return;
   if (!props.dataSource.capabilities.upload) return;
@@ -1546,7 +1627,6 @@ async function perform(action:'move' | 'copy', items:OperationItem[], sourceColl
   return runMutation(async() => { await props.dataSource.operate(action, collectionId, items); selectedKeys.value = new Set(); closeActions(false) });
 }
 async function submitReceiptItems(items:FilesOperationItem[], collectionId = snapshot.value?.collection.id) {
-  if (readOnlyArea.value) return;
   if (!snapshot.value || pendingRequest.value || operations.receipts.value.some(receipt => receipt.state === 'pending')) { operationError.value = 'Resolve the pending operation before starting another.'; return false }
   if (!collectionId) return false;
   if (items.length > 250) { operationError.value = 'Select at most 250 items for one operation.'; return false }
@@ -1617,11 +1697,10 @@ async function recoverOperation() {
   await runMutation(async() => { if (request) await operations.submit(request); else if (receipt) await operations.resume(receipt.operationId) });
 }
 async function showOperation(operationId:string) { await runMutation(async() => { await operations.resume(operationId) }) }
-function beginRename(entry = selectedEntries.value[0]) { if (readOnlyArea.value || busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
+function beginRename(entry = selectedEntries.value[0]) { if (readOnlyArea.value) return; if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
 function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
 function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
 async function commitRename(entry:DisplayEntry) {
-  if (readOnlyArea.value) return;
   if (renameCommitting || editingKey.value !== entry.key) return;
   const name = renameValue.value.trim();
   if (!name || name === entry.name) { cancelRename(); return }
@@ -1740,7 +1819,7 @@ async function authoritativeTrashEntries(pending:(DisplayEntry & { trashItem:Fil
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
 function emptyTrash() { return purgeEntries(trashItems.value.map(toTrashDisplay), true) }
-async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'reference' | 'details' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
+async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
   if (action === 'native-open') { await activate(target); return }
@@ -1755,7 +1834,11 @@ async function runTargetAction(action:'open' | 'native-open' | 'reveal' | 'refer
   }
   if (action === 'reference') { try { const params = new URLSearchParams({ version: target.currentVersionId, path: target.path, name: target.name }); await navigator.clipboard.writeText(`sulla-file://${ target.id }?${ params }`) } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) } return }
   if (action === 'details') { await showDetails(target); return }
-  if (readOnlyArea.value) return;
+  if (action === 'share') {
+    if (target.folder && snapshot.value) shareTarget.value = { id: target.id, name: target.name, folder: true, path: target.path, collectionId: snapshot.value.collection.id, orgId: snapshot.value.collection.orgId, ownerUserId: snapshot.value.collection.ownerUserId };
+    else shareEntry(target);
+    return;
+  }
   if (['rename', 'online-only', 'keep-local', 'restore', 'purge'].includes(action)) selectedKeys.value = new Set([target.key]);
   if (action === 'rename') renameSelected(); else if (action === 'move') await moveSelected(); else if (action === 'copy' || action === 'cut') copyToClipboard(action); else if (action === 'download') await downloadSelected();
   else if (action === 'restore') await restoreSelected(); else if (action === 'purge') await purgeSelected();
@@ -1776,7 +1859,7 @@ function onKeydown(event:KeyboardEvent) {
     return;
   }
   if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
-  if (selected.value || folderDetails.value || target?.closest('button,a,dialog')) return;
+  if (selected.value || shareTarget.value || folderDetails.value || target?.closest('button,a,dialog')) return;
   if (event.key === 'Escape') { cancelRename(); closeActions(false); closeBackgroundActions(); clearSelection(); return }
   if (modifier && key === 'k') { event.preventDefault(); searchInput.value?.focus(); return }
   if (modifier && key === 'z' && !event.shiftKey) { event.preventDefault(); undoLastOperation(); return }
@@ -1789,14 +1872,17 @@ function onKeydown(event:KeyboardEvent) {
   if (event.key === ' ' && selectedEntries.value.some(entry => !entry.folder)) { event.preventDefault(); openQuickLook(); return }
 }
 function navigateTo(detail:FilesNavigationPayload) {
+  if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
   if (!file && detail.path) {
     openPath(detail.path);
+    if (detail.section === 'share-review') shareCurrentFolder();
     return;
   }
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
   selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
+  if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
 
 watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
@@ -2261,6 +2347,5 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
   .detail-panel { width: calc(100% - 64px); }
 }
 .details-action{opacity:1;white-space:nowrap}.row:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.folder-details{max-width:min(440px,calc(100vw - 32px));border:1px solid var(--line-2);border-radius:12px;background:var(--card-solid);color:var(--text);padding:24px}.folder-details::backdrop{background:rgba(26,35,50,.35)}.folder-details dl{display:grid;grid-template-columns:auto 1fr;gap:10px}.folder-details dd{margin:0;overflow-wrap:anywhere}.folder-details .btn{margin-right:8px}
-
-.more-system-areas{border:0;background:transparent;color:inherit;color:var(--muted);text-align:left;padding:6px 12px;font-size:11px;cursor:pointer}
+.more-system-areas{border:0;background:transparent;color:var(--muted);text-align:left;padding:6px 12px;font-size:11px;cursor:pointer}
 </style>
