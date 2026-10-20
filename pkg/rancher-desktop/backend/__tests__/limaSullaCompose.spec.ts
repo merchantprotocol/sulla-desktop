@@ -14,6 +14,9 @@ const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-deskto
 // compose definition plus the dependency versions lima.ts reads at load.
 const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
 const flags = { vaultV2: false, fuse: false };
+// The guest's /proc/self/mountinfo; BusyBox Alpine has no usable findmnt.
+const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false };
+const mountReports: (string | undefined)[] = [];
 const noop = () => undefined;
 const stubs = (names: string, extra: Record<string, unknown> = {}) => ({
   ...Object.fromEntries(names.split(' ').map(name => [name, noop])), ...extra,
@@ -47,7 +50,9 @@ jest.unstable_mockModule('@pkg/utils/sullaFilesNativeSource', () => ({
 }));
 jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ refreshVaultPinnedSessions: () => Promise.resolve() }));
 jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({ refreshFilesPinnedSessions: () => Promise.resolve() }));
-jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager getSullaFilesMountManager'));
+jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager', {
+  getSullaFilesMountManager: () => ({ reportGuestPreparation: (reason?: string) => { mountReports.push(reason) } }),
+}));
 jest.unstable_mockModule('@pkg/main/mainEvents', () => stubs('NoMainEventsHandlerError', {
   default: { on: noop, emit: noop, handle: noop, invoke: noop },
 }));
@@ -80,7 +85,13 @@ async function generate() {
     commands.push({ command: args, options });
 
     if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
-    if (args[0] === 'findmnt') return Promise.resolve('ext4 /dev/vdb1[/mnt/sulla-files]\n');
+    if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
+    if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
+      return guest.catFails ? Promise.reject(new Error('cat failed')) : Promise.resolve(guest.mountinfo);
+    }
+    if (args[0] === 'mount' && args[1] === '--bind') {
+      guest.mountinfo += '612 22 0:20 /mnt/sulla-files /mnt/sulla-files rw,relatime shared:300 - tmpfs tmpfs rw\n';
+    }
 
     return Promise.resolve('');
   };
@@ -121,6 +132,9 @@ beforeEach(() => {
 
   for (const key of Object.keys(assetStub)) if (key !== 'alpineLimaISO') delete assetStub[key];
   Object.assign(assetStub, fresh);
+  guest.mountinfo = '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n';
+  guest.catFails = false;
+  mountReports.length = 0;
 });
 
 describe.each([
@@ -177,5 +191,36 @@ describe.each([
     const { compose } = await generate();
 
     expect(compose.services.workflow_manager.command).toEqual(['node', 'dist/services/sulla-workflows/src/manager.js']);
+  });
+});
+
+describe('guest Files mount preparation never blocks compose generation', () => {
+  beforeEach(() => { Object.assign(flags, { vaultV2: false, fuse: true }) });
+  const filesBinds = (compose: any) => Object.entries<any>(compose.services)
+    .filter(([, service]) => (service.volumes ?? []).some((v: any) => typeof v === 'string' && v.startsWith('/mnt/sulla-files:')))
+    .map(([name]) => name).sort();
+
+  test('BusyBox guest without findmnt: binds once, makes shared, keeps the adapter', async() => {
+    const { compose, commands } = await generate();
+    const mounts = commands.filter(c => c.command[0] === 'mount').map(c => c.command.join(' '));
+
+    expect(mounts).toEqual(['mount --bind /mnt/sulla-files /mnt/sulla-files', 'mount --make-shared /mnt/sulla-files']);
+    expect(compose.services).toHaveProperty('sulla_files_fuse');
+    expect(filesBinds(compose)).toEqual(['sulla_files_fuse', 'workflow_manager']);
+    expect(mountReports).toEqual([undefined]);
+  });
+
+  test.each([
+    ['an unexpected FUSE mount', () => { guest.mountinfo += '720 22 0:61 / /mnt/sulla-files rw - fuse.sshfs u@h:/x rw\n' }, /Refusing to reuse/],
+    ['an unreadable mount table', () => { guest.catFails = true }, /cat failed/],
+  ])('%s: omits the adapter and its binds, reports, and still writes compose', async(_label, arrange, reason) => {
+    arrange();
+    const { compose, commands } = await generate();
+
+    expect(compose.services).not.toHaveProperty('sulla_files_fuse');
+    expect(compose.services).toHaveProperty('sulla_files');
+    expect(filesBinds(compose)).toEqual([]);
+    expect(commands.some(c => c.command[0] === 'mount')).toBe(false);
+    expect(mountReports).toEqual([expect.stringMatching(reason)]);
   });
 });

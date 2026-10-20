@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 import type { VMExecutor } from '@pkg/backend/backend';
+import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 import { sullaFilesNativeSourceGrant, sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
@@ -9,7 +10,7 @@ const console = Logging.background;
 const COMPOSE_FILE = '/tmp/sulla-docker-compose.yml';
 const RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 const TOKEN_FILE = `${ RUNTIME_ROOT }/token`;
-const MOUNT_PATH = '/mnt/sulla-files';
+const MOUNT_PATH = SULLA_FILES_GUEST_MOUNT_PATH;
 const TOKEN_REFRESH_MS = 4 * 60_000;
 const DISABLED_REASON = 'The Files mount is unavailable.';
 
@@ -24,6 +25,7 @@ export class SullaFilesMountManager extends EventEmitter {
   private operation?: Promise<void>;
   private credentialWrite?: Promise<void>;
   private credentialGeneration = 0;
+  private guestPreparationFailure?: string;
   private statusValue:SullaFilesNativeRuntimeStatus = {
     state: 'disabled', ready: false, generation: 0, sourceGrant: sullaFilesNativeSourceGrant(),
     reason: DISABLED_REASON,
@@ -34,6 +36,15 @@ export class SullaFilesMountManager extends EventEmitter {
   configureGuest(executor:VMExecutor):void {
     this.executor = executor;
     if (!sullaFilesNativeSourceRolloutRequested()) this.publish('disabled', DISABLED_REASON);
+  }
+
+  /**
+   * Record the outcome of the backend's guest anchor preparation. A failure
+   * leaves the adapter out of compose, so start() reports it instead of trying.
+   */
+  reportGuestPreparation(failureReason?:string):void {
+    this.guestPreparationFailure = failureReason;
+    if (failureReason && sullaFilesNativeSourceRolloutRequested()) this.publish('error', `The Files guest mount is unavailable: ${ failureReason }`);
   }
 
   clearGuest(executor:VMExecutor):void {
@@ -47,6 +58,10 @@ export class SullaFilesMountManager extends EventEmitter {
     }
     await this.serialize(async() => {
       if (this.statusValue.ready) return;
+      if (this.guestPreparationFailure) {
+        this.publish('error', `The Files guest mount is unavailable: ${ this.guestPreparationFailure }`);
+        return;
+      }
       await this.startInternal(provider);
     });
   }
@@ -123,6 +138,11 @@ export class SullaFilesMountManager extends EventEmitter {
     const mountedBeforeUnmount = await this.mountState(executor);
     if (mountedBeforeUnmount === 'adapter') {
       await executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-u', MOUNT_PATH).catch(() => undefined);
+      // fusermount3 ships with fuse3, which the guest may lack; root can
+      // unmount a FUSE filesystem with plain (BusyBox or util-linux) umount.
+      if (await this.mountState(executor) === 'adapter') {
+        await executor.execCommand({ root: true, expectFailure: true }, 'umount', MOUNT_PATH).catch(() => undefined);
+      }
     }
     const mountState = await this.mountState(executor);
     await executor.execCommand(
@@ -185,16 +205,12 @@ export class SullaFilesMountManager extends EventEmitter {
   }
 
   private async mountState(executor:VMExecutor):Promise<'adapter' | 'anchor' | 'none' | 'unexpected'> {
-    const record = await executor.execCommand(
-      { root: true, capture: true, expectFailure: true }, 'findmnt', '--mountpoint', MOUNT_PATH,
-      '--noheadings', '--output', 'FSTYPE,SOURCE',
-    ).catch(() => '');
-    if (!record.trim()) return 'none';
-    const [fileSystem, source] = record.trim().split(/\s+/, 2);
+    // An unreadable mount table is treated as "nothing mounted", which the
+    // callers then refuse as a missing anchor.
+    const probe = await probeFilesAnchor(executor, MOUNT_PATH).catch(() => undefined);
 
-    if (fileSystem === 'fuse.sulla-files' && source === 'sulla-files') return 'adapter';
-    if (!fileSystem.startsWith('fuse.') && (source === MOUNT_PATH || source.endsWith(`[${ MOUNT_PATH }]`) || source.endsWith('[/sulla-files]'))) return 'anchor';
-    return 'unexpected';
+    if (!probe || probe.state === 'not-mounted') return 'none';
+    return probe.state;
   }
 
   private async serialize(action:() => Promise<void>):Promise<void> {
