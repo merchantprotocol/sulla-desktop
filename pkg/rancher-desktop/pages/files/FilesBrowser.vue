@@ -258,13 +258,6 @@
           </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
-            <select
-              v-if="snapshot?.availableCollections?.length"
-              :value="snapshot.collection.id"
-              aria-label="Browse collection"
-              :disabled="busy || loading"
-              @change="selectCollection(($event.target as HTMLSelectElement).value)"
-            ><option v-for="collection in snapshot.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option></select>
             <button
               v-if="snapshot?.collection.id"
               class="btn sm ghost"
@@ -299,9 +292,6 @@
               /> Share
             </button>
           </div>
-        </div>
-        <div v-if="snapshot?.status.indexing" class="operation-error" :class="{ 'index-complete': snapshot.status.indexing.complete }">
-          Index: {{ indexSummary }}
         </div>
         <div v-if="query.trim() && searchCoverage && !searchCoverage.complete" class="operation-error" role="status">
           Search coverage is incomplete: {{ searchCoverage.pending + searchCoverage.indexing }} file{{ searchCoverage.pending + searchCoverage.indexing === 1 ? '' : 's' }} still processing, {{ searchCoverage.partial }} partially indexed, {{ searchCoverage.unsupported }} unsupported, and {{ searchCoverage.failed }} failed. Partial files can still match within the extracted portion; unsupported and failed files cannot contribute content matches.
@@ -1022,7 +1012,6 @@ const parentFolderLabel = computed(() => currentPath.value.split('/').filter(Boo
 const parentPath = computed(() => currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
 const summaryText = computed(() => `${ visibleEntries.value.length } item${ visibleEntries.value.length === 1 ? '' : 's' } · ${ formatBytes(visibleEntries.value.reduce((sum, entry) => sum + entry.size, 0)) }`);
-const indexSummary = computed(() => { const value = snapshot.value?.status.indexing; return value ? `${ value.indexed } indexed · ${ value.partial } partial · ${ value.pending } pending · ${ value.indexing } indexing · ${ value.unsupported } unsupported · ${ value.failed } failed` : 'Unavailable'; });
 const accountName = computed(() => snapshot.value?.collection.accountName || 'Signed-in user');
 const accountLine = computed(() => {
   const raw = snapshot.value?.collection.accountRole;
@@ -2025,7 +2014,7 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
 .selection-slot { height:52px; margin-bottom:12px; overflow-x:auto; }
-.selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
+.selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--paper-2); }
 .selection-bar b { margin-right:auto; font-size:12px; }
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
 .operation-error.index-complete { border-color:color-mix(in srgb, var(--ok) 35%, transparent); background:var(--ok-soft); color:var(--ok); }

@@ -16,6 +16,10 @@ export interface Config {
   vaultAuthorityId?:     string;
   vaultAuthorityToken?:  string;
   vaultAuthorityCaPath?: string;
+  vaultBrokerUrl?:       string;
+  vaultBrokerServiceId?: string;
+  vaultBrokerServiceToken?: string;
+  vaultBrokerCaPath?:    string;
   chunkRoot:            string;
   dataRoot:             string;
   filesRoot?:           string;
@@ -124,6 +128,10 @@ export function loadConfig():Config {
     vaultAuthorityId:    process.env.SULLA_FILES_VAULT_AUTHORITY_SERVICE_ID,
     vaultAuthorityToken: process.env.SULLA_FILES_VAULT_AUTHORITY_TOKEN,
     vaultAuthorityCaPath: process.env.SULLA_FILES_VAULT_AUTHORITY_CA_PATH,
+    vaultBrokerUrl:       process.env.SULLA_FILES_VAULT_BROKER_URL,
+    vaultBrokerServiceId: process.env.SULLA_FILES_VAULT_BROKER_SERVICE_ID,
+    vaultBrokerServiceToken: process.env.SULLA_FILES_VAULT_BROKER_TOKEN,
+    vaultBrokerCaPath:    process.env.SULLA_FILES_VAULT_BROKER_CA_PATH,
     chunkRoot:        resolve(process.env.SULLA_FILES_CHUNK_ROOT ?? '/var/lib/sulla-files/chunks'),
     dataRoot:         resolve(process.env.SULLA_FILES_DATA_ROOT ?? '/var/lib/sulla-files'),
     filesRoot,

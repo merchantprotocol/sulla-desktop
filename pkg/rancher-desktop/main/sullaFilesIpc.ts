@@ -595,9 +595,10 @@ export function initSullaFilesIpc():void {
     const roots = (await getSullaFilesRootRegistry().list()).filter(root => root.activation === 'active' && root.collectionId);
     const options:Electron.OpenDialogOptions = {
       title:       'Attach from Sulla Files',
-      defaultPath: roots.find(root => root.id === 'default')?.path,
       properties:  ['openFile', 'multiSelections'],
     };
+    const defaultRoot = roots.find(root => root.id === 'default')?.path;
+    if (defaultRoot) options.defaultPath = defaultRoot;
     const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (picked.canceled) return [];
 
