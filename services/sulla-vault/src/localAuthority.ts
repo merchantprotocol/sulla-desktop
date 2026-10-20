@@ -71,6 +71,7 @@ import {
   cacheUpdateSessionKeyInput,
 } from './contracts.js';
 import type { Database, Queryable } from './db.js';
+import { FilesAuditEmitter } from './filesAudit.js';
 
 const CHALLENGE_TTL_MS = 30_000;
 const CACHE_UPDATE_TTL_MS = 60_000;
@@ -457,12 +458,14 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private securityOperationTail: Promise<void> = Promise.resolve();
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
+  private readonly filesAudit: FilesAuditEmitter;
 
   constructor(
     private readonly db: Database,
     private readonly config: VaultConfig,
     private readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
   ) {
+    this.filesAudit = new FilesAuditEmitter(config);
     if (config.mode === 'desktop') {
       const credentials = [
         ['bootstrap', config.bootstrapServiceToken],
@@ -479,6 +482,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
     }
   }
+
+  emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
 
   status(): { state: LocalVaultState; unlocked: boolean; principalId?: string; cacheUpdateRequired: boolean } {
     this.expireStagedCacheUpdate();
@@ -937,7 +942,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       { itemId: row.id, ownerId: keys.userId },
     )) as VaultItemPlaintext;
     this.requireGeneration(generation);
-    await this.auditHumanAction(this.db, keys.userId, 'human_item_reveal', row.id);
+    await this.auditHumanAction(this.db, keys.userId, 'human_item_reveal', row.id, item.name);
     this.requireGeneration(generation);
     return { id: row.id, revision: Number(row.revision), item };
     });
@@ -985,7 +990,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           input.item.integration ? `${ input.item.integration.integrationId }/${ input.item.integration.accountId }` : null],
       );
       this.requireGeneration(generation);
-      await this.auditHumanAction(client, keys.userId, 'human_item_created', id);
+      await this.auditHumanAction(client, keys.userId, 'human_item_created', id, input.item.name);
       this.requireGeneration(generation);
       return { id, revision: Number(created.rows[0].revision) };
       }
@@ -1001,7 +1006,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     );
     if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; reload and retry');
     this.requireGeneration(generation);
-    await this.auditHumanAction(client, keys.userId, 'human_item_updated', id);
+    await this.auditHumanAction(client, keys.userId, 'human_item_updated', id, input.item.name);
     this.requireGeneration(generation);
     return { id, revision: Number(updated.rows[0].revision) };
     });
@@ -2066,12 +2071,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     })();
   }
 
-  private async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null): Promise<void> {
+  private async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null, path?: string): Promise<void> {
     await db.query(
       `INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked)
        VALUES ($1,$2,$3,'{}'::jsonb,false)`,
       [actorId, itemId, action],
     );
+    if (itemId) this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: itemId, action, actor: actorId, result: 'allowed', ...(path ? { path } : {}) });
   }
 
   private async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -2469,6 +2475,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
         { agentId: input.claims.agent_id, operation: input.operation, destination: new URL(input.url).origin }, blocked, reason],
     );
+    this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: item.id, action: 'vault_outbound_request', actor: input.claims.agent_id || input.claims.sub, result: blocked ? 'blocked' : 'allowed', meta: { operation: input.operation, agentId: input.claims.agent_id } });
   }
 
   private async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {

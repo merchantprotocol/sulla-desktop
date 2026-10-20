@@ -19,6 +19,8 @@ export interface VaultConfig {
   brokerServiceToken?:         string;
   filesServiceId?:             string;
   filesServiceToken?:          string;
+  filesApiUrl?:                string;
+  auditSpoolDir?:              string;
   bootstrapServiceId?:         string;
   bootstrapServiceToken?:      string;
   approvalServiceId?:          string;
@@ -122,6 +124,8 @@ export function loadConfig(): VaultConfig {
     brokerServiceToken:         process.env.SULLA_VAULT_BROKER_TOKEN,
     filesServiceId:             process.env.SULLA_VAULT_FILES_SERVICE_ID ?? 'sulla-files',
     filesServiceToken:          process.env.SULLA_VAULT_FILES_TOKEN,
+    filesApiUrl:                process.env.SULLA_FILES_API_URL ?? 'https://sulla_files:8792',
+    auditSpoolDir:              process.env.SULLA_VAULT_AUDIT_SPOOL_DIR ?? '/var/lib/sulla-vault',
     bootstrapServiceId:         process.env.SULLA_VAULT_BOOTSTRAP_SERVICE_ID ?? 'sulla-desktop-bootstrap',
     bootstrapServiceToken:      process.env.SULLA_VAULT_BOOTSTRAP_TOKEN,
     approvalServiceId:          process.env.SULLA_VAULT_APPROVAL_SERVICE_ID ?? 'sulla-desktop-approval',
