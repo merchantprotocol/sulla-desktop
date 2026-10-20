@@ -9,6 +9,8 @@ export interface DecisionRecord {
   expiresAt:      number;
   toolName?:      string;
   questions?:     { question: string; multiSelect?: boolean; options: { label: string; description?: string }[] }[];
+  /** Opaque, local-only action data consumed by the Desktop main process. */
+  payload?:       Record<string, string>;
 }
 export interface DecisionResponse {
   id:             string;

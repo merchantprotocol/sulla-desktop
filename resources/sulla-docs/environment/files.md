@@ -98,3 +98,19 @@ Rebuild both the Files service and Desktop when their bootstrap contract changes
 - `services/sulla-files/src/app.ts`, `shares.ts`, and `protectedFiles.ts`
 - `services/sulla-files/src/bootstrapAuthority.ts`, `bootstrapProtocol.ts`, and `keyring.ts`
 - `services/sulla-files-fuse/sulla_files_fuse.py`
+
+### Versions, drafts, and approval
+
+Agent identities (including agent jobs, capabilities, and the Files FUSE adapter)
+always write a new `draft` version. The published version remains unchanged until
+a human approves publication. Agents may read the latest version, including drafts,
+with `files_get` or `files_versions`, but must use `files_request_publish` to ask
+for publication; they cannot publish directly. That request returns immediately
+and creates a card in Decide. The Desktop main process performs the eventual
+publish as the human identity and reports the outcome to the requesting chat.
+
+The File Manager shows published content to humans, marks files with an unpublished
+draft as **Draft pending**, and lists each version as Draft, Published, or
+Superseded. A record lock or an active retention policy is enforced by the Files
+service for every caller, including agents and FUSE; modify, rename, and delete
+attempts fail with a lock response (FUSE maps this to `EROFS`/`EPERM`).
