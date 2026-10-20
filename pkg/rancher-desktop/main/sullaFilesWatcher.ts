@@ -238,7 +238,7 @@ class SullaFilesWatcher {
       for (const source of [
         { area: 'logs', root: resolveSullaLogsDir(), prefix: 'app/' },
         { area: 'training-data', root: resolveSullaConversationsDir(), prefix: '' },
-        { area: 'sulla', root: resolveSullaDocsDir(), prefix: '' },
+        { area: 'sulla', root: resolveSullaDocsDir(), prefix: 'Docs/' },
       ]) {
         const collection=areas.find(area=>area.systemArea===source.area);
         if (!collection) throw new Error(`System collection ${source.area} missing`);
