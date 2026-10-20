@@ -433,11 +433,15 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla bookmarks/move` — Move or reorder a bookmark or folder in the app Bookmarks pane.
 - `sulla bookmarks/remove` — Remove a bookmark or folder from the app Bookmarks pane.
 
-## files (10 tools)
-- `sulla files/put` — Create a new version of a Sulla file.
-- `sulla files/get` — Read a current or historical Sulla file version.
+## files (14 tools)
+- `sulla files/where` — Find the best described folder before saving. Returns ranked folders plus a suggested folder and filename.
+- `sulla files/create_folder` — Create a folder when no described folder fits. `description` is required.
+- `sulla files/put` — Create a new version of a Sulla file. Agent writes are drafts; they default to the run's scratch collection.
+- `sulla files/get` — Read a current or historical Sulla file version, including drafts for agents.
 - `sulla files/list` — List live files in a collection.
 - `sulla files/history` — List every version of a Sulla file.
+- `sulla files/versions` — List versions with publication, lock, and retention state.
+- `sulla files/request_publish` — Ask for human approval to publish a draft version. Returns at once; the decision appears in Decide. Agents cannot publish directly.
 - `sulla files/restore` — Restore an older file version as a new current version.
 - `sulla files/link` — Create a public Sulla Cloud share link for a file or folder.
 - `sulla files/shared` — List public links shared by the signed-in user, including views, expiry, keep-available state, source and revocation.
@@ -491,7 +495,7 @@ Account IDs are discoverable via `sulla vault/list_accounts '{"account_type":"<s
 | agents | 11 | | rules | 4 |
 | marketplace | 11 | | function | 3 |
 | rdctl | 10 | | models | 3 |
-| files | 10 | | kubectl | 3 |
+| files | 14 | | kubectl | 3 |
 | memory | 9 | | secretary | 3 |
 | docker | 9 | | settings | 2 |
 | workflow | 8 | | notify | 2 |

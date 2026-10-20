@@ -2,6 +2,8 @@
 
 **Use Cases** is the user-facing name for the marketplace. The Use Cases tab lists ready-made jobs (skills, workflows, agents, functions, recipes) you can install. A **recipe** is one kind of Use Case: a Docker Compose configuration that runs a service in Lima. Say "Use Cases" to users, and use "recipe" only when you mean the Docker Compose kind.
 
+**Use Cases are sourced from Files.** Definitions for agents, skills, workflows, functions, and recipes live in Sulla Files under `Sulla/Use Cases/<type>/<slug>/`. Postgres holds only the runtime index, rebuilt from published Files versions. This reverses the old "Postgres only, never filesystem" rule. It does not bring back the old `~/sulla` folders, which are not read. See [files-harness.md](../environment/files-harness.md) for drafts, publish requests, and rollback.
+
 ## What a recipe is
 
 A recipe is a Docker Compose configuration, not a Docker image. Each recipe ships:
@@ -10,7 +12,7 @@ A recipe is a Docker Compose configuration, not a Docker image. Each recipe ship
 - `metadata.yaml`: catalog info (title, description, categories, icon, exposed URLs)
 - Optional `README.md`, icons
 
-Installing a recipe pulls the referenced container images and starts them through Lima's Docker daemon. Recipe folders live under `~/sulla/recipes/<slug>/` (`resolveSullaRecipesDir()`).
+Installing a recipe pulls the referenced container images and starts them through Lima's Docker daemon. A local recipe definition lives in Files at `Sulla/Use Cases/recipes/<slug>/`, with an `installation.yaml` and a compose file. Nothing reads `~/sulla/recipes/`.
 
 **Catalog source:** `https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml`
 
@@ -70,12 +72,13 @@ sulla extensions/install_extension '{"id":"docker.io/.../X:2.0.0"}'
 ```
 
 ### "Build me a new recipe"
-Author the files locally under `~/sulla/recipes/<slug>/`:
-- Write a `compose.yaml` (real Docker Compose, with pinned image versions)
-- Write a `metadata.yaml` with title, description, labels (categories), and `extraUrls`
+Author the files in Files under `Sulla/Use Cases/recipes/<slug>/` (use `sulla files/put`; agent writes are drafts):
+- Write a `compose.yaml` or `docker-compose.yml` (real Docker Compose, with pinned image versions)
+- Write an `installation.yaml` with the recipe manifest
 - Test the stack with `sulla docker/docker_run` or `lima_shell`
+- Request publication with `sulla files/request_publish`. The recipe becomes active only after a human approves it in Decide.
 
-To publish it, use `sulla marketplace/publish '{"kind":"recipe","slug":"<slug>"}'`. It needs a Sulla Cloud sign-in. The listing stays pending until an admin approves it. Don't claim it's public before that.
+To publish to the public catalog, use `sulla marketplace/publish '{"kind":"recipe","slug":"<slug>"}'`. It needs a Sulla Cloud sign-in. The listing stays pending until an admin approves it. Don't claim it's public before that.
 
 ## Discovery vs invocation
 

@@ -41,7 +41,9 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 
 ## environment/
 - `architecture.md` — What runs where: Electron main, Lima VM, Vue renderer, Docker containers
+- `files-harness.md` — How agents work with Files: where to save (`files_where`), drafts, publish requests, locks and retention, Use Cases lifecycle, folder descriptions, what not to do
 - `files.md` — Files authority, native helper custody, collection envelopes, migration and verification
+- `files-first.md` — Files layout, system areas, audit logs, and Use Cases source of truth
 - `paths.md` — ~/sulla/ tree, app resources path, Lima paths, DB ports
 - `communication.md` — WebSocket channels, IPC, exec tool, inter-agent messaging
 - `docker.md` — Lima vs host Docker, pre-installed containers, docker_* and lima_* tools
