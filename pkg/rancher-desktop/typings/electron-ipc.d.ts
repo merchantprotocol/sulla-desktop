@@ -514,6 +514,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
   'files-ui:create-folder': (relativePath: string) => void;
+  'files-ui:update-folder-description': (input:{folderId:string;description:string;namingHint?:string}) => void;
   'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;

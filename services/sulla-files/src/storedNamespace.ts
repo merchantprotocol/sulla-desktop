@@ -53,10 +53,11 @@ export async function ensureStoredFileParents(
   actor:FilesIdentity,
 ):Promise<void> {
   const [createdByType, createdById] = creator(actor);
+  const description=actor.agentId||actor.jobId ? `Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description` : null;
   for (const path of storedParentPaths(filePath)) {
-    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id)
-      VALUES($1,$2,$3,$4) ON CONFLICT(collection_id,path) DO NOTHING`,
-    [collectionId, path, createdByType, createdById]);
+    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(collection_id,path) DO NOTHING`,
+    [collectionId, path, createdByType, createdById, description]);
   }
 }
 
@@ -68,9 +69,10 @@ export async function ensureStoredFolder(
 ):Promise<void> {
   await assertStoredFolderPath(client, collectionId, folderPath);
   const [createdByType, createdById] = creator(actor);
+  const description=actor.agentId||actor.jobId ? `Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description` : null;
   for (const path of [...storedParentPaths(folderPath), folderPath]) {
-    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id)
-      VALUES($1,$2,$3,$4) ON CONFLICT(collection_id,path) DO NOTHING`,
-    [collectionId, path, createdByType, createdById]);
+    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(collection_id,path) DO NOTHING`,
+    [collectionId, path, createdByType, createdById, description]);
   }
 }
