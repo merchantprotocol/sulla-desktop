@@ -503,6 +503,9 @@ export interface IpcMainInvokeEvents {
   'files-ui:link-activity': (id?: string) => { id: string; action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt: string; detail?: string }[];
   'files-ui:open-folder':   () => void;
   'files-ui:open-file':     (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:open-default':  (input: { fileId: string; versionId?: string }) => void;
+  'files-ui:open-with':     (input: { fileId: string; versionId?: string; application?: string }) => { application?:string; recentApplications:string[] };
+  'files-ui:recent-apps':   (input: { name:string }) => string[];
   'files-ui:reveal-file':   (input: { fileId: string; versionId?: string }) => import('@pkg/pages/files/types').FilesRevealResult;
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
