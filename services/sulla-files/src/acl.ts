@@ -1,5 +1,6 @@
 import type { FilesIdentity } from './auth.js';
 import type pg from 'pg';
+import { allowAllAgentAccess } from './agentAccessPolicy.js';
 
 export const ROLE_LEVEL:Record<string, number> = { view: 1, 'use-by-agents': 2, edit: 3, manage: 4 };
 export interface CollectionGrant { role?: string; paths: { folderPath: string; role: string }[]; files: { fileId: string; role: string }[]; collection: any }
@@ -27,6 +28,7 @@ export async function prepareCollectionMembership(db:pg.Pool, identityDb:pg.Pool
 export async function resolveCollectionGrants(db:pg.Pool | pg.PoolClient, identityDb:pg.Pool | undefined, actor:FilesIdentity, collectionId:string, membership?:CollectionMembership):Promise<CollectionGrant> {
   const result = await db.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]); const collection = result.rows[0];
   if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
+  if (allowAllAgentAccess(actor)) return { role: 'manage', paths: [], files: [], collection };
   if (!collectionInScope(actor, collection.org_id)) return { paths:[], files:[], collection };
   let groups:string[] = [];
   if (membership) {

@@ -1,4 +1,5 @@
 import type { FilesIdentity } from './auth.js';
+import { allowAllAgentAccess } from './agentAccessPolicy.js';
 
 export type FuseOperation = 'list' | 'read' | 'write' | 'create' | 'rename' | 'delete';
 
@@ -10,5 +11,5 @@ export type FuseOperation = 'list' | 'read' | 'write' | 'create' | 'rename' | 'd
  */
 export function authorizeFuseOperation(_identity:FilesIdentity, _operation:FuseOperation,
   _resource:{ collectionId?:string; fileId?:string; path?:string } = {}):boolean {
-  return true;
+  return allowAllAgentAccess(_identity) || _identity.kind === 'capability';
 }

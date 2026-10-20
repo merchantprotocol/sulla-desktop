@@ -17,6 +17,7 @@ import { OriginalRevealAttestations,type OriginalRevealTarget } from './original
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
+import { allowAllAgentAccess } from './agentAccessPolicy.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { serverUi } from './serverUi.js';
 import { SharesService } from './shares.js';
@@ -183,7 +184,7 @@ export function createApp(
     return resolveCollectionGrants(queryable, identityDb, identity(request), collectionId);
   }
   function requireScratchRun(actor:FilesIdentity, collection:any):void {
-    if (collection.kind !== 'scratch' || (!actor.agentId && !actor.jobId)) return;
+    if (allowAllAgentAccess(actor) || collection.kind !== 'scratch' || (!actor.agentId && !actor.jobId)) return;
     if (!actor.jobId || collection.agent_run_id !== actor.jobId) throw new HttpError(403, 'scratch collection is scoped to its owner and agent run');
     if (collection.thread_id && actor.threadId && collection.thread_id !== actor.threadId) throw new HttpError(403, 'scratch collection belongs to another thread');
   }
@@ -490,7 +491,7 @@ export function createApp(
     const collections = await db.query("SELECT id,name FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY name,id");
     const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
       f.current_version_id AS "versionId" FROM files f
-      WHERE f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+      WHERE f.deleted_at IS NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
       ORDER BY f.collection_id,f.path`);
     const folders = await db.query('SELECT id,collection_id,path FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path');
     response.setHeader('Cache-Control', 'private, no-store');
