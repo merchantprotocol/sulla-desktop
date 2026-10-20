@@ -244,8 +244,10 @@ export class SullaFilesMountManager extends EventEmitter {
       { root: true, expectFailure: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
       'stop', '-t', '10', 'sulla_files_fuse',
     ).catch(() => undefined);
-    const mountedBeforeUnmount = await this.mountState(executor);
-    if (mountedBeforeUnmount === 'adapter') {
+    // A daemon/container restart can leave more than one propagated FUSE
+    // adapter stacked above the anchor. Drain every owned layer before a new
+    // generation mounts; one unmount only reveals the next stacked adapter.
+    for (let attempt = 0; attempt < 8 && await this.mountState(executor) === 'adapter'; attempt++) {
       await executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-u', MOUNT_PATH).catch(() => undefined);
       // fusermount3 ships with fuse3, which the guest may lack; root can
       // unmount a FUSE filesystem with plain (BusyBox or util-linux) umount.
