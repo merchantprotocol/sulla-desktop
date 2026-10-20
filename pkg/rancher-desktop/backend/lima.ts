@@ -326,6 +326,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #managedServicesReconciliation?: Promise<void>;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
+  #lastFilesGuestMountFailure?: string;
   #sullaCredentialsReady = false;
   #sullaCredentialsWaiters = new Set<() => void>();
 
@@ -3045,7 +3046,7 @@ start_pre() {
       } else {
         await this.reconcileSullaDockerEnvironment(generation);
         markSullaDockerServicesStarted();
-        getSullaFilesMountManager().configureGuest(this);
+        getSullaFilesMountManager().configureGuest(this, () => this.recoverSullaFilesGuestMount());
       }
       this.assertManagedServicesGeneration(generation);
       await instantiateSullaStart(() => this.assertManagedServicesGeneration(generation));
@@ -3820,6 +3821,7 @@ start_pre() {
   private async prepareSullaFilesGuestMount(compose: any): Promise<boolean> {
     try {
       await prepareSullaFilesGuestAnchor(this);
+      this.#lastFilesGuestMountFailure = undefined;
       getSullaFilesMountManager().reportGuestPreparation();
       // The workflow manager image cannot ask Desktop; this marker tells it
       // the anchor exists so its runners may bind /mnt/sulla-files.
@@ -3831,7 +3833,9 @@ start_pre() {
     } catch (error) {
       const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
 
-      console.log(`[Sulla] Files guest mount unavailable: ${ reason }`);
+      // Retries regenerate compose; log a failure once, not on every attempt.
+      if (reason !== this.#lastFilesGuestMountFailure) console.log(`[Sulla] Files guest mount unavailable: ${ reason }`);
+      this.#lastFilesGuestMountFailure = reason;
       getSullaFilesMountManager().reportGuestPreparation(reason);
       for (const service of Object.values<any>(compose.services ?? {})) {
         if (!Array.isArray(service?.volumes)) continue;
@@ -3844,6 +3848,33 @@ start_pre() {
 
       return false;
     }
+  }
+
+  /**
+   * Runtime recovery for the Files guest mount, called by the mount manager's
+   * retry loop. Re-runs the same idempotent preparation by regenerating the
+   * compose file (which restores the adapter service and the consumers'
+   * /mnt/sulla-files binds once the anchor exists), then brings
+   * workflow_manager up to that definition. The mount manager itself starts
+   * sulla_files_fuse. Throws when preparation still fails.
+   */
+  async recoverSullaFilesGuestMount(): Promise<void> {
+    const generation = this.#managedServicesGeneration;
+
+    // Never race a startup reconciliation; it regenerates compose itself.
+    await this.#managedServicesReconciliation?.catch(() => undefined);
+    this.assertManagedServicesGeneration(generation);
+    await this.prepareSullaComposeFile();
+    this.assertManagedServicesGeneration(generation);
+    if (!getSullaFilesMountManager().guestMountAvailable()) {
+      throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
+    }
+    await reconcileComposeService({
+      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
+      service:        'workflow_manager',
+      run:            (...command) => this.execCommand({ root: true }, ...command),
+      checkpoint:     () => this.assertManagedServicesGeneration(generation),
+    });
   }
 
   private async applySullaCompose(generation: number): Promise<void> {
