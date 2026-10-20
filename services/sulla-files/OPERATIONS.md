@@ -2,6 +2,15 @@
 
 ## Native custody and folder extension (028)
 
+## Explorer tree mapping (029)
+
+`collections.explorer_path` is an additive presentation mapping for the one
+File Manager/FUSE namespace. The default collection uses the empty prefix;
+pre-existing secondary collections receive a stable `<name>--<id-prefix>`
+path. Existing content stays in its original collection and remains readable.
+FUSE rename requests are executed through the receipt-backed database/folder
+operation coordinator, including native custody and cross-collection checks.
+
 Apply `028_native_operation_journal.sql` after 027. Endpoint names and batch
 identity/control semantics remain unchanged. This is service source, not evidence
 that an installed deployment has applied the migration or passed runtime checks.

@@ -17,12 +17,12 @@
           S
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
-      <label v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="root-picker">
-        <span>Files collection</span>
-        <select :value="snapshot?.collection.id" :disabled="busy || loading" @change="onCollectionChange">
-          <option v-for="collection in snapshot?.availableCollections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
-        </select>
-      </label>
+      <div v-if="(snapshot?.availableCollections?.length ?? 0) > 1" class="tree-roots" aria-label="File tree roots">
+        <div class="grp">Folders</div>
+        <button v-for="collection in snapshot?.availableCollections" :key="collection.id" type="button"
+          :class="{ on: collection.id === snapshot?.collection.id }" :disabled="busy || loading"
+          @click="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></button>
+      </div>
       <div v-if="dragTargets.length && dragSourceCapability !== 'unavailable' && (snapshot?.availableCollections?.length ?? 0) > 1" class="collection-drops" aria-label="Move selection to collection">
         <button v-for="collection in otherCollections" :key="collection.id" class="btn sm" type="button" @dragover.prevent.stop="setCollectionDropEffect" @drop.prevent.stop="onCollectionDrop(collection.id, $event)">Move to {{ collection.name }}</button>
       </div>
@@ -192,6 +192,13 @@
               v-html="icons.plus"
             /> New folder
           </button>
+          <button
+            v-if="dataSource.createFile"
+            class="btn"
+            type="button"
+            :disabled="busy || loading || section !== 'files'"
+            @click="newFile"
+          >New file</button>
           <button
             v-if="dataSource.nativeSourceReady && dataSource.chooseNativeSource"
             class="btn"
@@ -717,6 +724,7 @@
             <b>{{ pageTitle }}</b>
             <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
             <button role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFolder(); closeBackgroundActions()">New folder</button>
+            <button v-if="dataSource.createFile" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFile(); closeBackgroundActions()">New file</button>
             <button role="menuitem" type="button" @click="setSort('name'); closeBackgroundActions()">Sort by name</button>
             <button role="menuitem" type="button" @click="refresh(true); closeBackgroundActions()">Refresh</button>
           </div>
@@ -1181,7 +1189,6 @@ async function selectCollection(collectionId:string) {
   await refresh();
   explorer.clearForCollection(collectionId); loadFolderPreferences();
 }
-function onCollectionChange(event:Event) { selectCollection((event.target as HTMLSelectElement).value).catch(cause => { error.value = cause instanceof Error ? cause.message : String(cause) }) }
 function setCollectionDropEffect(event:DragEvent) { if (event.dataTransfer) event.dataTransfer.dropEffect='move' }
 async function onCollectionDrop(collectionId:string,event:DragEvent) {
   if (busy.value || loading.value || !dragTargets.value.length || collectionId===snapshot.value?.collection.id) return;
@@ -1207,6 +1214,12 @@ async function newFolder() {
   const path = joinPath(currentPath.value, name);
   if (operations.supported()) await submitReceiptItems([{ itemId: crypto.randomUUID(), action: 'create-folder', targetPath: path }]);
   else await runMutation(() => props.dataSource.createFolder(path));
+}
+async function newFile() {
+  if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.createFile) return;
+  const name=window.prompt('Name this file','untitled.txt')?.trim(); if(!name) return;
+  if(name.includes('/') || name==='.' || name==='..'){ operationError.value='Enter a file name without path separators.'; return }
+  await runMutation(()=>props.dataSource.createFile!(joinPath(currentPath.value,name)));
 }
 async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
 async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
@@ -2011,6 +2024,9 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 .brand span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .root-picker { display: grid; gap: 4px; margin: 0 8px 10px; color: var(--dim); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .root-picker select { min-width: 0; width: 100%; padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--card-solid); color: var(--text); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.tree-roots { display:grid; gap:2px; margin-bottom:8px; }
+.tree-roots button { display:flex; align-items:center; gap:9px; width:100%; padding:7px 14px; border:0; border-radius:7px; background:transparent; color:var(--dim); text-align:left; }
+.tree-roots button:hover,.tree-roots button.on { background:var(--ink-05); color:var(--text); }
 .collection-drops { display: grid; gap: 4px; margin: 0 8px 10px; }
 .collection-drops .btn { width: 100%; white-space: normal; }
 .nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--muted); font-weight: 500; }
@@ -2286,7 +2302,7 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 @container (max-width: 1180px) {
   .nav { width: 64px; padding: 14px 10px; }
   .nav a { justify-content: center; padding: 9px 0; position: relative; }
-  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .root-picker, .collection-drops, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
+  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .root-picker, .tree-roots, .collection-drops, .nav .grp, .nav .foot small, .nav .foot div:not(.avatar), .nav .quota, .syncline { display: none; }
   .nav a .cnt { position: absolute; margin: 0; transform: translate(14px, -10px); }
   .brand { justify-content: center; padding-bottom: 12px; }
   .content { padding: 16px 18px 50px; }

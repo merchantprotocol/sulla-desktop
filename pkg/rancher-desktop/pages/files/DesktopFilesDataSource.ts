@@ -177,7 +177,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
       ipcRenderer.invoke('files-ui:status'),
     ]);
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
-    const availableCollections = collections.map(collection => ({ id: collection.id, name: roots.find(root => root.collectionId === collection.id)?.name ?? collection.name }));
+    const availableCollections = collections.map(collection => ({ id: collection.id,
+      name: collection.explorer_path || roots.find(root => root.collectionId === collection.id)?.name || collection.name,
+      treePath: collection.explorer_path ?? '' }));
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
@@ -284,6 +286,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
+  createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {
     if (!file.conflictSourceFileId || !file.conflictSourceVersionId) throw new Error('This conflict cannot be acknowledged safely. Refresh Files and try again.');

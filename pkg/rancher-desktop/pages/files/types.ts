@@ -135,7 +135,7 @@ export interface FilesVersion {
 
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
-  availableCollections?: { id:string; name:string }[];
+  availableCollections?: { id:string; name:string; treePath?:string }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   trash?: FilesTrashItem[];
@@ -424,6 +424,7 @@ export interface FilesDataSource {
   uploadPaths(paths:string[], destination?:string): Promise<number>;
   uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
+  createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;

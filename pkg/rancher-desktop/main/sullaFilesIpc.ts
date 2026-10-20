@@ -486,6 +486,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:native-runtime', () => mountManager.status());
   ipcMain.handle('sulla-files:collections', () => json('/v1/collections'));
   ipcMain.handle('sulla-files:list', (_event, input:{ collectionId: string; path?: string; trash?: boolean }) => json(`/v1/files?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`));
+  ipcMain.handle('sulla-files:create-empty-file', (_event,input:{collectionId:string;path:string}) => json('/v1/files/empty',{method:'POST',body:JSON.stringify(input)}));
   ipcMain.handle('sulla-files:search', (_event, input:{ query: string; collectionId?: string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));
   ipcMain.handle('sulla-files:stars', (_event, input:{ collectionId: string }) => json(`/v1/stars?collectionId=${ encodeURIComponent(input.collectionId) }`));

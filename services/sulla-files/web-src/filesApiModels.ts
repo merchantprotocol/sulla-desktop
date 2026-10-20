@@ -7,6 +7,7 @@ export interface FilesApiCollection extends FilesApiRecord {
   name:                  string;
   kind:                  string;
   access_role?:          string;
+  explorer_path?:        string;
   owner_user_id?:        string;
   shared_folders?:       FilesApiRecord[];
   shared_files?:         FilesApiRecord[];
