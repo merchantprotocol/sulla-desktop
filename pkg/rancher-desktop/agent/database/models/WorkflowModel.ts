@@ -27,6 +27,8 @@ interface WorkflowAttributes {
   location:             'desktop' | 'server';
   created_at:           Date;
   updated_at:           Date;
+  use_case_file_id:     string | null;
+  use_case_version_id:  string | null;
 }
 
 /**

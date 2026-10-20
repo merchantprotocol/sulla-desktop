@@ -17,6 +17,9 @@ export interface FunctionDefinition {
   user_edited:             boolean;
   marketplace_template_id: string | null;
   marketplace_author:      string | null;
+  enabled?:                boolean;
+  use_case_file_id?:       string | null;
+  use_case_version_id?:    string | null;
   created_at:              Date | string;
   updated_at:              Date | string;
 }
@@ -37,16 +40,19 @@ export interface IntegrationDefinition {
 }
 
 export interface RecipeDefinition extends IntegrationDefinition {
-  compose: string;
+  compose:                 string;
+  enabled?:                boolean;
+  use_case_file_id?:       string | null;
+  use_case_version_id?:    string | null;
 }
 
 export class FunctionDefinitionModel {
   static findBySlug(slug: string): Promise<FunctionDefinition | null> {
-    return postgresClient.queryOne('SELECT * FROM function_definitions WHERE slug = $1', [slug]);
+    return postgresClient.queryOne('SELECT * FROM function_definitions WHERE slug = $1 AND enabled = TRUE', [slug]);
   }
 
   static list(): Promise<FunctionDefinition[]> {
-    return postgresClient.query('SELECT * FROM function_definitions ORDER BY slug', []);
+    return postgresClient.query('SELECT * FROM function_definitions WHERE enabled = TRUE ORDER BY slug', []);
   }
 }
 
@@ -62,11 +68,11 @@ export class IntegrationDefinitionModel {
 
 export class RecipeDefinitionModel {
   static findBySlug(slug: string): Promise<RecipeDefinition | null> {
-    return postgresClient.queryOne('SELECT * FROM recipe_definitions WHERE slug = $1', [slug]);
+    return postgresClient.queryOne('SELECT * FROM recipe_definitions WHERE slug = $1 AND enabled = TRUE', [slug]);
   }
 
   static list(): Promise<RecipeDefinition[]> {
-    return postgresClient.query('SELECT * FROM recipe_definitions ORDER BY slug', []);
+    return postgresClient.query('SELECT * FROM recipe_definitions WHERE enabled = TRUE ORDER BY slug', []);
   }
 }
 

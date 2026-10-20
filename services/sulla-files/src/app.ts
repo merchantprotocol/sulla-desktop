@@ -421,6 +421,30 @@ export function createApp(
     });
     response.status(result.unchanged ? 200 : 201).json(result);
   } catch (error) { next(error) } });
+  /** Desktop-only migration helpers for the Sulla system collection. */
+  app.post('/v1/local/system-areas/move', async(request, response, next) => { const client = await db.connect(); try {
+    const fileId = String(request.body.fileId ?? ''); const targetPath = cleanPath(String(request.body.targetPath ?? ''), false);
+    await client.query('BEGIN');
+    const file = (await client.query(`SELECT f.* FROM files f JOIN collections c ON c.id=f.collection_id
+      WHERE f.id=$1 AND c.system_area='sulla' FOR UPDATE`, [fileId])).rows[0];
+    if (!file) throw new HttpError(404, 'Sulla system-area file not found');
+    await lockStoredNamespace(client, file.collection_id); await ensureStoredFileParents(client, file.collection_id, targetPath, identity(request));
+    await assertStoredFilePath(client, file.collection_id, targetPath, file.id);
+    const moved = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id,targetPath])).rows[0];
+    await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
+      VALUES('user',$1,$2,$3,$4,'system-area-move',$5)`, [config.userId,config.deviceId,file.id,file.current_version_id,{from:file.path,to:targetPath}]);
+    await client.query('COMMIT'); response.json(moved);
+  } catch(error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.post('/v1/local/system-areas/audit', async(request, response, next) => { try {
+    const fileId = request.body.fileId || null; const versionId = request.body.versionId || null;
+    if (fileId) {
+      const row = (await db.query(`SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 AND c.system_area='sulla'`,[fileId])).rows[0];
+      if (!row) throw new HttpError(404,'Sulla system-area file not found');
+    }
+    await db.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
+      VALUES('user',$1,$2,$3,$4,$5,$6)`,[config.userId,config.deviceId,fileId,versionId,String(request.body.action??'system-area-event'),request.body.details??{}]);
+    response.status(204).end();
+  } catch(error) { next(error) } });
   app.post('/v1/local/native-sources/publications', async(request, response, next) => { try {
     const metadata = nativeMetadata(request);
     const fileId = String(request.body.fileId ?? '');
