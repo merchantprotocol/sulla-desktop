@@ -142,6 +142,129 @@
     return row;
   };
 
+  // ── Custom fields ─────────────────────────────────────────────────────────
+  // Types, limits and validators come from customFields.js (mirror of vault-crypto customFields.ts).
+  const CF = globalThis.SullaVaultCustomFields;
+  const icon = path => `<svg class="i sm" aria-hidden="true" viewBox="0 0 24 24">${path}</svg>`;
+  const eyePath = '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/>';
+  const copyPath = '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/>';
+  const iconButton = (path, label, className = '') => { const button = document.createElement('button'); button.type = 'button'; button.className = className; button.innerHTML = icon(path); button.setAttribute('aria-label', label); button.title = label; return button; };
+  const customFieldTypeName = type => CF.TYPE_LABELS[type] || `Other (${type})`;
+  const copyValue = async value => { try { await navigator.clipboard.writeText(value); message('Copied.'); } catch { message('Copy is unavailable in this window.', true); } };
+  const customFieldDetail = field => {
+    const secret = CF.isSecret(field);
+    const row = detailField(field.label, field.type === 'boolean' ? (field.value === 'true' ? 'Yes' : 'No') : field.value, secret);
+    row.classList.add('custom-field-detail'); row.dataset.customType = field.type;
+    const output = row.querySelector('.v');
+    if (field.type === 'multiline' && !secret) output.classList.add('multiline');
+    if (field.type === 'url' && field.value && !CF.valueError('url', field.value)) {
+      const link = document.createElement('a'); link.href = field.value.trim(); link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = field.value.trim();
+      output.replaceChildren(link);
+    }
+    if (field.type === 'boolean') { output.classList.add('bool-value', field.value === 'true' ? 'yes' : 'no'); output.setAttribute('aria-label', `${field.label}: ${output.textContent}`); }
+    if (field.value && field.type !== 'boolean') { const copy = iconButton(copyPath, `Copy ${field.label}`); copy.onclick = () => { void copyValue(field.value); }; row.append(copy); }
+    return row;
+  };
+
+  const newFieldId = () => (crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join(''));
+  const customFieldRows = () => [...byId('custom-fields').querySelectorAll('.custom-field-row')];
+  const updateCustomFieldCount = () => { const count = customFieldRows().length; byId('custom-field-count').textContent = count ? `${count} of ${CF.LIMITS.maxFields}` : ''; byId('add-custom-field').disabled = count >= CF.LIMITS.maxFields; };
+  const rowValue = row => {
+    const input = row.querySelector('.cf-input');
+    if (!input) return '';
+    return row.dataset.type === 'boolean' ? String(input.checked) : input.value;
+  };
+  // Builds the value control for a type. Secrets get a masked input plus a reveal button.
+  const customFieldInput = (row, type, value) => {
+    const holder = row.querySelector('.cf-value'); holder.replaceChildren();
+    const labelText = () => row.querySelector('.cf-label').value.trim() || 'Custom field';
+    let input;
+    if (type === 'boolean') {
+      const toggle = document.createElement('label'); toggle.className = 'cf-toggle';
+      input = document.createElement('input'); input.type = 'checkbox'; input.checked = value === 'true';
+      const track = document.createElement('i'); track.setAttribute('aria-hidden', 'true');
+      const state = document.createElement('span'); state.className = 'cf-toggle-text'; state.textContent = input.checked ? 'Yes' : 'No';
+      input.addEventListener('change', () => { state.textContent = input.checked ? 'Yes' : 'No'; });
+      toggle.append(input, track, state); holder.append(toggle);
+    } else if (type === 'multiline') {
+      input = document.createElement('textarea'); input.value = value; input.rows = 3; holder.append(input);
+    } else {
+      input = document.createElement('input'); input.value = value; input.autocomplete = 'off'; input.spellcheck = false;
+      input.type = ({ password: 'password', 'one-time': 'password', url: 'url', email: 'email', date: 'date', phone: 'tel' })[type] || 'text';
+      if (type === 'number') input.inputMode = 'decimal';
+      if (CF.SECRET_TYPES.includes(type)) input.autocomplete = 'new-password';
+      input.placeholder = ({ url: 'https://example.com', email: 'name@example.com', phone: '+1 555 0100', number: '0', 'one-time': 'Base32 secret or otpauth:// URI', password: 'Secret value' })[type] || 'Value';
+      holder.append(input);
+      if (CF.SECRET_TYPES.includes(type)) {
+        const reveal = iconButton(eyePath, 'Reveal value', 'cf-icon');
+        reveal.onclick = () => { const shown = input.type === 'password'; input.type = shown ? 'text' : 'password'; reveal.setAttribute('aria-label', shown ? 'Hide value' : 'Reveal value'); reveal.title = reveal.getAttribute('aria-label'); };
+        holder.append(reveal);
+      }
+    }
+    input.classList.add('cf-input');
+    input.setAttribute('aria-label', `${labelText()} value`);
+    input.addEventListener(type === 'boolean' ? 'change' : 'input', () => validateCustomFieldRow(row));
+    holder.classList.toggle('with-action', CF.SECRET_TYPES.includes(type));
+  };
+  const setRowNote = (row, text, kind) => { const note = row.querySelector('.cf-note'); note.textContent = text || ''; note.className = `cf-note${kind ? ` ${kind}` : ''}`; };
+  // Inline validation with the shared rules. Returns the first problem or null.
+  const validateCustomFieldRow = (row, final = false) => {
+    const label = row.querySelector('.cf-label').value;
+    const others = customFieldRows().filter(other => other !== row).map(other => other.querySelector('.cf-label').value);
+    const labelProblem = label.trim() || final ? CF.labelError(label, others) : null;
+    const valueProblem = CF.valueError(row.dataset.type, rowValue(row));
+    const problem = labelProblem || (valueProblem ? `Value ${valueProblem}` : null);
+    row.classList.toggle('invalid', Boolean(problem));
+    row.querySelector('.cf-label').setAttribute('aria-invalid', String(Boolean(labelProblem)));
+    row.querySelector('.cf-input')?.setAttribute('aria-invalid', String(Boolean(valueProblem)));
+    if (problem) setRowNote(row, problem, 'error'); else if (row.querySelector('.cf-note').classList.contains('error')) setRowNote(row, '');
+    return problem;
+  };
+  const changeCustomFieldType = (row, nextType) => {
+    const previousType = row.dataset.type; const previous = rowValue(row);
+    let next = previous; let note = '';
+    if (nextType === 'boolean') { if (!['true', 'false'].includes(previous)) { next = 'false'; if (previous) note = `Value cleared: it is not valid for ${customFieldTypeName(nextType)}.`; } }
+    else if (previousType === 'boolean') next = '';
+    else if (previous && CF.valueError(nextType, previous)) { next = ''; note = `Value cleared: it is not valid for ${customFieldTypeName(nextType)}.`; }
+    row.dataset.type = nextType; customFieldInput(row, nextType, next);
+    validateCustomFieldRow(row); if (note) setRowNote(row, note, 'warn');
+  };
+  const addCustomFieldRow = (field = {}) => {
+    const root = byId('custom-fields'); const type = field.type || 'text';
+    const row = document.createElement('div'); row.className = 'custom-field-row'; row.dataset.fieldId = field.id || newFieldId(); row.dataset.type = type;
+    if (field.hidden !== undefined) row.dataset.hidden = String(field.hidden);
+    const head = document.createElement('div'); head.className = 'cf-head';
+    const label = document.createElement('input'); label.className = 'cf-label'; label.placeholder = 'Label'; label.maxLength = CF.LIMITS.maxLabelLength; label.value = field.label || ''; label.autocomplete = 'off'; label.setAttribute('aria-label', 'Custom field label');
+    const select = document.createElement('select'); select.className = 'cf-type'; select.setAttribute('aria-label', 'Value type');
+    for (const value of CF.isKnownType(type) ? CF.TYPES : [...CF.TYPES, type]) { const option = document.createElement('option'); option.value = value; option.textContent = customFieldTypeName(value); select.append(option); }
+    select.value = type;
+    select.onchange = () => changeCustomFieldType(row, select.value);
+    const up = iconButton('<path d="m6 15 6-6 6 6"/>', 'Move field up', 'cf-icon'); up.onclick = () => { if (row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling); };
+    const down = iconButton('<path d="m6 9 6 6 6-6"/>', 'Move field down', 'cf-icon'); down.onclick = () => { if (row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row); };
+    const remove = iconButton('<path d="M6 6l12 12M18 6 6 18"/>', 'Remove custom field', 'cf-icon cf-remove'); remove.onclick = () => { row.remove(); updateCustomFieldCount(); customFieldRows().forEach(other => validateCustomFieldRow(other)); };
+    head.append(label, select, up, down, remove);
+    const value = document.createElement('div'); value.className = 'cf-value';
+    const note = document.createElement('p'); note.className = 'cf-note'; note.setAttribute('role', 'status');
+    row.append(head, value, note); root.append(row);
+    customFieldInput(row, type, typeof field.value === 'string' ? field.value : '');
+    label.addEventListener('input', () => { row.querySelector('.cf-input')?.setAttribute('aria-label', `${label.value.trim() || 'Custom field'} value`); customFieldRows().forEach(other => validateCustomFieldRow(other)); });
+    updateCustomFieldCount();
+    return label;
+  };
+  const renderCustomFields = fields => { byId('custom-fields').replaceChildren(); for (const field of Array.isArray(fields) ? fields.slice(0, CF.LIMITS.maxFields) : []) addCustomFieldRow(field); updateCustomFieldCount(); };
+  // Collects editor rows in display order and validates them with the shared rules (fails closed).
+  const readCustomFields = () => {
+    const rows = customFieldRows();
+    const problems = rows.map(row => validateCustomFieldRow(row, true));
+    const first = problems.findIndex(Boolean);
+    if (first >= 0) { rows[first].querySelector('.cf-label').focus(); throw new Error(`Custom field ${first + 1}: ${problems[first]}`); }
+    const fields = rows.map(row => ({ id: row.dataset.fieldId, label: row.querySelector('.cf-label').value.trim(), type: row.dataset.type, value: rowValue(row), ...(row.dataset.hidden ? { hidden: row.dataset.hidden === 'true' } : {}) }));
+    const preserved = Array.isArray(editingItem?.customFields) ? editingItem.customFields : [];
+    const checked = CF.validate(fields, { preserved });
+    if (!checked.ok) throw new Error(checked.error);
+    return checked.fields;
+  };
+
   const selectItem = async id => {
     const generation = ++detailGeneration;
     selectedId = id; renderItems();
@@ -163,6 +286,7 @@
       if (item.password) fields.append(detailField(item.type === 'apiKey' ? 'Secret' : 'Password', item.password, true));
       for (const [name, value] of Object.entries(item.integration?.properties || {})) fields.append(detailField(name, value, true));
       if (item.uris?.[0]?.uri) fields.append(detailField('Website', item.uris[0].uri));
+      for (const field of Array.isArray(item.customFields) ? item.customFields : []) if (field && typeof field.label === 'string') fields.append(customFieldDetail({ ...field, value: typeof field.value === 'string' ? field.value : '' }));
       if (item.notes) fields.append(detailField('Notes', item.notes));
       if (!fields.children.length) fields.append(detailField('Details', 'No additional fields'));
       const enabled = itemPolicy.mode === 'agents';
@@ -228,7 +352,7 @@
     const itemPolicy = policy(detail);
     byId('item-id').value = detail?.id || ''; byId('revision').value = detail?.revision || ''; byId('item-type').value = detail?.integration ? 'integration' : detail?.type || 'login';
     byId('name').value = detail?.name || ''; byId('username').value = detail?.username || detail?.integration?.accountId || ''; byId('item-password').value = detail?.password || ''; byId('website').value = detail?.uris?.[0]?.uri || ''; byId('notes').value = detail?.notes || ''; byId('favorite').checked = Boolean(detail?.favorite);
-    byId('integration-id').value = detail?.integration?.integrationId || ''; byId('account-id').value = detail?.integration?.accountId || ''; renderIntegrationProperties(detail?.integration?.properties);
+    byId('integration-id').value = detail?.integration?.integrationId || ''; byId('account-id').value = detail?.integration?.accountId || ''; renderIntegrationProperties(detail?.integration?.properties); renderCustomFields(detail?.customFields);
     const agentsEnabled = itemPolicy.mode === 'agents'; byId('agent-enabled').checked = agentsEnabled; byId('only-me-access').checked = !agentsEnabled; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-agents').value = itemPolicy.agents.join(', '); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
     const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration;
     byId('delete-item').hidden = !detail?.id; byId('editor-title').textContent = detail?.id ? `Edit ${detail.name}` : 'New vault item'; byId('editor-crumb').textContent = detail?.name || 'New item'; byId('editor-tile').textContent = initials(detail) || '＋';
@@ -246,6 +370,8 @@
     item.agentPolicy = { mode: byId('policy-mode').value, level: byId('policy-level').value, agents: entries(byId('policy-agents').value), sites: sites(byId('policy-sites').value), expiresAt: expiry ? new Date(expiry).toISOString() : null, askFirst: byId('ask-first').checked, allowServerAgents: byId('allow-server-agents').checked };
     if (type === 'integration') item.integration = { ...(item.integration || {}), integrationId: byId('integration-id').value.trim(), accountId: byId('account-id').value.trim(), properties: readIntegrationProperties() };
     else delete item.integration;
+    const customFields = readCustomFields();
+    if (customFields.length) item.customFields = customFields; else delete item.customFields;
     return item;
   };
   const openIntegrationHint = async() => {
@@ -325,6 +451,7 @@
   byId('audit-next').onclick = () => { if (auditHasMore) { auditOffset += 25; void loadAudit(); } };
   byId('item-type').onchange = () => { const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration; if (integration && !byId('integration-properties').children.length) renderIntegrationProperties({}); };
   byId('add-integration-property').onclick = () => { if (byId('integration-properties').children.length >= 20) return message('Integration properties are limited to 20.', true); addPropertyRow().focus(); };
+  byId('add-custom-field').onclick = () => { if (customFieldRows().length >= CF.LIMITS.maxFields) return message(`Custom fields are limited to ${CF.LIMITS.maxFields}.`, true); addCustomFieldRow().focus(); };
   document.querySelectorAll('input[name="policy-access"]').forEach(input => { input.onchange = syncPolicyEnabled; });
   document.querySelectorAll('[data-level]').forEach(button => button.onclick = () => setPolicyLevel(button.dataset.level));
   for (const id of ['cancel', 'editor-back']) byId(id).onclick = showBrowser;
@@ -340,7 +467,7 @@
   byId('recovery-form').onsubmit = async event => { event.preventDefault(); try { const bytes = crypto.getRandomValues(new Uint8Array(32)); const recoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0); await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode }) }); event.target.reset(); byId('recovery-output').hidden = false; byId('recovery-output').textContent = recoveryCode; message('Recovery code generated. Save it now; it will not be shown again.'); } catch (error) { message(error.message, true); } };
   byId('backup-export-form').onsubmit = async event => { event.preventDefault(); try { const backup = await api('/v1/human/backup/export', { method: 'POST', body: JSON.stringify({ backupPassword: byId('backup-export-password').value }) }); const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `sulla-vault-backup-${new Date().toISOString().slice(0, 10)}.vault`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); event.target.reset(); message('Encrypted backup downloaded.'); } catch (error) { message(error.message, true); } };
   byId('backup-import-form').onsubmit = async event => { event.preventDefault(); try { const file = byId('backup-file').files[0]; if (file.size > 25 * 1024 * 1024) throw new Error('Backup files are limited to 25 MB'); const backup = JSON.parse(await file.text()); await api('/v1/human/backup/import', { method: 'POST', body: JSON.stringify({ backupPassword: byId('backup-import-password').value, backup }) }); event.target.reset(); byId('unlock-error').textContent = 'Backup restored. Unlock it with the vault password from that backup.'; } catch (error) { byId('unlock-error').textContent = error.message; } };
-  byId('lock').onclick = async() => { try { invalidateDetail(); invalidateAudit(); const next = await api('/v1/human/lock', { method: 'POST', body: '{}' }); if (!next?.csrf || next.phase !== 'pre-unlock') throw new Error('Vault lock did not rotate the protected session'); csrf = next.csrf; items = []; renderItems(); showBrowser(); document.querySelectorAll('form').forEach(form => form.reset()); renderIntegrationProperties({}); byId('recovery-output').textContent = ''; byId('recovery-output').hidden = true; message(''); setPhase(next.phase); } catch (error) { message(error.message, true); } };
+  byId('lock').onclick = async() => { try { invalidateDetail(); invalidateAudit(); const next = await api('/v1/human/lock', { method: 'POST', body: '{}' }); if (!next?.csrf || next.phase !== 'pre-unlock') throw new Error('Vault lock did not rotate the protected session'); csrf = next.csrf; items = []; renderItems(); showBrowser(); document.querySelectorAll('form').forEach(form => form.reset()); renderIntegrationProperties({}); renderCustomFields([]); byId('recovery-output').textContent = ''; byId('recovery-output').hidden = true; message(''); setPhase(next.phase); } catch (error) { message(error.message, true); } };
   addEventListener('pagehide', () => { invalidateDetail(); invalidateAudit(); csrf = ''; items = []; });
   start().catch(error => { byId('state').textContent = 'Unavailable'; byId('unlock').hidden = false; byId('unlock-error').textContent = error.message; });
 })();

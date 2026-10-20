@@ -21,6 +21,9 @@ import {
   type AgentAccessLevel,
   type AgentPolicy,
   type EncryptedEnvelope,
+  isKnownCustomFieldType,
+  validateCustomFields,
+  type VaultItemCustomField,
   type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
@@ -269,6 +272,7 @@ class StreamingRedactor {
 }
 
 export const localAuthorityTestHooks = {
+  credentialField,
   operationDigest,
   privateAddress,
   streamResponseIsBodyless,
@@ -365,7 +369,9 @@ function credentialField(item: VaultItemPlaintext, field: string): string | unde
     (['password', 'api_key', 'bearer_token', 'api_token', 'access_token', 'auth_token', 'token'].includes(field)
       ? item.password
       : undefined) ??
-    item.fields?.find(candidate => candidate.name === field)?.value;
+    item.fields?.find(candidate => candidate.name === field)?.value ??
+    // Custom fields are usable by label at the same autofill level as the password; lowest priority.
+    item.customFields?.find(candidate => candidate.label === field && typeof candidate.value === 'string')?.value;
 }
 
 function deriveChatgptAccountRoutingForRequest(
@@ -947,7 +953,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       throw new LocalVaultError('invalid_operation', 400, 'Agent access policy is invalid');
     }
     const id = input.id ?? randomUUID();
-    const encrypted = await encryptItem(JSON.stringify(input.item), keys.userKey, { itemId: id, ownerId: keys.userId });
+    const item: VaultItemPlaintext = { ...input.item };
+    if (item.customFields !== undefined) {
+      // Unknown types (from a newer client) may only round-trip when the stored item already had them.
+      const raw: unknown = item.customFields;
+      const hasUnknownType = Array.isArray(raw) && raw.some(field => !isKnownCustomFieldType((field as { type?: unknown } | null)?.type));
+      const preserved = input.id && hasUnknownType ? await this.storedCustomFields(keys, input.id) : [];
+      this.requireGeneration(generation);
+      const checked = validateCustomFields(raw, { preserved });
+      if (!checked.ok) throw new LocalVaultError('invalid_operation', 400, checked.error);
+      if (checked.fields.length) item.customFields = checked.fields;
+      else delete item.customFields;
+    }
+    const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const result = await this.runTransaction(async client => {
       if (!input.id) {
       const created = await client.query<{ revision: number }>(
@@ -979,6 +997,21 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     });
     return result;
     });
+  }
+
+  /** Decrypts only the custom fields of a stored item; used to let unknown field types round-trip. */
+  private async storedCustomFields(keys: { userId: string; userKey: Uint8Array }, itemId: string): Promise<VaultItemCustomField[]> {
+    const result = await this.db.query<ItemRow>(
+      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
+         FROM items WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [itemId, keys.userId],
+    );
+    const row = result.rows[0];
+    if (!row) return [];
+    const stored = JSON.parse(await decryptItemText(
+      { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
+      { itemId: row.id, ownerId: keys.userId },
+    )) as VaultItemPlaintext;
+    return Array.isArray(stored.customFields) ? stored.customFields : [];
   }
 
   async deleteHumanItem(sessionId: string | undefined, csrf: string | undefined, itemId: string, revision: number): Promise<void> {

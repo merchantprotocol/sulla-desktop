@@ -162,3 +162,41 @@
 /* Keep the selected item and its Edit control reachable on smaller windows. */
 @media(max-width:1050px){.vault-body{overflow:auto;align-content:start;grid-template-rows:auto auto}.side{grid-row:1/3}.listcol{max-height:380px}.detail{display:block;grid-column:2;overflow:visible}.detail:has(#detail-content[hidden]){display:none}}
 @media(max-width:720px){.detail{grid-column:1}.listcol{max-height:300px}}
+
+/* Custom fields (editor rows + detail rows). Labels use the approved uppercase mono label style;
+   primary text stays --ink / --read-2 for >= 4.5:1 contrast on white. */
+.custom-fields{margin-top:20px;padding-top:4px;border-top:1px solid var(--hair)}
+.custom-fields .property-heading strong{font:400 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--read-4)}
+.custom-field-row{display:grid;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--hair);border-radius:14px;background:rgba(255,255,255,.55)}
+.custom-field-row.invalid{border-color:rgba(185,28,28,.4)}
+.cf-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,180px) auto auto auto;gap:6px;align-items:center}
+.custom-field-row input,.custom-field-row select,.custom-field-row textarea{min-height:40px;border-radius:11px;border-color:rgba(58,127,160,.18);background:#fff;padding:0 12px;font:400 14px var(--sans);color:var(--ink)}
+.custom-field-row textarea{min-height:84px;padding:10px 12px}
+.custom-field-row .cf-label{font:500 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--read-2)}
+.custom-field-row .cf-label::placeholder{color:var(--read-4);opacity:1}
+.custom-field-row [aria-invalid="true"]{border-color:var(--danger)}
+.cf-icon{display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--hair);border-radius:9px;background:var(--surface);color:var(--read-3);flex:none}
+.cf-icon:hover{color:var(--ink);border-color:var(--hair-strong)}
+.cf-remove:hover{color:var(--danger);border-color:rgba(185,28,28,.3)}
+.cf-value{display:flex;gap:6px;align-items:center}
+.cf-value>input,.cf-value>textarea{flex:1;min-width:0}
+.cf-toggle{display:flex;align-items:center;gap:10px;min-height:40px;color:var(--ink);font:400 14px var(--sans);cursor:pointer}
+.cf-toggle input{position:absolute;opacity:0;width:1px;height:1px}
+.cf-toggle i{display:block;position:relative;width:38px;height:23px;border-radius:12px;background:var(--read-5)}
+.cf-toggle i::after{content:'';position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:.15s}
+.cf-toggle input:checked+i{background:linear-gradient(180deg,var(--accent-2),var(--accent))}
+.cf-toggle input:checked+i::after{left:18px}
+.cf-toggle input:focus-visible+i{box-shadow:0 0 0 3px rgba(80,150,179,.3)}
+.cf-note{margin:0;font-size:12px;line-height:1.4;color:var(--read-2)}
+.cf-note:empty{display:none}
+.cf-note.error{color:var(--danger)}
+.cf-note.warn{color:#8a5a00}
+.add-custom-field{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:13px;color:#2c6a87}
+.add-custom-field:disabled{opacity:.5;cursor:not-allowed}
+.custom-field-detail .k{overflow-wrap:anywhere}
+.detail-field .v.multiline{white-space:pre-wrap;overflow-wrap:anywhere}
+.detail-field .v a{color:#2c6a87;text-decoration:underline;text-underline-offset:2px}
+.detail-field .v.bool-value{display:flex;align-items:center;gap:7px;color:var(--ink)}
+.detail-field .v.bool-value::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--read-5)}
+.detail-field .v.bool-value.yes::before{background:var(--success)}
+@media(max-width:720px){.cf-head{grid-template-columns:minmax(0,1fr) auto auto auto}.cf-head .cf-type{grid-column:1/-1;grid-row:2}}
