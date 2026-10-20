@@ -1,11 +1,11 @@
 import { constants } from 'node:fs';
-import { access, copyFile, link, lstat, mkdir, open, readFile, rm } from 'node:fs/promises';
-import { dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
+import { access, copyFile, link, mkdir, open, readFile, realpath, rm } from 'node:fs/promises';
+import { dirname, isAbsolute, normalize, relative, resolve } from 'node:path';
 
 export type BackupDestinationConfig =
   | { kind:'local'; root:string }
   | { kind:'nas'; share:string; protocol:'smb' | 'nfs'; vaultCredentialId?:string }
-  | { kind:'s3'; endpoint:string; bucket:string; prefix?:string; vaultCredentialId:string };
+  | { kind:'s3'; endpoint:string; bucket:string; prefix?:string; region?:string; vaultCredentialId:string };
 
 export interface BackupObjectStore {
   readonly description:string;
@@ -17,9 +17,19 @@ export interface BackupObjectStore {
   close():Promise<void>;
 }
 
-export interface VmNasMountHelper {
-  /** Mounts inside Lima with nosuid,nodev,noexec. The helper alone reads Vault credentials. */
-  mount(request:{ share:string; protocol:'smb' | 'nfs'; vaultCredentialId?:string; flags:readonly ['nosuid','nodev','noexec'] }):Promise<{ mountPoint:string; unmount():Promise<void> }>;
+export const BACKUP_ROOT = '/var/lib/sulla-files-backups';
+
+export function localBackupRoot(root:unknown):string {
+  if (typeof root !== 'string' || !root.startsWith(`${ BACKUP_ROOT }/`) || root.includes('\\') || root.split('/').some(part => part === '.' || part === '..')) throw new Error('Local backups require a subfolder of the VM backup disk');
+  const subdir=root.slice(BACKUP_ROOT.length+1);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(subdir) || subdir.startsWith('nas-')) throw new Error('Invalid local backup subfolder');
+  return root;
+}
+
+export async function checkedBackupDirectory(root:string):Promise<string> {
+  await mkdir(root,{recursive:true,mode:0o700});
+  if (await realpath(root) !== root) throw new Error('Backup directories cannot contain symbolic links');
+  return root;
 }
 
 export interface S3BackupClient {
@@ -28,6 +38,7 @@ export interface S3BackupClient {
   get(bucket:string,key:string):Promise<Buffer>;
   delete(bucket:string,key:string):Promise<void>;
   putFile(bucket:string,key:string,source:string):Promise<void>;
+  close?():void;
 }
 
 function safeKey(key:string):string {
@@ -79,14 +90,11 @@ class S3ObjectStore implements BackupObjectStore {
   putFileImmutable(key:string,source:string):Promise<void> { return this.client.putFile(this.config.bucket,this.key(key),source) }
   get(key:string):Promise<Buffer> { return this.client.get(this.config.bucket,this.key(key)) }
   remove(key:string):Promise<void> { return this.client.delete(this.config.bucket,this.key(key)) }
-  close():Promise<void> { return Promise.resolve() }
+  async close():Promise<void> { this.client.close?.() }
 }
 
-export async function openBackupDestination(config:BackupDestinationConfig, dependencies:{ nas?:VmNasMountHelper; s3?:S3BackupClient } = {}):Promise<BackupObjectStore> {
-  if (config.kind === 'local') return new LocalBackupObjectStore(config.root);
-  if (config.kind === 's3') { if (!dependencies.s3) throw new Error('S3 backup transport is not configured'); return new S3ObjectStore(config, dependencies.s3) }
-  if (!dependencies.nas) throw new Error('The privileged Lima NAS mount helper is not configured');
-  const mounted = await dependencies.nas.mount({ share:config.share, protocol:config.protocol, vaultCredentialId:config.vaultCredentialId, flags:['nosuid','nodev','noexec'] });
-  const info = await lstat(mounted.mountPoint); if (!info.isDirectory() || info.isSymbolicLink()) { await mounted.unmount(); throw new Error('NAS helper returned an unsafe mount point') }
-  return new LocalBackupObjectStore(join(mounted.mountPoint, 'sulla-files-backups'), mounted.unmount);
+export async function openBackupDestination(config:Exclude<BackupDestinationConfig,{kind:'nas'}>, dependencies:{ s3?:S3BackupClient } = {}):Promise<BackupObjectStore> {
+  if (config.kind === 'local') return new LocalBackupObjectStore(await checkedBackupDirectory(localBackupRoot(config.root)));
+  if (!dependencies.s3) throw new Error('S3 backup transport is not configured');
+  return new S3ObjectStore(config, dependencies.s3);
 }

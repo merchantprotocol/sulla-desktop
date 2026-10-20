@@ -23,10 +23,23 @@ interface BackupDestination { id:string; kind:'local'|'nas'|'s3'; label:string; 
 export default defineComponent({
   name: 'preferences-body-files',
   data() {
-    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupEndpoint:'', backupShare:'', backupBucket:'', backupCredentialId:'', loading: true, error: '', saving: new Set<string>() };
+    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupSubfolder:'', backupEndpoint:'', backupShare:'', backupProtocol:'smb' as 'smb'|'nfs', backupBucket:'', backupRegion:'', backupCredentialId:'', backupPoll:undefined as ReturnType<typeof setInterval>|undefined, loading: true, error: '', saving: new Set<string>() };
   },
-  async mounted() { await this.load() },
+  async mounted() {
+    await this.load();
+    this.backupPoll=setInterval(()=>{
+      if(this.backups.some(destination=>destination.status?.state==='running')) void this.loadBackups();
+    },3_000);
+  },
+  beforeUnmount() { if(this.backupPoll) clearInterval(this.backupPoll) },
   methods: {
+    async loadBackups() {
+      try { this.backups=(await ipcRenderer.invoke('files-backups:list')).destinations as BackupDestination[] } catch(error) {this.error=error instanceof Error?error.message:String(error)}
+    },
+    async removeBackup(destination:BackupDestination) {
+      this.saving.add(destination.id);
+      try {await ipcRenderer.invoke('files-backups:remove',destination.id);await this.loadBackups()} catch(error) {this.error=error instanceof Error?error.message:String(error)} finally {this.saving.delete(destination.id)}
+    },
     async load() {
       this.loading = true; this.error = '';
       try { this.roots = await ipcRenderer.invoke('files-preferences:list-roots'); this.backups=(await ipcRenderer.invoke('files-backups:list')).destinations as BackupDestination[] } catch (error) { this.error = error instanceof Error ? error.message : String(error) } finally { this.loading = false }
@@ -68,10 +81,10 @@ export default defineComponent({
     },
     time(value?:string):string { return value ? new Date(value).toLocaleString() : 'Not yet' },
     async addBackup(){
-      const config=this.backupKind==='local' ? {kind:'local',root:this.backupEndpoint} : this.backupKind==='nas'
-        ? {kind:'nas',share:this.backupShare,protocol:this.backupEndpoint==='nfs'?'nfs':'smb',vaultCredentialId:this.backupCredentialId||undefined}
-        : {kind:'s3',endpoint:this.backupEndpoint,bucket:this.backupBucket,vaultCredentialId:this.backupCredentialId};
-      await ipcRenderer.invoke('files-backups:add',{kind:this.backupKind,label:this.backupLabel,config}); await this.load();
+      const config=this.backupKind==='local' ? {kind:'local',root:`/var/lib/sulla-files-backups/${ this.backupSubfolder }`} : this.backupKind==='nas'
+        ? {kind:'nas',share:this.backupShare,protocol:this.backupProtocol,vaultCredentialId:this.backupCredentialId||undefined}
+        : {kind:'s3',endpoint:this.backupEndpoint,bucket:this.backupBucket,region:this.backupRegion||undefined,vaultCredentialId:this.backupCredentialId};
+      try {await ipcRenderer.invoke('files-backups:add',{kind:this.backupKind,label:this.backupLabel,config}); await this.load()} catch(error) {this.error=error instanceof Error?error.message:String(error)}
     },
     async runBackup(destination:BackupDestination){ this.saving.add(destination.id); try { await ipcRenderer.invoke('files-backups:run',destination.id); await this.load() } catch(error){this.error=error instanceof Error?error.message:String(error)} finally {this.saving.delete(destination.id)} },
   },
@@ -97,16 +110,18 @@ export default defineComponent({
     </div>
     <div class="files-heading backup-heading"><div><h3>Backups</h3><p class="description">Hourly for 24 hours, daily for 30 days, and weekly for 12 weeks. Snapshots are verified before older copies are pruned.</p></div></div>
     <div class="root-controls backup-add">
-      <label>Destination <select v-model="backupKind"><option value="local">Local / external volume</option><option value="nas">NAS (SMB/NFS)</option><option value="s3">S3-compatible</option></select></label>
-      <input v-model="backupLabel" placeholder="Name"><input v-if="backupKind === 'local'" v-model="backupEndpoint" placeholder="VM path (not Mac home)"><input v-if="backupKind === 'nas'" v-model="backupShare" placeholder="Share URL"><select v-if="backupKind === 'nas'" v-model="backupEndpoint"><option value="smb">SMB</option><option value="nfs">NFS</option></select><input v-if="backupKind === 's3'" v-model="backupEndpoint" placeholder="HTTPS endpoint"><input v-if="backupKind === 's3'" v-model="backupBucket" placeholder="Bucket"><input v-if="backupKind !== 'local'" v-model="backupCredentialId" placeholder="Vault credential ID">
+      <label>Destination <select v-model="backupKind"><option value="local">This computer (Sulla VM disk)</option><option value="nas">NAS (SMB/NFS)</option><option value="s3">S3-compatible</option></select></label>
+      <input v-model="backupLabel" placeholder="Name"><input v-if="backupKind === 'local'" v-model="backupSubfolder" placeholder="Subfolder name"><input v-if="backupKind === 'nas'" v-model="backupShare" placeholder="Share URL"><select v-if="backupKind === 'nas'" v-model="backupProtocol"><option value="smb">SMB</option><option value="nfs">NFS</option></select><input v-if="backupKind === 's3'" v-model="backupEndpoint" placeholder="HTTPS endpoint"><input v-if="backupKind === 's3'" v-model="backupBucket" placeholder="Bucket"><input v-if="backupKind === 's3'" v-model="backupRegion" placeholder="Signing region (default us-east-1)"><input v-if="backupKind !== 'local'" v-model="backupCredentialId" placeholder="Vault credential ID">
       <button class="btn role-primary" @click="addBackup">Add destination</button>
     </div>
+    <p v-if="backupKind === 'local'" class="description">This copy protects against mistakes, not disk loss: it lives on this computer's Sulla VM disk.</p>
+    <p v-if="backupKind !== 'local'" class="description">Use a personal Vault item with backup_kind (nas or s3) and backup_target matching the exact share URL or HTTPS endpoint. SMB needs username/password; S3 needs accessKeyId/secretAccessKey (optional sessionToken).</p>
     <div class="root-list">
       <section v-for="destination in backups" :key="destination.id" class="root-card">
         <div class="root-summary"><div class="root-name"><strong>{{ destination.label }}</strong><span class="root-path">{{ destination.kind.toUpperCase() }}</span></div><span class="root-state" :class="destination.status?.state">{{ destination.status?.state ?? 'Not run' }}</span></div>
         <div class="root-meta"><span>Last success: {{ destination.status?.state === 'verified' ? time(destination.status.finished_at) : 'Not yet' }}</span><span>Last verified restore: {{ destination.status?.state === 'verified' ? time(destination.status.finished_at) : 'Not yet' }}</span></div>
         <p v-if="destination.status?.error_message" class="root-error">{{ destination.status.error_message }}</p>
-        <div class="root-controls"><button class="btn role-secondary" :disabled="saving.has(destination.id)" @click="runBackup(destination)">Run now</button><button class="btn role-secondary" disabled title="Restore requires an empty Files destination">Restore…</button></div>
+        <div class="root-controls"><button class="btn role-secondary" :disabled="saving.has(destination.id) || destination.status?.state === 'running'" @click="runBackup(destination)">Run now</button><button class="btn role-secondary" disabled title="Restore requires an empty Files destination">Restore…</button><button class="btn role-secondary" :disabled="saving.has(destination.id) || destination.status?.state === 'running'" title="Removes configuration only; backup data is kept" @click="removeBackup(destination)">Remove</button></div>
       </section>
       <div v-if="!backups.length" class="files-empty">No personal backup destination configured.</div>
     </div>

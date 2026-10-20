@@ -522,7 +522,8 @@ export interface IpcMainInvokeEvents {
   'files-preferences:remove-root': (id: string) => void;
   'files-backups:list': () => { destinations:unknown[]; retention:{hourly:number;daily:number;weekly:number} };
   'files-backups:add': (input:{kind:'local'|'nas'|'s3';label:string;config:Record<string,unknown>}) => unknown;
-  'files-backups:run': (id:string) => { snapshotId:string; uploaded:number; reused:number; verified:boolean };
+  'files-backups:run': (id:string) => { runId:string };
+  'files-backups:remove': (id:string) => void;
   'sulla-files:collections':     () => any[];
   'sulla-files:folders': (input: { collectionId:string; details?:boolean }) => (string | import('@pkg/pages/files/types').FilesFolderState)[];
   'sulla-files:operation-capabilities': (input: { collectionId:string }) => {

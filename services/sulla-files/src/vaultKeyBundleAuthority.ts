@@ -41,6 +41,10 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
     }
   }
 
+  backupCredentials(itemId:string,target:string):Promise<import('./backup/s3.js').S3BackupCredentials> {
+    return this.request('backup-credentials','/v1/desktop/files/backup-credentials',{itemId,target});
+  }
+
   unlockedPrincipal():Promise<{ principalId: string; generation: number }> {
     return this.request('principal-read', '/v1/desktop/files/principal');
   }

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { open, readFile } from 'node:fs/promises';
 
 import express from 'express';
 
@@ -29,8 +30,11 @@ import { insertStreamingUpload } from './streamingUpload.js';
 import { isUseCasePath } from './useCasePaths.js';
 import { isSullaWritablePath } from './systemPaths.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
-import { createIncrementalBackup, verifyIncrementalRestore } from './backup/incremental.js';
-import { openBackupDestination, type BackupDestinationConfig } from './backup/destinations.js';
+import { BACKUP_ROOT, checkedBackupDirectory, localBackupRoot, LocalBackupObjectStore, openBackupDestination, type BackupDestinationConfig } from './backup/destinations.js';
+import { PersonalBackupScheduler } from './backup/scheduler.js';
+import { BackupRuntimeRequests } from './backup/runtime.js';
+import { AwsS3BackupClient } from './backup/s3.js';
+import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
@@ -375,31 +379,77 @@ export function createApp(
   }
 
   app.get('/healthz', (_request, response) => response.json(healthPayload(config, ready(), filesLifecycle?.status())));
+  app.use('/v1/local/backups',(_request,response,next)=>config.mode==='desktop'?next():response.sendStatus(404));
+  const backupRuntime=new BackupRuntimeRequests();
+  const backupVault=configuredVaultFilesKeyBundleAuthority(config);
+  const backupScheduler=new PersonalBackupScheduler(db,config,{ready,open:async(id,destination)=>{
+    if(destination.kind==='local') {
+      const root=await checkedBackupDirectory(localBackupRoot(destination.root));
+      return new LocalBackupObjectStore(await checkedBackupDirectory(`${ root }/destinations/${ id }`));
+    }
+    if(destination.kind==='nas') {
+      await backupRuntime.prepare(id);
+      const point=`${ BACKUP_ROOT }/nas-${ id }`;
+      const mounts=(await readFile('/proc/self/mountinfo','utf8')).split('\n');
+      if(!mounts.some(line=>{const parts=line.split(' ');const separator=parts.indexOf('-');return parts[4]===point && ['cifs','nfs','nfs4'].includes(parts[separator+1]) && ['nosuid','nodev','noexec'].every(flag=>parts[5].split(',').includes(flag))})) throw new Error('NAS mount did not propagate into Files');
+      const handle=await open(point,'r');
+      try { return new LocalBackupObjectStore(await checkedBackupDirectory(`${ point }/sulla-files-backups/${ id }`),()=>handle.close()) } catch(error) {await handle.close();throw error}
+    }
+    if(!backupVault) throw new Error('Vault backup credential authority is unavailable');
+    const client=new AwsS3BackupClient(destination.endpoint,await backupVault.backupCredentials(destination.vaultCredentialId,destination.endpoint),destination.region);
+    try { return await openBackupDestination({...destination,prefix:[destination.prefix,`destinations/${ id }`].filter(Boolean).join('/')},{s3:client}) } catch(error) {client.close();throw error}
+  }});
+  app.locals.backupScheduler=backupScheduler;
+  app.locals.backupRuntime=backupRuntime;
   app.get('/v1/local/backups', async(_request,response,next)=>{ try {
     const destinations=(await db.query(`SELECT id,kind,label,config,enabled,created_at,updated_at FROM files_backup_destinations ORDER BY created_at`)).rows;
     const status=(await db.query(`SELECT DISTINCT ON(destination_id) destination_id,state,started_at,finished_at,error_message,snapshot_id
       FROM files_backup_runs ORDER BY destination_id,started_at DESC`)).rows;
-    response.json({destinations:destinations.map(item=>({...item,status:status.find(run=>run.destination_id===item.id)})),retention:{hourly:24,daily:30,weekly:12}});
+    response.json({destinations:destinations.map(item=>({...item,status:status.find(run=>run.destination_id===item.id)})),runtimeRequests:backupRuntime.list(),retention:{hourly:24,daily:30,weekly:12}});
   } catch(error){next(error)} });
+  app.post('/v1/local/backups/runtime/:id',async(request,response)=>{
+    if(!backupRuntime.complete(request.params.id,request.body?.ok===true)) return response.sendStatus(404);
+    response.sendStatus(204);
+  });
   app.post('/v1/local/backups/destinations',async(request,response,next)=>{ try {
-    const kind=request.body?.kind; const label=String(request.body?.label??'').trim(); const destination=request.body?.config as BackupDestinationConfig; const fields=destination as any;
-    if (!['local','nas','s3'].includes(kind) || destination?.kind!==kind || !label) throw new HttpError(400,'Invalid backup destination');
-    if (kind==='local' && (!fields.root || !fields.root.startsWith('/') || fields.root==='/Users' || fields.root.startsWith('/Users/'))) throw new HttpError(400,'Local backup destination must be an absolute non-home VM path');
-    if (kind==='nas' && (!['smb','nfs'].includes(fields.protocol) || !fields.share)) throw new HttpError(400,'Invalid NAS backup destination');
-    if (kind==='s3') { const endpoint=new URL(fields.endpoint); if(endpoint.protocol!=='https:' || !fields.bucket || !fields.vaultCredentialId) throw new HttpError(400,'S3 backups require HTTPS, a bucket, and Vault credentials') }
+    const kind=request.body?.kind; const label=String(request.body?.label??'').trim(); const fields=request.body?.config;
+    if (!['local','nas','s3'].includes(kind) || fields?.kind!==kind || !label || label.length>200) throw new HttpError(400,'Invalid backup destination');
+    if(fields.vaultCredentialId && (typeof fields.vaultCredentialId!=='string' || !UUID.test(fields.vaultCredentialId))) throw new HttpError(400,'Enter a valid Vault item UUID');
+    let destination:BackupDestinationConfig;
+    if (kind==='local') {
+      try { destination={kind,root:localBackupRoot(fields.root)} } catch { throw new HttpError(400,'Local backups require a valid subfolder on the Sulla VM backup disk') }
+    } else if(kind==='nas') {
+      let share:URL;
+      try {share=new URL(fields.share)} catch {throw new HttpError(400,'Enter a valid NAS share URL')}
+      if(!['smb','nfs'].includes(fields.protocol) || share.protocol!==`${ fields.protocol }:` || !share.hostname || share.pathname==='/' || share.username || share.password || share.search || share.hash || share.port) throw new HttpError(400,'Enter an smb://server/share or nfs://server/export URL without credentials');
+      if(fields.protocol==='smb' && !fields.vaultCredentialId) throw new HttpError(400,'SMB backups require Vault credentials');
+      destination={kind,share:fields.share,protocol:fields.protocol,...(fields.vaultCredentialId?{vaultCredentialId:String(fields.vaultCredentialId)}:{})};
+    } else {
+      let endpoint:URL;
+      try {endpoint=new URL(fields.endpoint)} catch {throw new HttpError(400,'Enter a valid HTTPS S3 endpoint')}
+      if(endpoint.protocol!=='https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || !fields.bucket || !fields.vaultCredentialId) throw new HttpError(400,'S3 backups require HTTPS, a bucket, and Vault credentials');
+      if(fields.region && (typeof fields.region!=='string' || !/^[A-Za-z0-9-]{1,64}$/.test(fields.region))) throw new HttpError(400,'Invalid S3 signing region');
+      destination={kind:'s3',endpoint:fields.endpoint,bucket:String(fields.bucket),vaultCredentialId:String(fields.vaultCredentialId),...(fields.region?{region:fields.region}:{}),...(fields.prefix?{prefix:String(fields.prefix)}:{})};
+    }
     const id=randomUUID(); const row=(await db.query(`INSERT INTO files_backup_destinations(id,kind,label,config) VALUES($1,$2,$3,$4) RETURNING *`,[id,kind,label,destination])).rows[0]; response.status(201).json(row);
   } catch(error){next(error)} });
-  app.post('/v1/local/backups/:id/run',async(request,response,next)=>{ const runId=randomUUID(); try {
-    const destination=(await db.query('SELECT * FROM files_backup_destinations WHERE id::text=$1 AND enabled=TRUE',[request.params.id])).rows[0]; if(!destination) throw new HttpError(404,'Backup destination not found');
-    await db.query(`INSERT INTO files_backup_runs(id,destination_id,state) VALUES($1,$2,'running')`,[runId,destination.id]);
-    const objectStore=await openBackupDestination(destination.config);
+  app.delete('/v1/local/backups/destinations/:id',async(request,response,next)=>{
+    const client=await db.connect();
     try {
-      const created=await createIncrementalBackup(config,objectStore,'manual'); await verifyIncrementalRestore(config,objectStore,created.key);
-      const snapshotId=created.manifest.manifest.id; await db.query(`INSERT INTO files_backup_snapshots(id,destination_id,tier,manifest_key,manifest_sha256,created_at,verified_at,restore_verified_at)
-        VALUES($1,$2,'manual',$3,$4,$5,NOW(),NOW())`,[snapshotId,destination.id,created.key,createHash('sha256').update(JSON.stringify(created.manifest)).digest('hex'),created.manifest.manifest.createdAt]);
-      await db.query(`UPDATE files_backup_runs SET state='verified',finished_at=NOW(),snapshot_id=$2 WHERE id=$1`,[runId,snapshotId]); response.json({snapshotId,uploaded:created.uploaded,reused:created.reused,verified:true});
-    } finally { await objectStore.close() }
-  } catch(error:any){ await db.query(`UPDATE files_backup_runs SET state='failed',finished_at=NOW(),error_code=$2,error_message=$3 WHERE id=$1`,[runId,error?.code??'backup-failed',String(error?.message??'Backup failed').slice(0,1000)]).catch(()=>undefined); next(error) } });
+      await client.query('BEGIN');
+      const locked=(await client.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS locked',[`files-backup:${ request.params.id }`])).rows[0].locked;
+      if(!locked) throw new HttpError(409,'Wait for the running backup before removing this destination');
+      const row=(await client.query('SELECT id,kind FROM files_backup_destinations WHERE id::text=$1 FOR UPDATE',[request.params.id])).rows[0];
+      if(!row) throw new HttpError(404,'Backup destination not found');
+      if(row.kind==='nas') await backupRuntime.prepare(row.id,'unmount');
+      await client.query('DELETE FROM files_backup_destinations WHERE id=$1',[row.id]);
+      await client.query('COMMIT');response.sendStatus(204);
+    } catch(error) {await client.query('ROLLBACK');next(error)} finally {client.release()}
+  });
+  app.post('/v1/local/backups/:id/run',async(request,response,next)=>{ try {
+    const destination=(await db.query('SELECT * FROM files_backup_destinations WHERE id::text=$1 AND enabled=TRUE',[request.params.id])).rows[0]; if(!destination) throw new HttpError(404,'Backup destination not found');
+    try { response.status(202).json({runId:await backupScheduler.enqueue(destination.id,destination.config,'hourly')}) } catch { throw new HttpError(409,'Backup is already running or the service is unavailable') }
+  } catch(error){next(error)} });
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
     response.json((await db.query('SELECT id,system_area AS \"systemArea\" FROM collections WHERE system_area IS NOT NULL')).rows);

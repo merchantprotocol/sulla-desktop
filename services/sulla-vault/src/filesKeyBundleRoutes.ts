@@ -50,6 +50,7 @@ function string(value:unknown, name:string, max = 4096):string {
 export function createFilesKeyBundleRouter(
   authority:VaultFilesKeyBundleAuthority,
   identity:{ serviceId: string; token: string },
+  backupCredentials?:(itemId:string,target:string)=>Promise<Record<string,string>>,
 ):express.Router {
   if (!identity.serviceId || Buffer.byteLength(identity.token) < 32) {
     throw new Error('Vault Files service identity is not configured');
@@ -63,6 +64,13 @@ export function createFilesKeyBundleRouter(
       return;
     }
     next();
+  });
+  router.post('/backup-credentials',async(request,response,next)=>{
+    try {
+      if(!backupCredentials) return response.sendStatus(404);
+      response.setHeader('Cache-Control','no-store');
+      response.json(await backupCredentials(string(request.body?.itemId,'itemId',36),string(request.body?.target,'target',2048)));
+    } catch(error) { next(error) }
   });
   router.get('/principal', async(_request, response, next) => {
     try {

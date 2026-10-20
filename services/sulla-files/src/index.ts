@@ -156,6 +156,7 @@ if (config.mode === 'server') {
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
 const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
+if(config.mode==='desktop') app.locals.backupScheduler.start();
 const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWriter.drain().catch((error:unknown)=>console.error('[SullaFiles] audit delivery failed; retry pending',error)) },1000);
 auditTimer.unref();
 const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
@@ -172,6 +173,8 @@ function listening() {
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     clearInterval(auditTimer);
+    app.locals.backupScheduler.stop();
+    app.locals.backupRuntime.stop();
     server.close(() => {
       lifecycle.lock().finally(() => {
         return Promise.all([db.end(), identityDb?.end()]).finally(() => process.exit(0));

@@ -522,6 +522,24 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
   }
 
+  /** Narrow backup-only egress: personal items, fixed field allowlist, and a bound destination. */
+  async backupCredentials(itemId:string,kind:'s3'|'nas',target:string):Promise<Record<string,string>> {
+    const keys=this.requireKeys(); const generation=this.generation;
+    if (!/^[0-9a-f-]{36}$/i.test(itemId)) throw new LocalVaultError('invalid_operation',400,'Backup credential ID is invalid');
+    const item=(await this.db.query<ItemRow>(`SELECT * FROM items WHERE id=$1 AND owner_user_id=$2 AND collection_id IS NULL AND deleted_at IS NULL`,[itemId,keys.userId])).rows[0];
+    if (!item) throw new LocalVaultError('policy_denied',403,'Backup credential is unavailable');
+    const plaintext=JSON.parse(await decryptItemText({version:1,ciphertext:item.ciphertext,encryptedItemKey:item.encrypted_item_key},keys.userKey,{itemId:item.id,ownerId:keys.userId})) as VaultItemPlaintext;
+    const bound=credentialField(plaintext,'backup_target');
+    if (credentialField(plaintext,'backup_kind')!==kind || bound!==target) throw new LocalVaultError('policy_denied',403,'Vault item must bind backup_kind and backup_target to this destination');
+    const fields=kind==='s3'?['accessKeyId','secretAccessKey','sessionToken']:['username','password','domain'];
+    const result:Record<string,string>={};
+    for(const field of fields) { const value=credentialField(plaintext,field); if(value) result[field]=value }
+    if(kind==='s3' && (!result.accessKeyId || !result.secretAccessKey)) throw new LocalVaultError('credential_field_missing',400,'S3 backup credentials are incomplete');
+    if(kind==='nas' && (!result.username || !result.password)) throw new LocalVaultError('credential_field_missing',400,'SMB backup credentials are incomplete');
+    this.requireGeneration(generation);
+    return result;
+  }
+
   createCacheUpdateChallenge(callerId: string, clientNonce: string, clientProof: string): {
     challengeId: string; serverNonce: string; serverProof: string; expiresAt: number;
   } {

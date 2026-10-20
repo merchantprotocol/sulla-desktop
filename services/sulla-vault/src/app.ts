@@ -267,7 +267,13 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.use('/v1/desktop/files', createFilesKeyBundleRouter(filesKeyBundleAuthority!, {
       serviceId: config.filesServiceId!,
       token: config.filesServiceToken!,
-    }));
+    },(id,target)=>localAuthority.backupCredentials(id,'s3',target)));
+    app.post('/v1/desktop/backup-credentials',async(request,response)=>{
+      const identity=serviceIdentity(request);
+      if(identity.serviceId!==config.approvalServiceId || !safeTokenEqual(identity.token,config.approvalServiceToken)) return response.sendStatus(401);
+      response.setHeader('Cache-Control','no-store');
+      response.json(await localAuthority.backupCredentials(requiredString(request.body.itemId,'itemId'),'nas',requiredString(request.body.target,'target')));
+    });
     app.post('/v1/desktop/bootstrap/challenge', (request, response) => {
       response.json(localAuthority.createChallenge(
         requiredString(request.body.callerId, 'callerId'),

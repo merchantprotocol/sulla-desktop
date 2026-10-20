@@ -60,6 +60,14 @@ export class SullaFilesClient {
     return response.status === 204 ? undefined as T : response.json() as Promise<T>;
   }
 
+  /** Backup control uses the authenticated local channel, never an agent capability alone. */
+  async backupJson<T>(endpoint:string,init:RequestInit={}):Promise<T> {
+    if(!/^\/v1\/local\/backups(?:\/|$)/.test(endpoint)) throw new Error('Invalid backup control endpoint');
+    const response=await getSullaFilesWatcher().requestNativeFiles(endpoint,init);
+    if(!response.ok) throw new FilesApiError(await errorMessage(response),response.status);
+    return response.status===204?undefined as T:response.json() as Promise<T>;
+  }
+
   folderOperationState(collectionId:string, path:string):Promise<FilesFolderOperationState> {
     const query = new URLSearchParams({ collectionId, path });
 

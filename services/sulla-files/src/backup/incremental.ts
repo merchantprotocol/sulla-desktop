@@ -89,6 +89,15 @@ export async function verifyIncrementalManifest(store:BackupObjectStore,key:stri
   return signed;
 }
 
+export async function promoteManifest(store:BackupObjectStore,source:SignedIncrementalManifest,tier:'daily'|'weekly',key:string|Buffer):Promise<{key:string;manifest:SignedIncrementalManifest}> {
+  const manifest:IncrementalManifest={...source.manifest,id:randomUUID(),tier};
+  const signed:SignedIncrementalManifest={manifest,signature:{algorithm:'hmac-sha256',value:signature(manifest,key)}};
+  const path=`snapshots/${ manifest.createdAt.slice(0,10) }/${ manifest.id }.json`;
+  await store.putImmutable(path,JSON.stringify(signed));
+  await verifyIncrementalManifest(store,path,key);
+  return {key:path,manifest:signed};
+}
+
 export function retentionVictims(manifests:SignedIncrementalManifest[],now=new Date()):SignedIncrementalManifest[] {
   const limits={hourly:{count:24,age:24*60*60_000},daily:{count:30,age:30*24*60*60_000},weekly:{count:12,age:12*7*24*60*60_000}} as const;
   const victims:SignedIncrementalManifest[]=[];
