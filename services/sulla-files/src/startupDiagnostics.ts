@@ -30,6 +30,7 @@ export type FilesDiagnosticClass =
   | 'vault-authority';
 
 export type VaultAuthorityOperation =
+  | 'backup-credentials'
   | 'principal-read'
   | 'custody-recipient'
   | 'bundle-registration'
@@ -52,7 +53,7 @@ const DIAGNOSTIC_CLASSES = new Set<FilesDiagnosticClass>([
   'bootstrap', 'database', 'filesystem', 'master-key', 'startup', 'transport', 'vault-authority',
 ]);
 const VAULT_OPERATIONS = new Set<VaultAuthorityOperation>([
-  'principal-read', 'custody-recipient', 'bundle-registration', 'device-recovery',
+  'backup-credentials', 'principal-read', 'custody-recipient', 'bundle-registration', 'device-recovery',
 ]);
 const BOOTSTRAP_CODES = new Set([
   'FILES_BOOTSTRAP_CANCELLED',

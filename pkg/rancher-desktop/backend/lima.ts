@@ -65,6 +65,7 @@ import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
 import { SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchor } from '@pkg/backend/guestMountInfo';
+import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
 import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
@@ -3046,6 +3047,7 @@ start_pre() {
       } else {
         await this.reconcileSullaDockerEnvironment(generation);
         markSullaDockerServicesStarted();
+        getSullaFilesBackups().configureGuest(this);
         getSullaFilesMountManager().configureGuest(this, () => this.recoverSullaFilesGuestMount());
       }
       this.assertManagedServicesGeneration(generation);
@@ -3740,6 +3742,7 @@ start_pre() {
       ports: ['127.0.0.1:30124:8792'],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
+        '/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave',
         // The image declares VOLUME /data/files. Without an explicit mount,
         // compose re-inherits whatever an older container had there on every
         // recreate -- including a stale host bind (~/sulla/files) the VM can
@@ -3760,6 +3763,9 @@ start_pre() {
         interval: '5s', timeout: '3s', retries: 10,
       },
     };
+
+    // Backups are optional: a bad anchor must never stop Files from booting.
+    try { await getSullaFilesBackups().prepareAnchor(this) } catch (error) { console.warn('[SullaFiles] backup mount anchor unavailable; NAS backups disabled this session', error) }
 
     // The guest Files mount is optional: if its anchor cannot be prepared the
     // adapter is left out of compose and Desktop keeps booting without it.
@@ -4210,6 +4216,7 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
 
     this.invalidateManagedServicesGeneration();
     await getSullaFilesMountManager().stop().catch(error => console.warn('[SullaFiles] guest mount shutdown failed:', error));
+    getSullaFilesBackups().clearGuest(this);
     getSullaFilesMountManager().clearGuest(this);
     if (this.currentAction === Action.STARTING && this.#backendStartSettled) {
       await this.#backendStartSettled;
