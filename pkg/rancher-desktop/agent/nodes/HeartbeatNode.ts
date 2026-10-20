@@ -4,7 +4,7 @@
 // and shows desktop notifications instead of WebSocket chat messages.
 
 import { BaseNode } from './BaseNode';
-import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
 import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 import { buildIdeaLabDigest, IDEA_LAB_PROJECT_SLUG } from '../prompts/heartbeatIdeaLab';
 import { throwIfAborted } from '../services/AbortService';
@@ -244,6 +244,20 @@ export class HeartbeatNode extends BaseNode {
         showHeartbeatNotification(notifTitle, notifMessage);
       } catch (err) {
         console.warn('[HeartbeatNode] Failed to show desktop notification:', err);
+      }
+    }
+
+    // Heartbeat used the recall half of the subconscious pipeline but never
+    // invoked its post-turn writers. That left headless/autonomous exchanges
+    // invisible to observations even though their completed messages were in
+    // state. Match AgentNode and launch writers only after the final response.
+    if (outcome.status === 'done' || outcome.status === 'blocked' ||
+        (outcome.status === 'in_progress' && !state.metadata.hadToolCalls)) {
+      try {
+        const includeObservations = await this.shouldInjectObservationsForAgent(state);
+        runSubconsciousObservationWriters(state, { includeObservations });
+      } catch (err) {
+        console.warn('[HeartbeatNode] post-turn observation writers failed to launch:', err);
       }
     }
 

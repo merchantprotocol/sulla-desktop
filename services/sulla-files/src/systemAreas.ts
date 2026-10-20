@@ -6,7 +6,14 @@ import type pg from 'pg';
 const AREAS = [
   { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault', 'app'] },
   { key: 'training-data', name: 'Training Data', explorerPath: 'Training Data', folders: [] },
-  { key: 'sulla', name: 'Sulla', explorerPath: 'Sulla', folders: ['Docs', 'Use Cases/skills', 'Use Cases/workflows', 'Use Cases/agents', 'Use Cases/functions', 'Use Cases/recipes', 'Projects', 'Identity'] },
+  { key: 'sulla', name: 'Sulla', explorerPath: 'Sulla', folders: [
+    { path: 'Docs' }, { path: 'Use Cases/skills' }, { path: 'Use Cases/workflows' }, { path: 'Use Cases/agents' },
+    { path: 'Use Cases/functions' }, { path: 'Use Cases/recipes' }, { path: 'Projects' }, { path: 'Identity' },
+    { path: 'Memory', description: 'Durable agent memory. Memory files are live as soon as they are written (no publish step). Record durable facts as observations too.' },
+    { path: 'Memory/claude-code', description: 'Claude Code project memory files.' },
+    { path: 'Memory/codex', description: 'Codex CLI memory database snapshot.' },
+    { path: 'Memory/sulla', description: 'Memories written by Sulla agents and services.' },
+  ] },
 ] as const;
 
 export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void> {
@@ -26,11 +33,15 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
         const wrapped = await config.keyring.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
       }
-      for (const folder of area.folders) {
+      for (const folderEntry of area.folders) {
+        const folder = typeof folderEntry === 'string' ? folderEntry : folderEntry.path;
         const parts = folder.split('/');
         for (let index = 1; index <= parts.length; index++) {
-          await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id)
-            VALUES($1,$2,'service','sulla-files') ON CONFLICT(collection_id,path) DO NOTHING`, [collection.id, parts.slice(0, index).join('/')]);
+          const path = parts.slice(0, index).join('/');
+          const description = index === parts.length && typeof folderEntry !== 'string' ? folderEntry.description ?? null : null;
+          await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
+            VALUES($1,$2,'service','sulla-files',$3) ON CONFLICT(collection_id,path) DO UPDATE
+            SET description=COALESCE(EXCLUDED.description,file_folders.description)`, [collection.id, path, description]);
         }
       }
     }

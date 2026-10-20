@@ -243,7 +243,14 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    // Codex has no memory-dir setting, and SQLite locking over FUSE is not
+    // safe. Keep the live db local; restore it from Files after a VM restart
+    // wiped it, and snapshot the current copy into Files on every launch.
+    const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then M=/mnt/sulla-files/Sulla/Memory/codex; L="$HOME/.codex/memories_1.sqlite"; ` +
+      `mkdir -p "$M" "$HOME/.codex"; ` +
+      `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
+      `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -721,6 +728,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
 - You are part of a live multi-agent network — Heartbeat and other agents are active
+- Durable agent memory lives in Files under \`Sulla/Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 
     stableParts.push(`<environment>

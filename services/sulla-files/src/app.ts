@@ -27,6 +27,7 @@ import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload } from './streamingUpload.js';
 import { isUseCasePath } from './useCasePaths.js';
+import { isSullaWritablePath } from './systemPaths.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import type { FilesLifecycle } from './lifecycle.js';
@@ -886,7 +887,7 @@ export function createApp(
   app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
-    if (collection.system_area === 'sulla' && !path.startsWith('Use Cases/')) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts');
+    if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts and durable Memory');
     await requirePath(request, collection.id, path, 'edit');
     const bytes = request.body.contentBase64 !== undefined
       ? Buffer.from(String(request.body.contentBase64), 'base64')
@@ -917,8 +918,8 @@ export function createApp(
     if (expectedVersionId !== undefined && (!existing || existing.current_version_id !== expectedVersionId)) {
       throw new HttpError(409, `file version conflict; current version is ${ existing?.current_version_id ?? 'missing' }`);
     }
-    const useCaseDraft = collection.system_area === 'sulla' && path.startsWith('Use Cases/');
-    if (existing && !useCaseDraft && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
+    const sharedSullaPath = collection.system_area === 'sulla' && isSullaWritablePath(path);
+    if (existing && !sharedSullaPath && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
       throw new HttpError(409, 'artifact path belongs to another creator');
     }
     if (versionId) {
