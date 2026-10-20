@@ -3764,7 +3764,8 @@ start_pre() {
       },
     };
 
-    await getSullaFilesBackups().prepareAnchor(this);
+    // Backups are optional: a bad anchor must never stop Files from booting.
+    try { await getSullaFilesBackups().prepareAnchor(this) } catch (error) { console.warn('[SullaFiles] backup mount anchor unavailable; NAS backups disabled this session', error) }
 
     // The guest Files mount is optional: if its anchor cannot be prepared the
     // adapter is left out of compose and Desktop keeps booting without it.

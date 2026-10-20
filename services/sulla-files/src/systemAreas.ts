@@ -38,7 +38,7 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
         const parts = folder.split('/');
         for (let index = 1; index <= parts.length; index++) {
           const path = parts.slice(0, index).join('/');
-          const description = index === parts.length && typeof folderEntry !== 'string' ? folderEntry.description ?? null : null;
+          const description = index === parts.length && typeof folderEntry !== 'string' && 'description' in folderEntry ? folderEntry.description : null;
           await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
             VALUES($1,$2,'service','sulla-files',$3) ON CONFLICT(collection_id,path) DO UPDATE
             SET description=COALESCE(EXCLUDED.description,file_folders.description)`, [collection.id, path, description]);
