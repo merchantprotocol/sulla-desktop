@@ -17,9 +17,16 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
   'sulla-cloud.api': {
     integrations: ['sulla-cloud'],
     hosts: ['sulla-workers.merchantprotocol.workers.dev'],
+    methods: ['GET', 'POST'],
+    injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/(?:calls(?:\/[A-Za-z0-9._~-]{1,200})?|leads|messages|devices|push\/[A-Za-z0-9._~-]{1,200})$/,
+  },
+  'sulla-cloud.shares': {
+    integrations: ['sulla-cloud'],
+    hosts: ['sulla-workers.merchantprotocol.workers.dev'],
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT'],
     injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
-    pathPattern: /^\/(?:calls(?:\/[A-Za-z0-9._~-]{1,200})?|leads|messages|devices|push\/[A-Za-z0-9._~-]{1,200}|shares(?:\/[A-Za-z0-9._~-]{1,200}(?:\/content)?)?)$/,
+    pathPattern: /^\/shares(?:\/[A-Za-z0-9._~-]{1,200}(?:\/content)?)?$/,
   },
   'provider.transcription': {
     integrations: ['grok'],

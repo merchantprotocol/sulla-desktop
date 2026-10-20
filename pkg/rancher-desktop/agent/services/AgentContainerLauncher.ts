@@ -167,6 +167,15 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
   }
 }
 
+/** Docker containers need the Lima guest's host aliases explicitly; Docker's
+ * host-gateway points at the Docker bridge, not the Lima host service address. */
+async function containerHostAliases(): Promise<string[]> {
+  const output = await limactl(['sh', '-c', 'getent ahostsv4 host.lima.internal | awk \'NR == 1 { print $1 }\'']);
+  const address = output.stdout.trim().split(/\s+/)[0];
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) throw new Error('Could not resolve the Lima host address for agent containers');
+  return ['host.lima.internal', 'host.docker.internal', 'host.rancher-desktop.internal'].map(host => `${ host }:${ address }`);
+}
+
 let imageReady: Promise<string> | null = null;
 
 /** Re-resolve the lazy transport image after each backend start generation. */
@@ -630,6 +639,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       },
       binds,
       network:     'sulla_default',
+      extraHosts: await containerHostAliases(),
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
       tmpfs:       { '/home/sulla': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700` },
