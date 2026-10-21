@@ -714,7 +714,6 @@ export class SpawnAgentWorker extends BaseTool {
       throw err;
     } finally {
       stopDeadRunWatch?.();
-      await endAgentScratch(syncJob.jobId);
     }
     // The caller is reading the results right here; only the durable display /
     // ownership record needs settling, not a background wake.
