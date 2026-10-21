@@ -1,6 +1,8 @@
 import { startVectorBackfill } from './vectorBackfill.js';
+import { startSearchCleanup } from './searchCleanup.js';
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import http, { type RequestListener } from 'node:http';
 import https from 'node:https';
 
 import { installAuditContext } from './auditContext.js';
@@ -32,7 +34,18 @@ import { adoptVaultPrincipal } from './vaultPrincipal.js';
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
-const db = await connect(config.databaseUrl); await migrate(db); startVectorBackfill(db);
+const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
+if (config.mode === 'desktop' && !tlsEnabled) throw new Error('Files TLS identity is required in desktop mode');
+let requestHandler:RequestListener = (_request, response) => {
+  response.writeHead(503, { 'content-type': 'application/json' }); response.end('{"status":"starting"}');
+};
+const server = tlsEnabled
+  ? https.createServer({ cert: await readFile(config.tlsCertificatePath!), key: await readFile(config.tlsPrivateKeyPath!) },
+    (request, response) => requestHandler(request, response)).listen(config.port, '0.0.0.0', listening)
+  : http.createServer((request, response) => requestHandler(request, response)).listen(config.port, '0.0.0.0', listening);
+function listening() { console.log(`[SullaFiles] ${ config.mode } liveness listening on ${ config.port }`); }
+
+const db = await connect(config.databaseUrl); await migrate(db);
 installAuditContext(db);
 const processDiagnostics = new FilesStartupDiagnostics();
 if (config.mode === 'desktop') {
@@ -159,20 +172,13 @@ if (config.mode === 'server') {
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
 const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
+requestHandler = app;
+startSearchCleanup(db);
+startVectorBackfill(db);
 if(config.mode==='desktop') app.locals.backupScheduler.start();
 const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWriter.drain().catch((error:unknown)=>console.error('[SullaFiles] audit delivery failed; retry pending',error)) },1000);
 auditTimer.unref();
-const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);
-if (config.mode === 'desktop' && !tlsEnabled) throw new Error('Files TLS identity is required in desktop mode');
-const server = tlsEnabled
-  ? https.createServer({
-    cert: await readFile(config.tlsCertificatePath!),
-    key:  await readFile(config.tlsPrivateKeyPath!),
-  }, app).listen(config.port, '0.0.0.0', listening)
-  : app.listen(config.port, '0.0.0.0', listening);
-function listening() {
-  console.log(`[SullaFiles] ${ config.mode } service listening on ${ config.port }`);
-}
+console.log(`[SullaFiles] ${ config.mode } service ready on ${ config.port }`);
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     clearInterval(auditTimer);

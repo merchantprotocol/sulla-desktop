@@ -3688,7 +3688,7 @@ start_pre() {
           'CMD', 'node', '-e',
           "const fs=require('fs'),https=require('https');const r=https.get({hostname:'127.0.0.1',port:8792,path:'/healthz',ca:fs.readFileSync('/run/sulla-files-tls/tls.crt')},x=>{x.resume();process.exit(x.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2500,()=>r.destroy())",
         ],
-        interval: '5s', timeout: '3s', retries: 10,
+        interval: '5s', timeout: '3s', retries: 10, start_period: '10m',
       },
     };
 
@@ -3981,8 +3981,18 @@ start_pre() {
           for (const { service, container } of orderedOptionalServices) {
             if (this.#activeOptionalSullaServices.has(service)) continue;
             try {
-              await startOptionalService(service);
-              await this.waitForDockerServiceHealthy(container, 20, generation);
+              // Files can legitimately spend minutes applying a first-start
+              // schema upgrade. Do not re-run compose against a live starter.
+              if (service === 'sulla_files') {
+                const state = await this.execCommand(
+                  { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
+                  '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', container,
+                );
+                if (!state.trim().startsWith('running')) await startOptionalService(service);
+              } else {
+                await startOptionalService(service);
+              }
+              await this.waitForDockerServiceHealthy(container, service === 'sulla_files' ? 600 : 20, generation);
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
             } catch (error) {
