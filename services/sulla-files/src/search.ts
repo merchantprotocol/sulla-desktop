@@ -1,3 +1,4 @@
+import { vectorSearchReady } from './vectorState.js';
 import { basename } from 'node:path';
 
 import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
@@ -40,14 +41,9 @@ function filteredWhere(input:SearchInput, scopes:CollectionSearchScope[], args:a
 
 export class FileSearch {
   private readonly embedder: PotionEmbedder;
-  private vectorTable?:      boolean;
   constructor(private readonly db:pg.Pool, model:PotionEmbedder | string) { this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model }
 
-  private async hasVectorTable():Promise<boolean> {
-    if (this.vectorTable !== undefined) return this.vectorTable;
-    this.vectorTable = Boolean((await this.db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
-    return this.vectorTable;
-  }
+  private hasVectorTable():Promise<boolean> { return vectorSearchReady(this.db) }
 
   private async boundedQuery<T extends pg.QueryResultRow>(text:string, values:any[]):Promise<pg.QueryResult<T> | undefined> {
     // node-pg ignores AbortSignal in QueryConfig. Keep cancellation honest:
@@ -56,6 +52,10 @@ export class FileSearch {
     try {
       await client.query('BEGIN');
       await client.query("SET LOCAL statement_timeout = '5s'");
+      if (text.includes('file_search_vectors')) {
+        await client.query("SET LOCAL hnsw.ef_search = 200");
+        await client.query("SET LOCAL hnsw.iterative_scan = strict_order");
+      }
       const result = await client.query<T>(text, values);
       await client.query('COMMIT');
       return result;
@@ -113,11 +113,22 @@ export class FileSearch {
     const semanticArgs:any[] = []; const semanticWhere = filteredWhere(input, scopes, semanticArgs); const semanticVersion = visibleVersion(semanticArgs);
     if (await this.hasVectorTable()) {
       semanticArgs.push(vectorLiteral(vector));
-      semantic = (await this.boundedQuery<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
-        1-(sv.embedding <=> $${ semanticArgs.length }::vector) signal
+      const q = `$${ semanticArgs.length }::halfvec`;
+      const nearestLimit = input.folder || input.type || input.person || input.from || input.to || input.publishedOnly ? 2000 : 500;
+      // Take candidates straight from the HNSW index (no joins, so the planner can use it), then
+      // apply visibility/scope filters. If the filters leave fewer than 60 rows, fall back to the
+      // exact filtered scan so scoped searches never lose results.
+      const nearest = (await this.boundedQuery<Candidate>(`WITH nearest AS MATERIALIZED (
+          SELECT chunk_id, embedding <=> ${ q } dist FROM file_search_vectors ORDER BY embedding <=> ${ q } LIMIT ${ nearestLimit })
+        SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,1-n.dist signal
+        FROM nearest n JOIN file_search_chunks sc ON sc.id=n.chunk_id JOIN files f ON f.id=sc.file_id JOIN file_versions v ON v.id=${ semanticVersion }
+        WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=${ semanticVersion }
+        ORDER BY n.dist LIMIT 60`, semanticArgs))?.rows ?? [];
+      semantic = nearest.length >= 60 ? nearest : (await this.boundedQuery<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
+        1-(sv.embedding <=> ${ q }) signal
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id JOIN file_search_vectors sv ON sv.chunk_id=sc.id
         WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=${ semanticVersion }
-        ORDER BY sv.embedding <=> $${ semanticArgs.length }::vector LIMIT 60`, semanticArgs))?.rows ?? [];
+        ORDER BY sv.embedding <=> ${ q } LIMIT 60`, semanticArgs))?.rows ?? nearest;
     } else {
       const bounded = (await this.boundedQuery<any>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=v.id

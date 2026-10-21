@@ -1,3 +1,4 @@
+import { startVectorBackfill } from './vectorBackfill.js';
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import https from 'node:https';
@@ -31,7 +32,7 @@ import { adoptVaultPrincipal } from './vaultPrincipal.js';
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
-const db = await connect(config.databaseUrl); await migrate(db);
+const db = await connect(config.databaseUrl); await migrate(db); startVectorBackfill(db);
 installAuditContext(db);
 const processDiagnostics = new FilesStartupDiagnostics();
 if (config.mode === 'desktop') {
