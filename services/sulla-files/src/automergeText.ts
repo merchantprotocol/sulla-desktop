@@ -1,0 +1,22 @@
+import * as Automerge from '@automerge/automerge';
+
+export interface TextDocument { text:string }
+
+export function utf8Text(bytes:Buffer):string | undefined {
+  try {
+    const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+    return text.includes('\0') ? undefined : text;
+  } catch { return undefined }
+}
+
+export function newTextDocument(text:string):Automerge.Doc<TextDocument> { return Automerge.from<TextDocument>({text}) }
+export function editTextDocument(document:Automerge.Doc<TextDocument>,text:string):Automerge.Doc<TextDocument> {
+  return Automerge.change(document,draft=>Automerge.updateText(draft,['text'],text));
+}
+export function mergeTextDocuments(baseText:string,currentText:string,submittedText:string) {
+  const base=newTextDocument(baseText);
+  return Automerge.merge(editTextDocument(Automerge.clone(base),currentText),editTextDocument(Automerge.clone(base),submittedText));
+}
+export const saveTextDocument=(document:Automerge.Doc<TextDocument>)=>Buffer.from(Automerge.save(document));
+export const loadTextDocument=(bytes:Buffer)=>Automerge.load<TextDocument>(bytes);
+export const textDocumentHeads=(document:Automerge.Doc<TextDocument>)=>Automerge.getHeads(document);
