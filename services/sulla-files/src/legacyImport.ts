@@ -572,9 +572,12 @@ export class LegacyFilesImporter {
       }
     }
     trace.mark('file-publication');
-    await client.query(`INSERT INTO files(id,collection_id,path,deleted_at,expires_at,created_by_type,created_by_id,mime,size,search_text,created_at,updated_at,extracted_at,extraction_status,person_id)
-        SELECT fm.shadow_file_id,fm.shadow_collection_id,f.path,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.search_text,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id
+    await client.query(`INSERT INTO files(id,collection_id,path,deleted_at,expires_at,created_by_type,created_by_id,mime,size,created_at,updated_at,extracted_at,extraction_status,person_id)
+        SELECT fm.shadow_file_id,fm.shadow_collection_id,f.path,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id
         FROM files f JOIN files_legacy_file_map fm ON fm.source_file_id=f.id ON CONFLICT(id) DO NOTHING`);
+    await client.query(`INSERT INTO file_search_text(file_id,path,search_text)
+        SELECT fm.shadow_file_id,f.path,s.search_text FROM files_legacy_file_map fm JOIN files f ON f.id=fm.source_file_id LEFT JOIN file_search_text s ON s.file_id=f.id
+        ON CONFLICT(file_id) DO UPDATE SET search_text=EXCLUDED.search_text WHERE EXISTS(SELECT 1 FROM files target WHERE target.id=EXCLUDED.file_id AND target.current_version_id IS NULL)`);
     const versionMap = new Map((await client.query('SELECT source_version_id::text,shadow_version_id::text FROM files_legacy_version_map')).rows.map(row => [row.source_version_id, row.shadow_version_id]));
     const fileMap = new Map((await client.query('SELECT source_file_id::text,shadow_file_id::text FROM files_legacy_file_map')).rows.map(row => [row.source_file_id, row.shadow_file_id]));
     trace.mark('version-publication');

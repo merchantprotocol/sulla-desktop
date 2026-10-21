@@ -102,16 +102,17 @@ integration('publishes a complete retry-safe legacy snapshot in PostgreSQL', asy
     await db.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
       VALUES($1,$2,$3,$4,$5,$6,'user','owner','post-import native edit','native-device',$4)`,
     [nativeEdit, shadow.shadow_file_id, shadow.shadow_collection_id, shadow.shadow_version_id, shadow.manifest_hash, legacyPlain.length]);
-    await db.query("UPDATE files SET current_version_id=$2,path='Native/renamed-after-import.txt',search_text='native metadata' WHERE id=$1", [shadow.shadow_file_id, nativeEdit]);
+    await db.query("UPDATE files SET current_version_id=$2,path='Native/renamed-after-import.txt' WHERE id=$1", [shadow.shadow_file_id, nativeEdit]);
+    await db.query("UPDATE file_search_text SET search_text='native metadata' WHERE file_id=$1", [shadow.shadow_file_id]);
     await db.query("INSERT INTO collection_acl(collection_id,principal_type,principal_id,role) VALUES($1,'group','post-import-group','view')", [shadow.shadow_collection_id]);
     await db.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1', [shadow.shadow_collection_id]);
-    const beforeRetry = (await db.query(`SELECT f.current_version_id,f.path,f.search_text,
+    const beforeRetry = (await db.query(`SELECT f.current_version_id,f.path,s.search_text,
       (SELECT count(*)::int FROM collection_acl WHERE collection_id=$2) acl_count,
-      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
+      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f JOIN file_search_text s ON s.file_id=f.id WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
     assert.equal((await importer.run(nativeMaster, [legacyMaster])).versions, 5);
-    const afterRetry = (await db.query(`SELECT f.current_version_id,f.path,f.search_text,
+    const afterRetry = (await db.query(`SELECT f.current_version_id,f.path,s.search_text,
       (SELECT count(*)::int FROM collection_acl WHERE collection_id=$2) acl_count,
-      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
+      (SELECT jsonb_object_agg(id,refcount) FROM chunks WHERE collection_id=$2) refcounts FROM files f JOIN file_search_text s ON s.file_id=f.id WHERE f.id=$1`, [shadow.shadow_file_id, shadow.shadow_collection_id])).rows[0];
     assert.deepEqual(afterRetry, beforeRetry); assert.equal(afterRetry.current_version_id, nativeEdit);
 
     // A retired writer may append one final version after the import receipt

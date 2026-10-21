@@ -37,7 +37,8 @@ export function shouldSkipSearchIndex(headerValue:string | undefined, systemArea
  */
 export async function skipSearchIndexForVersion(client:Queryable, fileId:string, versionId:string):Promise<void> {
   await client.query('DELETE FROM file_index_jobs WHERE file_id=$1 AND version_id=$2', [fileId, versionId]);
-  await client.query(`UPDATE files SET search_text=NULL,extracted_at=NOW(),extraction_status='unsupported',
+  await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]);
+  await client.query(`UPDATE files SET extracted_at=NOW(),extraction_status='unsupported',
     extraction_reason_code='system_area_unindexed',extraction_reason='System-area files are stored without search indexing.'
     WHERE id=$1 AND current_version_id=$2`, [fileId, versionId]);
 }

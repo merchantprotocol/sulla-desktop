@@ -58,7 +58,8 @@ export class IndexingQueue {
       await client.query(`INSERT INTO file_index_jobs(file_id,version_id,status,attempts,last_error,available_at,started_at,finished_at,reason_code,reason)
         VALUES($1,$2,'pending',0,NULL,NOW(),NULL,NULL,'manual_retry','Waiting for local indexing.')
         ON CONFLICT(version_id) DO UPDATE SET status='pending',attempts=0,last_error=NULL,available_at=NOW(),started_at=NULL,finished_at=NULL,reason_code='manual_retry',reason='Waiting for local indexing.'`, [fileId, file.current_version_id]);
-      await client.query("UPDATE files SET search_text=NULL,extracted_at=NULL,extraction_status='pending',extraction_reason_code='manual_retry',extraction_reason='Waiting for local indexing.' WHERE id=$1", [fileId]);
+      await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]);
+      await client.query("UPDATE files SET extracted_at=NULL,extraction_status='pending',extraction_reason_code='manual_retry',extraction_reason='Waiting for local indexing.' WHERE id=$1", [fileId]);
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     this.wake();
@@ -112,7 +113,8 @@ export class IndexingQueue {
             if (await this.hasVectorTable()) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::vector)', [inserted.rows[0].id, vectorLiteral(embedding)]);
           }
         }
-        await client.query('UPDATE files SET search_text=$2,extracted_at=NOW(),extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5 WHERE id=$1', [file.id, extracted.text, extracted.status, extracted.reasonCode, extracted.reason]);
+        await client.query('UPDATE file_search_text SET search_text=$2 WHERE file_id=$1', [file.id, extracted.text]);
+        await client.query('UPDATE files SET extracted_at=NOW(),extraction_status=$2,extraction_reason_code=$3,extraction_reason=$4 WHERE id=$1', [file.id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('UPDATE file_index_jobs SET status=$2,finished_at=NOW(),reason_code=$3,reason=$4,last_error=NULL WHERE version_id=$1', [job.version_id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('COMMIT');
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
