@@ -23,7 +23,8 @@ const queries = [
   { name:'published-collection', text:'document', collection:sample.collection_id, published:true },
   { name:'multi-folder', text:'request failed', folder:sample.folder },
 ];
-const vectorAvailable = Boolean((await db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
+// Semantic search reads halfvec only after the background backfill set its marker.
+const vectorAvailable = Boolean((await db.query("SELECT to_regclass('file_search_vectors') IS NOT NULL AND EXISTS(SELECT 1 FROM files_schema_migrations WHERE version='045_pgvector_backfill_complete') ok")).rows[0]?.ok);
 const samples = new Map();
 const cheap = [];
 let stopCheap = false;
@@ -49,11 +50,18 @@ async function semantic(q) {
   const client=await db.connect();
   try {
     await client.query('BEGIN');
-    if(vectorAvailable) { await client.query("SET LOCAL hnsw.ef_search=100"); await client.query("SET LOCAL hnsw.iterative_scan=strict_order"); }
-    const result = vectorAvailable ? await client.query(`SELECT f.id,f.collection_id,f.path FROM files f
+    if(vectorAvailable) { await client.query("SET LOCAL hnsw.ef_search=200"); await client.query("SET LOCAL hnsw.iterative_scan=strict_order"); }
+    const nearestLimit = q.collection||q.folder||q.published ? 2000 : 500;
+    const nearestSql = `WITH nearest AS MATERIALIZED (SELECT chunk_id, embedding <=> $${args.length}::halfvec dist FROM file_search_vectors ORDER BY embedding <=> $${args.length}::halfvec LIMIT ${nearestLimit})
+      SELECT f.id,f.collection_id,f.path FROM nearest n JOIN file_search_chunks sc ON sc.id=n.chunk_id JOIN files f ON f.id=sc.file_id AND sc.version_id=f.current_version_id
+      WHERE ${where.join(' AND ')} ORDER BY n.dist LIMIT 60`;
+    const exactSql = `SELECT f.id,f.collection_id,f.path FROM files f
       JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=f.current_version_id
       JOIN file_search_vectors sv ON sv.chunk_id=sc.id WHERE ${where.join(' AND ')}
-      ORDER BY sv.embedding <=> $${args.length}::halfvec LIMIT 60`,args) : await client.query(`SELECT f.id,f.collection_id,f.path,sc.embedding_json FROM files f
+      ORDER BY sv.embedding <=> $${args.length}::halfvec LIMIT 60`;
+    let result = vectorAvailable ? await client.query(nearestSql,args) : undefined;
+    if (result && result.rows.length < 60) result = await client.query(exactSql,args);
+    if (!result) result = await client.query(`SELECT f.id,f.collection_id,f.path,sc.embedding_json FROM files f
       JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=f.current_version_id
       WHERE ${where.join(' AND ')} ORDER BY f.updated_at DESC LIMIT 800`,args.slice(0,-1));
     if(!vectorAvailable) result.rows.map(row=>cosine(queryVector,row.embedding_json)).sort((a,b)=>b-a).slice(0,60);

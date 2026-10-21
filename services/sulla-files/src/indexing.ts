@@ -1,3 +1,4 @@
+import { vectorSearchReady, vectorTableExists } from './vectorState.js';
 import { extractIndexText } from './extractor.js';
 import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
 import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
@@ -21,7 +22,6 @@ export class IndexingQueue {
   private timer?:            NodeJS.Timeout;
   private running = false;
   private stopped = false;
-  private vectorTable?:      boolean;
 
   constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
@@ -69,11 +69,7 @@ export class IndexingQueue {
     this.wake();
   }
 
-  private async hasVectorTable():Promise<boolean> {
-    if (this.vectorTable !== undefined) return this.vectorTable;
-    this.vectorTable = Boolean((await this.db.query("SELECT to_regclass('file_search_vectors') name")).rows[0]?.name);
-    return this.vectorTable;
-  }
+
 
   private async drain():Promise<void> {
     if (this.stopped || this.running) return;
@@ -112,9 +108,10 @@ export class IndexingQueue {
         if (extracted.status === 'indexed' && extracted.text) {
           for (const [ordinal, content] of chunks(extracted.text).entries()) {
             const embedding = this.embedder.embed(content);
-            const vectorTable = await this.hasVectorTable();
+            const vectorTable = await vectorTableExists(this.db);
+            const vectorReady = vectorTable && await vectorSearchReady(this.db);
             const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
-              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorTable ? null : JSON.stringify(Array.from(embedding))]);
+              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorReady ? null : JSON.stringify(Array.from(embedding))]);
             if (vectorTable) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::halfvec)', [inserted.rows[0].id, vectorLiteral(embedding)]);
           }
         }
