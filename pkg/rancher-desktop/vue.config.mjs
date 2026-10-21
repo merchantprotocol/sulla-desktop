@@ -114,6 +114,7 @@ export default {
       '@composio/core':         'commonjs @composio/core',
       '@composio/client':       'commonjs @composio/client',
       '@reflink/reflink':       'commonjs @reflink/reflink',
+      '@napi-rs/xattr':         'commonjs @napi-rs/xattr',
     };
 
     // Workers run in a web-worker context where `global` is not defined.

@@ -11,6 +11,7 @@ import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
+import { FINDER_BADGE_ATTRIBUTE, FinderBadgeSync } from './sullaFinderBadges';
 import { SullaFilesSystemIngestJob, type SystemIngestRequest, type SystemIngestStatus } from './sullaFilesSystemIngest';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
@@ -603,21 +604,26 @@ class SullaFilesWatcher {
     } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) }
   }
 
+  private finderBadges?: FinderBadgeSync;
+
   private async refreshFinderBadges():Promise<void> {
     if (process.platform !== 'darwin') return;
-    const collectionsResponse = await this.requestFiles('/v1/collections');
-    if (!collectionsResponse.ok) return;
-    const collections = await collectionsResponse.json() as { id: string }[];
-    for (const collection of collections) {
-      const response = await this.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`);
-      if (!response.ok) continue;
-      const files = await response.json() as { path: string; sync_state?: string }[];
-      for (const file of files) {
-        const target = path.resolve(this.folder, file.path);
-        if (!target.startsWith(`${ this.folder }${ path.sep }`)) continue;
-        try { await spawnFile('/usr/bin/xattr', ['-w', 'io.sulla.files.sync-state', file.sync_state || 'unknown', target]) } catch { /* Finder metadata is best-effort. */ }
+    this.finderBadges ??= new FinderBadgeSync(this.folder, async(target, state) => {
+      const { setAttribute } = await import('@napi-rs/xattr');
+
+      await setAttribute(target, FINDER_BADGE_ATTRIBUTE, state);
+    });
+    if (!this.finderBadges.begin()) return;
+    try {
+      const collectionsResponse = await this.requestFiles('/v1/collections');
+      if (!collectionsResponse.ok) return;
+      const collections = await collectionsResponse.json() as { id: string }[];
+      for (const collection of collections) {
+        const response = await this.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`);
+        if (!response.ok) continue;
+        await this.finderBadges.apply(await response.json() as { path: string; sync_state?: string }[]);
       }
-    }
+    } finally { this.finderBadges.end() }
   }
 
   async status():Promise<SullaFilesStatus> {
