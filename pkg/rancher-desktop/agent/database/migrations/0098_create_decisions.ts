@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS human_decisions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS human_decisions_status ON human_decisions(status, updated_at);
+CREATE INDEX IF NOT EXISTS human_decisions_session ON human_decisions(session_id);
 CREATE TABLE IF NOT EXISTS tool_approval_policies (
   tool_name TEXT PRIMARY KEY,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -139,6 +139,16 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   private static isReady = false;
 
+  // Redis is the shared cache, but every read still used to query PostgreSQL
+  // for cast metadata. Keep a short local cache to avoid per-second hot loops
+  // turning into sequential scans while retaining bounded cross-process staleness.
+  private static readonly localCache = new Map<string, { value: any; expiresAt: number }>();
+  private static readonly localCacheTtlMs = 5_000;
+
+  private static invalidateLocal(property: string): void {
+    this.localCache.delete(property);
+  }
+
   // Retry policy for bootstrap (overridable in tests).
   // Delay before retry N (1-indexed) = min(baseDelayMs * 2^(N-1), maxDelayMs).
   public static bootstrapMaxAttempts = 5;
@@ -268,6 +278,10 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    */
   public static async getSetting(property: string, _default: any = null): Promise<any> {
     if (this.isReady) {
+      const local = this.localCache.get(property);
+      if (local && local.expiresAt > Date.now()) return local.value;
+      this.localCache.delete(property);
+
       // Redis → PG path (values are strings)
       const cached = await redisClient.hget('sulla_settings', property);
       if (cached !== null) {
@@ -275,17 +289,24 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         const setting = await this.find(property);
         if (setting) {
           const cast = setting.attributes.cast;
-          return this.castValue(cached, cast);
+          const value = this.castValue(cached, cast);
+          this.localCache.set(property, { value, expiresAt: Date.now() + this.localCacheTtlMs });
+          return value;
         }
-        return this.castValue(cached); // fallback without cast
+        const value = this.castValue(cached); // fallback without cast
+        this.localCache.set(property, { value, expiresAt: Date.now() + this.localCacheTtlMs });
+        return value;
       }
       const setting = await this.find(property);
       if (setting) {
         const value = setting.attributes.value;
         const cast = setting.attributes.cast;
         await redisClient.hset('sulla_settings', property, value);
-        return this.castValue(value, cast);
+        const castValue = this.castValue(value, cast);
+        this.localCache.set(property, { value: castValue, expiresAt: Date.now() + this.localCacheTtlMs });
+        return castValue;
       }
+      this.localCache.set(property, { value: _default, expiresAt: Date.now() + this.localCacheTtlMs });
       return _default;
     }
 
@@ -324,6 +345,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         await model.save();
       }
       await redisClient.hset('sulla_settings', property, stringValue);
+      this.invalidateLocal(property);
       return;
     }
 
@@ -385,6 +407,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     model.attributes.property = property;
     await model.delete();
     await redisClient.hdel('sulla_settings', property);
+    this.invalidateLocal(property);
   }
 
   public static generatePassword(length = 16): string {
