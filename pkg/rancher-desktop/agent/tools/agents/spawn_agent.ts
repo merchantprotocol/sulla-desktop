@@ -527,7 +527,7 @@ export class SpawnAgentWorker extends BaseTool {
           taskResult = returnedJobResult(returned, label, threadId);
         } else {
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
-          const { status, text } = extractAgentTurnOutcome(finalState);
+          const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
           taskResult = contract.schema && status !== 'blocked'
             ? { label, status: 'error', output: `failed: no_contract — ${ label } ended without returning its "${ contract.name }" contract.\n\nLast message:\n${ text }`, threadId, contract: contract.name }
             : { label, status, output: text, threadId, contract: contract.name };
@@ -661,13 +661,16 @@ export class SpawnAgentWorker extends BaseTool {
           await completeJob(job.jobId, results);
           if (stoppedAsDead) return; // the parent was already told
 
-          console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
-          await emitProactiveCompletion(parentChannel, job.jobId, results, undefined, parentThreadId);
+          const failed = results.find(result => result.status === 'error');
+          const failureReason = failed ? failed.output : undefined;
+
+          console.log(`[spawn_agent] Async job ${ job.jobId } ${ failed ? 'failed' : 'completed' } — ${ results.length } result(s)`);
+          await emitProactiveCompletion(parentChannel, job.jobId, results, failureReason, parentThreadId);
           // Feed the results back INTO the orchestrator's loop, not just onto a
           // UI card. Without this the parent's turn already ended and nothing
           // re-invokes it — the results would strand and the orchestrator would
           // report that the sub-agents "died".
-          const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
+          const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results, failureReason);
           if (delivered) {
             await markCompletionDelivered(job.jobId);
             await safeMarkDelegationsDelivered(delegationIds);

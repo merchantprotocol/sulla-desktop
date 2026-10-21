@@ -35,11 +35,14 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const lower = `${ name || '' } ${ message }`.toLowerCase();
 
   if ((error as any)?.cliRecoveryExhausted) {
+    const unsafe = Boolean((error as any)?.unsafeToFallback);
     return {
       kind:            'unavailable',
       retryPrimary:    false,
-      fallbackAllowed: false,
-      userMessage:     'The selected CLI model stopped responding and could not be recovered safely.',
+      fallbackAllowed: !unsafe,
+      userMessage:     unsafe
+        ? 'The selected CLI model stopped while a tool result was uncertain, so recovery was stopped safely.'
+        : 'The selected CLI model stopped responding after its bounded recovery attempts.',
     };
   }
 

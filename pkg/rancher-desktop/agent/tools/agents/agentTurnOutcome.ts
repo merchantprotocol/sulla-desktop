@@ -11,7 +11,7 @@
  */
 
 export interface AgentTurnOutcome {
-  status: 'completed' | 'blocked';
+  status: 'completed' | 'blocked' | 'error';
   text:   string;
 }
 
@@ -19,7 +19,7 @@ export interface AgentTurnOutcome {
  * Derive the reply text + terminal status from a finished sub-agent graph
  * state. `finalState` is the value resolved by `graph.execute(subState)`.
  */
-export function extractAgentTurnOutcome(finalState: any): AgentTurnOutcome {
+export function extractAgentTurnOutcome(finalState: any, brief?: string): AgentTurnOutcome {
   const agentMeta    = finalState?.metadata?.agent || {};
   const agentStatus  = String(agentMeta.status || '').toLowerCase();
 
@@ -37,8 +37,10 @@ export function extractAgentTurnOutcome(finalState: any): AgentTurnOutcome {
     finalState?.messages?.[finalState.messages.length - 1]?.content ||
     '(no output)';
 
-  return {
-    status: 'completed',
-    text:   typeof out === 'string' ? out : JSON.stringify(out),
-  };
+  const text = typeof out === 'string' ? out : JSON.stringify(out);
+  const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+  if (brief && normalize(text) === normalize(brief)) {
+    return { status: 'error', text: 'Provider failed before producing a worker result.' };
+  }
+  return { status: 'completed', text };
 }
