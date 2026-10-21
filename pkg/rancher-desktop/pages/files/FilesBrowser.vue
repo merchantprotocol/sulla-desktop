@@ -1963,11 +1963,28 @@ watch([query, section, busy], ([value, requestedSection, mutating]) => {
 function consumeNavigation() { if (!mounted || busy.value || loading.value || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(busy, value => { if (!value) consumeNavigation() });
 watch(() => props.navigation, () => consumeNavigation());
+let stopFilesChanged:(() => void) | undefined;
+let changeTimer:ReturnType<typeof setTimeout> | undefined;
+let pendingChange = false;
+let refreshingChange = false;
+function scheduleFilesRefresh() {
+  pendingChange = true;
+  if (changeTimer) clearTimeout(changeTimer);
+  changeTimer = setTimeout(async() => {
+    if (!mounted || busy.value || loading.value || refreshingChange) return;
+    pendingChange = false;
+    refreshingChange = true;
+    try { await refresh(true); consumeNavigation() }
+    finally { refreshingChange = false; if (mounted && pendingChange) scheduleFilesRefresh() }
+  }, 300);
+}
+function refreshVisibleFiles() { if (document.visibilityState !== 'hidden') scheduleFilesRefresh() }
+watch([busy, loading], ([mutating, fetching]) => { if (!mutating && !fetching && pendingChange) scheduleFilesRefresh() });
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
 let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(async() => { mounted = true; stopFilesChanged = props.dataSource.onFilesChanged?.(scheduleFilesRefresh); window.addEventListener('focus', refreshVisibleFiles); document.addEventListener('visibilitychange', refreshVisibleFiles); window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(scheduleFilesRefresh, 12_000) });
+onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) clearTimeout(changeTimer); window.removeEventListener('focus', refreshVisibleFiles); document.removeEventListener('visibilitychange', refreshVisibleFiles); refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>

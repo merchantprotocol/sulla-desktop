@@ -475,6 +475,7 @@ export interface IpcMainInvokeEvents {
 
   // #region Filesystem
   'files-ui:status':        () => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
+  'files-ui:watch': (collectionId:string) => void;
   'files-ui:native-runtime': () => import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus;
   'files-ui:set-paused':    (paused: boolean) => import('@pkg/main/sullaFilesWatcher').SullaFilesStatus;
   'files-ui:capabilities':  () => {
@@ -1236,6 +1237,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'files-ui:changed': (change:{ collectionId:string; seq:string; paths:string[] }) => void;
   'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
   'files-ui:native-runtime-changed': (status: import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;

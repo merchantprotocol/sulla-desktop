@@ -428,6 +428,7 @@ export interface FilesDataSource {
   createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
+  onFilesChanged?(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void;
   onUploadProgress?(listener:(progress:{ current:number; total:number; name:string; percent:number; done:boolean }) => void):() => void;
   openFolder(): Promise<void>;
   openFile(fileId:string, versionId?:string): Promise<void>;
