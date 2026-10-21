@@ -12,12 +12,31 @@ import type {
 } from '@sulla/vault-crypto';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const VAULT_RETRY_WINDOW_MS = 2 * 60 * 1000;
+const VAULT_RETRY_INITIAL_DELAY_MS = 250;
+const VAULT_RETRY_MAX_DELAY_MS = 5 * 1000;
+const RETRYABLE_NETWORK_CODES = new Set(['ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'ETIMEDOUT']);
 
 export interface VaultFilesAuthorityClientConfig {
   baseUrl:      string;
   serviceId:    string;
   serviceToken: string;
   caPath?:      string;
+}
+
+function isRetryableVaultStartupError(error:unknown):boolean {
+  if (error instanceof FilesSafeDiagnosticError) {
+    const diagnostic = error.diagnostic;
+    if (diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403) return false;
+    if (diagnostic.httpStatus === 423) return true;
+  }
+  let current:unknown = error;
+  for (let depth = 0; depth < 3 && current; depth++) {
+    if (typeof current === 'object' && current !== null && 'code' in current &&
+        typeof current.code === 'string' && RETRYABLE_NETWORK_CODES.has(current.code)) return true;
+    current = typeof current === 'object' && current !== null && 'cause' in current ? current.cause : undefined;
+  }
+  return false;
 }
 
 export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
@@ -62,6 +81,21 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
   }
 
   private async request<T>(operation:VaultAuthorityOperation, pathname:string, body?:unknown):Promise<T> {
+    const startedAt = Date.now();
+    let delay = VAULT_RETRY_INITIAL_DELAY_MS;
+    for (;;) {
+      try {
+        return await this.requestOnce<T>(operation, pathname, body);
+      } catch (error) {
+        if (!isRetryableVaultStartupError(error) || Date.now() - startedAt >= VAULT_RETRY_WINDOW_MS) throw error;
+        console.warn(`[SullaFiles] Vault unavailable; retrying ${operation} in ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, VAULT_RETRY_MAX_DELAY_MS);
+      }
+    }
+  }
+
+  private async requestOnce<T>(operation:VaultAuthorityOperation, pathname:string, body?:unknown):Promise<T> {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     let ca:Buffer | undefined;
     try {
