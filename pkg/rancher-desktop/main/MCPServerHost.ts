@@ -51,10 +51,12 @@ import {
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 import { DEFAULT_SESSION_TTL_MS, ToolSessionRegistry, type ToolSession } from './mcpToolSessions';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
+const console = Logging.background;
 const LOG = '[MCPServerHost]';
 
 // Hostname the Lima VM uses to reach the host it's running on. Lima adds
@@ -196,19 +198,24 @@ export class MCPServerHost {
       // Tool handlers close over the request's resolved session, so they
       // can reach straight into the calling graph's BaseThreadState.
       app.post('/mcp', requireSession, async (req: Request, res: Response) => {
+        const session = (req as any).sullaSession as ToolSession;
+        let step = 'build';
         try {
-          const session = (req as any).sullaSession as ToolSession;
           const mcp = this.buildMcpServer(session);
+          step = 'transport';
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           res.on('close', () => {
             try { transport.close(); } catch { /* ignore */ }
             try { mcp.close(); } catch { /* ignore */ }
           });
+          step = 'connect';
           await mcp.connect(transport);
+          step = 'handle';
           await transport.handleRequest(req as any, res as any, req.body);
         } catch (err) {
-          console.error(`${ LOG } request handler error:`, err);
-          if (!res.headersSent) res.status(500).json({ error: 'mcp_server_error' });
+          const thread = session?.state?.metadata?.threadId ?? 'unknown';
+          console.error(`${ LOG } request failed at step=${ step } thread=${ thread }:`, (err as Error)?.stack ?? err);
+          if (!res.headersSent) res.status(500).json({ error: 'mcp_server_error', step, message: (err as Error)?.message });
         }
       });
 
@@ -218,9 +225,21 @@ export class MCPServerHost {
       app.get('/mcp', (_req, res) => res.status(405).json({ error: 'method_not_allowed' }));
       app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'method_not_allowed' }));
 
-      // Simple liveness check — unrelated to MCP protocol; useful for
-      // diagnostics and smoke tests from the VM.
       app.get('/healthz', (_req, res) => res.json({ ok: true, port: this.port }));
+      app.get('/diagnostics', (req, res) => {
+        const session = this.resolveSession(req);
+        res.json({
+          ok:             true,
+          port:           this.port,
+          activeSessions: this.sessions.size,
+          sessionValid:   session !== null,
+          sessionMeta:    session ? {
+            conversationId: session.state.metadata.conversationId ?? null,
+            threadId:       session.state.metadata.threadId ?? null,
+            wsChannel:      session.state.metadata.wsChannel ?? null,
+          } : null,
+        });
+      });
 
       await new Promise<void>((resolve, reject) => {
         const server = app.listen(0, '0.0.0.0', () => {

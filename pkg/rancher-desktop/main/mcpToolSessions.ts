@@ -92,6 +92,10 @@ export class ToolSessionRegistry {
     }
   }
 
+  get size(): number {
+    return this.sessions.size;
+  }
+
   clear(): void {
     this.sessions.clear();
   }
