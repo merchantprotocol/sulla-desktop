@@ -60,6 +60,22 @@ describe('StartupProgressPanel', () => {
     w.unmount();
   });
 
+  it('lists services that are still starting under the bar (and keeps rendering)', async() => {
+    const t0 = 1_000_000;
+    const snap = { ...snapshotAt(t0), services: [
+      { name: 'sulla-files-runtime', label: 'Files', status: 'waiting-on-unlock' as const, reason: 'Vault is locked', since: t0, attempts: 0 },
+      { name: 'postgres', label: 'Postgres', status: 'ready' as const, since: t0, attempts: 1 },
+    ] };
+    const w = mount(StartupProgressPanel, { props: { snapshot: snap, now: () => t0 + 5_000 } });
+
+    await flushPromises();
+    expect(w.find('[role="progressbar"]').exists()).toBe(true);
+    expect(w.get('.sulla-sp-service-status').text()).toContain('Files');
+    expect(w.get('.sulla-sp-service-status').text()).toContain('waiting on unlock');
+    expect(w.get('.sulla-sp-service-status').text()).not.toContain('Postgres');
+    w.unmount();
+  });
+
   it('shows the failure calmly with the step name and a retry hint', () => {
     const model = new StartupProgressModel(() => 10);
 

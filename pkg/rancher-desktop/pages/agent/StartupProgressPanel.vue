@@ -226,7 +226,7 @@ export default defineComponent({
     expose({ displayed, advance, reducedMotion });
 
     return {
-      displayed, reducedMotion, stepLabel, stepElapsed, totalElapsed, slowNote, formatDuration, advance,
+      displayed, reducedMotion, stepLabel, stepElapsed, totalElapsed, slowNote, serviceIssues, formatDuration, advance,
     };
   },
 });
