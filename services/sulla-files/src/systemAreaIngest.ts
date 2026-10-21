@@ -10,11 +10,11 @@
  *
  * Logs and transcripts can be tens of thousands of files; running every
  * version through text extraction and embedding competes with the user's own
- * Files, so Desktop may ask to store them without search indexing. That is
- * honoured only for the read-only logs and training-data areas.
+ * Files. Logs and training-data are always stored without search indexing;
+ * the legacy header is accepted but cannot opt them back in.
  */
 export const SKIP_SEARCH_INDEX_HEADER = 'x-sulla-files-skip-search-index';
-const UNINDEXED_SYSTEM_AREAS = new Set(['logs', 'training-data']);
+export const UNINDEXED_SYSTEM_AREAS = new Set(['logs', 'training-data']);
 const SYSTEM_AREAS = new Set(['logs', 'training-data', 'sulla']);
 
 export interface Queryable { query(sql:string, values?:unknown[]):Promise<{ rows:any[] }> }
@@ -26,8 +26,8 @@ export function isSystemArea(systemArea:unknown):boolean {
   return typeof systemArea === 'string' && SYSTEM_AREAS.has(systemArea);
 }
 
-export function shouldSkipSearchIndex(headerValue:string | undefined, systemArea:unknown):boolean {
-  return headerValue === '1' && typeof systemArea === 'string' && UNINDEXED_SYSTEM_AREAS.has(systemArea);
+export function shouldSkipSearchIndex(_headerValue:string | undefined, systemArea:unknown):boolean {
+  return typeof systemArea === 'string' && UNINDEXED_SYSTEM_AREAS.has(systemArea);
 }
 
 /**
@@ -37,7 +37,7 @@ export function shouldSkipSearchIndex(headerValue:string | undefined, systemArea
  */
 export async function skipSearchIndexForVersion(client:Queryable, fileId:string, versionId:string):Promise<void> {
   await client.query('DELETE FROM file_index_jobs WHERE file_id=$1 AND version_id=$2', [fileId, versionId]);
-  await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]);
+  await client.query('DELETE FROM file_search_text WHERE file_id=$1', [fileId]);
   await client.query(`UPDATE files SET extracted_at=NOW(),extraction_status='unsupported',
     extraction_reason_code='system_area_unindexed',extraction_reason='System-area files are stored without search indexing.'
     WHERE id=$1 AND current_version_id=$2`, [fileId, versionId]);

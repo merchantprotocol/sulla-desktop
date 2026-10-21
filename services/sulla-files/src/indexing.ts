@@ -1,4 +1,5 @@
 import { extractIndexText } from './extractor.js';
+import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
 import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 
 import type pg from 'pg';
@@ -33,10 +34,12 @@ export class IndexingQueue {
     await this.db.query(`INSERT INTO file_index_jobs(file_id,version_id,status)
       SELECT f.id,f.current_version_id,'pending' FROM files f
       WHERE f.deleted_at IS NULL AND f.current_version_id IS NOT NULL AND f.extraction_status='pending'
-      ON CONFLICT(version_id) DO NOTHING`);
+        AND NOT EXISTS(SELECT 1 FROM collections c WHERE c.id=f.collection_id AND c.system_area=ANY($1::text[]))
+      ON CONFLICT(version_id) DO NOTHING`, [[...UNINDEXED_SYSTEM_AREAS]]);
     await this.db.query(`UPDATE files f SET extraction_status='failed',extracted_at=NOW(),extraction_reason_code='missing_job',extraction_reason='The indexing queue record was missing. Re-index this file.'
       WHERE f.deleted_at IS NULL AND f.current_version_id IS NOT NULL AND f.extraction_status IN('pending','indexing')
-      AND NOT EXISTS(SELECT 1 FROM file_index_jobs j WHERE j.version_id=f.current_version_id)`);
+      AND NOT EXISTS(SELECT 1 FROM collections c WHERE c.id=f.collection_id AND c.system_area=ANY($1::text[]))
+      AND NOT EXISTS(SELECT 1 FROM file_index_jobs j WHERE j.version_id=f.current_version_id)`, [[...UNINDEXED_SYSTEM_AREAS]]);
     this.timer = setInterval(() => this.drain().catch(error => console.error('[SullaFiles] index queue failed', error)), 500);
     this.timer.unref(); this.wake();
   }
@@ -52,7 +55,8 @@ export class IndexingQueue {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
-      const file = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
+      const file = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [fileId])).rows[0];
+      if (UNINDEXED_SYSTEM_AREAS.has(file?.system_area)) throw new Error('This system area is not indexed.');
       if (!file || file.deleted_at || !file.current_version_id) throw new Error('Only a current, active file can be re-indexed.');
       await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [fileId, file.current_version_id]);
       await client.query(`INSERT INTO file_index_jobs(file_id,version_id,status,attempts,last_error,available_at,started_at,finished_at,reason_code,reason)
@@ -84,19 +88,19 @@ export class IndexingQueue {
     const job = claimed.rows[0]; if (!job) return false;
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
-      await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
-      const file = (await this.db.query('SELECT id,collection_id,path,mime,current_version_id,deleted_at FROM files WHERE id=$1', [job.file_id])).rows[0];
-      if (!file || file.deleted_at || file.current_version_id !== job.version_id) {
+      const file = (await this.db.query('SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1', [job.file_id])).rows[0];
+      if (!file || file.deleted_at || file.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(file.system_area)) {
         await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
         return true;
       }
+      await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
       source = await this.source(file);
       const extracted = await extractIndexText(source.path, file.mime);
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
-        const current = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [file.id])).rows[0];
-        if (!current || current.deleted_at || current.current_version_id !== job.version_id) {
+        const current = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [file.id])).rows[0];
+        if (!current || current.deleted_at || current.current_version_id !== job.version_id || UNINDEXED_SYSTEM_AREAS.has(current.system_area)) {
           await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
           await client.query('COMMIT'); return true;
         }
@@ -104,7 +108,7 @@ export class IndexingQueue {
         if (activeJob?.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
           await client.query('COMMIT'); return true;
         }
-        await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [file.id, job.version_id]);
+        await client.query('DELETE FROM file_search_chunks WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)', [file.id]);
         if (extracted.status === 'indexed' && extracted.text) {
           for (const [ordinal, content] of chunks(extracted.text).entries()) {
             const embedding = this.embedder.embed(content);
@@ -113,7 +117,7 @@ export class IndexingQueue {
             if (await this.hasVectorTable()) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::vector)', [inserted.rows[0].id, vectorLiteral(embedding)]);
           }
         }
-        await client.query('UPDATE file_search_text SET search_text=$2 WHERE file_id=$1', [file.id, extracted.text]);
+        await client.query('INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text', [file.id, file.path, extracted.text]);
         await client.query('UPDATE files SET extracted_at=NOW(),extraction_status=$2,extraction_reason_code=$3,extraction_reason=$4 WHERE id=$1', [file.id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('UPDATE file_index_jobs SET status=$2,finished_at=NOW(),reason_code=$3,reason=$4,last_error=NULL WHERE version_id=$1', [job.version_id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('COMMIT');
@@ -125,8 +129,8 @@ export class IndexingQueue {
       const client = await this.db.connect();
       try {
         await client.query('BEGIN');
-        const current = (await client.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1 FOR UPDATE', [job.file_id])).rows[0];
-        if (current && !current.deleted_at && current.current_version_id === job.version_id) {
+        const current = (await client.query('SELECT f.current_version_id,f.deleted_at,c.system_area FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 FOR UPDATE OF f', [job.file_id])).rows[0];
+        if (current && !current.deleted_at && current.current_version_id === job.version_id && !UNINDEXED_SYSTEM_AREAS.has(current.system_area)) {
           const updated = await client.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END
             WHERE version_id=$1 AND status='indexing' AND attempts=$6`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason, job.attempts]);
           if (updated.rowCount) await client.query('UPDATE files SET extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,extracted_at=CASE WHEN $3=\'failed\' THEN NOW() ELSE NULL END WHERE id=$1 AND current_version_id=$2', [job.file_id, job.version_id, status, terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
