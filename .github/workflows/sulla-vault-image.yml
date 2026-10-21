@@ -1,8 +1,15 @@
 name: Publish sulla-vault image
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     tags: ['v*']
+    # Only rebuild when the vault's own inputs change. Every new :latest digest makes
+    # Desktop recreate the vault container at launch, which comes back locked.
+    paths:
+      - 'services/sulla-vault/**'
+      - 'packages/vault-crypto/**'
+      - '.github/workflows/sulla-vault-image.yml'
 permissions:
   contents: read
   packages: write
