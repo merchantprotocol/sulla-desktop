@@ -226,36 +226,38 @@
       <div v-else class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
         <div class="toolbar">
           <div v-if="section === 'files' && !readOnlyArea" class="history-controls">
+            <div class="nav-pair" role="group" aria-label="History">
+              <button
+                class="folder-up"
+                type="button"
+                aria-label="Back"
+                title="Back"
+                :disabled="busy || loading || !canGoBack"
+                @click="goBack"
+              ><span v-html="icons.arrowLeft" /></button>
+              <button
+                class="folder-up"
+                type="button"
+                aria-label="Forward"
+                title="Forward"
+                :disabled="busy || loading || !canGoForward"
+                @click="goForward"
+              ><span v-html="icons.chevronRight" /></button>
+            </div>
             <button
-              class="folder-up"
+              v-if="currentPath"
+              class="folder-up parent-up"
               type="button"
-              aria-label="Back"
-              title="Back"
-              :disabled="busy || loading || !canGoBack"
-              @click="goBack"
-            ><span v-html="icons.arrowLeft" /></button>
-            <button
-              class="folder-up forward"
-              type="button"
-              aria-label="Forward"
-              title="Forward"
-              :disabled="busy || loading || !canGoForward"
-              @click="goForward"
-            ><span v-html="icons.arrowLeft" /></button>
-          <button
-            v-if="currentPath"
-            class="folder-up"
-            type="button"
-            :aria-label="`Back to ${parentFolderLabel}`"
-            :title="`Back to ${parentFolderLabel}`"
-            :disabled="busy || loading"
-            :data-drop-path="parentPath"
-            @dragover.prevent="onNavigationDragOver(parentPath, $event)"
-            @drop.prevent="onNavigationDrop(parentPath, $event)"
-            @click="openParent"
-          >
-            <span v-html="icons.arrowLeft" />
-          </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
+              :aria-label="`Up to ${parentFolderLabel}`"
+              :title="`Up to ${parentFolderLabel}`"
+              :disabled="busy || loading"
+              :data-drop-path="parentPath"
+              @dragover.prevent="onNavigationDragOver(parentPath, $event)"
+              @drop.prevent="onNavigationDrop(parentPath, $event)"
+              @click="openParent"
+            >
+              <span v-html="icons.arrowUp" />
+            </button><h1>{{ pageTitle }}</h1><span class="meta">{{ summaryText }}</span>
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
             <button
@@ -884,6 +886,8 @@ const icons = {
   trash:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
   search:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></svg>',
   arrowLeft:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+  chevronRight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+  arrowUp:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>',
   plus:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   upload:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V5M7 10l5-5 5 5M4 19h16"/></svg>',
   share:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/></svg>',
@@ -2053,7 +2057,10 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 .action-menu b + .menu-sep, .action-menu .menu-sep + .menu-sep, .action-menu .menu-sep:not(:has(~ button, ~ .menu-subsection)) { display:none; }
 .history-controls { min-width:0; display:flex; align-items:center; gap:6px; }
 .history-controls h1 { margin-left:2px; }
-.folder-up.forward span { display:inline-flex; transform:rotate(180deg); }
+.nav-pair { display:flex; flex:none; }
+.nav-pair .folder-up:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
+.nav-pair .folder-up:last-child { margin-left:-1px; border-top-left-radius:0; border-bottom-left-radius:0; }
+.parent-up { margin-left:4px; }
 .folder-up:disabled { opacity:.35; cursor:default; }
 .row.is-cut, .tile.is-cut { opacity:.48; }
 .inline-rename { width:100%; min-width:80px; padding:2px 5px; border:1px solid var(--accent); border-radius:4px; outline:2px solid var(--accent-soft); background:var(--card-solid); }
