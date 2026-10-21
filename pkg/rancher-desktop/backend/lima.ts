@@ -68,7 +68,7 @@ import { SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchor } from '@pkg
 import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
-import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
+import { expectVaultContainer, instantiateSullaStart, markSullaDockerServicesStarted, markVaultContainerReady } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
@@ -3961,6 +3961,7 @@ start_pre() {
       // isolated; a failed Vault explicitly suppresses Files for this generation.
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
         optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
+        expectVaultContainer();
       }
       optionalServices.push(
         { service: 'sulla_relay', container: 'sulla_relay' },
@@ -3995,6 +3996,7 @@ start_pre() {
               await this.waitForDockerServiceHealthy(container, service === 'sulla_files' ? 600 : 20, generation);
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
+              if (service === 'sulla_vault') markVaultContainerReady();
             } catch (error) {
               if (error instanceof ManagedServicesReconciliationCancelled) return;
               const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];

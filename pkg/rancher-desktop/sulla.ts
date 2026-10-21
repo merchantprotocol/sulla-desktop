@@ -136,6 +136,37 @@ function publishVaultState(unlocked: boolean): Promise<void> {
   return vaultTransition;
 }
 
+// Boot refreshes the vault container in the background, which can replace the one the
+// lifecycle already unlocked. The lifecycle waits for the refreshed container, and any
+// later replacement re-runs the unlock so a fresh (locked) container never goes unnoticed.
+let vaultContainerReady: Promise<void> | null = null;
+let resolveVaultContainerReady: (() => void) | null = null;
+let vaultLifecycleInitialized = false;
+
+export function expectVaultContainer(): void {
+  if (resolveVaultContainerReady) return;
+  vaultContainerReady = new Promise<void>((resolve) => { resolveVaultContainerReady = resolve });
+}
+
+export function markVaultContainerReady(): void {
+  resolveVaultContainerReady?.();
+  resolveVaultContainerReady = null;
+  if (!vaultLifecycleInitialized) return;
+  void (async() => {
+    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    const unlocked = await getVaultKeyService().initialize();
+    console.log(`[Background] Vault container replaced; re-initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
+    await publishVaultState(unlocked);
+  })().catch(error => console.warn('[Vault] Re-initialize after container replacement failed:', error));
+}
+
+async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
+  if (!vaultContainerReady) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([vaultContainerReady, new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs) })]);
+  if (timer) clearTimeout(timer);
+}
+
 /** Refresh non-secret state only; migration and backup run inside the container. */
 async function onVaultUnlocked(): Promise<void> {
   try {
@@ -327,7 +358,9 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
       // Lets unlock verify a key against real ciphertext if the canary is lost.
       vaultKeyService.setCiphertextSampleProvider(() => IntegrationValueModel.sampleEncryptedValue());
+      await waitForVaultContainer();
       const unlocked = await vaultKeyService.initialize();
+      vaultLifecycleInitialized = true;
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
       await publishVaultState(unlocked);
@@ -337,6 +370,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
       const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
 
+      vaultLifecycleInitialized = false;
       getVaultBackupService().stop();
       getVaultKeyService().lock();
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
