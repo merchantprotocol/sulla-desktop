@@ -149,10 +149,11 @@ export async function withGitHubBrokerRemote<T>(
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('github.git broker did not bind a TCP port');
   try {
-    const base = ctx.pod_id
-      ? `http://sulla-host-relay:30124/_sulla/${ address.port }`
-      : `http://host.lima.internal:${ address.port }`;
-    return await run(`${ base }${ scopedPath }`);
+    // The callback always runs through runCommand's Lima shell, regardless of
+    // whether the caller itself has a pod id.  Container callers reach the tool
+    // over MCP, but git still runs in Lima, where the Desktop broker is exposed
+    // through host.lima.internal rather than the container-only named relay.
+    return await run(`http://host.lima.internal:${ address.port }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
