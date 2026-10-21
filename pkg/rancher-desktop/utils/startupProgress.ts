@@ -29,9 +29,9 @@ export interface StartupStageDef {
 }
 
 export const STARTUP_STAGES: readonly StartupStageDef[] = [
-  { id: 'boot', label: 'Starting the virtual machine', start: 0, end: 38 },
-  { id: 'containers', label: 'Starting Sulla services', start: 38, end: 60 },
-  { id: 'services', label: 'Bringing features online', start: 60, end: 99 },
+  { id: 'boot', label: 'Preparing Sulla\'s operating system', start: 0, end: 38 },
+  { id: 'containers', label: 'Setting up Sulla\'s private services', start: 38, end: 60 },
+  { id: 'services', label: 'Getting your features ready', start: 60, end: 99 },
   { id: 'ready', label: 'Ready', start: 100, end: 100 },
 ];
 
@@ -107,29 +107,29 @@ const clamp01 = (n: number) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 
 
 /** Lifecycle service name → plain-language label. Unknown names fall back to a readable form. */
 export const LIFECYCLE_LABELS: Record<string, string> = {
-  'backend-ws':                  'Connecting to the agent backend',
-  'relay-tool-tunnel':           'Opening the relay tool tunnel',
-  'model-provider-ipc':          'Preparing model settings',
-  postgres:                      'Connecting to the database',
-  redis:                         'Connecting to the cache',
-  'database-manager':            'Applying database updates',
-  scheduler:                     'Starting the calendar scheduler',
-  heartbeat:                     'Starting the Heartbeat',
-  'knowledge-projection-outbox': 'Starting knowledge sync',
-  'sulla-files-maintenance':     'Starting Files maintenance',
-  'workflow-scheduler':          'Starting the routine scheduler',
-  'workflow-container-events':   'Connecting routine events',
-  'chat-server':                 'Starting the chat server',
-  'local-tool-tunnel':           'Connecting the local tool relay',
-  'mcp-server-host':             'Starting the MCP server',
-  accounts:                      'Starting local accounts',
-  vault:                         'Starting the vault',
-  'sulla-files-runtime':         'Unlocking Files',
-  'model-provider':              'Loading your models',
-  integrations:                  'Loading integrations',
-  oauth:                         'Resuming connected accounts',
-  'file-search':                 'Scheduling the file search index',
-  'host-access-sync':            'Syncing host access settings',
+  'backend-ws':                  'Connecting your agents',
+  'relay-tool-tunnel':           'Opening the secure relay for remote tools',
+  'model-provider-ipc':          'Preparing your model settings',
+  postgres:                      'Opening your private database',
+  redis:                         'Warming up the cache that keeps Sulla fast',
+  'database-manager':            'Bringing your data up to date',
+  scheduler:                     'Getting your calendar reminders ready',
+  heartbeat:                     'Waking Heartbeat, your background agent',
+  'knowledge-projection-outbox': 'Keeping your knowledge in sync',
+  'sulla-files-maintenance':     'Scheduling upkeep for your files',
+  'workflow-scheduler':          'Getting your routines ready to run on schedule',
+  'workflow-container-events':   'Connecting your routines',
+  'chat-server':                 'Getting chat ready',
+  'local-tool-tunnel':           'Connecting your local tools',
+  'mcp-server-host':             'Sharing Sulla\'s tools with your AI apps',
+  accounts:                      'Preparing your local accounts',
+  vault:                         'Preparing your encrypted password vault',
+  'sulla-files-runtime':         'Opening your secure Files',
+  'model-provider':              'Loading your AI models',
+  integrations:                  'Reconnecting your integrations',
+  oauth:                         'Keeping your connected accounts signed in',
+  'file-search':                 'Getting file search ready',
+  'host-access-sync':            'Applying your host access settings',
 };
 
 /**
@@ -147,45 +147,45 @@ export const LIFECYCLE_WEIGHTS: Record<string, number> = {
 
 /** Compose service name → plain-language name. */
 export const CONTAINER_LABELS: Record<string, string> = {
-  python_runtime:   'the Python runtime',
-  shell_runtime:    'the shell runtime',
-  node_runtime:     'the Node runtime',
-  sulla_accounts:   'Sulla Accounts',
-  sulla_vault:      'the Sulla Vault',
-  sulla_relay:      'the Sulla relay',
-  workflow_manager: 'the workflow manager',
-  sulla_files:      'Sulla Files',
-  tools:            'Sulla Tools',
+  python_runtime:   'Python for running your code',
+  shell_runtime:    'the safe command shell',
+  node_runtime:     'Node.js for running your code',
+  sulla_accounts:   'your local accounts',
+  sulla_vault:      'your encrypted password vault',
+  sulla_relay:      'the secure relay',
+  workflow_manager: 'your routine runner',
+  sulla_files:      'your secure Files',
+  tools:            'your agents\' toolbox',
 };
 
 /** Backend ProgressTracker descriptions → plain-language labels. */
 const BACKEND_LABELS: Record<string, string> = {
-  'Ensuring virtualization is supported':            'Checking virtualization support',
-  'Updating cluster configuration':                  'Writing the VM configuration',
-  'Stopping existing instance':                      'Stopping the previous VM',
-  'Installing CA certificates':                      'Installing certificates',
-  'Configuring image proxy':                         'Configuring the image proxy',
-  'Configuring container engine':                    'Configuring the container engine',
-  'Configuring logrotate':                           'Configuring log rotation',
-  'Installing Buildkit':                             'Installing Buildkit',
-  'Installing image scanner':                        'Installing the image scanner',
-  'Installing credential helper':                    'Installing the credential helper',
-  'Installing sulla CLI':                            'Installing the sulla CLI',
-  'Verifying agent CLI installs':                    'Checking agent command-line tools',
-  'Configuring Claude Code':                         'Configuring Claude Code',
-  'Installing threat-scanning proxy':                'Installing the threat-scanning proxy',
+  'Ensuring virtualization is supported':            'Making sure this Mac can run Sulla safely',
+  'Updating cluster configuration':                  'Saving Sulla\'s system settings',
+  'Stopping existing instance':                      'Closing the last session cleanly',
+  'Installing CA certificates':                      'Setting up secure connections',
+  'Configuring image proxy':                         'Speeding up app downloads',
+  'Configuring container engine':                    'Getting Sulla\'s app engine ready',
+  'Configuring logrotate':                           'Keeping logs from filling your disk',
+  'Installing Buildkit':                             'Installing tools for building apps',
+  'Installing image scanner':                        'Installing the app security scanner',
+  'Installing credential helper':                    'Keeping your app logins secure',
+  'Installing sulla CLI':                            'Installing the tools your agents use',
+  'Verifying agent CLI installs':                    'Checking your agents\' tools',
+  'Configuring Claude Code':                         'Connecting Claude Code',
+  'Installing threat-scanning proxy':                'Turning on threat protection for web traffic',
   'Installing Sulla Console':                        'Installing the Sulla Console',
-  'Setting docker context':                          'Setting the Docker context',
-  'Waiting for container engine client to be ready': 'Waiting for the container engine',
-  'Waiting for Kubernetes API ready (up to 10 min)': 'Waiting for Kubernetes',
-  'Preparing Sulla Docker Compose file':             'Preparing the service list',
-  'Docker Compose file prepared':                    'Service list ready',
-  'Deploying Sulla services with Docker Compose':    'Starting Sulla services',
-  'Verifying compose file':                          'Checking the service list',
-  'Checking Docker credentials config':              'Checking Docker credentials',
-  'Deploying new containers':                        'Starting the database and cache',
-  'Sulla services deployed':                         'Sulla services started',
-  'Sulla deployment completed':                      'Sulla services started',
+  'Setting docker context':                          'Connecting Docker to Sulla',
+  'Waiting for container engine client to be ready': 'Getting Sulla\'s app engine ready',
+  'Waiting for Kubernetes API ready (up to 10 min)': 'Getting Kubernetes ready for your services',
+  'Preparing Sulla Docker Compose file':             'Planning Sulla\'s private services',
+  'Docker Compose file prepared':                    'Private services planned',
+  'Deploying Sulla services with Docker Compose':    'Starting Sulla\'s private services',
+  'Verifying compose file':                          'Double-checking the service plan',
+  'Checking Docker credentials config':              'Checking your Docker sign-in',
+  'Deploying new containers':                        'Opening your private database and cache',
+  'Sulla services deployed':                         'Sulla\'s private services are running',
+  'Sulla deployment completed':                      'Sulla\'s private services are running',
 };
 
 /** Numeric checkpoints the backend reports during boot (see backend/lima.ts start()). */
@@ -193,13 +193,13 @@ const BOOT_CHECKPOINTS = [0, 20, 40, 50, 60, 70, 75];
 const BOOT_SCALE = 75;
 /** What the VM is doing after reaching each boot checkpoint, when the description is generic. */
 const BOOT_CHECKPOINT_LABELS: Record<number, string> = {
-  0:  'Checking this machine',
-  20: 'Booting the virtual machine',
-  40: 'Preparing the virtual machine',
-  50: 'Configuring services in the VM',
-  60: 'Installing tools in the VM',
-  70: 'Connecting to the container engine',
-  75: 'Waiting for Kubernetes',
+  0:  'Making sure this Mac can run Sulla safely',
+  20: 'Preparing Sulla\'s operating system',
+  40: 'Setting up Sulla\'s private workspace',
+  50: 'Configuring Sulla\'s background services',
+  60: 'Installing the tools your agents use',
+  70: 'Getting Sulla\'s app engine ready',
+  75: 'Getting Kubernetes ready for your services',
 };
 /** Compose checkpoints (see reconcileSullaDockerEnvironment). */
 const CONTAINER_CHECKPOINTS = [0, 5, 15, 20, 35];
@@ -213,7 +213,7 @@ const GENERIC_DESCRIPTIONS = new Set(['Starting Backend', 'System configuration 
 function humanize(name: string): string {
   const words = name.replace(/[-_]+/g, ' ').trim();
 
-  return words ? `Starting ${ words }` : 'Starting';
+  return words ? `Getting ${ words } ready` : 'Getting things ready';
 }
 
 export function lifecycleLabel(name: string): string {
@@ -223,7 +223,7 @@ export function lifecycleLabel(name: string): string {
 export function containerLabel(service: string, index: number, total: number): string {
   const nice = CONTAINER_LABELS[service] ?? service.replace(/_/g, ' ');
 
-  return `Starting ${ nice } (${ index } of ${ total })`;
+  return `Preparing ${ nice } (${ index } of ${ total })`;
 }
 
 /** Which stage a backend description belongs to. */
@@ -265,17 +265,17 @@ function nextCheckpoint(checkpoints: number[], value: number, scale: number): nu
 // ── Slow-step notes ────────────────────────────────────────────────────────
 
 const SLOW_NOTES: Record<string, string> = {
-  'boot:20':                          'The Linux virtual machine that runs Sulla\'s services is booting. This is the longest part of a cold start.',
-  'boot:60':                          'Installing and checking the command-line tools agents use inside the VM.',
-  'boot:75':                          'Kubernetes is enabled, so Sulla waits for its API before starting services.',
-  'backend:Deploying new containers': 'Waiting for the database and cache containers to report healthy.',
-  'service:postgres':                 'Waiting for the database container to accept connections.',
-  'service:redis':                    'Waiting for the cache container to answer.',
-  'service:database-manager':         'Applying any new database migrations and seed data.',
-  'service:vault':                    'Opening the password vault and checking its key.',
-  'service:sulla-files-runtime':      'Connecting Files and checking its secure storage. Scanning your files runs in the background after this and does not hold up startup.',
+  'boot:20':                          'Sulla runs in its own operating system so agent commands stay in a sandbox, not directly on your Mac. Starting it is the longest part of a cold start.',
+  'boot:60':                          'Installing and checking the tools your agents use, so they\'re ready the moment you ask.',
+  'boot:75':                          'Kubernetes is turned on, so Sulla waits for it before starting your services.',
+  'backend:Deploying new containers': 'Waiting for your private database and cache to report healthy.',
+  'service:postgres':                 'Waiting for your private database to accept connections.',
+  'service:redis':                    'Waiting for the cache to answer.',
+  'service:database-manager':         'Applying any database updates so your data matches this version.',
+  'service:vault':                    'Opening your encrypted password vault and checking its key.',
+  'service:sulla-files-runtime':      'Connecting your secure Files. Scanning your files runs in the background after this and does not hold up startup.',
   'service:integrations':             'Loading the settings for your connected integrations.',
-  'service:model-provider':           'Loading your model provider settings.',
+  'service:model-provider':           'Loading your AI model settings.',
 };
 
 /** A calm explanation for a step that has been running longer than SLOW_STEP_MS, or null. */
@@ -285,7 +285,7 @@ export function slowStepNote(stepKey: string, elapsedMs: number): string | null 
 
   if (known) return known;
   if (stepKey.startsWith('container:')) {
-    return 'Starting this service. If a newer image is available it downloads first, which is the slow part.';
+    return 'Getting this ready. If an update is available it downloads first, which is the slow part.';
   }
 
   return 'Still working on this step. Sulla keeps going on its own; nothing is needed from you.';

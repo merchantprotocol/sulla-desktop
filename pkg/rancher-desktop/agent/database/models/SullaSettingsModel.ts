@@ -149,6 +149,34 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     this.localCache.delete(property);
   }
 
+  // Redis is only a cache in front of PostgreSQL. When it's restarting or in its
+  // reconnect cooldown, reads and writes go straight to PostgreSQL instead of
+  // failing the caller (a cooldown during boot used to abort startup). Keys whose
+  // cache write was missed skip Redis until a later write lands, so a stale
+  // cached value is never served; bootstrap re-syncs everything on next launch.
+  private static readonly redisStale = new Set<string>();
+
+  private static async cacheGet(property: string): Promise<string | null> {
+    if (this.redisStale.has(property)) return null;
+    try {
+      return await redisClient.hget('sulla_settings', property);
+    } catch (err) {
+      console.warn(`[SullaSettingsModel] Redis read skipped for ${ property }; using PostgreSQL:`, err instanceof Error ? err.message : err);
+
+      return null;
+    }
+  }
+
+  private static async cachePut(property: string, value: string): Promise<void> {
+    try {
+      await redisClient.hset('sulla_settings', property, value);
+      this.redisStale.delete(property);
+    } catch (err) {
+      this.redisStale.add(property);
+      console.warn(`[SullaSettingsModel] Redis write skipped for ${ property }:`, err instanceof Error ? err.message : err);
+    }
+  }
+
   // Retry policy for bootstrap (overridable in tests).
   // Delay before retry N (1-indexed) = min(baseDelayMs * 2^(N-1), maxDelayMs).
   public static bootstrapMaxAttempts = 5;
@@ -283,7 +311,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       this.localCache.delete(property);
 
       // Redis → PG path (values are strings)
-      const cached = await redisClient.hget('sulla_settings', property);
+      const cached = await this.cacheGet(property);
       if (cached !== null) {
         // Get cast from DB since Redis doesn't store it
         const setting = await this.find(property);
@@ -301,7 +329,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       if (setting) {
         const value = setting.attributes.value;
         const cast = setting.attributes.cast;
-        await redisClient.hset('sulla_settings', property, value);
+        await this.cachePut(property, value);
         const castValue = this.castValue(value, cast);
         this.localCache.set(property, { value: castValue, expiresAt: Date.now() + this.localCacheTtlMs });
         return castValue;
@@ -344,7 +372,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         model.attributes = { property, value: stringValue, cast };
         await model.save();
       }
-      await redisClient.hset('sulla_settings', property, stringValue);
+      await this.cachePut(property, stringValue);
       this.invalidateLocal(property);
       return;
     }
@@ -406,7 +434,11 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     const model = new this();
     model.attributes.property = property;
     await model.delete();
-    await redisClient.hdel('sulla_settings', property);
+    try {
+      await redisClient.hdel('sulla_settings', property);
+    } catch {
+      this.redisStale.add(property);
+    }
     this.invalidateLocal(property);
   }
 
