@@ -30,6 +30,22 @@ spec:
       - name: postgres
         image: postgres:16-alpine
         imagePullPolicy: IfNotPresent
+        command:
+        - postgres
+        - -c
+        - shared_buffers=512MB
+        - -c
+        - effective_cache_size=1536MB
+        - -c
+        - work_mem=16MB
+        - -c
+        - maintenance_work_mem=256MB
+        - -c
+        - idle_in_transaction_session_timeout=60s
+        - -c
+        - random_page_cost=1.1
+        - -c
+        - shared_preload_libraries=pg_stat_statements
         ports:
         - containerPort: 5432
           hostPort: 30116
