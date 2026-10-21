@@ -141,7 +141,7 @@ class SullaFilesWatcher {
   private customerServicePending = false;
   private customerStatusAt = 0;
   private customerStatusRefreshing = false;
-  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.rawLocalRequest(endpoint, init));
+  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init));
   private nativeEnabled = false;
   private started = false;
   private stopped = false;

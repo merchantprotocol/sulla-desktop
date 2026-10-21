@@ -42,18 +42,49 @@ export class SullaUseCaseFiles {
   private timer?:NodeJS.Timeout;
   private running = false;
   private lastSignature = '';
+  private retryDelay = 2_000;
+  private lastFailure = '';
+  private stopped = false;
 
   constructor(private readonly request:Request) {}
 
   start():void {
     activeUseCaseFiles = this;
     if (this.timer) return;
-    this.timer = setInterval(() => this.scan().catch(error => console.warn('[UseCases] scan failed:', error)), 2_000);
-    this.timer.unref();
-    this.scan().catch(error => console.warn('[UseCases] initial scan failed:', error));
+    this.stopped = false;
+    this.schedule(0);
   }
 
-  stop():void { if (this.timer) clearInterval(this.timer); this.timer = undefined; if (activeUseCaseFiles === this) activeUseCaseFiles = undefined }
+  stop():void {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    if (activeUseCaseFiles === this) activeUseCaseFiles = undefined;
+  }
+
+  private schedule(delay:number):void {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => this.runScheduledScan(), delay);
+    this.timer.unref();
+  }
+
+  private async runScheduledScan():Promise<void> {
+    this.timer = undefined;
+    try {
+      await this.scan();
+      this.retryDelay = 2_000;
+      this.lastFailure = '';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== this.lastFailure) {
+        this.lastFailure = message;
+        console.warn('[UseCases] scan failed:', error);
+      }
+      this.retryDelay = Math.min(this.retryDelay * 2, 60_000);
+    } finally {
+      this.schedule(this.retryDelay);
+    }
+  }
 
   private async areas():Promise<{ id:string; systemArea:string }[]> {
     const response = await this.request('/v1/local/system-areas');
