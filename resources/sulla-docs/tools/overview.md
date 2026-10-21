@@ -6,6 +6,8 @@
 exec({ command: "sulla <category>/<tool> '<json_params>'" })
 ```
 
+For large JSON, pass `-` to read stdin or `@/path/file.json` to stream a file without putting the payload in argv.
+
 **This is the ONLY correct way to call CLI tools.**
 
 Examples:
