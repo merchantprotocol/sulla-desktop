@@ -48,8 +48,12 @@ jest.unstable_mockModule('@pkg/utils/paths', () => ({
 jest.unstable_mockModule('@pkg/utils/sullaFilesNativeSource', () => ({
   sullaFilesNativeSourceRolloutRequested: () => flags.fuse,
 }));
-jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ refreshVaultPinnedSessions: () => Promise.resolve() }));
-jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({ refreshFilesPinnedSessions: () => Promise.resolve() }));
+jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ VAULT_HTTPS_ORIGIN: 'https://127.0.0.1:30135', refreshVaultPinnedSessions: () => Promise.resolve() }));
+jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({
+  FILES_HTTPS_ORIGIN:           'https://127.0.0.1:30124',
+  refreshFilesPinnedSessions:   () => Promise.resolve(),
+  desktopFilesFetch:            () => Promise.resolve(new Response('{}')),
+}));
 jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => stubs('SullaFilesMountManager', {
   getSullaFilesMountManager: () => ({
     reportGuestPreparation: (reason?: string) => { mountReports.push(reason) },
@@ -92,7 +96,7 @@ function fakeBackend() {
     if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
       return guest.catFails ? Promise.reject(new Error('cat failed')) : Promise.resolve(guest.mountinfo);
     }
-    if (args[0] === 'mount' && args[1] === '--bind') {
+    if (args[0] === 'mount' && args[1] === '--bind' && args[2] === '/mnt/sulla-files') {
       guest.mountinfo += '612 22 0:20 /mnt/sulla-files /mnt/sulla-files rw,relatime shared:300 - tmpfs tmpfs rw\n';
     }
 
@@ -166,7 +170,7 @@ describe.each([
         const source = volumeSource(volume);
 
         if (source === undefined) continue; // named volume
-        expect({ name, source }).toEqual({ name, source: expect.stringMatching(/^\/(mnt\/data\/|var\/lib\/sulla\/|mnt\/sulla-files$|var\/run\/docker\.sock$)/) });
+        expect({ name, source }).toEqual({ name, source: expect.stringMatching(/^\/(mnt\/data\/|var\/lib\/sulla\/|mnt\/sulla-files$|mnt\/sulla-backups$|proc$|var\/run\/docker\.sock$)/) });
         expect(source.startsWith(appHome)).toBe(false);
         expect(source.startsWith(home)).toBe(false);
         expect(source.startsWith('/Users')).toBe(false);
@@ -211,7 +215,7 @@ describe('guest Files mount preparation never blocks compose generation', () => 
 
   test('BusyBox guest without findmnt: binds once, makes shared, keeps the adapter', async() => {
     const { compose, commands } = await generate();
-    const mounts = commands.filter(c => c.command[0] === 'mount').map(c => c.command.join(' '));
+    const mounts = commands.filter(c => c.command[0] === 'mount').map(c => c.command.join(' ')).filter(c => !c.includes('/mnt/sulla-backups'));
 
     expect(mounts).toEqual(['mount --bind /mnt/sulla-files /mnt/sulla-files', 'mount --make-shared /mnt/sulla-files']);
     expect(compose.services).toHaveProperty('sulla_files_fuse');
@@ -230,7 +234,7 @@ describe('guest Files mount preparation never blocks compose generation', () => 
     expect(compose.services).not.toHaveProperty('sulla_files_fuse');
     expect(compose.services).toHaveProperty('sulla_files');
     expect(filesBinds(compose)).toEqual([]);
-    expect(commands.some(c => c.command[0] === 'mount')).toBe(false);
+    expect(commands.some(c => c.command[0] === 'mount' && c.command.includes('/mnt/sulla-files'))).toBe(false);
     expect(compose.services.workflow_manager.environment).not.toHaveProperty('SULLA_FILES_GUEST_MOUNT');
     expect(mountReports).toEqual([expect.stringMatching(reason)]);
   });
