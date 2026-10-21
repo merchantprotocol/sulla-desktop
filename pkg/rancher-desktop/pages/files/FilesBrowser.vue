@@ -467,7 +467,8 @@
         <div
           v-else-if="view === 'list'"
           ref="listSurface"
-          class="card files"
+          class="card files virtual-surface"
+          @scroll="updateVirtualScroll"
           @pointerdown="startMarquee"
           @click.self="clearSelection"
           @contextmenu.self.prevent="openBackgroundActions"
@@ -508,8 +509,9 @@
                     {{ group.label }}
                   </td>
                 </tr>
+                <tr v-if="listTopSpacer" class="virtual-spacer"><td colspan="7" :style="{ height: `${listTopSpacer}px` }" /></tr>
                 <tr
-                  v-for="entry in group.entries"
+                  v-for="entry in virtualListEntries"
                   :key="entry.key"
                   class="row"
                   :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
@@ -645,6 +647,7 @@
                   </td>
                 </tr>
               </template>
+              <tr v-if="listBottomSpacer" class="virtual-spacer"><td colspan="7" :style="{ height: `${listBottomSpacer}px` }" /></tr>
             </tbody>
           </table>
         </div>
@@ -652,14 +655,16 @@
         <div
           v-else
           ref="gridSurface"
-          class="gridv"
+          class="gridv virtual-surface"
+          @scroll="updateVirtualScroll"
           @pointerdown="startMarquee"
           @click.self="clearSelection"
           @contextmenu.self.prevent="openBackgroundActions"
           @dragover="onSurfaceDragOver"
         >
+          <div v-if="gridTopSpacer" class="grid-spacer" :style="{ height: `${gridTopSpacer}px` }" />
           <div
-            v-for="entry in visibleEntries"
+            v-for="entry in virtualGridEntries"
             :key="entry.key"
             class="tile"
             :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
@@ -709,6 +714,7 @@
               ><b v-else>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
+          <div v-if="gridBottomSpacer" class="grid-spacer" :style="{ height: `${gridBottomSpacer}px` }" />
         </div>
         <Teleport to="body">
           <div v-if="actionTarget" ref="actionMenu" class="action-menu" role="menu" :aria-label="`Actions for ${actionTarget.name}`" :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }" @keydown="onMenuKeydown" @contextmenu.prevent @click.stop @dblclick.stop>
@@ -855,6 +861,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch 
 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
+import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
 import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
 import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
@@ -868,7 +875,7 @@ const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigati
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
 interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
@@ -951,6 +958,9 @@ const operationNotice = ref('');
 const editingKey = ref(''); const renameValue = ref(''); let renameCommitting = false;
 const mainSurface = ref<HTMLElement | null>(null); const listSurface = ref<HTMLElement | null>(null); const gridSurface = ref<HTMLElement | null>(null);
 const browserSurface = ref<HTMLElement | null>(null);
+const virtualScrollTop = ref(0); const virtualViewportHeight = ref(720); const gridColumns = ref(1);
+const LIST_ROW_HEIGHT = 63; const GRID_ROW_HEIGHT = 177; const VIRTUAL_OVERSCAN = 6;
+let gridResizeObserver:ResizeObserver | undefined;
 const marquee = ref<{ left:number; top:number; width:number; height:number; additive:boolean } | null>(null);
 let stopPointerGesture:(() => void) | undefined;
 let suppressGestureClick = false;
@@ -968,7 +978,7 @@ const nativeSources = ref<{ fileId:string; name:string; state:string; lastError?
 const starred = ref(new Set<string>());
 const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; collectionId:string; orgId?:string; ownerUserId?:string; assetKind?:'file' | 'capture' | 'artifact' } | null>(null);
 
-const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt) ?? []);
+const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt && file.path.split('/').at(-1) !== '_folder-metadata.yaml') ?? []);
 const trashItems = computed(() => snapshot.value?.trash ?? []);
 const totalBytes = computed(() => activeFiles.value.reduce((sum, file) => sum + file.size, 0));
 const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
@@ -1084,10 +1094,10 @@ function kindLabel(mime:string, path = '') {
   if (mime.startsWith('text/')) return 'Text';
   return ext ? ext.toUpperCase() : 'File';
 }
-function toDisplay(file:FilesItem):DisplayEntry {
+function toDisplay(file:FilesItem, sortTimestamp = Date.parse(file.updatedAt || '0')):DisplayEntry {
   const glyph = fileGlyph(file.mime, file.path); const conflict = entrySync(file) === 'conflict';
 
-  return { ...file, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · both copies preserved` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
+  return { ...file, sortTimestamp, key: file.id, name: file.path.split('/').at(-1) || file.path, folder: false, agent: file.createdByType === 'agent-run', childCount: 0, kindClass: glyph.className, icon: glyph.icon, subtitle: conflict ? `Edited on ${ file.conflictDevices || 2 } desktops at once · both copies preserved` : `${ kindLabel(file.mime, file.path) } · v${ file.versionCount } · ${ file.indexStatus }: ${ file.indexReason }` };
 }
 function toTrashDisplay(item:FilesTrashItem):DisplayEntry {
   const undo = item.currentTombstone.undo.state.replace('-', ' ');
@@ -1097,7 +1107,7 @@ function toTrashDisplay(item:FilesTrashItem):DisplayEntry {
   };
 
   return {
-    id: item.id, key: `trash:folder:${ item.id }`, path: item.path,
+    id: item.id, key: `trash:folder:${ item.id }`, path: item.path, sortTimestamp: Date.parse(item.deletedAt || '0'),
     name: item.path.split('/').at(-1) || item.path, folder: true, trashItem: item,
     agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder,
     subtitle: `Folder · Trash restore ${ undo }`, mime: 'inode/directory', size: 0,
@@ -1107,93 +1117,97 @@ function toTrashDisplay(item:FilesTrashItem):DisplayEntry {
     capabilities: item.capabilities,
   };
 }
-function folderEntry(prefix:string, name:string, children:FilesItem[], folderState?:FilesFolderState):DisplayEntry {
-  const newest = [...children].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];
-  const agent = children.length > 0 && children.every(file => file.createdByType === 'agent-run');
-  const state = children.some(file => entrySync(file) === 'conflict') ? 'conflict' : children.some(file => entrySync(file) === 'syncing') ? 'syncing' : children.length && children.every(file => entrySync(file) === 'online-only') ? 'online-only' : 'synced';
+function folderEntry(prefix:string, aggregate:FolderAggregate, folderState?:FilesFolderState):DisplayEntry {
+  const newest = aggregate.newest;
+  const agent = aggregate.count > 0 && aggregate.allAgent;
+  const state = aggregate.hasConflict ? 'conflict' : aggregate.hasSyncing ? 'syncing' : aggregate.count > 0 && aggregate.allOnlineOnly ? 'online-only' : 'synced';
   const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'stored in Sulla';
-  const size = children.reduce((sum, file) => sum + file.size, 0);
 
-  return { id: `folder:${ prefix }${ name }`, key: `folder:${ prefix }${ name }`, path: `${ prefix }${ name }`, name, folder: true, folderState, agent, childCount: children.length, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ children.length } file${ children.length === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size, updatedAt: newest?.updatedAt ?? '', currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
+  return { id: `folder:${ prefix }${ aggregate.name }`, key: `folder:${ prefix }${ aggregate.name }`, path: `${ prefix }${ aggregate.name }`, name:aggregate.name, folder: true, folderState, agent, childCount: aggregate.count, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ aggregate.count } file${ aggregate.count === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size:aggregate.size, updatedAt: newest?.updatedAt ?? '', sortTimestamp:aggregate.newestTimestamp, currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
+}
+function compareEntries(a:DisplayEntry, b:DisplayEntry) {
+  if (a.folder !== b.folder) return a.folder ? -1 : 1;
+  if (a.agent !== b.agent) return a.agent ? 1 : -1;
+  let result = sort.value === 'modified' ? a.sortTimestamp - b.sortTimestamp : sort.value === 'size' ? a.size - b.size : sort.value === 'type' ? fileNameCollator.compare(a.mime, b.mime) : fileNameCollator.compare(a.name, b.name);
+  if (sort.value === 'owner') result = fileNameCollator.compare(ownerName(a), ownerName(b));
+  return sortDirection.value === 'asc' ? result : -result;
 }
 const visibleEntries = computed<DisplayEntry[]>(() => {
   if (section.value === 'trash') {
     const search = query.value.trim().toLowerCase();
-    const entries = trashItems.value.filter(item => !search || item.path.toLowerCase().includes(search)).map(toTrashDisplay);
-
-    return entries.sort((a, b) => {
-      const result = sort.value === 'modified' ? Date.parse(a.updatedAt || '0') - Date.parse(b.updatedAt || '0') : sort.value === 'size' ? a.size - b.size : sort.value === 'type' ? a.mime.localeCompare(b.mime) : a.name.localeCompare(b.name, undefined, { numeric: true });
-
-      return sortDirection.value === 'asc' ? result : -result;
-    });
+    return trashItems.value.filter(item => item.path.split('/').at(-1) !== '_folder-metadata.yaml' && (!search || item.path.toLowerCase().includes(search))).map(toTrashDisplay).sort(compareEntries);
   }
   let files = searchResults.value ?? activeFiles.value;
   if (section.value === 'agent') files = files.filter(file => file.createdByType === 'agent-run');
   if (section.value === 'starred') files = files.filter(file => starred.value.has(file.id));
-  if (section.value === 'recent') files = [...files].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, 50);
+  if (section.value === 'recent') { const timestamps=new Map(files.map(file=>[file.id,Date.parse(file.updatedAt||'0')])); files = [...files].sort((a, b) => timestamps.get(b.id)! - timestamps.get(a.id)!).slice(0, 50); }
   if (section.value === 'shared') files = files.filter(file => sharedFolders.value.some(folder => file.path.startsWith(`${ folder }/`)));
   const search = query.value.trim().toLowerCase();
   const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value);
   const prefix = currentPath.value && section.value === 'files' ? `${ currentPath.value }/` : '';
-  const entries:DisplayEntry[] = []; const folders = new Map<string, FilesFolderState | undefined>();
-  for (const file of files) {
-    if (!flat && !file.path.startsWith(prefix)) continue;
-    const relative = flat ? file.path : file.path.slice(prefix.length); const parts = relative.split('/');
-    if (!flat && (parts.length > 1 || file.mime === 'inode/directory')) { if (!folders.has(parts[0])) folders.set(parts[0], undefined) } else if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
-  }
-  if (!flat && section.value === 'files') for (const folder of snapshot.value?.folders ?? []) {
-    const folderPath = typeof folder === 'string' ? folder : folder.path;
-    if (folderPath.startsWith(prefix) && folderPath.length > prefix.length) {
-      const name = folderPath.slice(prefix.length).split('/')[0];
-      const displayedPath = `${ prefix }${ name }`;
-      folders.set(name, typeof folder !== 'string' && folder.path === displayedPath ? folder : folders.get(name));
+  const entries:DisplayEntry[] = [];
+  const aggregation = aggregateFolderChildren(files, prefix);
+  const folderStates = new Map<string, FilesFolderState | undefined>();
+  if (flat) {
+    for (const file of files) if (file.mime !== 'inode/directory') entries.push(toDisplay(file));
+  } else {
+    entries.push(...aggregation.directFiles.map(file => toDisplay(file, aggregation.timestamps.get(file.id) ?? Date.parse(file.updatedAt || '0')))));
+    for (const folder of snapshot.value?.folders ?? []) {
+      const folderPath = typeof folder === 'string' ? folder : folder.path;
+      if (folderPath.startsWith(prefix) && folderPath.length > prefix.length) {
+        const name = folderPath.slice(prefix.length).split('/')[0];
+        const displayedPath = `${ prefix }${ name }`;
+        folderStates.set(name, typeof folder !== 'string' && folder.path === displayedPath ? folder : folderStates.get(name));
+        if (!aggregation.folders.has(name)) aggregation.folders.set(name, { name, path:displayedPath, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:true, hasConflict:false, hasSyncing:false, allOnlineOnly:true });
+      }
     }
+    for (const aggregate of aggregation.folders.values()) entries.push(folderEntry(prefix, aggregate, folderStates.get(aggregate.name)));
   }
-  for (const [name, folderState] of folders) entries.push(folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`)), folderState));
   if (section.value === 'starred') {
     for (const key of starred.value) {
       if (!key.startsWith('folder:')) continue;
-      const path = key.slice('folder:'.length); const children = activeFiles.value.filter(file => file.path.startsWith(`${ path }/`));
-      if (children.length) {
+      const path = key.slice('folder:'.length); const parent = path.split('/').slice(0, -1).join('/'); const parentPrefix = `${ parent }${ parent ? '/' : '' }`;
+      const aggregate = aggregateFolderChildren(activeFiles.value, parentPrefix).folders.get(path.split('/').at(-1)!);
+      if (aggregate?.count) {
         const state = snapshot.value?.folders?.find(folder => typeof folder !== 'string' && folder.path === path);
-        entries.push(folderEntry(`${ path.split('/').slice(0, -1).join('/') }${ path.includes('/') ? '/' : '' }`, path.split('/').at(-1)!, children, typeof state === 'string' ? undefined : state));
+        entries.push(folderEntry(parentPrefix, aggregate, typeof state === 'string' ? undefined : state));
       }
     }
   }
-  const filtered = entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date));
-  return filtered.sort((a, b) => {
-    if (a.folder !== b.folder) return a.folder ? -1 : 1;
-    if (a.agent !== b.agent) return a.agent ? 1 : -1;
-    let result = sort.value === 'modified' ? Date.parse(a.updatedAt || '0') - Date.parse(b.updatedAt || '0') : sort.value === 'size' ? a.size - b.size : sort.value === 'type' ? a.mime.localeCompare(b.mime) : a.name.localeCompare(b.name, undefined, { numeric: true });
-
-    if (sort.value === 'owner') result = ownerName(a).localeCompare(ownerName(b));
-    return sortDirection.value === 'asc' ? result : -result;
-  });
+  return entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date)).sort(compareEntries);
 });
 function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
-  const prefix = `${ folder.path }/`; const files = activeFiles.value; const folders = new Map<string, FilesFolderState | undefined>(); const entries:DisplayEntry[] = [];
-  for (const file of files) {
-    if (!file.path.startsWith(prefix)) continue;
-    const relative = file.path.slice(prefix.length); const parts = relative.split('/');
-    if (parts.length > 1 || file.mime === 'inode/directory') folders.set(parts[0], folders.get(parts[0]));
-    else entries.push({ ...toDisplay(file), depth });
-  }
+  const prefix = `${ folder.path }/`; const aggregation = aggregateFolderChildren(activeFiles.value, prefix); const states = new Map<string, FilesFolderState | undefined>();
   for (const item of snapshot.value?.folders ?? []) {
     const folderPath = typeof item === 'string' ? item : item.path;
     if (!folderPath.startsWith(prefix) || folderPath === folder.path) continue;
     const name = folderPath.slice(prefix.length).split('/')[0]; const direct = `${ prefix }${ name }`;
-    if (!folders.has(name) || folderPath === direct) folders.set(name, typeof item === 'string' ? undefined : item);
+    if (!states.has(name) || folderPath === direct) states.set(name, typeof item === 'string' ? undefined : item);
+    if (!aggregation.folders.has(name)) aggregation.folders.set(name, { name, path:direct, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:true, hasConflict:false, hasSyncing:false, allOnlineOnly:true });
   }
-  const folderEntries = [...folders].map(([name, state]) => ({ ...folderEntry(prefix, name, files.filter(file => file.path.startsWith(`${ prefix }${ name }/`)), state), depth }));
-  const sorted = [...folderEntries, ...entries].sort((a, b) => a.folder === b.folder ? a.name.localeCompare(b.name, undefined, { numeric:true }) : a.folder ? -1 : 1);
-
+  const entries = [...aggregation.folders.values()].map(item => ({ ...folderEntry(prefix, item, states.get(item.name)), depth }));
+  entries.push(...aggregation.directFiles.map(file => ({ ...toDisplay(file, aggregation.timestamps.get(file.id) ?? Date.parse(file.updatedAt || '0'))), depth })));
+  const sorted = entries.sort((a, b) => a.folder === b.folder ? fileNameCollator.compare(a.name, b.name) : a.folder ? -1 : 1);
   return sorted.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [entry, ...childrenForFolder(entry, depth + 1)] : [entry]);
 }
 const displayedEntries = computed(() => visibleEntries.value.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [{ ...entry, depth:0 }, ...childrenForFolder(entry, 1)] : [{ ...entry, depth:0 }]));
 const groups = computed(() => [{ label: currentPath.value ? 'Contents' : 'Files and folders', entries:displayedEntries.value }].filter(group => group.entries.length));
-const allVisibleSelected = computed(() => Boolean(displayedEntries.value.length) && displayedEntries.value.every(entry => selectedKeys.value.has(entry.key)));
-const selectedFileForShare = computed(() => displayedEntries.value.find(entry => !entry.folder && selectedKeys.value.has(entry.key)) ?? selected.value);
-const selectedEntries = computed(() => displayedEntries.value.filter(entry => selectedKeys.value.has(entry.key)));
+const listWindow = computed(() => { const start=Math.max(0,Math.floor(virtualScrollTop.value/LIST_ROW_HEIGHT)-VIRTUAL_OVERSCAN); const count=Math.ceil(virtualViewportHeight.value/LIST_ROW_HEIGHT)+VIRTUAL_OVERSCAN*2; return { start, end:Math.min(displayedEntries.value.length,start+count) } });
+const virtualListEntries = computed(() => displayedEntries.value.slice(listWindow.value.start,listWindow.value.end));
+const listTopSpacer = computed(() => listWindow.value.start*LIST_ROW_HEIGHT);
+const listBottomSpacer = computed(() => Math.max(0,(displayedEntries.value.length-listWindow.value.end)*LIST_ROW_HEIGHT));
+const gridWindow = computed(() => { const rowStart=Math.max(0,Math.floor(virtualScrollTop.value/GRID_ROW_HEIGHT)-VIRTUAL_OVERSCAN); const visibleRows=Math.ceil(virtualViewportHeight.value/GRID_ROW_HEIGHT)+VIRTUAL_OVERSCAN*2; return { start:rowStart*gridColumns.value, end:Math.min(displayedEntries.value.length,(rowStart+visibleRows)*gridColumns.value), rowStart } });
+const virtualGridEntries = computed(() => displayedEntries.value.slice(gridWindow.value.start,gridWindow.value.end));
+const gridTopSpacer = computed(() => Math.max(0,gridWindow.value.rowStart*GRID_ROW_HEIGHT-14));
+const gridBottomSpacer = computed(() => Math.max(0,(Math.ceil(displayedEntries.value.length/gridColumns.value)-Math.ceil(gridWindow.value.end/gridColumns.value))*GRID_ROW_HEIGHT));
+function updateVirtualScroll(event:Event) { const surface=event.currentTarget as HTMLElement; virtualScrollTop.value=surface.scrollTop; virtualViewportHeight.value=surface.clientHeight; }
+function updateGridColumns() { const surface=gridSurface.value; if (!surface) return; gridColumns.value=Math.max(1,Math.floor((surface.clientWidth+14)/(188+14))); virtualViewportHeight.value=surface.clientHeight; }
+function scrollEntryIntoView(index:number) { const surface=view.value==='list'?listSurface.value:gridSurface.value; if (!surface) return; const row=view.value==='list'?index:Math.floor(index/gridColumns.value); const height=view.value==='list'?LIST_ROW_HEIGHT:GRID_ROW_HEIGHT; const top=row*height; if(top<surface.scrollTop)surface.scrollTop=top;else if(top+height>surface.scrollTop+surface.clientHeight)surface.scrollTop=top+height-surface.clientHeight; virtualScrollTop.value=surface.scrollTop; }
+const displayedEntryMap = computed(() => new Map(displayedEntries.value.map(entry => [entry.key, entry])));
+const displayedEntryKeys = computed(() => new Set(displayedEntryMap.value.keys()));
+const allVisibleSelected = computed(() => Boolean(displayedEntryKeys.value.size) && displayedEntryKeys.value.size === selectedKeys.value.size && [...displayedEntryKeys.value].every(key => selectedKeys.value.has(key)));
+const selectedEntries = computed(() => [...selectedKeys.value].map(key => displayedEntryMap.value.get(key)).filter((entry):entry is DisplayEntry => Boolean(entry)));
+const selectedFileForShare = computed(() => selectedEntries.value.find(entry => !entry.folder) ?? selected.value);
 const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
    (clipboard.value.sourceCapability !== 'unavailable' && props.dataSource.capabilities.crossCollectionOperations !== 'unavailable' &&
@@ -1221,7 +1235,7 @@ async function refresh(silent = false, afterMutation = false) {
     nativeSources.value = sources; snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
     await operations.restore(loaded.collection.id);
     if (!isCurrent()) return;
-    selectedKeys.value = new Set([...selectedKeys.value].filter(key => visibleEntries.value.some(entry => entry.key === key)));
+    selectedKeys.value = new Set([...selectedKeys.value].filter(key => displayedEntryKeys.value.has(key)));
   } catch (cause) { if (isCurrent()) error.value = cause instanceof Error ? cause.message : String(cause) }
   finally { if (isCurrent()) loading.value = false }
 }
@@ -1323,13 +1337,13 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   if (event.repeat && (event.key === 'Delete' || event.key === 'Backspace')) { event.preventDefault(); return }
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); undoLastOperation(); return }
-  const entries = visibleEntries.value; const index = entries.findIndex(item => item.key === entry.key);
+  const entries = displayedEntries.value; const index = entries.findIndex(item => item.key === entry.key);
   if (isMac && event.metaKey && event.key === 'ArrowDown') { event.preventDefault(); activate(entry); return }
   if ((event.metaKey || event.ctrlKey) && event.key === 'ArrowUp') { event.preventDefault(); openParent(); return }
   if (quickLookEntry.value) { onKeydown(event); return }
   if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(event.key)) {
     event.preventDefault(); const delta = ['ArrowDown', 'ArrowRight'].includes(event.key) ? 1 : -1; const next = entries[Math.max(0, Math.min(entries.length - 1, index + delta))];
-    if (next) { focusEntry(next, event); nextTick(() => browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(next.key) }"]`)?.focus()) }
+    if (next) { focusEntry(next, event); scrollEntryIntoView(entries.indexOf(next)); nextTick(() => browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(next.key) }"]`)?.focus()) }
   } else if (event.key === ' ' && !event.metaKey && !event.ctrlKey) { event.preventDefault(); openQuickLook(entry) }
   else if ((isMac && event.key === 'Enter') || (!isMac && event.key === 'F2')) { event.preventDefault(); beginRename(entry) }
   else if ((!isMac && event.key === 'Enter') || (isMac && event.metaKey && event.key === 'ArrowDown')) { event.preventDefault(); activate(entry) }
@@ -1607,7 +1621,19 @@ function startMarquee(event:PointerEvent) {
     moved = true;
     const left = Math.min(originX, next.clientX); const top = Math.min(originY, next.clientY); const right = Math.max(originX, next.clientX); const bottom = Math.max(originY, next.clientY);
     marquee.value = { left, top, width: right - left, height: bottom - top, additive };
-    const hits = visibleEntries.value.filter(entry => { const node = browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(entry.key) }"]`); if (!node) return false; const rect = node.getBoundingClientRect(); return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom }).map(entry => entry.key);
+    const surface = view.value === 'list' ? listSurface.value : gridSurface.value;
+    const surfaceRect = surface?.getBoundingClientRect();
+    const hits = surface && surfaceRect ? displayedEntries.value.filter((entry, index) => {
+      if (view.value === 'list') {
+        const entryTop = surfaceRect.top + 62 + index * LIST_ROW_HEIGHT - surface.scrollTop;
+        return surfaceRect.right >= left && surfaceRect.left <= right && entryTop + LIST_ROW_HEIGHT >= top && entryTop <= bottom;
+      }
+      const column = index % gridColumns.value; const row = Math.floor(index / gridColumns.value); const gap = 14;
+      const width = (surface.clientWidth - gap * (gridColumns.value - 1)) / gridColumns.value;
+      const entryLeft = surfaceRect.left + column * (width + gap);
+      const entryTop = surfaceRect.top + row * GRID_ROW_HEIGHT - surface.scrollTop;
+      return entryLeft + width >= left && entryLeft <= right && entryTop + GRID_ROW_HEIGHT - gap >= top && entryTop <= bottom;
+    }).map(entry => entry.key) : [];
     selectedKeys.value = new Set([...(additive ? existing : []), ...hits]);
   };
   trackPointer(event, move, cancelled => { marquee.value = null; if (cancelled) selectedKeys.value = existing; else if (!moved && !additive) clearSelection() }, () => moved || additive); event.preventDefault();
@@ -1744,7 +1770,7 @@ async function recoverOperation() {
   await runMutation(async() => { if (request) await operations.submit(request); else if (receipt) await operations.resume(receipt.operationId) });
 }
 async function showOperation(operationId:string) { await runMutation(async() => { await operations.resume(operationId) }) }
-function beginRename(entry = selectedEntries.value[0]) { if (readOnlyArea.value) return; if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
+function beginRename(entry = selectedEntries.value[0]) { if (readOnlyArea.value) return; if (busy.value || section.value === 'trash' || !entry || selectedEntries.value.length > 1) return; const index=displayedEntries.value.findIndex(item=>item.key===entry.key); if(index>=0)scrollEntryIntoView(index); editingKey.value = entry.key; renameValue.value = entry.name; nextTick(() => setRenameInput(browserSurface.value?.querySelector<HTMLInputElement>('.inline-rename'), entry)) }
 function setRenameInput(element:unknown, entry:DisplayEntry) { if (!(element instanceof HTMLInputElement) || editingKey.value !== entry.key || document.activeElement === element) return; nextTick(() => { if (!element.isConnected || editingKey.value !== entry.key) return; element.focus(); const dot = entry.folder ? -1 : entry.name.lastIndexOf('.'); element.setSelectionRange(0, dot > 0 ? dot : entry.name.length) }) }
 function cancelRename() { const key = editingKey.value; editingKey.value = ''; renameValue.value = ''; renameCommitting = false; if (key) nextTick(() => { if (!editingKey.value) browserSurface.value?.querySelector<HTMLElement>(`[data-entry-key="${ CSS.escape(key) }"]`)?.focus() }) }
 async function commitRename(entry:DisplayEntry) {
@@ -1935,7 +1961,8 @@ function navigateTo(detail:FilesNavigationPayload) {
   if (detail.section === 'share-review') shareEntry(toDisplay(file));
 }
 
-watch(view, () => { stopPointerGesture?.(); saveFolderPreferences() });
+watch(view, async() => { stopPointerGesture?.(); virtualScrollTop.value=0; saveFolderPreferences(); await nextTick(); if(gridSurface.value){gridResizeObserver?.observe(gridSurface.value);updateGridColumns()} });
+watch([section,currentPath,query],()=>{virtualScrollTop.value=0;const surface=view.value==='list'?listSurface.value:gridSurface.value;if(surface)surface.scrollTop=0});
 let searchTimer:ReturnType<typeof setTimeout> | undefined;
 let searchGeneration = 0;
 let mounted = false;
@@ -1970,8 +1997,8 @@ watch(() => props.navigation, () => consumeNavigation());
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
 let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
-onMounted(async() => { mounted = true; window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(async() => { mounted = true; gridResizeObserver=new ResizeObserver(updateGridColumns); await nextTick(); if(gridSurface.value)gridResizeObserver.observe(gridSurface.value); window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
+onBeforeUnmount(() => { mounted = false; gridResizeObserver?.disconnect(); refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
@@ -2211,7 +2238,10 @@ onBeforeUnmount(() => { mounted = false; refreshGeneration++; searchGeneration++
 
 /* List view */
 .card { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
-.files { overflow: hidden; }
+.files { overflow: auto; max-height: min(70vh, 760px); }
+.virtual-surface { overscroll-behavior:contain; }
+.virtual-spacer td { padding:0!important; border:0!important; }
+.files tr.row { height:63px; }
 .tbl { width: 100%; border-collapse: collapse; }
 .tbl th { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); font-weight: 600; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .tbl td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -2269,8 +2299,9 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .sync.conflict { color: var(--bad); }
 
 /* Grid view */
-.gridv { display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 14px; }
-.tile { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; cursor: default; }
+.gridv { display: grid; max-height:min(70vh,760px); overflow:auto; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 14px; }
+.grid-spacer { grid-column:1/-1; pointer-events:none; }
+.tile { height:163px; box-sizing:border-box; background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; cursor: default; }
 .tile[draggable="true"] { cursor: grab; }
 .tile.is-dragging { opacity: .45; }
 .tile.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
