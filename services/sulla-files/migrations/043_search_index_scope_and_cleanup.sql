@@ -1,7 +1,5 @@
 -- Derived search data only: never delete files, versions, manifests or content.
--- The migration runner owns the transaction; bounded batches limit working
--- memory and lock_timeout makes contention fail/retry on the next startup.
-SET LOCAL lock_timeout = '5s';
+-- Cleanup of existing derived rows runs after startup in searchCleanup.ts.
 
 -- Every writer updates current_version_id, not just system-area ingest. The
 -- ingest header cannot be the authority for whether an area is searchable.
@@ -52,39 +50,3 @@ END $$;
 CREATE TRIGGER trg_guard_file_search_index_job BEFORE INSERT OR UPDATE ON file_index_jobs
   FOR EACH ROW EXECUTE FUNCTION guard_file_search_index_job();
 
-DO $$
-DECLARE removed INTEGER; cursor_id UUID := '00000000-0000-0000-0000-000000000000';
-BEGIN
-  LOOP
-    WITH batch AS MATERIALIZED (
-      SELECT sc.id FROM file_search_chunks sc JOIN files f ON f.id=sc.file_id
-      JOIN collections c ON c.id=f.collection_id
-      WHERE sc.id>cursor_id AND (c.system_area IN ('logs','training-data') OR sc.version_id IS DISTINCT FROM f.current_version_id)
-      ORDER BY sc.id LIMIT 1000
-    ), deleted AS (
-      DELETE FROM file_search_chunks sc USING batch b WHERE sc.id=b.id RETURNING sc.id
-    )
-    SELECT count(*),max(id::text)::uuid INTO removed,cursor_id FROM deleted;
-    EXIT WHEN removed=0;
-  END LOOP;
-  LOOP
-    WITH batch AS MATERIALIZED (
-      SELECT s.file_id FROM file_search_text s JOIN files f ON f.id=s.file_id
-      JOIN collections c ON c.id=f.collection_id WHERE c.system_area IN ('logs','training-data') LIMIT 250
-    )
-    DELETE FROM file_search_text s USING batch b WHERE s.file_id=b.file_id;
-    GET DIAGNOSTICS removed = ROW_COUNT;
-    EXIT WHEN removed=0;
-  END LOOP;
-  LOOP
-    WITH batch AS MATERIALIZED (
-      SELECT j.version_id FROM file_index_jobs j JOIN files f ON f.id=j.file_id
-      JOIN collections c ON c.id=f.collection_id
-      WHERE c.system_area IN ('logs','training-data') OR j.version_id IS DISTINCT FROM f.current_version_id
-      LIMIT 1000
-    )
-    DELETE FROM file_index_jobs j USING batch b WHERE j.version_id=b.version_id;
-    GET DIAGNOSTICS removed = ROW_COUNT;
-    EXIT WHEN removed=0;
-  END LOOP;
-END $$;
