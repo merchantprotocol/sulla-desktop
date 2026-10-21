@@ -178,7 +178,7 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
 /** Loads the exact existing Files sync bundle; no key material is included. */
 export async function loadResidencySyncBundle(db: pg.Pool, expected: RemoteVersionDescriptor): Promise<ResidencySyncBundle> {
   const row = (await db.query(
-    `SELECT row_to_json(c.*) AS collection,row_to_json(f.*) AS file,row_to_json(v.*) AS version,row_to_json(m.*) AS manifest
+    `SELECT row_to_json(c.*) AS collection,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.retention_mode,f.retain_until,f.record_lock_type,f.lifecycle_generation,f.operation_revision) x)) AS file,row_to_json(v.*) AS version,row_to_json(m.*) AS manifest
        FROM files f JOIN file_versions v ON v.id=$1 AND v.file_id=f.id
        JOIN collections c ON c.id=f.collection_id
        JOIN manifests m ON m.hash=v.manifest_hash

@@ -49,6 +49,9 @@ import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
+// search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
+const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
+const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
 type RequestWithIdentity = express.Request<Record<string, string>> & { filesIdentity?: FilesIdentity };
 type Right = 'view' | 'edit' | 'manage';
 
@@ -1095,7 +1098,7 @@ export function createApp(
           OR (chunks.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=chunks.id AND m.published_at IS NOT NULL)))
           AND (c.agent_run_id=ANY($2::text[]) OR f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[]))`, [actor.userId, runIds, actor.orgId ?? null]);
       if (Number(legacy.rows[0]?.count ?? 0) > 0) throw new HttpError(409, 'Legacy agent files need an explicit secure import from the retired external chunk store; records were preserved and were not opened');
-      const rows = await db.query(`SELECT f.*,c.kind AS collection_kind,c.agent_run_id
+      const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},c.kind AS collection_kind,c.agent_run_id
         FROM files f JOIN collections c ON c.id=f.collection_id JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
         WHERE c.owner_user_id=$1 AND ($4::text IS NULL OR c.org_id=$4::text) AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
           AND chunks.compatibility_state='native' AND chunks.published=TRUE AND chunks.legacy_source=FALSE AND (c.thread_id=$3 OR c.thread_id IS NULL)
@@ -1233,7 +1236,7 @@ export function createApp(
       return;
     }
     const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = '';
-    const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
+    const query = await db.query(`SELECT j.*,${FILE_ROW_JSON_SQL} file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
     const actor = identity(request); const entries:any[] = [];
     for (const row of query.rows.filter(row => !isProtectedPath(row.file.path))) {
       const draftVisible = true; const canEdit = true;
@@ -1249,7 +1252,7 @@ export function createApp(
     }
     response.json(entries.sort((left, right) => Number(left.seq) - Number(right.seq)).slice(0, 1000));
   } catch (error) { next(error) } });
-  app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,row_to_json(f.*) file,
+  app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,${FILE_ROW_JSON_SQL} file,
       CASE WHEN k.version_id IS NULL THEN NULL ELSE json_build_object('collectionId',k.collection_id,'principalId',k.principal_id,'keyVersion',k.key_version,'epoch',k.key_epoch) END AS "keyContext"
       FROM file_versions v JOIN files f ON f.id=v.file_id LEFT JOIN manifests m ON m.hash=v.manifest_hash LEFT JOIN file_version_key_contexts k ON k.version_id=v.id WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await assertUnprotectedFile(db, query.rows[0].file); const file = await requireFile(request, query.rows[0].file.id, 'view'); await visibleVersion(request, file, request.params.id); response.json(query.rows[0]) } catch (error) { next(error) } });
   app.get('/v1/files/:id/recording-metadata', async(request:RequestWithIdentity, response, next) => { try {
@@ -1512,7 +1515,7 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
     const params:any[] = [collectionId, path ? `${ path }/` : '']; let filter = '';
-    const rows = await db.query(`SELECT f.*,v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
+    const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
       WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params);
     const actor = identity(request); const visible = [];
@@ -1641,7 +1644,7 @@ export function createApp(
   } catch (error) { next(error) } });
   app.get('/v1/trash', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId=String(request.query.collectionId??''); const access=await requireCollection(request,collectionId,'view',true,true);
-    const files=await db.query(`SELECT * FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`,[collectionId]);
+    const files=await db.query(`SELECT ${FILE_COLUMNS_SQL} FROM files f WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND f.deleted_at IS NOT NULL ORDER BY f.deleted_at DESC`,[collectionId]);
     const allowed:any[]=[];
     const undoState=(receipt:any,pathOperation:any) => {
       const lifecycle=receipt?.folder_plan?.lifecycle??{}; const disposal=pathOperation?.plan?.disposal??lifecycle.disposal??{};
@@ -1780,7 +1783,7 @@ export function createApp(
     if (!source) throw new HttpError(404, 'scratch run not found');
     const targetCollectionId = String(request.body.collectionId ?? ''); await requireCollection(request, targetCollectionId, 'edit'); const target = await collectionRow(targetCollectionId);
     if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
-    const files = (await db.query('SELECT * FROM files WHERE collection_id=$1 AND created_by_id=$2 AND deleted_at IS NULL', [source.id, request.params.runId])).rows;
+    const files = (await db.query(`SELECT ${FILE_COLUMNS_SQL} FROM files f WHERE f.collection_id=$1 AND f.created_by_id=$2 AND f.deleted_at IS NULL`, [source.id, request.params.runId])).rows;
     const materialized = await Promise.all(files.map(async file => ({ file, content: await loadFileContent(db, config, store, file.id, file.current_version_id) })));
     await client.query('BEGIN');
     await lockStoredNamespace(client, targetCollectionId);

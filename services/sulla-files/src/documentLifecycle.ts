@@ -12,9 +12,10 @@ function httpError(status:number, message:string):Error & { status:number } {
 function iso(value:any):string | undefined { return value?.toISOString?.() ?? value ?? undefined }
 
 export function lifecycleFields(file:any) {
+  const { search_text: _st, search_vector: _sv, ...rest } = file;
   return {
-    ...file,
-    publication_state: file.draft_version_id ? 'draft' : 'published',
+    ...rest,
+    publication_state: rest.draft_version_id ? 'draft' : 'published',
     versioning: { enabled: file.versioning_enabled, majorMinor: file.major_minor_enabled, requireApproval: file.require_approval, requireCheckout: file.require_checkout },
     checkout: file.checked_out_by_user_id ? { userId: file.checked_out_by_user_id, deviceId: file.checked_out_by_device_id, at: iso(file.checked_out_at) } : null,
     retention: { mode: file.retention_mode, retainUntil: iso(file.retain_until), eventType: file.retention_event_type, eventOccurredAt: iso(file.retention_event_at), durationDays: file.retention_duration_days },
