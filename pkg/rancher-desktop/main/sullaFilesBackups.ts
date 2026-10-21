@@ -113,7 +113,7 @@ class SullaFilesBackups {
     // Only non-secret paths/options are argv. Secret bytes go down stdin directly into a root-only VM file.
     const payload=Buffer.from(`username=${ credentials.username }\npassword=${ credentials.password }\n${ credentials.domain?`domain=${ credentials.domain }\n`:'' }`);
     try {
-      const child=executor.spawn({root:true,stdio:['pipe','ignore','ignore']},'sh','-c','set -eu; umask 077; set -C; cat > "$1"; chmod 0600 "$1"','sh',credentialFile);
+      const child=executor.spawn({root:true},'sh','-c','set -eu; umask 077; set -C; cat > "$1"; chmod 0600 "$1"','sh',credentialFile);
       await new Promise<void>((resolve,reject)=>{
         child.on('error',()=>reject(new Error('NAS credential transfer failed')));
         child.on('exit',code=>code===0?resolve():reject(new Error('NAS credential transfer failed')));
