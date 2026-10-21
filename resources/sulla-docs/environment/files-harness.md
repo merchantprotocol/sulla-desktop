@@ -11,7 +11,7 @@ Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, yo
 - **Agent writes are drafts.** Any write by an agent creates a new draft version, wherever it lands. The published version does not change.
 - **Exception: `Sulla/Memory/`.** Durable agent memory publishes immediately so recall can see it. Claude Code project memory lives in `Sulla/Memory/claude-code/<project>`, the Codex memory database is snapshotted to `Sulla/Memory/codex`, and Sulla agents use `Sulla/Memory/sulla`. Saving a memory file is not enough on its own: also record the durable fact with the observation tool.
 - **Human writes publish immediately**, unless the file requires approval or the file is under `Sulla/Use Cases/` (see section 5).
-- **Drafts are visible to agents, not to the runtime.** Read a draft with normal file tools or list versions with normal file tools (tool normal file tools). Humans see the published version and a **Draft pending** marker in File Manager.
+- **Drafts are visible to agents, not to the runtime.** Read a draft with normal file tools on the mount, or list versions with `sulla files/versions`. Humans see the published version and a **Draft pending** marker in File Manager.
 
 ## 3. Publish requests
 
@@ -67,7 +67,7 @@ Sulla/Use Cases/<type>/<slug>/
 ## 6. What not to do
 
 - **Don't write to Postgres directly** (`agent_definitions`, `skill_definitions`, `workflows`, `files`, `file_versions`, and the like). That skips locks, retention, audit, and publish rules. Use the Files tools.
-- **Don't save to random folders.** Run `files/where` first.
+- **Don't save to random folders.** Check `_folder-metadata.yaml` files to find the right place, or use `sulla files/search`.
 - **Don't treat a draft as live.** Only published versions run.
 - **Don't write to `Logs/` or `Training Data/`.** They are read-only to callers (`403`, `EROFS`).
 - **Don't save to `~/sulla/skills`, `~/sulla/agents`, or `~/sulla/workflows` expecting them to load.** The runtime does not read them.
