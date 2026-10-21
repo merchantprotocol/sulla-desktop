@@ -54,6 +54,11 @@ interface HeartbeatProjectsAudit {
 
 const MAX_EVENT_HISTORY = 200;
 
+// A container that's still inside Docker's health start_period (or has no
+// healthcheck but only just started) restarts normally while its own
+// dependencies come up — that's not an operator-actionable crash.
+const CONTAINER_START_GRACE_MS = 2 * 60 * 1000;
+
 // Consecutive-failure escalation. Threshold uses === as a latch: one
 // notification per outage, re-armed only by a successful cycle; while the
 // outage persists we re-ping every RENOTIFY_EVERY-th failure.
@@ -298,6 +303,10 @@ export class HeartbeatService {
       let lastError = String(state.Error || '').trim();
       let heapError = false;
 
+      const startedAtMs = Date.parse(String(state.StartedAt || ''));
+      const withinStartGrace = Number.isFinite(startedAtMs) && (Date.now() - startedAtMs) < CONTAINER_START_GRACE_MS;
+      const inStartupWindow = state.Health?.Status === 'starting' || withinStartGrace;
+
       if (state.OOMKilled || restartCount > 0 || restartIncreasing || state.Status === 'exited') {
         const logs = await runCommand('docker', ['logs', '--tail', '40', name], { timeoutMs: 15_000, maxOutputChars: 30_000 });
         const lines = `${ logs.stdout }\n${ logs.stderr }`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -306,7 +315,9 @@ export class HeartbeatService {
         else if (!lastError && lines.length) lastError = lines[lines.length - 1];
       }
 
-      const unhealthy = Boolean(state.OOMKilled) || restartCount >= 3 || restartIncreasing || heapError;
+      // A container still inside its start grace is allowed to restart
+      // quietly; OOM/heap crashes are real regardless of boot phase.
+      const unhealthy = Boolean(state.OOMKilled) || heapError || (!inStartupWindow && (restartCount >= 3 || restartIncreasing));
       if (!unhealthy) {
         this.containerAlerts.delete(name);
         continue;
