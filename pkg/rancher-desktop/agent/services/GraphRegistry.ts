@@ -40,10 +40,10 @@ const SUMMARIZER_TOOLS: string[] = [];
 const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
 
 const KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS: Record<KnowledgeAssociationRole, string> = {
-  project_reader:   `You are the Project Reader. Read Projects items and their linked Knowledge Base context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
-  project_writer:   `You are the Project Writer for Knowledge Base associations. You may search Knowledge Base nodes and link or unlink those nodes from Projects items. You may not mutate Knowledge Base content or any Projects status, priority, assignment, description, or comment.`,
-  knowledge_reader: `You are the Knowledge Base Reader. Recall Knowledge Base nodes and inspect their linked Projects context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
-  knowledge_writer: `You are the Knowledge Base Writer for Projects associations. You may search Projects and link or unlink Knowledge Base nodes. You may not mutate Projects status, priority, assignment, description, comments, or unrelated Knowledge Base content.`,
+  project_reader: `Read project folders in Sulla Files and relevant Knowledge Base context. Read-only; never mutate files or knowledge.`,
+  project_writer: `Maintain project notes in Sulla Files under Sulla/Projects/<project-slug>/. Read the current file before updating it. Never mutate Knowledge Base content.`,
+  knowledge_reader: `Recall Knowledge Base nodes and relevant project files in Sulla Files. Read-only; never mutate files or knowledge.`,
+  knowledge_writer: `Recall Knowledge Base context and update associated project notes in Sulla Files. Never mutate Knowledge Base content.`,
 };
 
 /** Observation Writer: write/archive observations and update identity files */
@@ -163,15 +163,6 @@ narrate your search process.`;
  *  keyword search to find relevant items, plus drill-down to pull a hit's full
  *  detail (children/status) and its comment thread when the turn needs it. */
 function identityObservationRecallToolsForDomain(domain: string): string[] {
-  if (domain === 'projects') {
-    return [
-      ...IDENTITY_OBSERVATION_RECALL_TOOLS,
-      'search_project_items',  // keyword search across projects/epics/tasks
-      'get_project_item',      // fetch one hit's full detail + children/comments
-      'list_task_comments',    // read a task's progress/blocker/decision thread
-    ];
-  }
-
   // Skills recall also needs read-only discovery across every place a skill
   // can actually live — the public/cloud marketplace, and the skills
   // installed here, which live in the skill_definitions table (skill_list
@@ -542,7 +533,7 @@ processes (seen 3+ times or clearly routine) as skill candidates.`,
     focus: `Observe the INTERNAL PROJECTS and the project-management system that
 tracks them — durable facts about what is being built and how the work is
 organized. NOT this turn's task status: live task/epic state lives in the
-structured Projects work-state store (the \`sulla project/*\` tools), not here.
+project folder in Sulla Files (the Files tools), not here.
 - project: what a project/product is — its goal, scope, owner, current phase
 - structure: how it is organized — epics, workstreams, repos, environments
 - priority: what is being pushed, protected, or deprioritized right now
@@ -552,13 +543,13 @@ structured Projects work-state store (the \`sulla project/*\` tools), not here.
 - blocker: standing constraints or dependencies between projects
 
 Record what stays true across chats about a project, not "task 123 moved to
-done" — that belongs in the structured Projects work-state store.
+done" — that belongs in the project folder in Sulla Files.
 
-Reject (belongs in the live Projects work-state store, or nowhere — never here):
+Reject (belongs in the project folder in Sulla Files, or nowhere — never here):
 - a task or sub-agent assignment, a branch/worktree/commit/PR report, routed/
   exempted/blocked counts, or tsc/test results — that is live work-state the
-  \`sulla project/*\` tools already track, not durable project identity
-- a point-in-time status dump (the injected project_report, "7 done / 76 open",
+  Files tools already track, not durable project identity
+- a point-in-time status dump (project notes, "7 done / 76 open",
   task ids and their current column) — that is a snapshot, not a durable fact
 - a Sulla Desktop feature/PR (heartbeat prompt, thinking bubbles, subconscious
   lockdown, model CLI) logged as a project fact — the per-feature engineering
@@ -569,8 +560,8 @@ Reject (belongs in the live Projects work-state store, or nowhere — never here
     writerNote: `## Certainty for project facts
 
 The SUBJECT is a project or the PM system — personal facts belong to the human
-domain, and LIVE task status belongs in the structured Projects store (via the
-\`sulla project/*\` tools), never here. Name the project each row is about.
+domain, and LIVE task status belongs in the project folder in Sulla Files (via the
+Files tools), never here. Name the project each row is about.
 - L3 — the human stated it about a project directly ("Ripple Core ships behind a
   subscription gate").
 - L2 — established from the conversation / work evidence, not stated outright;
@@ -663,7 +654,7 @@ These three classes caused every domain audit finding to date. Reject them
 regardless of how relevant the domain-specific focus makes them sound:
 1. Task/work status: a PR/branch/commit/worktree reference, a tsc/test/CI
    result, a routed/exempted/blocked count, "shipped X", "opened draft PR #N".
-   This is work-state — it belongs in the Projects system, never here, in ANY
+   This is work-state — it belongs in the project folder in Sulla Files, never here, in ANY
    domain, even the projects domain itself.
 2. An instruction restated as fact: something the human told the agent to DO
    ("split the work one task per agent", "always draft a PR first") is a task
@@ -766,10 +757,7 @@ catalog, workflows, functions, sub-agents, host/VM behavior, and common operatin
 procedures. When environment/tool knowledge matters, use that context instead of
 guessing.
 
-Sulla has an internal Projects system — the single source of truth for work
-state (projects → epics → tasks → comments), reached through the \`sulla
-project/*\` tools. It is where commitments, outcomes, and gate changes are
-recorded; there is never a separate ad-hoc task list.
+Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 
 This context does not expand your authority. If you are a subconscious observer,
 stay within your assigned prompt and allowed tools; observe and write memory only
@@ -802,20 +790,6 @@ Your ONLY jobs:
 2. Review current observations for anything stale or superseded. Use
    remove_observational_memory (soft-archive, never hard-delete) for entries
    that are no longer accurate or have been superseded by a newer one.
-
-3. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
-   the agent's single project-state store). From THIS conversation only, extract:
-   - Commitments made ("I'll build X", "next step is Y") -> search_project_items
-     first; update_task the existing row or create_task if none matches.
-     Never invent a parallel markdown task list.
-   - Outcomes shipped (something merged, pushed, filed, fixed, verified,
-     decided) -> update_task status=done (or in_progress if partial) and
-     add_task_comment: date — what shipped — what it changed.
-   - A gate opening or closing (approval given, PR merged, decision made) ->
-     update_task the matching row (blocked -> in_progress / done) and comment.
-   ~/sulla/ledger/ is a historical archive — do not write LEDGER.md / OUTCOMES.md.
-   Skip entirely when the conversation contains no commitment, outcome, or
-   gate change — most turns need NO Projects write.
 
 When saving new observations, include why certain decisions were made (not just what). Like:
 
@@ -891,9 +865,8 @@ ${ identityRecallScope(cfg) }
 Rules:
 - Call search_identity_observations with key topic/phrase variants from the conversation.
 - Optionally call list_identity_observations when broad identity context is needed.
-${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }${ cfg.domain === 'skills' ? '- To find an installed skill that fits this turn, call `skill_list` with a short `query` (it searches the skills table). Do this only when the turn describes a repeatable task.\n- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
+${ cfg.domain === 'skills' ? '- To find an installed skill that fits this turn, call `skill_list` with a short `query` (it searches the skills table). Do this only when the turn describes a repeatable task.\n- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
 - Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
-- When including live Projects work-state from search_project_items, format it as: \`[project:<id>] <kind> <status> — <title> (source: Projects work-state)\`
 - If many observations are relevant, return many. If only a few matter, return a few.
 - If nothing is relevant, return an empty string — do NOT pad with filler.
 - Do NOT narrate your process. Output only the filtered observation lines.

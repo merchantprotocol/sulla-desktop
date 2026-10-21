@@ -4,7 +4,6 @@
 
 import { migrationsRegistry } from './migrations';
 import { SullaSettingsModel } from './models/SullaSettingsModel';
-import { projectRegistry } from './registry/ProjectRegistry';
 import { skillsRegistry } from './registry/SkillsRegistry';
 import { seedersRegistry } from './seeders';
 
@@ -12,7 +11,6 @@ import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 const MIGRATIONS_TABLE = 'sulla_migrations';
 const SEEDERS_TABLE = 'sulla_seeders';
-const PROJECTS_CUTOVER_LOCK = 'sulla-projects-legacy-cutover';
 
 interface TrackedItem {
   id:          number;
@@ -58,38 +56,7 @@ export class DatabaseManager {
     await postgresClient.query('SELECT 1');
     console.log('[DB] Connection healthy');
 
-    // The service takes the same session lock before scanning the legacy
-    // schema. Holding it across the full immutable migration chain prevents
-    // import from observing a half-migrated schema. This does not wait on
-    // service readiness, so either process may safely win startup order.
-    const projectsCutoverLock = await postgresClient.getClient();
-    let projectsCutoverLocked = false;
-    let projectsCutoverReleaseError: Error | undefined;
-    try {
-      await projectsCutoverLock.query('SELECT pg_advisory_lock(hashtext($1))', [PROJECTS_CUTOVER_LOCK]);
-      projectsCutoverLocked = true;
-      await this.runMigrations();
-
-      // The Projects container may complete an empty legacy import before a
-      // fresh Desktop install has created its historical Projects tables. The
-      // service leaves this durable cutover function in the legacy database;
-      // invoke it only after the immutable migration chain has finished, but
-      // before any seeder, registry, or lifecycle-dependent caller can write.
-      await this.applyProjectsLegacyCutoverFence();
-    } finally {
-      if (projectsCutoverLocked) {
-        try {
-          const released = await projectsCutoverLock.query<{ unlocked: boolean }>(
-            'SELECT pg_advisory_unlock(hashtext($1)) AS unlocked', [PROJECTS_CUTOVER_LOCK]);
-          if (!released.rows[0]?.unlocked) {
-            projectsCutoverReleaseError = new Error('Projects cutover advisory lock was not released');
-          }
-        } catch (error) {
-          projectsCutoverReleaseError = error instanceof Error ? error : new Error(String(error));
-        }
-      }
-      projectsCutoverLock.release(projectsCutoverReleaseError);
-    }
+    await this.runMigrations();
 
     try {
       const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
@@ -134,16 +101,6 @@ export class DatabaseManager {
     // Settings are ready to be used in seeding
     await this.runSeeders();
 
-    // Lane definitions are reasserted at every boot. This is deliberately
-    // outside the one-shot seeder registry: newly encountered legacy task
-    // statuses must become visible lanes without rewriting task rows.
-    try {
-      const { initialize } = await import('@pkg/agent/database/seeders/WorkLaneDefinitionSeeder');
-      await initialize();
-    } catch (error) {
-      console.warn('[DB] WorkLaneDefinitionSeeder failed:', error);
-    }
-
     // Seed the editable system-prompt sections from their baked native
     // fallbacks (write-only-if-absent; honors is_customized). Non-fatal —
     // the section factories remain the runtime fallback if this fails.
@@ -169,13 +126,6 @@ export class DatabaseManager {
       await skillsRegistry.initialize();
     } catch (error) {
       console.warn('[DB] SkillsRegistry warm initialization failed:', error);
-    }
-
-    // Warm project registry cache
-    try {
-      await projectRegistry.initialize();
-    } catch (error) {
-      console.warn('[DB] ProjectRegistry warm initialization failed:', error);
     }
 
     this.initialized = true;
@@ -284,16 +234,4 @@ export class DatabaseManager {
     console.log('[DB] Seeders complete');
   }
 
-  private async applyProjectsLegacyCutoverFence(): Promise<void> {
-    const applied = await postgresClient.transaction(async(client) => {
-      const cutover = await client.query<{ active: boolean }>(`
-        SELECT to_regclass('public.sulla_projects_legacy_cutover') IS NOT NULL
-          AND to_regprocedure('public.sulla_projects_apply_legacy_write_fence()') IS NOT NULL AS active
-      `);
-      if (!cutover.rows[0]?.active) return false;
-      await client.query('SELECT public.sulla_projects_apply_legacy_write_fence()');
-      return true;
-    });
-    if (applied) console.log('[DB] Legacy Projects tables fenced for container ownership');
-  }
 }

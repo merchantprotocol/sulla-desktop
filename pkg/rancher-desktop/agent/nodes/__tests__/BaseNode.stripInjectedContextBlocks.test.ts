@@ -221,7 +221,6 @@ describe('BaseNode.stripInjectedContextBlocks', () => {
     const node = new TestNode('test-node', 'TestNode');
     const authorityTags = [
       'turn_context',
-      'project_report',
       'selected_project_item',
       'sulla_context',
       'platform_context',

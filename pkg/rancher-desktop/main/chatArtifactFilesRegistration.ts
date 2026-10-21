@@ -40,7 +40,7 @@ function extension(kind: ChatArtifactKind, language?: string | null): string {
 }
 
 function artifactPath(artifact: ChatArtifactRecord): string {
-  if (artifact.path?.startsWith('projects/')) return artifact.path;
+  if (artifact.path?.startsWith('Sulla/Projects/')) return artifact.path;
   const ext = extension(artifact.kind, artifact.language);
   const name = safeSegment(path.basename(artifact.name), 'artifact');
   const fileName = path.extname(name) ? name : `${ name }${ ext }`;

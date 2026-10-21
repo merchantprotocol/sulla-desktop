@@ -123,17 +123,7 @@ export class ChatArtifactModel {
     return rows.map(mapArtifact);
   }
 
-  static async listProjectFiles(projectId: string): Promise<ChatArtifactRecord[]> {
-    const rows = await postgresClient.query<ChatArtifactRow>(
-      `SELECT * FROM chat_artifacts
-        WHERE is_deleted = false AND files_file_id IS NOT NULL
-          AND content LIKE $1
-        ORDER BY updated_at DESC`,
-      [`%\n  id: ${ JSON.stringify(projectId) }\n%`],
-    );
 
-    return rows.map(mapArtifact);
-  }
 
   static async get(threadId: string, idOrName: string, includeDeleted = false): Promise<ChatArtifactRecord | null> {
     const row = await postgresClient.queryOne<ChatArtifactRow>(

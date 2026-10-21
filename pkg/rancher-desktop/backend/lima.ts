@@ -3096,31 +3096,6 @@ start_pre() {
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
   }
 
-  private async loadOrCreateProjectsServiceSecret(name: 'projects-local-token' | 'projects-human-token' | 'projects-database-password'): Promise<string> {
-    await fs.promises.mkdir(paths.appHome, { recursive: true });
-    const target = path.join(paths.appHome, name);
-    const read = async(): Promise<string> => {
-      const stat = await fs.promises.lstat(target);
-      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Invalid Projects identity file');
-      const value = (await fs.promises.readFile(target, 'utf8')).trim();
-      if (!/^[A-Za-z0-9_-]{64}$/.test(value)) throw new Error('Invalid Projects identity; refusing to rotate it silently');
-      await fs.promises.chmod(target, 0o600);
-      return value;
-    };
-    try {
-      return await read();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const value = crypto.randomBytes(48).toString('base64url');
-    try {
-      await fs.promises.writeFile(target, value, { mode: 0o600, flag: 'wx' });
-      return value;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      return read();
-    }
-  }
 
   private async loadOrCreateVaultServiceIdentities(): Promise<{
     bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
@@ -3493,47 +3468,6 @@ start_pre() {
       };
     }
 
-    const projectsToken = await this.loadOrCreateProjectsServiceSecret('projects-local-token');
-    const projectsHumanToken = await this.loadOrCreateProjectsServiceSecret('projects-human-token');
-    const projectsDatabasePassword = await this.loadOrCreateProjectsServiceSecret('projects-database-password');
-    const projectsAdminPassword = escapeForCompose(encodeURIComponent(await SullaSettingsModel.getServicePassword()));
-    const projectsArchiveHours = Number(await SullaSettingsModel.get('projectsAutoArchiveDoneAfterHours', 24));
-    const projectsImage = resolveSullaServiceImage(
-      'sulla-projects', process.cwd(), Electron.app.getVersion(), process.env.SULLA_PROJECTS_IMAGE,
-    );
-    const resolvedProjectsImage = projectsImage.build ? projectsImage.image : `\${SULLA_PROJECTS_IMAGE:-${ projectsImage.image }}`;
-    if (shouldRefreshSullaServiceImage(projectsImage, process.env.SULLA_PROJECTS_IMAGE)) {
-      this.#managedSullaRefreshImages.set('sulla_projects', projectsImage.image);
-    }
-    if (!projectsImage.build && !process.env.SULLA_PROJECTS_IMAGE && !projectsImage.image.endsWith(':latest')) {
-      this.#optionalSullaFallbackImages.set('sulla_projects', {
-        env: 'SULLA_PROJECTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-projects:latest',
-      });
-    }
-    compose.services.sulla_projects = {
-      ...projectsImage,
-      image: resolvedProjectsImage,
-      container_name: 'sulla_projects',
-      depends_on: { postgres: { condition: 'service_healthy' } },
-      environment: {
-        NODE_OPTIONS: '--max-old-space-size=512',
-        SULLA_PROJECTS_MODE: 'desktop',
-        SULLA_PROJECTS_PORT: '8793',
-        SULLA_PROJECTS_LOCAL_TOKEN: projectsToken,
-        SULLA_PROJECTS_HUMAN_TOKEN: projectsHumanToken,
-        SULLA_PROJECTS_AUTO_ARCHIVE_HOURS: String(Number.isFinite(projectsArchiveHours) && projectsArchiveHours > 0 ? projectsArchiveHours : 0),
-        SULLA_PROJECTS_ADMIN_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla`,
-        SULLA_PROJECTS_MIGRATION_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla_projects`,
-        SULLA_PROJECTS_DATABASE_URL: `postgresql://sulla_projects_service:${ projectsDatabasePassword }@postgres:5432/sulla_projects`,
-        SULLA_PROJECTS_DATABASE_PASSWORD: projectsDatabasePassword,
-        SULLA_PROJECTS_LEGACY_DATABASE_URL: `postgresql://sulla:${ projectsAdminPassword }@postgres:5432/sulla`,
-      },
-      ports: ['127.0.0.1:30138:8793'],
-      restart: 'unless-stopped',
-      mem_limit: '768m',
-      healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8793/healthz'], interval: '10s', timeout: '3s', retries: 10 },
-    };
-
     // Desktop is a single-node Sulla Server. The manager and its ephemeral
     // runners use the same image that the server deployment will use; only
     // the launcher driver differs (Docker here, Kubernetes on k3s).
@@ -3567,15 +3501,12 @@ start_pre() {
       depends_on: {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
-        sulla_projects: { condition: 'service_healthy' },
         sulla_files: { condition: 'service_healthy' },
       },
       env_file: ['/etc/sulla-env'],
       environment: {
         NODE_OPTIONS: '--max-old-space-size=768',
         SULLA_WORKFLOW_ROLE: 'manager',
-        SULLA_PROJECTS_API_URL: 'http://sulla_projects:8793',
-        SULLA_PROJECTS_API_TOKEN: projectsToken,
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
@@ -3648,7 +3579,6 @@ start_pre() {
         postgres: { condition: 'service_healthy' },
         redis: { condition: 'service_healthy' },
         sulla_relay: { condition: 'service_healthy' },
-        sulla_projects: { condition: 'service_healthy' },
         sulla_files: { condition: 'service_healthy' },
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
       },
@@ -3659,8 +3589,6 @@ start_pre() {
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
-        SULLA_PROJECTS_API_URL: 'http://sulla_projects:8793',
-        SULLA_PROJECTS_API_TOKEN: projectsToken,
         SULLA_FILES_API_URL:     'https://sulla_files:8792',
         SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
         SULLA_FILES_CAPABILITY_SECRET: sullaServicePassword,
@@ -3977,6 +3905,9 @@ start_pre() {
         }
       };
 
+      // Retire the old Desktop board container; preserve all database data.
+      await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);
+
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
       await this.execCommand(
@@ -4026,14 +3957,13 @@ start_pre() {
         optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
       }
       optionalServices.push(
-        { service: 'sulla_projects', container: 'sulla_projects' },
         { service: 'sulla_relay', container: 'sulla_relay' },
         { service: 'sulla_files', container: 'sulla_files' },
         { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'tools', container: 'sulla_tools' },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
-        const order = ['sulla_accounts', 'sulla_vault', 'sulla_projects', 'sulla_relay', 'sulla_files',
+        const order = ['sulla_accounts', 'sulla_vault', 'sulla_relay', 'sulla_files',
           'sulla_files_fuse', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);

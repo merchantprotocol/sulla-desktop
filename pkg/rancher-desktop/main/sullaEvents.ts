@@ -32,12 +32,10 @@ import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
 import { initSullaPatchEvents } from './sullaPatchEvents';
 import { initSullaReflexEvents } from './sullaReflexEvents';
-import { initSullaProjectEvents } from './sullaProjectEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
-import { initWorkItemsEvents } from './workItemsEvents';
 import { initUsageEvents } from './usageEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 
@@ -354,7 +352,6 @@ export function initSullaEvents(): void {
   });
 
   initSullaWorkflowEvents();
-  initWorkItemsEvents();
   initUsageEvents();
   initSullaRoutineTemplateEvents();
   initSullaRoutineExportEvents();
@@ -364,7 +361,6 @@ export function initSullaEvents(): void {
   initSullaLibraryEvents();
   initSullaLibraryDraftEvents();
   initSullaFunctionEvents();
-  initSullaProjectEvents();
   initSullaApprovalEvents();
   initSullaPatchEvents();
   initSullaReflexEvents();

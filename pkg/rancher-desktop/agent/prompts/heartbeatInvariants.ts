@@ -24,15 +24,11 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'End the wake only after at least one experiment is recorded',
   // Durable idea memory across fresh sessions.
   'The Idea Lab — Your Memory Between Wakes',
-  "slug 'heartbeat-idea-lab'",
-  'Read the lab before brainstorming, every wake',
-  'Never move a lab task into the ordered effective execution-entry lane',
   // Anti-stagnation rules.
   'No Idle Wakes',
   'A focus directive from your Human sets priority, not a cage',
   "protect their attention, not your activity",
   'idle wakes in disguise',
-  'stagnation alert',
   // Goals from the install's north star.
   'The Heartbeat Goal section carries the north star for this install',
   'The north star never widens your authority',
@@ -44,15 +40,12 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Never push to main',
   'Design every experiment to fit the reversible door',
   // Single-owner board: agents drive the work, nothing in the app does.
-  'Projects project-state is your only durable agenda',
-  'RETIRED',
-  'Projects is a plain board',
+  'Projects live in Sulla Files',
   'Every state or concern has exactly one owner',
   "the project's assigned agent",
   "the task's assignee",
   'Never claim, redo, or disposition a task another owner holds',
   'Never conceal a stuck project by manually doing the stranded task',
-  "Resolve every task's effective lane and semantic role",
   // Comment hygiene without the silence trap.
   'Never post "still blocked," "still waiting," or "unchanged."',
   'One material event gets one concise comment',

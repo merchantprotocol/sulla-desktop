@@ -15,7 +15,7 @@
  */
 export const DEFAULT_REFLEX_THRESHOLD = 0.6;
 
-export const DEFAULT_REFLEX_CATEGORIES = ['browser', 'ui', 'docker', 'project', 'capture', 'secretary', 'notify'];
+export const DEFAULT_REFLEX_CATEGORIES = ['browser', 'ui', 'docker', 'capture', 'secretary', 'notify'];
 export const REFLEX_ROUTE_TOOL = 'route_agent';
 
 /** Tools inside allowed categories that must still never fire without the model. */

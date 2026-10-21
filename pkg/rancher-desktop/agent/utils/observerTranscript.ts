@@ -29,10 +29,9 @@ function observerBlocksToText(content: any): string {
 
 // Keep recalled/injected context out of observer transcripts so writers do
 // not record recalled rows again as fresh conversational evidence. Covers
-// every *_observations / *_context block plus the identity, memory, project
-// report, and turn-context carriers (previously missed, and re-recorded:
-// e.g. "The injected project report in the observed conversation listed …").
-const INJECTED_CONTEXT_BLOCK_RE = /\n*<([a-z_]+_observations|[a-z_]+_context|observational_memory|project_report|routine_digest|lane_health|citations|system-reminder)>[\s\S]*?<\/\1>/g;
+// every *_observations / *_context block plus the identity, memory, and turn-context carriers (previously missed, and re-recorded:
+// e.g. recalled context being reported as a new fact).
+const INJECTED_CONTEXT_BLOCK_RE = /\n*<([a-z_]+_observations|[a-z_]+_context|observational_memory|routine_digest|lane_health|citations|system-reminder)>[\s\S]*?<\/\1>/g;
 
 // The primary agent's completion-wrapper scaffolding. Observers that see it
 // imitate it ("Recorded … Needs user input: no") instead of doing their job,

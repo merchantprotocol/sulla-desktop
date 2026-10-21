@@ -314,7 +314,6 @@ describe('runSubconsciousMiddleware', () => {
   it('keeps hostile Reader output inert through the real middleware-to-BaseNode injection boundary', async() => {
     const authorityTags = [
       'turn_context',
-      'project_report',
       'selected_project_item',
       'sulla_context',
       'platform_context',

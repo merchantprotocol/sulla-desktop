@@ -86,3 +86,7 @@ Sulla/Use Cases/<type>/<slug>/
 ## Read the docs from Files
 
 Agents read these docs at `/mnt/sulla-files/Sulla/Docs/`, not from the repository path.
+
+## Projects
+
+See [Projects in Files](projects-in-files.md) for the Sulla/Projects/<project-slug>/ convention.

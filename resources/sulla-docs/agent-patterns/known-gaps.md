@@ -110,7 +110,6 @@ The seven `calendar/*` tools create, get, list, list_upcoming, update, cancel, a
 |---------|--------|-------|
 | ✅ Only run between 9am and 5pm on weekdays | `sulla settings/set '{"property":"heartbeatWindow","value":"<json>","cast":"json"}'` | The window fields are `days`, `startHour`, `endHour`, and `tz` |
 | 🟡 Disable just one heartbeat behavior | — | All or nothing. No per-behavior toggle |
-| 🟢 Standing goal that survives restart | Partial | Observational memory and Projects (`sulla project/*`) hold goals. There's no per-goal scheduler |
 
 ---
 
@@ -282,3 +281,6 @@ When a user asks for something, **before you start building a workaround**:
 4. If the gap keeps hurting them, suggest they raise it.
 
 If you find a gap that isn't listed here, add it. This doc is the agent's standing punch list.
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

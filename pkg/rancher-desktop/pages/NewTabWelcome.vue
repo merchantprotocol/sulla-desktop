@@ -29,12 +29,6 @@
         </button>
         <button
           type="button"
-          @click="$emit('set-mode', 'projects')"
-        >
-          <span class="noir-launch-glyph">◆</span>Projects · Sulla Desktop<kbd>⌘5</kbd>
-        </button>
-        <button
-          type="button"
           @click="$emit('set-mode', 'secretary')"
         >
           <span class="noir-launch-glyph">◉</span>Secretary mode<kbd>⌘⇧S</kbd>

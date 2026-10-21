@@ -60,8 +60,7 @@ interface SpawnTask {
   agentName?: string;
   prompt:     string;
   label?:     string;
-  /** Projects task this sub-agent works. The job owns it for the whole run:
-   *  assignee becomes the agent and no other writer may take the task. */
+  /** Optional legacy task correlation id. */
   projectTaskId?: string;
   /** Existing worktree to clone into the container job's retained workspace. */
   workspacePath?: string;
@@ -82,10 +81,7 @@ interface LaunchedTab {
 }
 
 /** Projects tasks the calling graph already owns (its parent job). */
-function inheritedTaskIds(metadata: any): string[] {
-  const owned = Array.isArray(metadata?.ownedProjectTaskIds) ? metadata.ownedProjectTaskIds : [];
-  return owned.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
-}
+
 
 /** The agent-config selector for a task: agentId, or its agentName alias. */
 function taskAgentSelector(task: SpawnTask): string | undefined {
@@ -173,7 +169,7 @@ export class SpawnAgentWorker extends BaseTool {
       if (projectTaskId !== undefined && (typeof projectTaskId !== 'string' || !projectTaskId.trim())) {
         return {
           successBoolean: false,
-          responseString: `Task at index ${ i } has an invalid projectTaskId; pass the Projects task id string (e.g. "AwBS") or omit it.`,
+          responseString: `Task at index ${ i } has an invalid projectTaskId; pass a correlation id string or omit it.`,
         };
       }
 
@@ -307,27 +303,6 @@ export class SpawnAgentWorker extends BaseTool {
     const { beginAgentScratch } = await import('../../files/scratchLifecycle');
     await beginAgentScratch(job.jobId, String(metadata?.userId ?? metadata?.ownerUserId ?? parentChannel), metadata?.orgId);
 
-    // Ownership: a tab that works a Projects task holds it until it returns.
-    const inherited = inheritedTaskIds(metadata);
-    if (task.projectTaskId) {
-      const { WorkTaskOwnershipModel } = await import('../../database/models/WorkTaskOwnershipModel');
-      let refusal: string | undefined;
-      try {
-        const claim = await WorkTaskOwnershipModel.claimForJob(job.jobId, { [task.projectTaskId.trim()]: childAgent.graphAgentId }, inherited);
-        if (!claim.claimed) {
-          refusal = `Not launched: ${ claim.conflicts.map(owner => `task ${ owner.taskId } is owned by ${ owner.kind } ${ owner.ref }`).join('; ') }. ` +
-            'Only one agent may work a task at a time.';
-        }
-      } catch (err) {
-        refusal = `Not launched: could not take ownership of ${ task.projectTaskId } (${ (err as Error).message }).`;
-      }
-      if (refusal) {
-        await this.rejectTasks([task], refusal);
-        deleteJob(job.jobId);
-        throw new Error(refusal);
-      }
-    }
-
     const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId, refId: job.jobId }));
 
     // A tab waiting on its human is idle, not dead: only a turn in flight that
@@ -361,7 +336,6 @@ export class SpawnAgentWorker extends BaseTool {
         prompt:          `[Agent tab launched by ${ parentName }]\n\n${ task.prompt }\n\n${ contractFooter({ jobId: job.jobId, contract, visibility: 'tab' }) }`,
         activityKeys:    RunActivity.inherit(metadata, job.jobId),
         runOverrides: { model: task.model, provider: task.provider, runLocation: task.runLocation },
-        ownedProjectTaskIds: [...new Set([...inherited, ...(task.projectTaskId ? [task.projectTaskId.trim()] : [])])],
       });
     } catch (err) {
       releaseJobWatcher(job.jobId);
@@ -420,36 +394,6 @@ export class SpawnAgentWorker extends BaseTool {
     let activityJobId: string | undefined;
     // Delegation-log row per task index, so delivery can be recorded later.
     const delegationIds: (string | null)[] = [];
-
-    // ── Task ownership ──────────────────────────────────────────
-    // A job that works a Projects task owns it for its whole run. Ownership is
-    // taken before anything launches, under one advisory lock, so this job
-    // and another session's job for the same task can't both win.
-    const inherited = inheritedTaskIds((this.state as any)?.metadata);
-    const assignees: Record<string, string> = {};
-    for (const task of tasks) {
-      if (task.projectTaskId) assignees[task.projectTaskId.trim()] = taskAgentSelector(task) || parentChannel;
-    }
-    let ownershipJob: Awaited<ReturnType<typeof createJob>> | undefined;
-    if (Object.keys(assignees).length > 0) {
-      ownershipJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
-      const { WorkTaskOwnershipModel } = await import('../../database/models/WorkTaskOwnershipModel');
-      let refusal: string | undefined;
-      try {
-        const claim = await WorkTaskOwnershipModel.claimForJob(ownershipJob.jobId, assignees, inherited);
-        if (!claim.claimed) {
-          refusal = `Not launched: ${ claim.conflicts.map(owner => `task ${ owner.taskId } is owned by ${ owner.kind } ${ owner.ref }`).join('; ') }. ` +
-            'Only one agent may work a task at a time. Wait for that owner to finish, or work a different task.';
-        }
-      } catch (err) {
-        refusal = `Not launched: could not take ownership of ${ Object.keys(assignees).join(', ') } (${ (err as Error).message }).`;
-      }
-      if (refusal) {
-        await this.rejectTasks(tasks, refusal);
-        deleteJob(ownershipJob.jobId);
-        return { successBoolean: false, responseString: refusal };
-      }
-    }
 
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
@@ -519,12 +463,6 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.activityKeys = RunActivity.inherit(
           (this.state as any)?.metadata, ...(activityJobId ? [activityJobId] : []),
         );
-        // Ownership flows down: a sub-agent may delegate the tasks it holds.
-        subState.metadata.ownedProjectTaskIds = [...new Set([
-          ...inherited,
-          ...(task.projectTaskId ? [task.projectTaskId.trim()] : []),
-        ])];
-
         // Propagate abort so both the user's stop button (parent AbortService)
         // AND stop_agent_job(jobId) (this job's signal) reach the sub-agents.
         // options.abort is typed AbortService everywhere else (Graph / BaseNode /
@@ -700,7 +638,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
-      const job = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+      const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
       const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
       await beginAgentScratch(job.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
@@ -763,7 +701,7 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Sync mode: block until complete ─────────────────────────
     // Sync launches need a durable job too: otherwise the rail and exchange
     // components would only exist for fire-and-forget work.
-    const syncJob = ownershipJob ?? await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
+    const syncJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
     const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
     await beginAgentScratch(syncJob.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
     let stopDeadRunWatch: (() => void) | undefined;

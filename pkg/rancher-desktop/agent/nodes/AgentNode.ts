@@ -161,31 +161,6 @@ export class AgentNode extends BaseNode {
       await this.injectTurnContext(state, { chatMode });
     }
 
-    // One-time operator work standup — injected into the orchestrating agent's
-    // FIRST run of this thread so it opens already knowing what shipped in the
-    // last 24h and what's next, without having to call a tool. After this the
-    // agent uses the `project_report` tool on demand. Skipped for sub-agents and
-    // tool-call loops; guarded so it fires once per thread. As a plain
-    // (non-synthetic) assistant note it persists in history and is never
-    // re-injected (stripInjectedContextBlocks doesn't touch <project_report>).
-    if (!isToolCallLoop && !(state.metadata as any).isSubAgent && !(state.metadata as any).workReportInjected) {
-      (state.metadata as any).workReportInjected = true;
-      try {
-        const { buildProjectReport } = await import('../prompts/projectReport');
-        const report = await buildProjectReport({ nextLimit: 10 });
-        if (report) {
-          const insertIdx = Math.max(0, state.messages.length - 1);
-          state.messages.splice(insertIdx, 0, {
-            role:     'assistant',
-            content:  `<project_report>\n${ report }\n</project_report>`,
-            metadata: { source: 'project_report', _synthetic: true },
-          });
-        }
-      } catch (err) {
-        console.warn('[AgentNode] work report injection failed:', err);
-      }
-    }
-
     this.injectSubconsciousAssistantContext(state);
 
     // ----------------------------------------------------------------

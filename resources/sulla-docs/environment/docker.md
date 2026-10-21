@@ -39,7 +39,7 @@ Runtime bindings use VM loopback. Functions mount
 Postgres uses `sulla_postgres_data`. Redis persistence is disabled.
 
 `backend/lima.ts` augments the compose definition with `sulla_accounts`,
-`sulla_vault`, `sulla_projects`, `sulla_workflow_manager`, `sulla_relay`,
+`sulla_vault`, `sulla_workflow_manager`, `sulla_relay`,
 `sulla_tools`, `sulla_files` and `sulla_files_fuse`. Managed service images are
 resolved by the backend's image-selection code, with environment overrides and
 source-build support; do not assume every installed service uses `latest`.

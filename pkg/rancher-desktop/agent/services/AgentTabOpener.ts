@@ -98,7 +98,6 @@ export interface OpenAgentTabInput {
   /** Dead-run keys the child's activity must touch. */
   activityKeys:     string[];
   runOverrides?: { model?: string; provider?: string; runLocation?: 'vm' | 'container' };
-  ownedProjectTaskIds: string[];
 }
 
 /** Prime the child thread, open its tab and dispatch the brief. Throws on failure. */
@@ -117,7 +116,6 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
     if (!['claude-code', 'codex'].includes(provider)) throw new Error(`Provider "${ provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
   }
   meta.activityKeys = input.activityKeys;
-  meta.ownedProjectTaskIds = input.ownedProjectTaskIds;
   meta.delegatedJobId = input.jobId;
   await saveThreadState(state);
 

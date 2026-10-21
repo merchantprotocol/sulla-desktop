@@ -75,7 +75,6 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
 | `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update, diff | Artifact lifecycle for Use Cases (the marketplace) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
-| `project` | list/get/search items, create/update project+epic+task, add_task_comment, list_task_comments, archive_project_item, report, task dependencies, pipeline templates, lanes, knowledge links, reconcile_github_pr_mirror | Projects project-state (Postgres) — the ONE project-state store, accessed through the Sulla CLI catalog |
 | `ui` | open_tab | Open Sulla Desktop views from chat (incl. `projects`) |
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
 | `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations; update_identity_section | Memory and domain-keyed identity observations |
@@ -118,3 +117,6 @@ exec({ command: "sulla vault/read_secrets '{\"account_type\":\"slack\"}'" })
 ```
 
 Common `account_type` values: `github`, `slack`, `anthropic`, `openai`, `twenty`, `intuit`
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

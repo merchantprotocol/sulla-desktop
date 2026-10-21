@@ -403,10 +403,10 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
-  'sulla-cloud-connection:set-preferences':   (patch: { conversations?: boolean; vault?: boolean; projects?: boolean; remoteAccess?: boolean }) => Record<string, any>;
+  'sulla-cloud-connection:set-preferences':   (patch: { conversations?: boolean; vault?: boolean; remoteAccess?: boolean }) => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
-  'sulla-cloud-connection:sync-now':          (kind: 'vault' | 'projects') => Record<string, any>;
-  'sulla-cloud-connection:delete-cloud-copy': (kind: 'vault' | 'projects') => Record<string, any>;
+  'sulla-cloud-connection:sync-now':          (kind: 'vault') => Record<string, any>;
+  'sulla-cloud-connection:delete-cloud-copy': (kind: 'vault') => Record<string, any>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -631,68 +631,7 @@ export interface IpcMainInvokeEvents {
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
-  // Work-items Projects (Postgres): projects → epics → tasks (+ comments).
-  // Full CRUD bridge backing the Projects view (ProjectsHome.vue).
-  'work-items:board':    () => {
-    projects: (import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord & { knowledge_count: number })[];
-    epics:    (import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord & { knowledge_count: number })[];
-    tasks:    (import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord & { knowledge_count: number })[];
-    lanesByProject: Record<string, import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[]>;
-    laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
-    activeAgents: { project_id: string; task_id: string; agent_id: string }[];
-  };
   'usage:summary': (options?: { hours?: number; profileId?: string }) => import('@pkg/agent/usage/providerUsage').UsageSummary;
-  'work-items:project-files':    (projectId: string) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
-  'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
-  'work-items:issue-detail':    (taskId: string) => import('@pkg/agent/services/ProjectsIssueDetailService').ProjectsIssueDetail;
-  'work-items:artifact-evidence': (commentId: string) => { receipt: import('@pkg/agent/database/models/ArtifactReceiptModel').ArtifactReceiptRow; evidence: unknown } | null;
-  'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
-  'work-items:knowledge-list':  (input: { itemKind: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedKnowledgeRecord[];
-  'work-items:knowledge-link':  (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkRecord;
-  'work-items:knowledge-unlink': (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => boolean;
-  'knowledge:nodes-search':     (input?: { query?: string; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/KnowledgeGraphModel').KnowledgeNodeRecord[];
-  'knowledge:work-list':        (input: { knowledgeNodeId: string; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedWorkItemRecord[];
-  'work-items:project-create':  (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord;
-  'work-items:project-update':  (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord | null;
-  'work-items:project-archive': (id: string) => boolean;
-  'work-items:epic-create':     (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertEpicInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord;
-  'work-items:epic-update':     (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateEpicInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord | null;
-  'work-items:epic-archive':    (id: string) => boolean;
-  'work-items:task-create':     (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertTaskInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord;
-  'work-items:task-update':     (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateTaskInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord | null;
-  'work-items:task-archive':    (id: string) => boolean;
-  'work-items:comment-add':     (input: import('@pkg/agent/database/models/WorkItemsModel').AddCommentInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord;
-  'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string; actor?: string }[]) => boolean;
-  'work-items:views-list':      (projectId?: string | null) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord[];
-  'work-items:view-resolve':    (projectId?: string | null) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord | null;
-  'work-items:view-save':       (input: import('@pkg/agent/database/models/WorkProjectViewModel').SaveProjectViewInput) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord;
-  'work-items:dependencies-list': (projectId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord[];
-  'work-items:dependency-set':    (taskId: string, dependsOnTaskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord;
-  'work-items:dependency-remove': (taskId: string, dependsOnTaskId: string) => boolean;
-  'work-items:ready-tasks': (input: import('@pkg/agent/projects/application/ProjectsApplicationService').ReadyTasksInput) => import('@pkg/agent/projects/application/ProjectsApplicationService').ReadyTasksResult;
-  'work-items:pipeline-templates-list': (includeArchived?: boolean) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplateRecord[];
-  'work-items:pipeline-template-get': (templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate | null;
-  'work-items:pipeline-template-create': (input: import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').CreateProjectPipelineTemplateInput) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
-  'work-items:pipeline-template-update': (templateId: string, input: import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').UpdateProjectPipelineTemplateInput) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
-  'work-items:pipeline-template-archive': (templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplateRecord | null;
-  'work-items:pipeline-template-apply': (projectId: string, templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
-  'work-items:lanes-list':      (opts?: import('@pkg/agent/database/models/WorkLaneDefinitionModel').ListWorkLaneOpts) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord[];
-  'work-items:lanes-resolve':   (projectId: string, includeArchived?: boolean) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[];
-  'work-items:lane-create':     (input: import('@pkg/agent/database/models/WorkLaneDefinitionModel').CreateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord;
-  'work-items:lane-update':     (id: string, changes: import('@pkg/agent/database/models/WorkLaneDefinitionModel').UpdateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
-  'work-items:lane-archive':    (id: string, destinationLaneKey?: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').ArchiveWorkLaneResult;
-  'work-items:lane-archive-preview': (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').ArchiveWorkLanePreview;
-  'work-items:lane-restore':    (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
-  'work-items:lanes-reorder':   (scope: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneScope, orderedKeys: string[], projectId?: string) => number;
-  'work-items:lane-reset-override': (projectId: string, laneKey: string) => boolean;
-
-  // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
-  'projects-list': () => {
-    slug:        string;
-    name:        string;
-    status:      string;
-    description: string;
-  }[];
 
   // Approval gate — renderer resolves a pending user-approval request
   // that a backend tool parked via ApprovalService.

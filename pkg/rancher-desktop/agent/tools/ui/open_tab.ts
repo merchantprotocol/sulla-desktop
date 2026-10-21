@@ -34,7 +34,6 @@ const VALID_MODES = new Set([
   'browser',
   'welcome',
   'agents',
-  'projects',
   'files',
   'decide',
 ]);

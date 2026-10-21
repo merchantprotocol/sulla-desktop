@@ -27,7 +27,6 @@ import { mobileToolManifests } from './mobile/manifests';
 import { modelsToolManifests } from './models/manifests';
 import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
-import { projectToolManifests } from './project/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { reflexToolManifests } from './reflex/manifests';
@@ -76,5 +75,4 @@ toolRegistry.registerManifests([
   ...slackToolManifests,
   ...uiToolManifests,
   ...workflowToolManifests,
-  ...projectToolManifests,
 ]);
