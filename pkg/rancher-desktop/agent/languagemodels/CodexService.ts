@@ -1045,7 +1045,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // this exact protection (observed hangs up to 7.7h); codex never had
       // it. Liveness = any stdout/stderr byte, so long in-CLI tool runs
       // reset the clock; only a completely dead stream trips the kill.
-      const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+      // Bound a dead provider stream to a useful recovery window instead of
+      // leaving a spawned worker stuck for fifteen minutes.
+      const STALL_TIMEOUT_MS = 3 * 60 * 1_000;
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;

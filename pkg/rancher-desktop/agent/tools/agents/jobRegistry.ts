@@ -352,9 +352,11 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
     return;
   }
 
-  job.status = 'completed';
+  const failed = results.find(result => result.status === 'error');
+  job.status = failed ? 'failed' : 'completed';
   job.finishedAt = Date.now();
   job.results = results;
+  job.error = failed?.output;
   job.tasks = job.tasks.map((task, index) => {
     const result = results[index];
     if (!result) return task;
@@ -362,8 +364,8 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
   });
 
   await dbWrite(
-    `UPDATE agent_jobs SET status = 'completed', finished_at = now(), results = $2::jsonb, tasks = $3::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,
-    [jobId, JSON.stringify(results), JSON.stringify(job.tasks)],
+    `UPDATE agent_jobs SET status = $2, finished_at = now(), error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,
+    [jobId, job.status, job.error ?? null, JSON.stringify(results), JSON.stringify(job.tasks)],
   );
 }
 

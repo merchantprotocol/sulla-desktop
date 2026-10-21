@@ -20,10 +20,12 @@ export class CliFaultError extends Error {
 
 export class CliRecoveryExhaustedError extends Error {
   readonly cliRecoveryExhausted = true;
+  readonly unsafeToFallback: boolean;
 
   constructor(readonly faultKind: CliFaultKind, message: string, cause: unknown) {
     super(message, { cause });
     this.name = 'CliRecoveryExhaustedError';
+    this.unsafeToFallback = Boolean((cause as any)?.unsafeToFallback);
   }
 }
 
