@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# Enforce the Files heap budget even when compose overrides the image default.
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=512"
 run_as=node:node
 if [ -n "${SULLA_FILES_UID:-}" ] && [ -n "${SULLA_FILES_GID:-}" ]; then
   run_as="${SULLA_FILES_UID}:${SULLA_FILES_GID}"
