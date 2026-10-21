@@ -67,8 +67,8 @@ jest.unstable_mockModule('@pkg/main/deploymentProfiles', () => stubs('Deployment
 jest.unstable_mockModule('@pkg/main/credentialServer/httpCredentialHelperServer', () => ({
   getServerCredentialsPath: () => '', ServerState: {},
 }));
-jest.unstable_mockModule('@pkg/sulla', () => stubs('afterBackgroundLoaded hookSullaEnd initiateWindowContext ' +
-  'instantiateSullaStart markSullaDockerServicesStarted onMainProxyLoad sullaEnd'));
+jest.unstable_mockModule('@pkg/sulla', () => stubs('afterBackgroundLoaded expectVaultContainer hookSullaEnd initiateWindowContext ' +
+  'instantiateSullaStart markSullaDockerServicesStarted markVaultContainerReady onMainProxyLoad sullaEnd'));
 jest.unstable_mockModule('@pkg/window', () => stubs('centerDialog closeExtension createWindow getWindow openAudioSettings ' +
   'openCaptureStudio openDenyRootDialog openDialog openDockerDashboard openExtension ' +
   'openFirstRunDialog openKubernetesErrorMessageWindow openLanguageModelSettings openMain openSudoPrompt ' +
