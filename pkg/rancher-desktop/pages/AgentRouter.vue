@@ -148,13 +148,21 @@ import { useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pk
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab } = useBrowserTabs();
 const { loggedIn, vaultSetUp, statusResolved: vaultStatusResolved, tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
-const vaultUnlockVisible = computed(() => systemReady.value && vaultStatusResolved.value && !loggedIn.value && vaultSetUp.value);
+// While booting, vault-gated services report 'waiting-on-unlock' as soon as the vault is known locked.
+const bootVaultLocked = ref(false);
+function onBootSnapshot(_event: unknown, snapshot?: StartupProgressSnapshot | null) {
+  bootVaultLocked.value = !!snapshot?.services?.some(s => s.status === 'waiting-on-unlock');
+}
+const vaultUnlockVisible = computed(() => vaultSetUp.value && (systemReady.value
+  ? vaultStatusResolved.value && !loggedIn.value
+  : bootVaultLocked.value));
 
 watch(systemReady, (ready) => {
   if (!ready) {
@@ -572,6 +580,9 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  ipcRenderer.on('startup-progress' as any, onBootSnapshot);
+  ipcRenderer.invoke('startup-progress' as any).then(snapshot => onBootSnapshot(undefined, snapshot)).catch(() => undefined);
+
   // Register sub-tab change listener
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
@@ -623,6 +634,7 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  ipcRenderer.removeListener('startup-progress' as any, onBootSnapshot);
   presenceTracker.stop();
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
