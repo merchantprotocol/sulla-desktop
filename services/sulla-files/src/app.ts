@@ -682,26 +682,28 @@ export function createApp(
     if (fuseTreeSnapshot?.revision===revision) return fuseTreeSnapshot;
     if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
     fuseTreeSnapshotRequest=(async()=>{
-      // Retry if a writer commits while the three tree queries are in flight;
-      // never label mixed/stale rows with the newer revision.
-      while (true) {
-        const before=await fuseTreeRevision();
+      // One consistent database snapshot avoids retry starvation during active
+      // ingestion and labels the tree with precisely the revision it represents.
+      const client=await db.connect();
+      try {
+        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        const revision=String((await client.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0].revision);
         const [collections,files,folders]=await Promise.all([
-          db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
             AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
             ORDER BY explorer_path,id`),
-          db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
+          client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
             f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
             WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
             ORDER BY f.collection_id,f.path`),
-          db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
+          client.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
         ]);
-        const after=await fuseTreeRevision();
-        if (before!==after) continue;
+
         const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
         const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
-        return (fuseTreeSnapshot={body,revision:after});
-      }
+        await client.query('COMMIT');
+        return (fuseTreeSnapshot={body,revision});
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     })().finally(()=>{fuseTreeSnapshotRequest=undefined});
     return fuseTreeSnapshotRequest;
   };
@@ -713,8 +715,7 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-cache');
     response.setHeader('ETag', etag);
     if (request.header('if-none-match')===etag) return response.status(304).end();
-    let snapshot=await loadFuseTreeSnapshot();
-    while (snapshot.revision!==await fuseTreeRevision()) snapshot=await loadFuseTreeSnapshot();
+    const snapshot=await loadFuseTreeSnapshot();
     response.setHeader('ETag', `"${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
