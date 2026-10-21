@@ -218,6 +218,7 @@
             /> Upload
           </button>
           <button
+            v-if="dataSource.openPreferences"
             class="btn"
             type="button"
             :disabled="busy"
@@ -872,8 +873,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
@@ -1075,7 +1074,7 @@ const sections = computed(() => [
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: trashItems.value.length, warn: trashItems.value.some(item => item.currentTombstone.undo.state === 'recovery-required') },
 ]);
 function openFilePreferences():void {
-  ipcRenderer.send('preferences-open');
+  props.dataSource.openPreferences?.();
 }
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
 const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
