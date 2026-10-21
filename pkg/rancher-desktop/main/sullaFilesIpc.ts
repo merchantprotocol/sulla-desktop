@@ -693,6 +693,11 @@ export function initSullaFilesIpc():void {
     return getSullaFilesRootRegistry().update(id, updates);
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
+  // File Manager uses the files-ui namespace; keep the preferences aliases for
+  // the standalone Preferences window and existing integrations.
+  ipcMain.handle('files-ui:list-roots', () => getSullaFilesRootRegistry().list());
+  ipcMain.handle('files-ui:add-root', event => getSullaFilesRootRegistry().add(BrowserWindow.fromWebContents(event.sender) ?? undefined));
+  ipcMain.handle('files-ui:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
   ipcMain.handle('files-backups:list', () => filesClient.backupJson('/v1/local/backups'));
   ipcMain.handle('files-backups:add', (_event,input:{kind:'local'|'nas'|'s3';label:string;config:Record<string,unknown>}) => filesClient.backupJson('/v1/local/backups/destinations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)}));
   ipcMain.handle('files-backups:remove',(_event,id:string)=>getSullaFilesBackups().remove(id));

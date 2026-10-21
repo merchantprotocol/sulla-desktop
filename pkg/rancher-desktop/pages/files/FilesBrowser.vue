@@ -217,6 +217,19 @@
               v-html="icons.upload"
             /> Upload
           </button>
+          <button
+            class="btn"
+            type="button"
+            :disabled="busy"
+            title="Manage tracked folders"
+            aria-label="Open File Manager preferences"
+            @click="openFilePreferences"
+          >
+            <span
+              class="bi"
+              v-html="icons.settings"
+            /> Preferences
+          </button>
         </div>
       </div>
 
@@ -859,6 +872,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch } from 'vue';
 
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
@@ -902,6 +917,7 @@ const icons = {
   grid:       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>',
   more:       '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg>',
   close:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  settings:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>',
   alert:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>',
   syncLocal:  '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9" opacity=".16"/><path d="M8 12.5l2.6 2.6L16.5 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   syncOnline: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.96A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 7H7z"/></svg>',
@@ -1058,6 +1074,9 @@ const sections = computed(() => [
   { id: 'agent' as Section, label: 'Agent files', icon: icons.agent, count: agentCount.value, warn: true },
   { id: 'trash' as Section, label: 'Trash', icon: icons.trash, count: trashItems.value.length, warn: trashItems.value.some(item => item.currentTombstone.undo.state === 'recovery-required') },
 ]);
+function openFilePreferences():void {
+  ipcRenderer.send('preferences-open');
+}
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
 const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
 const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Files sync to the server and are versioned on every change.' : 'Files are encrypted and versioned in Sulla.');
