@@ -964,7 +964,7 @@ export function createApp(
   app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
-    if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts and durable Memory');
+    if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts, durable Memory and Projects');
     await requirePath(request, collection.id, path, 'edit');
     const bytes = request.body.contentBase64 !== undefined
       ? Buffer.from(String(request.body.contentBase64), 'base64')
