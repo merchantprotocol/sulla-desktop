@@ -407,6 +407,7 @@ export interface FilesDataSource {
   retryOperation?(operationId:string, request?:FilesOperationRetry):Promise<FilesOperationReceipt>;
   undoOperation?(operationId:string):Promise<FilesOperationReceipt>;
   load(): Promise<FilesSnapshot>;
+  openPreferences?():void;
   selectCollection?(collectionId:string):void;
   operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;
   folderOperationState?(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot>;
