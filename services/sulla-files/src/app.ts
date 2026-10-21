@@ -1031,6 +1031,11 @@ export function createApp(
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
   app.get('/v1/collections', async(_request, response, next) => { try {
+    if (_request.query.changesOnly === 'true') {
+      const rows = await db.query('SELECT id,name,explorer_path,system_area FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY id');
+      response.json(rows.rows);
+      return;
+    }
     const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY explorer_path,name");
     response.json(rows.rows.map(row => ({...row, systemArea:row.system_area ?? null, access_role:'manage',shared_folders:[],shared_files:[]})));
   } catch (error) { next(error) } });
@@ -1185,6 +1190,27 @@ export function createApp(
   });
   app.get('/v1/collections/:id/journal', async(request:RequestWithIdentity, response, next) => { try {
     const access = await requireCollection(request, request.params.id, 'view', true, true); const after = Number(request.query.after ?? 0);
+    // UI change feed: never serialize manifests, key context, or file contents.
+    if (request.query.changesOnly === 'true') {
+      if (request.query.head === 'true') {
+        const head = await db.query(`SELECT GREATEST(
+          COALESCE((SELECT MAX(seq) FROM journal WHERE collection_id=$1),0),
+          COALESCE((SELECT MAX(seq) FROM file_purge_tombstones WHERE collection_id=$1),0)
+        )::text AS seq`, [request.params.id]);
+        response.json({ seq: head.rows[0].seq, paths: [], more: false });
+        return;
+      }
+      const params = [request.params.id, Number.isSafeInteger(after) ? after : 0];
+      const changes = await db.query(`SELECT seq,path FROM (
+        SELECT j.seq,f.path FROM journal j JOIN files f ON f.id=j.file_id
+          WHERE j.collection_id=$1 AND j.seq>$2 AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+        UNION ALL SELECT seq,path FROM file_purge_tombstones WHERE collection_id=$1 AND seq>$2
+      ) changes ORDER BY seq LIMIT 1000`, params);
+      const entries = changes.rows.filter(row => !isProtectedPath(row.path));
+      // Advance past protected rows too, without revealing their paths.
+      response.json({ seq: String(changes.rows.at(-1)?.seq ?? params[1]), paths: entries.map(row => row.path), more: changes.rows.length === 1000 });
+      return;
+    }
     const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = '';
     const query = await db.query(`SELECT j.*,row_to_json(f.*) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
     const actor = identity(request); const entries:any[] = [];
