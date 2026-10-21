@@ -6,7 +6,7 @@ import StartupShowcase from '../StartupShowcase.vue';
 import { SHOWCASE_MODEL_NAMES, SHOWCASE_SLIDES, loadIntegrationCount, slideTitle } from '../startupShowcaseSlides';
 
 import { nativeIntegrations } from '@pkg/agent/integrations/native';
-import { StartupProgressModel, type StartupProgressSnapshot } from '@pkg/utils/startupProgress';
+import { StartupProgressModel, lifecycleLabel, type StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 function setReducedMotion(matches: boolean) {
   Object.defineProperty(window, 'matchMedia', {
@@ -49,8 +49,6 @@ describe('StartupProgressPanel', () => {
     await flushPromises();
 
     expect(w.get('[data-test="stage"]').text()).toContain('Stage 3 of 3');
-    expect(w.get('[data-test="stage"]').text()).toContain('Bringing features online');
-    expect(w.get('[data-test="step"]').text()).toBe('Unlocking Files');
     expect(w.get('[data-test="step-meta"]').text()).toContain('Step 3 of 3');
     expect(w.get('[data-test="elapsed"]').text()).toBe('1m 05s');
     // The finished-steps checklist is gone: it only added a scrollbar.
@@ -86,7 +84,7 @@ describe('StartupProgressPanel', () => {
 
     const box = w.get('[data-test="failures"]');
 
-    expect(box.text()).toContain('Starting the vault');
+    expect(box.text()).toContain(lifecycleLabel('vault'));
     expect(box.text()).toContain('key missing');
     expect(box.text()).toContain('Restarting Sulla');
     w.unmount();

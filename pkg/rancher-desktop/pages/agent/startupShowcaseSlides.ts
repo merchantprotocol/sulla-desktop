@@ -37,6 +37,15 @@ export const SHOWCASE_MODEL_NAMES = ['Claude Code', 'OpenAI Codex', 'OpenCode', 
 
 export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
   {
+    id:      'sandbox',
+    eyebrow: 'Secure environment',
+    title:   'Please wait while we prepare the secure environment for Sulla.',
+    body:    'Agents work in their own Linux VM, and your home folder isn\'t mounted inside it. They see the files you share through Files. Reaching the Mac is a setting you turn on.',
+    art:     'sandbox',
+    points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
+    sources: ['resources/sulla-docs/environment/architecture.md (Lima VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
+  },
+  {
     id:      'agents',
     eyebrow: 'Agents',
     title:   'Ask for the result, not the steps.',
@@ -125,15 +134,6 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     art:     'phone',
     points:  ['Pair Sulla Mobile', 'Hold the Sulla button and speak', 'Your desktop does the work and streams the answer back'],
     sources: ['resources/sulla-docs/mobile/overview.md'],
-  },
-  {
-    id:      'sandbox',
-    eyebrow: 'Sandbox',
-    title:   'Agents work in their own Linux VM.',
-    body:    'Your home folder isn\'t mounted inside it. Agents see the files you share through Files, and reaching the Mac itself is a setting you turn on.',
-    art:     'sandbox',
-    points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
-    sources: ['resources/sulla-docs/environment/architecture.md (Lima VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
   },
 ];
 

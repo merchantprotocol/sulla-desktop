@@ -40,7 +40,7 @@
               Starting Sulla
             </h2>
             <p class="sulla-startup-subtitle">
-              {{ snapshot?.ready ? 'Ready' : 'Getting everything ready' }}
+              {{ snapshot?.ready ? 'Ready for you' : 'Getting everything ready for you' }}
             </p>
           </div>
         </div>
@@ -62,7 +62,7 @@
         <StartupProgressPanel
           :snapshot="snapshot"
           :fallback-percent="progressMax > 0 ? progressCurrent / progressMax * 100 : 0"
-          :fallback-label="progressDescription || 'Initializing system...'"
+          :fallback-label="progressDescription || 'Preparing the secure environment for Sulla'"
         />
       </div>
     </div>
