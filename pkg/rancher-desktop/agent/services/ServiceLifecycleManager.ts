@@ -267,7 +267,7 @@ export class ServiceLifecycleManager extends EventEmitter {
       void this.startService(name);
     }, delay);
 
-    timer.unref();
+    timer.unref?.();
     this.retries.set(name, timer);
     console.log(`[Lifecycle] '${ name }' retry scheduled in ${ delay / 1000 }s`);
   }

@@ -10,7 +10,7 @@ const { ServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLif
 const { StartupProgressHub } = await import('../startupProgressHub');
 
 describe('ServiceLifecycleManager startup events', () => {
-  it('emits begin plus start/ready/failed/skipped steps in order, and keeps starting after a failure', async() => {
+  it('emits begin plus start/ready/failed steps in order, and keeps starting after a failure', async() => {
     const lifecycle = new ServiceLifecycleManager();
     const events: string[] = [];
 
@@ -27,8 +27,9 @@ describe('ServiceLifecycleManager startup events', () => {
       'begin:pre,a,bad,needs-bad:pre',
       'a:start', 'a:ready',
       'bad:start', 'bad:failed:boom',
-      'needs-bad:skipped:Needs bad',
     ]);
+    // Dependents of a failed service are no longer skipped: they wait for it (and retry with it).
+    expect(lifecycle.serviceStatuses().find(s => s.name === 'needs-bad')?.status).toBe('waiting-on-dependency');
   });
 
   it('a throwing progress listener cannot break startup', async() => {

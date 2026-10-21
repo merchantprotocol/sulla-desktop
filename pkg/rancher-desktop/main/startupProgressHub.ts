@@ -24,7 +24,7 @@ export class StartupProgressHub {
   }
 
   /** Subscribe to the lifecycle manager once. */
-  attachLifecycle(lifecycle: Pick<ReturnType<typeof getServiceLifecycleManager>, 'on'> = getServiceLifecycleManager()): void {
+  attachLifecycle(lifecycle: Pick<ReturnType<typeof getServiceLifecycleManager>, 'on' | 'serviceStatuses'> = getServiceLifecycleManager()): void {
     if (this.attached) return;
     this.attached = true;
     lifecycle.on('startup:begin', (e: LifecycleBeginEvent) => this.apply(() => this.model.onLifecycleBegin(e.order, e.alreadyStarted)));
