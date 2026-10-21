@@ -31,7 +31,7 @@ MAX_OPEN_HANDLES = 32
 SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
 MAX_TOKEN_BYTES = 4096
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
-SNAPSHOT_TTL_SECONDS = 1.0
+SNAPSHOT_TTL_SECONDS = 10.0
 METADATA_NAME = "_folder-metadata.yaml"
 METADATA_HEADER = """# Folder metadata for: {path}
 # Describes this folder and the files in it. Read this to understand the folder.
@@ -108,6 +108,8 @@ class FilesApi:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
                 return response.status, dict(response.headers), payload
         except urllib.error.HTTPError as error:
+            if error.code == 304:
+                return 304, dict(error.headers), b""
             payload = error.read(MAX_RESPONSE_BYTES + 1)
             try:
                 detail = json.loads(payload or b"{}")
@@ -120,9 +122,11 @@ class FilesApi:
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             raise OSError(errno.EIO, f"Files service unavailable: {error}") from error
 
-    async def snapshot(self):
-        _, _, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree")
-        return json.loads(body)
+    async def snapshot(self, etag=None):
+        headers = {"If-None-Match": etag} if etag else None
+        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree", "GET", None, headers)
+        next_etag = response_headers.get("ETag", etag)
+        return (None if status == 304 else json.loads(body)), next_etag
 
     async def read(self, file_id):
         _, headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content")
@@ -199,6 +203,7 @@ class SullaFiles(pyfuse3.Operations):
         self.uid = 0
         self.gid = 0
         self.snapshot_at = 0.0
+        self.snapshot_etag = None
         self.refresh_lock = trio.Lock()
         self.metadata_cache = {}
 
@@ -222,7 +227,9 @@ class SullaFiles(pyfuse3.Operations):
             if not force and self._fresh():
                 return
             started = time.monotonic()
-            self._apply(await self.api.snapshot())
+            snapshot, self.snapshot_etag = await self.api.snapshot(self.snapshot_etag)
+            if snapshot is not None:
+                self._apply(snapshot)
             self.snapshot_at = started
 
     def _apply(self, snapshot):

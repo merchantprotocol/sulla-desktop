@@ -140,8 +140,8 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.equal((await db.query('SELECT count(*)::int AS count FROM files WHERE collection_id=$1 AND path=$2', [collectionId, 'Proof'])).rows[0].count, 0);
 
     await waitForIndex(uploaded.id, uploaded.current_version_id);
-    let indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
+    let indexed = await db.query(`SELECT st.search_text,c.version_id,c.content,j.status
+      FROM files f JOIN file_search_text st ON st.file_id=f.id JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: firstBytes.toString(), version_id: uploaded.current_version_id, content: firstBytes.toString(), status: 'indexed' }]);
 
@@ -240,8 +240,8 @@ test('real handlers provision collections and preserve authenticated content acr
     assert.notEqual(changedBody.current_version_id, uploaded.current_version_id);
     await waitForIndex(uploaded.id, changedBody.current_version_id);
 
-    indexed = await db.query(`SELECT f.search_text,c.version_id,c.content,j.status
-      FROM files f JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
+    indexed = await db.query(`SELECT st.search_text,c.version_id,c.content,j.status
+      FROM files f JOIN file_search_text st ON st.file_id=f.id JOIN file_search_chunks c ON c.file_id=f.id AND c.version_id=f.current_version_id JOIN file_index_jobs j ON j.version_id=c.version_id
       WHERE f.id=$1`, [uploaded.id]);
     assert.deepEqual(indexed.rows, [{ search_text: secondBytes.toString(), version_id: changedBody.current_version_id, content: secondBytes.toString(), status: 'indexed' }]);
     searched = await requestJson('/v1/search', { method: 'POST', body: JSON.stringify({ query: firstBytes.toString(), collectionId }) });

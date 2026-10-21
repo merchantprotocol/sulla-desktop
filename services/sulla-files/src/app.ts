@@ -671,41 +671,52 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-store');
     response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
   } catch (error) { next(error) } });
-  // The mount can issue the same full-tree lookup concurrently from many processes.
-  // Coalesce those multi-megabyte PostgreSQL results and retain only one serialized
-  // snapshot. Without this service-side boundary, each caller holds its own full
-  // object graph while Express makes another JSON copy, amplifying heap pressure.
-  const FUSE_TREE_SNAPSHOT_TTL_MS = 1_000;
-  let fuseTreeSnapshot:{ body:Buffer; expiresAt:number } | undefined;
-  let fuseTreeSnapshotRequest:Promise<Buffer> | undefined;
-  const loadFuseTreeSnapshot = ():Promise<Buffer> => {
-    const now=Date.now();
-    if (fuseTreeSnapshot && fuseTreeSnapshot.expiresAt>now) return Promise.resolve(fuseTreeSnapshot.body);
+  // Cache one serialized tree by a database-owned change marker. Most FUSE
+  // lookups now pay for a scalar revision read and receive 304, rather than
+  // rebuilding and transferring the complete multi-megabyte tree every second.
+  let fuseTreeSnapshot:{ body:Buffer; revision:string } | undefined;
+  let fuseTreeSnapshotRequest:Promise<{ body:Buffer; revision:string }> | undefined;
+  const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
+  const loadFuseTreeSnapshot = async():Promise<{ body:Buffer; revision:string }> => {
+    const revision=await fuseTreeRevision();
+    if (fuseTreeSnapshot?.revision===revision) return fuseTreeSnapshot;
     if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
     fuseTreeSnapshotRequest=(async()=>{
-      const [collections,files,folders]=await Promise.all([
-        db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
-          AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
-          ORDER BY explorer_path,id`),
-        db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
-          f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-          WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-          ORDER BY f.collection_id,f.path`),
-        db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
-      ]);
-      const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
-      const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
-      fuseTreeSnapshot={body,expiresAt:Date.now()+FUSE_TREE_SNAPSHOT_TTL_MS};
-      return body;
+      // Retry if a writer commits while the three tree queries are in flight;
+      // never label mixed/stale rows with the newer revision.
+      while (true) {
+        const before=await fuseTreeRevision();
+        const [collections,files,folders]=await Promise.all([
+          db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+            AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
+            ORDER BY explorer_path,id`),
+          db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
+            f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
+            WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+            ORDER BY f.collection_id,f.path`),
+          db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
+        ]);
+        const after=await fuseTreeRevision();
+        if (before!==after) continue;
+        const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
+        const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
+        return (fuseTreeSnapshot={body,revision:after});
+      }
     })().finally(()=>{fuseTreeSnapshotRequest=undefined});
     return fuseTreeSnapshotRequest;
   };
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
-    const body=await loadFuseTreeSnapshot();
-    response.setHeader('Cache-Control', 'private, no-store');
-    response.type('application/json').send(body);
+    const currentRevision=await fuseTreeRevision();
+    const etag=`"${ currentRevision }"`;
+    response.setHeader('Cache-Control', 'private, no-cache');
+    response.setHeader('ETag', etag);
+    if (request.header('if-none-match')===etag) return response.status(304).end();
+    let snapshot=await loadFuseTreeSnapshot();
+    while (snapshot.revision!==await fuseTreeRevision()) snapshot=await loadFuseTreeSnapshot();
+    response.setHeader('ETag', `"${ snapshot.revision }"`);
+    response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect(); try {
@@ -1411,8 +1422,10 @@ export function createApp(
     }
     for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
     const authenticatedCreatorType = actor.agentId || actor.jobId ? 'agent-run' : 'user'; const authenticatedCreatorId = actor.jobId ?? actor.agentId ?? actor.userId;
-    await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,search_text) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-      ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,search_text=EXCLUDED.search_text,deleted_at=$9,updated_at=NOW()`, [fileId, bundle.collectionId, checked.path, authenticatedCreatorType, authenticatedCreatorId, bundle.file.mime, bundle.file.size, bundle.file.search_text, bundle.version.deleted ? new Date() : null]);
+    await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=$8,updated_at=NOW()`, [fileId, bundle.collectionId, checked.path, authenticatedCreatorType, authenticatedCreatorId, bundle.file.mime, bundle.file.size, bundle.version.deleted ? new Date() : null]);
+    await client.query(`INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3)
+      ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text`, [fileId, checked.path, bundle.file.search_text]);
     await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [bundle.version.id, fileId, bundle.version.chunk_collection_id, checked.currentVersionId, bundle.manifest?.hash ?? null, bundle.version.size, bundle.version.deleted, actor.agentId || actor.jobId ? 'agent-run' : 'user', actor.jobId ?? actor.agentId ?? actor.userId, bundle.version.message, actor.deviceId, checked.currentVersionId]);
     if (bundle.keyContext) {

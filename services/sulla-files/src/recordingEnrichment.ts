@@ -138,8 +138,8 @@ export class RecordingEnrichmentQueue {
         transcript=EXCLUDED.transcript,chapters=EXCLUDED.chapters,duration_seconds=EXCLUDED.duration_seconds,generator=EXCLUDED.generator,generated_at=NOW()`,
       [file.id, job.version_id, language, JSON.stringify(transcript), JSON.stringify(chapterList), duration]);
       const text = transcript.map(segment => segment.text).join(' ');
-      const hasSearchText = Boolean((await this.db.query("SELECT 1 FROM information_schema.columns WHERE table_name='files' AND column_name='search_text'")).rowCount);
-      if (hasSearchText) await this.db.query("UPDATE files SET search_text=$2,extraction_status='indexed',extracted_at=NOW() WHERE id=$1", [file.id, text]);
+      await this.db.query('UPDATE file_search_text SET search_text=$2 WHERE file_id=$1', [file.id, text]);
+      await this.db.query("UPDATE files SET extraction_status='indexed',extracted_at=NOW() WHERE id=$1", [file.id]);
       await this.db.query("UPDATE recording_enrichment_jobs SET status='completed',finished_at=NOW() WHERE version_id=$1", [job.version_id]);
       console.log(`[SullaFiles] enriched recording ${ basename(file.path) } with ${ transcript.length } transcript segments and ${ chapterList.length } chapters`);
     } catch (error) {
