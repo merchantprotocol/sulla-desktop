@@ -926,8 +926,14 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const popupTabId = hint?.surface === 'popup' && typeof hint.tabId === 'string' ? hint.tabId : undefined;
     const popupOrigin = popupTabId ? tabViewManager.getTrustedMainFrameOrigin(popupTabId) ?? undefined : undefined;
-    const humanSession = await getDesktopVaultClient().createHumanSession(
-      popupTabId && popupOrigin ? { tabId: popupTabId, origin: popupOrigin } : undefined,
+    // The container can be recreated right after the lifecycle reports it started;
+    // ride out that window instead of surfacing a raw connection error.
+    const { retryTransientVault } = await import('@pkg/utils/vaultTransient');
+    const humanSession = await retryTransientVault(
+      () => getDesktopVaultClient().createHumanSession(
+        popupTabId && popupOrigin ? { tabId: popupTabId, origin: popupOrigin } : undefined,
+      ),
+      { shouldContinue: () => vaultViewManager.isCurrent(reservation) },
     );
     if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
     const target = new URL(humanSession.url);

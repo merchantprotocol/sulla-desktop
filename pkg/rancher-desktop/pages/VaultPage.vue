@@ -5,7 +5,11 @@
     :class="{ popup: props.surface === 'popup' }"
     aria-label="Password Manager"
   >
-    <div v-if="error" class="vault-state">
+    <div v-if="starting" class="vault-state">
+      <strong>Vault is starting…</strong>
+      <span>Waiting for the secure vault service to come up. This retries automatically.</span>
+    </div>
+    <div v-else-if="error" class="vault-state">
       <strong>Vault unavailable</strong>
       <span>{{ error }}</span>
       <button type="button" @click="open">Retry</button>
@@ -18,6 +22,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { isTransientVaultError } from '@pkg/utils/vaultTransient';
 
 const host = ref<HTMLElement | null>(null);
 const props = withDefaults(defineProps<{
@@ -30,6 +35,10 @@ const props = withDefaults(defineProps<{
 }>(), { surface: 'page', siteUrl: '', active: true });
 const loading = ref(true);
 const error = ref('');
+const starting = ref(false);
+const MAX_AUTO_RETRIES = 45;
+let autoRetries = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const ownerId = crypto.randomUUID();
 let observer: ResizeObserver | null = null;
 let stopActiveWatch: WatchStopHandle | null = null;
@@ -43,6 +52,8 @@ function bounds(): { x: number; y: number; width: number; height: number } {
 
 async function open(): Promise<void> {
   const generation = ++lifecycleGeneration;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
   loading.value = true;
   error.value = '';
   await nextTick();
@@ -58,9 +69,20 @@ async function open(): Promise<void> {
     });
     if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;
+    starting.value = false;
+    autoRetries = 0;
   } catch (cause) {
     if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;
+    if (isTransientVaultError(cause) && autoRetries < MAX_AUTO_RETRIES) {
+      // The vault container is still coming up: keep the user informed and retry on our own.
+      starting.value = true;
+      autoRetries += 1;
+      retryTimer = setTimeout(() => { void open() }, 2_000);
+
+      return;
+    }
+    starting.value = false;
     error.value = cause instanceof Error ? cause.message : 'The local vault service did not answer.';
   }
 }
@@ -82,6 +104,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
   stopActiveWatch?.();
   stopActiveWatch = null;
   observer?.disconnect();
