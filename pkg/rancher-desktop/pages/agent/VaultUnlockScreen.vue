@@ -2,7 +2,7 @@
   <div class="vault-unlock-screen">
     <WindowDragLogo :size="20" class="vault-drag-logo" />
     <div v-if="waitingServices.length" class="vault-waiting" role="status"><strong>Unlock to finish starting Sulla.</strong><span>{{ waitingServices.join(' · ') }} are waiting.</span></div>
-    <VaultPage class="vault-secure-surface" />
+    <VaultPage class="vault-secure-surface" modal />
   </div>
 </template>
 

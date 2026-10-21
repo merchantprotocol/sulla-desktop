@@ -32,7 +32,8 @@ const props = withDefaults(defineProps<{
   siteUrl?: string;
   tabId?: string;
   active?: boolean;
-}>(), { surface: 'page', siteUrl: '', active: true });
+  modal?: boolean;
+}>(), { surface: 'page', siteUrl: '', active: true, modal: false });
 const loading = ref(true);
 const error = ref('');
 const starting = ref(false);
@@ -43,6 +44,7 @@ const ownerId = crypto.randomUUID();
 let observer: ResizeObserver | null = null;
 let stopActiveWatch: WatchStopHandle | null = null;
 let lifecycleGeneration = 0;
+const claimant: Claimant = { ownerId, modal: props.modal, reopen: () => { void open() } };
 
 function bounds(): { x: number; y: number; width: number; height: number } {
   const rect = host.value?.getBoundingClientRect();
@@ -57,7 +59,7 @@ async function open(): Promise<void> {
   loading.value = true;
   error.value = '';
   await nextTick();
-  if (!props.active || generation !== lifecycleGeneration) return;
+  if (!props.active || generation !== lifecycleGeneration || viewHolder() !== claimant) return;
   try {
     await ipcRenderer.invoke('vault:view-open', bounds(), {
       integrationId: props.integrationId,
@@ -92,14 +94,28 @@ function hide(): void {
   void ipcRenderer.invoke('vault:view-hide', ownerId);
 }
 
+function activate(): void {
+  release(claimant);
+  claimants.push(claimant);
+  if (viewHolder() === claimant) void open();
+}
+
+function deactivate(): void {
+  const wasHolder = viewHolder() === claimant;
+  release(claimant);
+  hide();
+  // Hand the single native view back to whoever it was taken from (e.g. the vault tab after unlock).
+  if (wasHolder) viewHolder()?.reopen();
+}
+
 onMounted(() => {
   observer = new ResizeObserver(() => {
     if (props.active) void ipcRenderer.invoke('vault:view-bounds', ownerId, bounds());
   });
   if (host.value) observer.observe(host.value);
   stopActiveWatch = watch(() => props.active, (active) => {
-    if (active) void open();
-    else hide();
+    if (active) activate();
+    else deactivate();
   }, { immediate: true });
 });
 
@@ -110,8 +126,24 @@ onBeforeUnmount(() => {
   stopActiveWatch = null;
   observer?.disconnect();
   observer = null;
-  hide();
+  deactivate();
 });
+</script>
+
+<script lang="ts">
+// The window has one native vault view. Every mounted, active VaultPage claims it;
+// the modal unlock screen wins, otherwise the most recently activated one does.
+interface Claimant { ownerId: string; modal: boolean; reopen: () => void }
+const claimants: Claimant[] = [];
+
+function viewHolder(): Claimant | undefined {
+  return claimants.findLast(c => c.modal) ?? claimants.at(-1);
+}
+
+function release(claimant: Claimant): void {
+  const index = claimants.indexOf(claimant);
+  if (index >= 0) claimants.splice(index, 1);
+}
 </script>
 
 <style scoped>
