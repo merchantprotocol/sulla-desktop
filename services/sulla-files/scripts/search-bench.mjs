@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { performance } from 'node:perf_hooks';
 import pg from 'pg';
-import { PotionEmbedder, vectorLiteral } from '../dist/potionEmbedder.js';
+import { cosine, PotionEmbedder, vectorLiteral } from '../dist/potionEmbedder.js';
 
 const url = process.env.DATABASE_URL;
 const model = process.env.POTION_MODEL;
@@ -53,9 +53,10 @@ async function semantic(q) {
     const result = vectorAvailable ? await client.query(`SELECT f.id,f.collection_id,f.path FROM files f
       JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=f.current_version_id
       JOIN file_search_vectors sv ON sv.chunk_id=sc.id WHERE ${where.join(' AND ')}
-      ORDER BY sv.embedding <=> $${args.length}::halfvec LIMIT 60`,args) : await client.query(`SELECT f.id,f.collection_id,f.path FROM files f
+      ORDER BY sv.embedding <=> $${args.length}::halfvec LIMIT 60`,args) : await client.query(`SELECT f.id,f.collection_id,f.path,sc.embedding_json FROM files f
       JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=f.current_version_id
       WHERE ${where.join(' AND ')} ORDER BY f.updated_at DESC LIMIT 800`,args.slice(0,-1));
+    if(!vectorAvailable) result.rows.map(row=>cosine(embedder.embed(q.text),row.embedding_json)).sort((a,b)=>b-a).slice(0,60);
     if(q.collection && result.rows.some(r=>r.collection_id!==q.collection)) throw new Error('collection scope violation');
     if(q.folder && result.rows.some(r=>!r.path.startsWith(q.folder))) throw new Error('folder scope violation');
     await client.query('COMMIT');
