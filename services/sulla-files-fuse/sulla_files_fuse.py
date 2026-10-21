@@ -7,6 +7,7 @@ import errno
 import json
 import os
 import stat
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -16,8 +17,13 @@ import pyfuse3
 import trio
 
 
+# Keep per-handle data on the bounded container tmpfs, not in Python heap.
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_OPEN_HANDLES = 128
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_OPEN_HANDLES = 32
+# Open-file buffers spill to a disk-backed volume, never to RAM (tmpfs counts
+# against the container memory limit).
+SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
 MAX_TOKEN_BYTES = 4096
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 1.0
@@ -56,14 +62,14 @@ class FilesApi:
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 length = response.headers.get("Content-Length")
-                if length and int(length) > MAX_FILE_BYTES:
+                if length and int(length) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
-                payload = response.read(MAX_FILE_BYTES + 1)
-                if len(payload) > MAX_FILE_BYTES:
+                payload = response.read(MAX_RESPONSE_BYTES + 1)
+                if len(payload) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
                 return response.status, dict(response.headers), payload
         except urllib.error.HTTPError as error:
-            payload = error.read(MAX_FILE_BYTES + 1)
+            payload = error.read(MAX_RESPONSE_BYTES + 1)
             try:
                 detail = json.loads(payload or b"{}")
             except json.JSONDecodeError:
@@ -87,7 +93,7 @@ class FilesApi:
         if len(data) > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
         headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash}
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", bytes(data), headers)
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", data, headers)
         return json.loads(body)
 
     async def create(self, collection_id, path):
@@ -283,13 +289,17 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(error.errno) from error
         handle = self.next_handle
         self.next_handle += 1
+        temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
+        temporary.write(data)
+        temporary.flush()
         self.handles[handle] = {
-            "inode": inode, "fileId": node["id"], "data": bytearray(data),
+            "inode": inode, "fileId": node["id"], "file": temporary, "size": len(data),
             "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failed": False,
             "append": bool(flags & os.O_APPEND),
         }
         if flags & os.O_TRUNC:
-            self.handles[handle]["data"].clear()
+            os.ftruncate(temporary.fileno(), 0)
+            self.handles[handle]["size"] = 0
             self.handles[handle]["dirty"] = True
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
@@ -297,21 +307,23 @@ class SullaFiles(pyfuse3.Operations):
         return info
 
     async def read(self, fh, offset, length):
-        data = self.handles[fh]["data"]
-        return bytes(data[offset:offset + length])
+        handle = self.handles[fh]
+        return os.pread(handle["file"].fileno(), length, offset)
 
     async def write(self, fh, offset, buf):
         handle = self.handles[fh]
         self._writable(self.nodes[handle["inode"]])
-        data = handle["data"]
         if handle["append"]:
-            offset = len(data)
+            offset = handle["size"]
         end = offset + len(buf)
         if end > MAX_FILE_BYTES:
             raise pyfuse3.FUSEError(errno.EFBIG)
-        if end > len(data):
-            data.extend(b"\0" * (end - len(data)))
-        data[offset:end] = buf
+        if offset > handle["size"]:
+            os.ftruncate(handle["file"].fileno(), end)
+        written = os.pwrite(handle["file"].fileno(), buf, offset)
+        if written != len(buf):
+            raise pyfuse3.FUSEError(errno.EIO)
+        handle["size"] = max(handle["size"], end)
         handle["dirty"] = True
         return len(buf)
 
@@ -320,15 +332,13 @@ class SullaFiles(pyfuse3.Operations):
             self._writable(self.nodes[inode])
             if fh is None or fh not in self.handles:
                 raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
-            data = self.handles[fh]["data"]
+            handle = self.handles[fh]
             size = int(attr.st_size)
             if size > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
-            if size < len(data):
-                del data[size:]
-            else:
-                data.extend(b"\0" * (size - len(data)))
-            self.handles[fh]["dirty"] = True
+            os.ftruncate(handle["file"].fileno(), size)
+            handle["size"] = size
+            handle["dirty"] = True
             self.nodes[inode]["size"] = size
         unsupported = fields.update_mode or fields.update_uid or fields.update_gid or fields.update_atime or fields.update_mtime
         if unsupported:
@@ -342,7 +352,12 @@ class SullaFiles(pyfuse3.Operations):
                 raise pyfuse3.FUSEError(errno.EIO)
             return
         try:
-            result = await self.api.write(handle["fileId"], handle["data"], handle["versionId"], handle["sourceHash"])
+            handle["file"].flush()
+            handle["file"].seek(0)
+            data = handle["file"].read(MAX_FILE_BYTES + 1)
+            if len(data) > MAX_FILE_BYTES:
+                raise pyfuse3.FUSEError(errno.EFBIG)
+            result = await self.api.write(handle["fileId"], data, handle["versionId"], handle["sourceHash"])
         except OSError as error:
             if getattr(error, "status", None) == 409:
                 handle["dirty"] = False
@@ -365,7 +380,9 @@ class SullaFiles(pyfuse3.Operations):
         try:
             await self._commit(fh)
         finally:
-            self.handles.pop(fh, None)
+            handle = self.handles.pop(fh, None)
+            if handle is not None:
+                handle["file"].close()
 
     def _child(self, parent_inode, name):
         parent=self.nodes.get(parent_inode)

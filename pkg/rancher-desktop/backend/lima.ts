@@ -3713,11 +3713,14 @@ start_pre() {
           SULLA_FILES_FUSE_URL:             'https://sulla_files:8792',
           SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
           SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla-files',
+          SULLA_FILES_FUSE_SPOOL:            '/var/spool/sulla-files-fuse',
           SSL_CERT_FILE:                     '/run/sulla-files-ca/tls.crt',
         },
         volumes: [
           '/var/lib/sulla/files-fuse:/run/sulla-files-fuse:ro',
           '/mnt/sulla-files:/mnt/sulla-files:rshared',
+          // Disk-backed spool for open-file buffers; /tmp is RAM and counts against mem_limit.
+          'sulla-files-fuse-spool:/var/spool/sulla-files-fuse',
           filesTlsBind(true),
         ],
         devices:      ['/dev/fuse:/dev/fuse'],
@@ -3755,6 +3758,7 @@ start_pre() {
     compose.volumes['sulla-vault-data'] ??= {};
     compose.volumes['sulla-files-data'] ??= {};
     compose.volumes['sulla-files-folder'] ??= {};
+    compose.volumes['sulla-files-fuse-spool'] ??= {};
 
     // Function code and invocation material stay inside the guest. Host paths
     // must never become Docker bind sources for agent-controlled runtimes.
