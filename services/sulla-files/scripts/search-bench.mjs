@@ -45,7 +45,7 @@ async function keyword(q) {
   record(`keyword:${q.name}`,performance.now()-started);
 }
 async function semantic(q) {
-  const args=[]; const where=whereFor(q,args); args.push(vectorLiteral(embedder.embed(q.text))); const started=performance.now();
+  const args=[]; const where=whereFor(q,args); const queryVector=embedder.embed(q.text); args.push(vectorLiteral(queryVector)); const started=performance.now();
   const client=await db.connect();
   try {
     await client.query('BEGIN');
@@ -56,7 +56,7 @@ async function semantic(q) {
       ORDER BY sv.embedding <=> $${args.length}::halfvec LIMIT 60`,args) : await client.query(`SELECT f.id,f.collection_id,f.path,sc.embedding_json FROM files f
       JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=f.current_version_id
       WHERE ${where.join(' AND ')} ORDER BY f.updated_at DESC LIMIT 800`,args.slice(0,-1));
-    if(!vectorAvailable) result.rows.map(row=>cosine(embedder.embed(q.text),row.embedding_json)).sort((a,b)=>b-a).slice(0,60);
+    if(!vectorAvailable) result.rows.map(row=>cosine(queryVector,row.embedding_json)).sort((a,b)=>b-a).slice(0,60);
     if(q.collection && result.rows.some(r=>r.collection_id!==q.collection)) throw new Error('collection scope violation');
     if(q.folder && result.rows.some(r=>!r.path.startsWith(q.folder))) throw new Error('folder scope violation');
     await client.query('COMMIT');
