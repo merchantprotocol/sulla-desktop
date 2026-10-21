@@ -131,9 +131,21 @@ export default {
       entry:       { background: path.resolve(this.rootDir, 'bootstrapEntry') },
       experiments: { outputModule: true },
       externals:   [
-        ...Object.keys(this.packageMeta.dependencies),
-        'pg-native', 'ws', 'bufferutil', 'utf-8-validate',
-        /^fast-glob/,
+        // The MCP SDK needs its own nested Ajv 8 (+ ajv-formats). Externalizing
+        // `ajv` by name would load the app's root Ajv 6 at runtime, and
+        // `new McpServer()` then throws "Cannot read properties of undefined
+        // (reading 'code')". Bundle Ajv for requests that come from the SDK.
+        ({ context, request }: { context?: string; request?: string }, callback: (error?: Error | null, result?: string) => void) => {
+          if (request && /^ajv(\/|$)/.test(request) && /[\\/]@modelcontextprotocol[\\/]sdk[\\/]/.test(context ?? '')) {
+            return callback();
+          }
+          const external = [
+            ...Object.keys(this.packageMeta.dependencies),
+            'pg-native', 'ws', 'bufferutil', 'utf-8-validate',
+          ].includes(request ?? '') || /^fast-glob/.test(request ?? '');
+
+          return external ? callback(null, request) : callback();
+        },
       ],
       devtool:     this.isDevelopment ? 'source-map' : false,
       resolve:     {
