@@ -42,7 +42,7 @@ function setDeviceState(next: CloudDeviceState) {
 async function reportedPreferences(): Promise<{ remoteAccess: 'enabled' | 'disabled'; syncSettings: Record<string, boolean> } | Record<string, never>> {
   try {
     const p = await getCloudPreferences();
-    return { remoteAccess: p.remoteAccess ? 'enabled' : 'disabled', syncSettings: { conversations: p.conversations, vault: p.vault, projects: p.projects } };
+    return { remoteAccess: p.remoteAccess ? 'enabled' : 'disabled', syncSettings: { conversations: p.conversations, vault: p.vault } };
   } catch {
     return {};
   }
