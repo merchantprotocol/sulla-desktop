@@ -128,7 +128,8 @@ export async function withGitHubBrokerRemote<T>(
       response.writeHead(upstream.status, brokerHeaders(upstream.headers));
       if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
       else response.end();
-    } catch {
+    } catch (error) {
+      console.warn('[github.git broker] request failed:', error instanceof Error ? error.message : error);
       abort.abort();
       if (response.headersSent) {
         response.destroy();
@@ -156,3 +157,4 @@ export async function withGitHubBrokerRemote<T>(
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }
+

@@ -82,6 +82,8 @@ const HUMAN_SESSION_TTL_MS = 15 * 60_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
+// Git pack transfers for a full fetch routinely exceed the API stream cap.
+const MAX_GIT_STREAM_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES = 64 * 1024;
 const LEGACY_PREFIX = '$VAULT$';
 const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
@@ -2179,10 +2181,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const method = input.method.toUpperCase();
     const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
+    const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
     let payload: Buffer | undefined;
     if (prepared.body !== undefined && method !== 'GET' && method !== 'HEAD') {
       payload = serializeBrokerBody(prepared.body);
-      if (payload.byteLength > MAX_STREAM_BYTES) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
+      if (payload.byteLength > streamLimit) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
       headers['content-length'] = String(payload.byteLength);
     }
     const binary = input.responseType === 'binary-stream';
@@ -2235,7 +2238,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         sink.start(response.statusCode ?? 502, outputHeaders);
         response.on('data', (chunk: Buffer) => {
           received += chunk.byteLength;
-          if (received > MAX_STREAM_BYTES) {
+          if (received > streamLimit) {
             request.destroy(new LocalVaultError('response_too_large', 502, 'Broker stream exceeded the size limit'));
             return;
           }
@@ -2515,4 +2518,5 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     );
   }
 }
+
 
