@@ -3725,7 +3725,7 @@ start_pre() {
         cap_add:      ['SYS_ADMIN'],
         security_opt: ['no-new-privileges:true'],
         read_only:    true,
-        tmpfs:        ['/tmp:rw,noexec,nosuid,nodev,size=16m'],
+        tmpfs:        ['/tmp:rw,noexec,nosuid,nodev,size=128m'],
         pids_limit:   64,
         mem_limit:    '256m',
         cpus:         0.5,

@@ -32,7 +32,8 @@ COPY services/sulla-files/web-src ./web-src
 COPY pkg/rancher-desktop/pages/files /app/pkg/rancher-desktop/pages/files
 RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
-ENV NODE_ENV=production
+# Keep V8 below the compose service memory limit even if compose env is lost.
+ENV NODE_ENV=production NODE_OPTIONS=--max-old-space-size=1536
 WORKDIR /app/services/sulla-files
 RUN apk add --no-cache antiword ffmpeg poppler-utils su-exec tesseract-ocr tesseract-ocr-data-eng unzip
 COPY --from=whisper /out/bin/whisper-cli /usr/local/bin/whisper-cli
