@@ -334,6 +334,19 @@ async function removeContainerSecrets(secretDir: string): Promise<void> {
   await limactl(['sh', '-c', 'if [ -d "$1" ]; then sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1"; fi', 'sh', secretDir]);
 }
 
+async function registerSullaFilesActor(containerId: string, agentId: string | undefined, jobId: string): Promise<void> {
+  if (!agentId || /[\r\n:]/.test(agentId) || /[\r\n:]/.test(jobId) || !/^[a-f0-9]{64}$/.test(containerId)) return;
+  await limactl(
+    ['sh', '-c', 'sudo install -d -m 0700 /var/lib/sulla/files-fuse/actors; umask 077; base64 -d | sudo tee "/var/lib/sulla/files-fuse/actors/$1" >/dev/null; sudo chmod 0400 "/var/lib/sulla/files-fuse/actors/$1"', 'sh', containerId],
+    Buffer.from(`${ agentId }:${ jobId }`).toString('base64'),
+  );
+}
+
+async function unregisterSullaFilesActor(containerId: string): Promise<void> {
+  if (!/^[a-f0-9]{64}$/.test(containerId)) return;
+  await limactl(['sh', '-c', 'sudo rm -f "/var/lib/sulla/files-fuse/actors/$1"', 'sh', containerId]);
+}
+
 async function cleanupContainerResources(
   runtime: ContainerRuntimeDriver,
   containerId: string | undefined,
@@ -351,7 +364,10 @@ async function cleanupContainerResources(
   let containerRemoved = !containerId;
   if (containerId) {
     await cleanupOwner.run(`container:${ containerId }`, () => runtime.remove(containerId))
-      .then(() => { containerRemoved = true })
+      .then(async() => {
+        containerRemoved = true;
+        await unregisterSullaFilesActor(containerId);
+      })
       .catch(error => failures.push(error));
   }
   if (containerRemoved) {
@@ -669,6 +685,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        'com.sulla.agent-id':       agentId,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
         'com.sulla.capability-jti': capabilityJti,
@@ -691,6 +708,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
+    await registerSullaFilesActor(containerId, agentId, run.jobId);
     await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
     await runtime.start(containerId);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
@@ -956,6 +974,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
         'com.sulla.capability-jti': capabilityJti,
@@ -972,6 +991,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
+    await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
     await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,

@@ -7,7 +7,7 @@ LABEL com.sulla.agent.transport-version="1"
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      bash build-essential ca-certificates curl git jq openssh-client python3 python3-pip tini \
+      attr bash build-essential ca-certificates curl git jq openssh-client python3 python3-pip tini \
  && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 

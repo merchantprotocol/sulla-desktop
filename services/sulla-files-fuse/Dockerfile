@@ -2,7 +2,7 @@ FROM python:3.12.12-slim-bookworm AS build
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends build-essential libfuse3-dev pkg-config \
- && pip wheel --wheel-dir /wheels pyfuse3==3.3.0 trio==0.32.0 \
+ && pip wheel --wheel-dir /wheels pyfuse3==3.3.0 trio==0.32.0 PyYAML==6.0.3 \
  && rm -rf /var/lib/apt/lists/*
 
 FROM python:3.12.12-slim-bookworm

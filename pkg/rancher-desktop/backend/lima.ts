@@ -3718,6 +3718,7 @@ start_pre() {
         },
         volumes: [
           '/var/lib/sulla/files-fuse:/run/sulla-files-fuse:ro',
+          '/proc:/host/proc:ro',
           '/mnt/sulla-files:/mnt/sulla-files:rshared',
           // Disk-backed spool for open-file buffers; /tmp is RAM and counts against mem_limit.
           'sulla-files-fuse-spool:/var/spool/sulla-files-fuse',
@@ -3727,6 +3728,7 @@ start_pre() {
         cap_drop:     ['ALL'],
         cap_add:      ['SYS_ADMIN'],
         security_opt: ['no-new-privileges:true'],
+        pid:          'host',
         read_only:    true,
         tmpfs:        ['/tmp:rw,noexec,nosuid,nodev,size=16m'],
         pids_limit:   64,
