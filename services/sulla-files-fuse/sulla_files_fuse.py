@@ -12,6 +12,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import logging
+import contextvars
+import re
+
+import yaml
 
 import pyfuse3
 import trio
@@ -27,6 +32,39 @@ SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fus
 MAX_TOKEN_BYTES = 4096
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 1.0
+METADATA_NAME = "_folder-metadata.yaml"
+METADATA_HEADER = """# Folder metadata for: {path}
+# Describes this folder and the files in it. Read this to understand the folder.
+# Edit this file to change metadata: changes are saved to Sulla Files, permission-checked and audited.
+# When you create a folder, fill in `description` with the folder's purpose for future agents.
+"""
+log = logging.getLogger("sulla-files-fuse")
+request_actor = contextvars.ContextVar("request_actor", default=None)
+
+
+class ActorResolver:
+    """Resolve FUSE request PIDs through platform-owned container identity files."""
+    def __init__(self, proc_root="/host/proc", actors_root="/run/sulla-files-fuse/actors"):
+        self.proc_root = proc_root
+        self.actors_root = actors_root
+        self.cache = {}
+
+    async def resolve(self, pid):
+        try:
+            cgroup_path = os.path.join(self.proc_root, str(pid), "cgroup")
+            cgroup = await trio.to_thread.run_sync(lambda: open(cgroup_path, encoding="utf-8").read())
+            ids = re.findall(r"(?:docker[-/]|cri-containerd[-/])([0-9a-f]{64})", cgroup)
+            if not ids: ids = re.findall(r"/([0-9a-f]{64})(?:\.scope)?(?:\n|$)", cgroup)
+            if not ids: return None
+            container_id = ids[-1]
+            if container_id in self.cache: return self.cache[container_id]
+            actor_path = os.path.join(self.actors_root, container_id)
+            actor = (await trio.to_thread.run_sync(lambda: open(actor_path, encoding="utf-8").read(1024))).strip()
+            if not actor or "\n" in actor or ":" not in actor: return None
+            self.cache[container_id] = actor
+            return actor
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
 
 
 def _mtime_ms(value):
@@ -37,9 +75,10 @@ def _mtime_ms(value):
 
 
 class FilesApi:
-    def __init__(self, base_url: str, token_file: str):
+    def __init__(self, base_url: str, token_file: str, actor_resolver=None):
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
+        self.actor_resolver = actor_resolver
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -57,7 +96,7 @@ class FilesApi:
     def _request(self, path: str, method="GET", body=None, headers=None):
         request = urllib.request.Request(
             f"{self.base_url}{path}", method=method, data=body,
-            headers={"Authorization": f"Bearer {self._token()}", **(headers or {})},
+            headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
         )
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
@@ -93,8 +132,30 @@ class FilesApi:
         if len(data) > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
         headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash}
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", data, headers)
+        _, response_headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", data, headers)
+        return json.loads(body), response_headers.get("X-Sulla-Merged") == "1"
+
+    async def replace(self, target_id, source_id):
+        body = json.dumps({"sourceFileId": source_id}).encode()
+        _, _, payload = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{target_id}/replace", "POST", body, {"Content-Type":"application/json"})
+        return json.loads(payload or b"{}")
+
+    async def metadata(self, collection_id, path):
+        query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/metadata?{query}")
         return json.loads(body)
+
+    async def folder_metadata(self, collection_id, path):
+        query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/folder-metadata?{query}")
+        return json.loads(body)
+
+    async def put_metadata(self, collection_id, path, set_values, unset, revision=None):
+        value = {"collectionId": collection_id, "path": path, "set": set_values, "unset": unset}
+        if revision is not None: value["baseRevision"] = revision
+        body = json.dumps(value).encode()
+        _, _, payload = await trio.to_thread.run_sync(self._request, "/v1/fuse/metadata", "PUT", body, {"Content-Type":"application/json"})
+        return json.loads(payload)
 
     async def create(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
@@ -139,6 +200,17 @@ class SullaFiles(pyfuse3.Operations):
         self.gid = 0
         self.snapshot_at = 0.0
         self.refresh_lock = trio.Lock()
+        self.metadata_cache = {}
+
+    async def _actor(self, ctx):
+        return await self.api.actor_resolver.resolve(ctx.pid) if self.api.actor_resolver and ctx else None
+
+    async def _as_actor(self, actor, awaitable):
+        token = request_actor.set(actor)
+        try:
+            return await awaitable
+        finally:
+            request_actor.reset(token)
 
     def _fresh(self):
         return time.monotonic() - self.snapshot_at < SNAPSHOT_TTL_SECONDS
@@ -154,6 +226,7 @@ class SullaFiles(pyfuse3.Operations):
             self.snapshot_at = started
 
     def _apply(self, snapshot):
+        self.metadata_cache.clear()
         present = {""}
         self.readonly_collections = {row["id"] for row in snapshot["collections"] if row.get("systemArea") in ("logs", "training-data")}
         roots = {}
@@ -188,6 +261,23 @@ class SullaFiles(pyfuse3.Operations):
                 inode=self._node(path,True); self.nodes[inode].update({"collectionId":row["collection_id"]})
             present.add(full); inode=self._node(full,False)
             self.nodes[inode].update({**row,"path":full,"filesPath":row["path"],"collectionId":row["collection_id"],"mtimeMs":_mtime_ms(row.get("updated_at"))})
+        # Metadata manifests are virtual files. A real file of the same name wins,
+        # and repositories stay completely untouched (including nested folders).
+        directories = [(inode, node) for inode, node in self.nodes.items() if node.get("directory") and node.get("collectionId")]
+        for _, directory in directories:
+            path = directory["path"]
+            parts = path.split("/") if path else []
+            in_git = any("/".join(parts[:index] + [".git"]) in self.path_inode for index in range(len(parts) + 1))
+            manifest_path = "/".join(filter(None, [path, METADATA_NAME]))
+            if in_git or manifest_path in present:
+                continue
+            present.add(manifest_path)
+            inode = self._node(manifest_path, False)
+            self.nodes[inode].update({
+                "path": manifest_path, "virtualMetadata": True, "size": 0,
+                "collectionId": directory["collectionId"],
+                "filesPath": self._files_path(path, directory["collectionId"]),
+            })
         for path, inode in list(self.path_inode.items()):
             if path and path not in present:
                 self._forget(path)
@@ -284,7 +374,12 @@ class SullaFiles(pyfuse3.Operations):
         if len(self.handles) >= MAX_OPEN_HANDLES:
             raise pyfuse3.FUSEError(errno.EMFILE)
         try:
-            data, version_id, source_hash = await self.api.read(node["id"])
+            if node.get("virtualMetadata"):
+                current = await self._get_folder_metadata(node["collectionId"], node["filesPath"])
+                data = self._render_folder_metadata(node, current)
+                version_id, source_hash = str(current.get("revision", "")), ""
+            else:
+                data, version_id, source_hash = await self.api.read(node["id"])
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
         handle = self.next_handle
@@ -293,9 +388,11 @@ class SullaFiles(pyfuse3.Operations):
         temporary.write(data)
         temporary.flush()
         self.handles[handle] = {
-            "inode": inode, "fileId": node["id"], "file": temporary, "size": len(data),
+            "inode": inode, "fileId": node.get("id"), "file": temporary, "size": len(data),
             "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failed": False,
             "append": bool(flags & os.O_APPEND),
+            "metadata": current if node.get("virtualMetadata") else None,
+            "actor": await self._actor(ctx),
         }
         if flags & os.O_TRUNC:
             os.ftruncate(temporary.fileno(), 0)
@@ -305,6 +402,69 @@ class SullaFiles(pyfuse3.Operations):
         info.keep_cache = False
         info.direct_io = True
         return info
+
+    def _render_folder_metadata(self, node, current):
+        folder = dict(current.get("folder") or {})
+        description = folder.pop("description", "")
+        naming_hint = folder.pop("naming_hint", "")
+        ordered = {"description": description, "naming_hint": naming_hint, **folder,
+                   "files": current.get("files") or {}}
+        dumped = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True)
+        dumped = dumped.replace("description: ''", "# REQUIRED: what is this folder for?\ndescription: ''", 1)
+        display = "/".join(filter(None, [self._collection_name(node["collectionId"]), node["filesPath"]]))
+        return (METADATA_HEADER.format(path=display) + dumped).encode()
+
+    async def _get_folder_metadata(self, collection_id, path):
+        key = ("folder", collection_id, path)
+        if key not in self.metadata_cache:
+            self.metadata_cache[key] = await self.api.folder_metadata(collection_id, path)
+        return self.metadata_cache[key]
+
+    async def _get_metadata(self, collection_id, path):
+        key = ("entry", collection_id, path)
+        if key not in self.metadata_cache:
+            self.metadata_cache[key] = await self.api.metadata(collection_id, path)
+        return self.metadata_cache[key]
+
+    def _invalidate_metadata(self, collection_id, path):
+        self.metadata_cache.pop(("entry", collection_id, path), None)
+        self.metadata_cache.pop(("folder", collection_id, os.path.dirname(path)), None)
+        self.metadata_cache.pop(("folder", collection_id, path), None)
+
+    def _collection_name(self, collection_id):
+        root = next((value for value in self.nodes.values() if value.get("collectionRoot") and value.get("collectionId") == collection_id), None)
+        return (root or {}).get("path", "").split("/", 1)[0]
+
+    async def _commit_metadata(self, handle, node, data):
+        try:
+            parsed = yaml.safe_load(data.decode("utf-8")) or {}
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("files", {}), dict):
+                raise ValueError("metadata document must be a mapping and files must be a mapping")
+        except (UnicodeDecodeError, yaml.YAMLError, ValueError) as error:
+            log.error("Invalid %s: %s", METADATA_NAME, error)
+            raise pyfuse3.FUSEError(errno.EINVAL) from error
+        current = handle["metadata"] or {"folder": {}, "files": {}, "revision": None}
+        wanted_files = parsed.pop("files", {})
+        folder_before = current.get("folder") or {}
+        await self._put_metadata_diff(node["collectionId"], node["filesPath"], folder_before, parsed, current.get("revision"))
+        file_before = current.get("files") or {}
+        for name in sorted(set(file_before) | set(wanted_files)):
+            before, after = file_before.get(name) or {}, wanted_files.get(name) or {}
+            if before != after:
+                file_path = "/".join(filter(None, [node["filesPath"], name]))
+                await self._put_metadata_diff(node["collectionId"], file_path, before, after)
+        self._invalidate_metadata(node["collectionId"], node["filesPath"])
+        refreshed = await self._get_folder_metadata(node["collectionId"], node["filesPath"])
+        rendered = self._render_folder_metadata(node, refreshed)
+        os.ftruncate(handle["file"].fileno(), 0); os.pwrite(handle["file"].fileno(), rendered, 0)
+        handle.update({"metadata": refreshed, "size": len(rendered), "versionId": str(refreshed.get("revision", ""))})
+
+    async def _put_metadata_diff(self, collection_id, path, before, after, revision=None):
+        set_values = {key: value for key, value in after.items() if before.get(key) != value}
+        unset = [key for key in before if key not in after]
+        if set_values or unset:
+            await self.api.put_metadata(collection_id, path, set_values, unset, revision)
+            self._invalidate_metadata(collection_id, path)
 
     async def read(self, fh, offset, length):
         handle = self.handles[fh]
@@ -357,18 +517,34 @@ class SullaFiles(pyfuse3.Operations):
             data = handle["file"].read(MAX_FILE_BYTES + 1)
             if len(data) > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
-            result = await self.api.write(handle["fileId"], data, handle["versionId"], handle["sourceHash"])
+            node = self.nodes[handle["inode"]]
+            if node.get("virtualMetadata"):
+                await self._as_actor(handle.get("actor"), self._commit_metadata(handle, node, data))
+                result, merged = {}, False
+            else:
+                result, merged = await self._as_actor(handle.get("actor"), self.api.write(handle["fileId"], data, handle["versionId"], handle["sourceHash"]))
+                if merged:
+                    merged_data, merged_version, merged_hash = await self.api.read(handle["fileId"])
+                    os.ftruncate(handle["file"].fileno(), 0)
+                    os.pwrite(handle["file"].fileno(), merged_data, 0)
+                    handle.update({"size": len(merged_data), "versionId": merged_version, "sourceHash": merged_hash})
         except OSError as error:
             if getattr(error, "status", None) == 409:
-                handle["dirty"] = False
                 handle["failed"] = True
-            raise pyfuse3.FUSEError(error.errno) from error
-        handle["versionId"] = result["versionId"]
-        handle["sourceHash"] = result["sourceHash"]
+                log.error("Write conflict for file %s; local edit remains buffered and was not dropped: %s", handle.get("fileId"), error)
+            elif self.nodes[handle["inode"]].get("virtualMetadata"):
+                log.error("Metadata update rejected: %s", error)
+            fuse_errno = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
+            raise pyfuse3.FUSEError(fuse_errno) from error
+        if result:
+            handle["versionId"] = result["versionId"]
+            handle["sourceHash"] = result["sourceHash"]
         handle["dirty"] = False
         handle["failed"] = False
         node = self.nodes[handle["inode"]]
         node.update(result)
+        node["size"] = handle["size"]
+        self.snapshot_at = 0.0
 
     async def flush(self, fh):
         await self._commit(fh)
@@ -401,8 +577,11 @@ class SullaFiles(pyfuse3.Operations):
         parent,path=self._child(parent_inode,name)
         self._writable(parent)
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
-        try: row=await self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"]))
-        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        try: row=await self._as_actor(await self._actor(ctx), self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"])))
+        except OSError as error:
+            mapped = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
+            log.error("Create rejected: %s", error)
+            raise pyfuse3.FUSEError(mapped) from error
         inode=self._node(path,False); self.nodes[inode].update({**row,"path":path,"filesPath":self._files_path(path,parent["collectionId"]),"collectionId":parent["collectionId"]})
         info=await self.open(inode,flags,ctx)
         return info,self._attrs(inode)
@@ -418,18 +597,37 @@ class SullaFiles(pyfuse3.Operations):
         source_files_path = self._files_path(old_path, source_collection)
         target_files_path = self._files_path(new_path, target_collection)
         try:
-            if node.get("directory"):
-                await self.api.rename_folder(source_collection,source_files_path,target_collection,target_files_path)
+            target_inode = self.path_inode.get(new_path)
+            target = self.nodes.get(target_inode) if target_inode else None
+            actor = await self._actor(ctx)
+            if target and target.get("virtualMetadata") and not node.get("directory"):
+                data, _, _ = await self.api.read(node["id"])
+                current = await self._get_folder_metadata(target["collectionId"], target["filesPath"])
+                temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
+                temporary.write(data); temporary.flush()
+                metadata_handle = {"metadata": current, "file": temporary}
+                try:
+                    await self._as_actor(actor, self._commit_metadata(metadata_handle, target, data))
+                    await self._as_actor(actor, self.api.delete(node["id"]))
+                finally:
+                    temporary.close()
+            elif target and not target.get("directory") and not node.get("directory"):
+                await self._as_actor(actor, self.api.replace(target["id"], node["id"]))
+            elif node.get("directory"):
+                await self._as_actor(actor, self.api.rename_folder(source_collection,source_files_path,target_collection,target_files_path))
             else:
-                await self.api.rename(node["id"],target_collection,target_files_path)
-        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+                await self._as_actor(actor, self.api.rename(node["id"],target_collection,target_files_path))
+        except OSError as error:
+            mapped = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
+            log.error("Rename/save rejected: %s", error)
+            raise pyfuse3.FUSEError(mapped) from error
         await self.refresh(force=True)
 
     async def unlink(self, parent_inode, name, ctx):
         _,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("directory"): raise pyfuse3.FUSEError(errno.ENOENT)
         self._writable(node)
-        try: await self.api.delete(node["id"])
+        try: await self._as_actor(await self._actor(ctx), self.api.delete(node["id"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
 
@@ -437,7 +635,7 @@ class SullaFiles(pyfuse3.Operations):
         parent,path=self._child(parent_inode,name)
         self._writable(parent)
         if not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
-        try: await self.api.mkdir(parent["collectionId"],self._files_path(path,parent["collectionId"]))
+        try: await self._as_actor(await self._actor(ctx), self.api.mkdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         inode=self._node(path,True); self.nodes[inode].update({"collectionId":parent["collectionId"]})
         return self._attrs(inode)
@@ -446,9 +644,57 @@ class SullaFiles(pyfuse3.Operations):
         parent,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EPERM)
         self._writable(node)
-        try: await self.api.rmdir(parent["collectionId"],self._files_path(path,parent["collectionId"]))
+        try: await self._as_actor(await self._actor(ctx), self.api.rmdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
+
+    def _metadata_path(self, node):
+        return self._files_path(node["path"], node["collectionId"])
+
+    def _xattr_key(self, name):
+        decoded = os.fsdecode(name)
+        prefix = "user.sulla."
+        if not decoded.startswith(prefix) or len(decoded) == len(prefix):
+            raise pyfuse3.FUSEError(errno.ENODATA)
+        return decoded[len(prefix):]
+
+    async def getxattr(self, inode, name, ctx):
+        node = self.nodes.get(inode)
+        if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
+        key = self._xattr_key(name)
+        try: result = await self._get_metadata(node["collectionId"], self._metadata_path(node))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        if key not in result.get("metadata", {}): raise pyfuse3.FUSEError(errno.ENODATA)
+        value = result["metadata"][key]
+        return value.encode() if isinstance(value, str) else json.dumps(value, separators=(",", ":")).encode()
+
+    async def listxattr(self, inode, ctx):
+        node = self.nodes.get(inode)
+        if not node or node.get("virtualMetadata"): return []
+        try: result = await self._get_metadata(node["collectionId"], self._metadata_path(node))
+        except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
+        return [os.fsencode(f"user.sulla.{key}") for key in result.get("metadata", {})]
+
+    async def setxattr(self, inode, name, value, ctx):
+        node = self.nodes.get(inode); key = self._xattr_key(name)
+        if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
+        try:
+            text = bytes(value).decode("utf-8")
+            parsed = json.loads(text)
+            value_to_set = parsed if isinstance(parsed, (dict, list, bool, int, float)) or parsed is None else text
+        except (UnicodeDecodeError, json.JSONDecodeError): value_to_set = bytes(value).decode("utf-8", "strict")
+        try: await self._as_actor(await self._actor(ctx), self.api.put_metadata(node["collectionId"], self._metadata_path(node), {key:value_to_set}, []))
+        except OSError as error: raise pyfuse3.FUSEError(errno.EACCES if getattr(error,"status",None)==403 else errno.EINVAL if getattr(error,"status",None)==400 else error.errno) from error
+        self.snapshot_at = 0.0
+        self._invalidate_metadata(node["collectionId"], self._metadata_path(node))
+
+    async def removexattr(self, inode, name, ctx):
+        node = self.nodes.get(inode); key = self._xattr_key(name)
+        if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
+        try: await self._as_actor(await self._actor(ctx), self.api.put_metadata(node["collectionId"], self._metadata_path(node), {}, [key]))
+        except OSError as error: raise pyfuse3.FUSEError(errno.EACCES if getattr(error,"status",None)==403 else error.errno) from error
+        self.snapshot_at = 0.0
+        self._invalidate_metadata(node["collectionId"], self._metadata_path(node))
 
 
 async def main(options):
@@ -456,7 +702,7 @@ async def main(options):
     if not token_file:
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     os.makedirs(options.mountpoint, exist_ok=True)
-    operations = SullaFiles(FilesApi(options.url, token_file))
+    operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver()))
     pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
     try:
         await pyfuse3.main()
@@ -465,6 +711,7 @@ async def main(options):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=os.environ.get("SULLA_FILES_FUSE_LOG_LEVEL", "INFO"))
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Files service base URL")
     parser.add_argument("mountpoint")
