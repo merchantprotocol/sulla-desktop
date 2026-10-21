@@ -285,14 +285,6 @@
           >
           <span class="text-sm label-text"><strong>Password vault</strong> — an encrypted backup. It's locked with your master password; Sulla Cloud can't read it.</span>
         </label>
-        <label class="flex items-start">
-          <input
-            v-model="syncProjects"
-            type="checkbox"
-            class="mr-2 mt-1"
-          >
-          <span class="text-sm label-text"><strong>Projects</strong> — see your projects and tasks on the web while this computer is off.</span>
-        </label>
       </rd-fieldset>
 
       <p class="mb-6 text-xs secondary-text">
@@ -342,7 +334,6 @@ const editingEmail = ref(false);
 // Sync choices — all off unless the user opts in.
 const syncConversations = ref(false);
 const syncVault = ref(false);
-const syncProjects = ref(false);
 
 // Reactive data
 const sullaEmail = ref('');
@@ -517,7 +508,6 @@ async function handleSyncChoices() {
     await ipcRenderer.invoke('sulla-cloud-connection:set-preferences', {
       conversations: syncConversations.value,
       vault:         syncVault.value,
-      projects:      syncProjects.value,
     });
   } catch (err) {
     console.warn('[FirstRunWelcome] Could not save sync choices:', err);

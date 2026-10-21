@@ -14,7 +14,6 @@ Every mention is `@<kind>:<identifier>`:
 | `@recipe:<slug>` | slug | `~/sulla/recipes/<slug>/manifest.yaml` |
 | `@integration:<slug>` | slug | `~/sulla/integrations/<slug>/` or `resources/integrations/…` |
 | `@workflow:<id>` | DB id | `workflows` table row (status: draft / production / archive) |
-| `@project:<slug>` | slug | Projects project-state project (Postgres) first; filesystem `~/sulla/projects/<slug>/PROJECT.md` is the PRD if one exists |
 
 The composer only offers tokens for artifacts that **already exist locally**. If a mention is in the user's message, the referenced item was real at composer time. It may have been deleted since — always verify before acting on it.
 
@@ -80,13 +79,9 @@ sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 ```
 
 ### `@project:<slug>`
-```bash
-sulla project/search_project_items '{"query":"<slug>","kind":"project"}'
-sulla project/get_project_item '{"id":"<id-from-search>"}'
-# PRD (if one exists — specs, not the agenda):
-cat ~/sulla/projects/<slug>/PROJECT.md
-```
-A `@project` mention is a **Projects project-state project** first (Postgres `work_projects`). Use `sulla project/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
+
+Read Sulla/Projects/<slug>/PROJECT.md and TASKS.md with Files tools.
+
 
 ## Intent inference
 
@@ -114,3 +109,6 @@ If the verb is ambiguous, ask one clarifying question before acting — don't gu
 - Backing IPC handlers: `main/sullaLibraryEvents.ts`, `sullaFunctionEvents.ts`, `sullaRoutineTemplateEvents.ts`, `sullaWorkflowEvents.ts`, `sullaProjectEvents.ts`
 - Token type: `pages/chat/models/Command.ts` (`MentionTarget.kind`)
 - Popover: `pages/chat/components/composer/CommandPopover.vue`
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

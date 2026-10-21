@@ -8,7 +8,6 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from './agent/services/IntegrationService';
 import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
-import { getProjectsAutoArchiveService } from '@pkg/agent/services/ProjectsAutoArchiveService';
 import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
 import { getWorkflowContainerEventBridge } from '@pkg/agent/services/WorkflowContainerEventBridge';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
@@ -27,8 +26,6 @@ import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
-import { getProjectsDomainEventConsumer } from '@pkg/agent/services/ProjectsDomainEventConsumer';
-import { getKnowledgeProjectionOutboxService } from '@pkg/agent/services/KnowledgeProjectionOutboxService';
 
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
@@ -233,41 +230,6 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     async() => {
       getHeartbeatService().destroy();
       console.log('[Background] HeartbeatService destroyed');
-    },
-  );
-
-  lifecycle.registerOnce('projects-auto-archive', ['database-manager'],
-    async() => {
-      await getProjectsAutoArchiveService().initialize();
-      console.log('[Background] ProjectsAutoArchiveService initialized');
-    },
-    async() => {
-      getProjectsAutoArchiveService().destroy();
-      console.log('[Background] ProjectsAutoArchiveService destroyed');
-    },
-  );
-
-  lifecycle.registerOnce('projects-domain-events', ['heartbeat'],
-    async() => {
-      await getProjectsDomainEventConsumer().initialize();
-      console.log('[Background] Projects domain-event consumer initialized');
-    },
-    () => {
-      getProjectsDomainEventConsumer().destroy();
-      console.log('[Background] Projects domain-event consumer destroyed');
-      return Promise.resolve();
-    },
-  );
-
-  lifecycle.registerOnce('knowledge-projection-outbox', ['database-manager'],
-    async() => {
-      await getKnowledgeProjectionOutboxService().initialize();
-      console.log('[Background] Knowledge projection outbox initialized');
-    },
-    () => {
-      getKnowledgeProjectionOutboxService().destroy();
-      console.log('[Background] Knowledge projection outbox destroyed');
-      return Promise.resolve();
     },
   );
 

@@ -26,7 +26,7 @@ If the choice is reversible, pick the best option, do it, and say which one you 
 
 Don't ask when:
 
-- The work is **read-only** (`read_file`, `file_search`, `browse_tools`, `function/list`, `project/list_project_items`). The user didn't sign up to click through every read.
+- The work is **read-only** (`read_file`, `file_search`, `browse_tools`, `function/list`, `files/files_where`). The user didn't sign up to click through every read.
 - The user **explicitly asked for the action in their last message**. "Delete the draft routine `foo`" means just do it. Don't re-ask what they just told you.
 - The action is **trivially reversible and local**. Creating a new draft routine, a new function dir, or a new project. You can scrap it in one command.
 - **Every turn.** If every tool call asks, the user goes numb to the card and starts approving on autopilot. The gate only works if it's rare and meaningful.

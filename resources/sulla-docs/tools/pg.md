@@ -62,12 +62,8 @@ Params are typed `string[]` in manifests but `pg.Pool` coerces to the column typ
 | `knowledgebase_categories` | KB category taxonomy | ✅ | ⚠️ via KB UI |
 | `sulla_migrations` | Migration tracking (infrastructure) | ✅ debug | ❌ App-owned |
 | `sulla_seeders` | Seed data tracking (infrastructure) | ✅ debug | ❌ App-owned |
-| `work_projects` | Projects: one outcome with a metric (status default `working`) | ✅ | ⚠️ Use `project/*` tools, not raw SQL |
-| `work_epics` | Epics under a project (status default `working`) | ✅ | ⚠️ Use `project/*` tools |
-| `work_tasks` | Tasks / subtasks (`parent_id`; status is a lane key, default `todo`) | ✅ | ⚠️ Use `project/*` tools |
 | `work_task_comments` | Notes on a task (GitHub-issue style) | ✅ | ⚠️ Use `add_task_comment` |
 
-Other Projects tables: `work_lane_definitions` (lanes, migration 0069), `work_project_pipeline_templates` and `work_project_pipeline_template_stages` (0087), `work_task_dependencies` (0075), `work_item_knowledge_links` (0077). Use the `project/*` tools for all of them.
 
 ## Schemas of the tables you'll query most
 
@@ -200,33 +196,26 @@ Take a backup first if the write deletes or rewrites data you can't rebuild.
 
 ## Projects tables
 
-### `work_projects` / `work_epics` / `work_tasks` / `work_task_comments` (migration 0044)
 
 Soft-archive, never hard-delete. No `bucket` column. `last_moved_at` updates on status / priority / assignee / due-date / parent changes.
 
 ```
-work_projects
   id TEXT PK · slug UNIQUE · title · description · outcome_metric
   status DEFAULT working · priority DEFAULT p2 · owner · github_repo · due_at
   assigned_agent (migration 0112)
   source · source_path · source_ref · created_at · updated_at · last_moved_at · archived
 
-work_epics
-  id TEXT PK · project_id FK work_projects(id)
   slug · title · description · status DEFAULT working · priority DEFAULT p2
   position · due_at · source · source_ref · created_at · updated_at · last_moved_at · archived
 
-work_tasks
-  id TEXT PK · project_id FK work_projects(id)  -- required
-  epic_id FK work_epics(id)                    -- optional
-  parent_id FK work_tasks(id)                  -- NULL = task, set = subtask
   slug · title · description · status (lane key, default todo) · priority DEFAULT p2
   due_at · github_issue · assignee · labels · position
   source · source_ref · created_at · updated_at · last_moved_at · completed_at · archived
 
 work_task_comments
-  id TEXT PK · task_id FK work_tasks(id) ON DELETE CASCADE
   author (default sulla; UI stamps human) · body · created_at · updated_at · archived
 ```
 
-Closed statuses: `done` / `cancelled` / `parked`. Priority accepts `critical` / `high` / `medium` / `low` and the `p0`–`p4` aliases. Not CRM. Do not write these with raw `pg/execute` — use the `project/*` tools.
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

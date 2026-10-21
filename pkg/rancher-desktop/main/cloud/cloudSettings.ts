@@ -4,7 +4,6 @@
  *
  *   cloudSyncConversations  push/pull chat history (claude_conversations/messages)
  *   cloudSyncVault          upload a ciphertext-only vault snapshot (zero-knowledge)
- *   cloudSyncProjects       upload a Projects snapshot
  *   cloudRemoteAccess       accept commands from browsers/phones the owner
  *                           approved at this desktop (on by default: nothing
  *                           is approved until the owner pairs a device here)
@@ -24,14 +23,12 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 export interface CloudPreferences {
   conversations: boolean;
   vault:         boolean;
-  projects:      boolean;
   remoteAccess:  boolean;
 }
 
 export const CLOUD_SETTING_KEYS = {
   conversations: 'cloudSyncConversations',
   vault:         'cloudSyncVault',
-  projects:      'cloudSyncProjects',
   remoteAccess:  'cloudRemoteAccess',
 } as const;
 
@@ -54,7 +51,6 @@ async function ensureInitialized(): Promise<void> {
   const wasSyncing = Number.isFinite(cursor) && cursor > 0;
   await SullaSettingsModel.set(CLOUD_SETTING_KEYS.conversations, wasSyncing, 'boolean');
   await SullaSettingsModel.set(CLOUD_SETTING_KEYS.vault, false, 'boolean');
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.projects, false, 'boolean');
   await SullaSettingsModel.set(CLOUD_SETTING_KEYS.remoteAccess, true, 'boolean');
   await SullaSettingsModel.set(INITIALIZED_KEY, true, 'boolean');
 }
@@ -64,7 +60,6 @@ export async function getCloudPreferences(): Promise<CloudPreferences> {
   return {
     conversations: asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.conversations, false), false),
     vault:         asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.vault, false), false),
-    projects:      asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.projects, false), false),
     remoteAccess:  asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.remoteAccess, true), true),
   };
 }

@@ -15,12 +15,12 @@ describe('observer transcript', () => {
       },
       {
         role:    'user',
-        content: 'Fix the vault.\n<turn_context>now=Sat TURN_CTX</turn_context>\n<project_report>PROJECT_RPT</project_report>\n<world_observations>WORLD_OBS</world_observations>',
+        content: 'Fix the vault.\n<turn_context>now=Sat TURN_CTX</turn_context>\n<world_observations>WORLD_OBS</world_observations>',
       },
       { role: 'assistant', content: 'Done.\n<human_identity_context>INLINE_HUMAN</human_identity_context>' },
     ]);
 
-    for (const leaked of ['HUMAN_CTX', 'TOP10_MEM', 'TURN_CTX', 'PROJECT_RPT', 'WORLD_OBS', 'INLINE_HUMAN']) {
+    for (const leaked of ['HUMAN_CTX', 'TOP10_MEM', 'TURN_CTX', 'WORLD_OBS', 'INLINE_HUMAN']) {
       expect(out).not.toContain(leaked);
     }
     expect(out).toContain('User: Fix the vault.');

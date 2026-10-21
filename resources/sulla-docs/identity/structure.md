@@ -22,9 +22,7 @@
     ├── identity.md          # External market, competitive landscape
     └── goals.md             # Market-level targets
 
-Postgres project tables         # ONE project-state store (operator agenda)
-  work_projects → work_epics → work_tasks → work_task_comments
-  Tools: sulla project/*   UI: Projects view (open_tab mode=projects)
+Sulla Files: Sulla/Projects/     # PROJECT.md and TASKS.md per project
 
 ~/sulla/projects/<slug>/     # PRDs + workspaces (specs, not the agenda)
 ~/sulla/ledger/              # Legacy markdown. Frozen. Do not pick from it.
@@ -144,6 +142,7 @@ Both stores soft-archive (never hard-delete), so history is recoverable. Use the
 
 ## Projects Work-State (the one project-state store)
 
-Project work in motion lives in the Postgres project tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are old leftovers and are frozen).
 
-Read and update work with the `sulla project/*` tools. For example, `sulla project/list_project_items`, `sulla project/report`, `sulla project/list_ready_tasks`, `sulla project/update_task`, and `sulla project/add_task_comment`. Don't look for native project-management tools outside the Sulla CLI catalog.
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

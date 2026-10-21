@@ -135,16 +135,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Pref = 'conversations' | 'vault' | 'projects' | 'remoteAccess';
+type Pref = 'conversations' | 'vault' | 'remoteAccess';
 
 const status = ref<Record<string, any> | null>(null);
 const busy = ref(false);
 const error = ref('');
 
-const syncItems: { key: 'conversations' | 'vault' | 'projects'; title: string; detail: string }[] = [
+const syncItems: { key: 'conversations' | 'vault'; title: string; detail: string }[] = [
   { key: 'conversations', title: 'Conversations', detail: 'read and continue chats from the web and your phone.' },
   { key: 'vault', title: 'Password vault', detail: 'encrypted backup, locked with your master password. Sulla Cloud can\'t read it.' },
-  { key: 'projects', title: 'Projects', detail: 'see projects and tasks on the web while this computer is off.' },
 ];
 
 const channelLabel = computed(() => ({
@@ -162,7 +161,7 @@ function fmt(iso?: string) {
   return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function objectLine(kind: 'vault' | 'projects') {
+function objectLine(kind: 'vault') {
   const s = (status.value?.objectSync ?? []).find((o: any) => o.kind === kind);
   if (!s) return '';
   if (s.lastError) return `Last attempt failed: ${ s.lastError }`;
@@ -191,12 +190,12 @@ function revoke(clientId: string) {
   return run(() => ipcRenderer.invoke('sulla-cloud-connection:revoke-client', clientId));
 }
 
-function syncNow(kind: 'vault' | 'projects') {
+function syncNow(kind: 'vault') {
   return run(() => ipcRenderer.invoke('sulla-cloud-connection:sync-now', kind));
 }
 
-function deleteCopy(kind: 'vault' | 'projects') {
-  if (!window.confirm(`Delete the ${ kind === 'vault' ? 'vault' : 'Projects' } copy stored in Sulla Cloud? Nothing on this computer changes.`)) return;
+function deleteCopy(kind: 'vault') {
+  if (!window.confirm(`Delete the vault copy stored in Sulla Cloud? Nothing on this computer changes.`)) return;
   return run(async() => {
     await ipcRenderer.invoke('sulla-cloud-connection:set-preferences', { [kind]: false });
     return ipcRenderer.invoke('sulla-cloud-connection:delete-cloud-copy', kind);

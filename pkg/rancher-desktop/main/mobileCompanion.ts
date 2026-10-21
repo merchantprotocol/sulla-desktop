@@ -19,7 +19,6 @@ const DESKTOP_TOGGLES = {
 type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
 
 import { BrowserBookmarkModel } from '@pkg/agent/database/models/BrowserBookmarkModel';
-import { getProjectsApplicationService } from '@pkg/agent/projects/application/ProjectsApplicationService';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
 
@@ -45,15 +44,6 @@ async function companionProvider(providerId: unknown) {
   if (!provider?.connected) throw new Error('That provider is not connected on this desktop');
   return provider;
 }
-
-async function companionTask(taskId: unknown) {
-  if (typeof taskId !== 'string' || !taskId || taskId.length > 200) throw new Error('Task required');
-  const task = await getProjectsApplicationService().getTask(taskId);
-  if (!task || task.archived) throw new Error('Task not found');
-  return task;
-}
-
-const CLOUD_PROJECT_CONTEXT = { actor: 'cloud-dashboard', source: 'ipc' } as const;
 
 function companionString(value: unknown, name: string, max: number, required = false): string | undefined {
   if (value === undefined || value === null) {
@@ -134,95 +124,6 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     cards.delete(id);
     if (!accepted) throw new Error('Already answered or expired. Ask Sulla for a fresh request.');
     return { accepted: true };
-  }
-  case 'projects.list':
-    return { projects: await getProjectsApplicationService().listProjects({ includeDone: true, limit: 1000 }) };
-  case 'projects.detail': {
-    if (typeof params.projectId !== 'string') throw new Error('Project required');
-    const projects = getProjectsApplicationService();
-    const project = await projects.getProject(params.projectId);
-    if (!project || project.archived) throw new Error('Project not found');
-    const [tasks, lanes] = await Promise.all([
-      projects.listTasks({ projectId: project.id, includeDone: true, limit: 5000 }),
-      projects.resolveEffectiveLanes(project.id),
-    ]);
-    return { project, tasks, lanes, truncated: tasks.length >= 5000 };
-  }
-  // One ticket with its thread, opened from the phone's dashboard or board.
-  case 'projects.task': {
-    const task = await companionTask(params.taskId);
-    const [project, lanes, comments] = await Promise.all([
-      getProjectsApplicationService().getProject(task.project_id),
-      getProjectsApplicationService().resolveEffectiveLanes(task.project_id),
-      getProjectsApplicationService().listComments(task.id),
-    ]);
-    return { task, project, lanes, comments };
-  }
-  // Human-initiated Kanban move from the paired mobile app. Keep this a
-  // narrow operation: the ticket must belong to the project shown on the
-  // phone, and the application service validates the destination lane.
-  case 'projects.moveTask': {
-    const task = await companionTask(params.taskId);
-    const projectId = typeof params.projectId === 'string' ? params.projectId.trim() : '';
-    const status = typeof params.status === 'string' ? params.status.trim() : '';
-    if (!projectId || projectId.length > 200) throw new Error('Project required');
-    if (!status || status.length > 100) throw new Error('Destination stage required');
-    if (task.project_id !== projectId) throw new Error('Ticket does not belong to this project');
-    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
-    const updated = await getProjectsApplicationService().updateTask(
-      task.id,
-      { status, actor: 'human' },
-      { actor: 'human', source: 'ipc' },
-    );
-    if (!updated) throw new Error('Ticket not found');
-    return { task: updated };
-  }
-  // Only ever a human comment: the phone owner typed it and pressed Post.
-  case 'projects.comment': {
-    const body = typeof params.body === 'string' ? params.body.trim() : '';
-    if (!body || body.length > 20000) throw new Error('Write a comment first (20,000 characters max)');
-    const task = await companionTask(params.taskId);
-    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
-    const comment = await getProjectsApplicationService().addComment({ task_id: task.id, body, author: 'human' }, { actor: 'human', source: 'ipc' });
-    return { comment };
-  }
-  case 'projects.create_task': {
-    const projectId = companionString(params.projectId, 'Project', 200, true)!;
-    const title = companionString(params.title, 'Title', 300, true)!;
-    const priority = companionString(params.priority, 'Priority', 32);
-    const status = companionString(params.status, 'Status', 100);
-    const assignee = params.assignee === null ? null : companionString(params.assignee, 'Assignee', 200);
-    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
-    const projects = getProjectsApplicationService();
-    await projects.ready();
-    const project = await projects.getProject(projectId);
-    if (!project || project.archived) throw new Error('Project not found');
-    const epic = (await projects.listEpics({ projectId, includeDone: true, limit: 1000 }))[0];
-    if (!epic) throw new Error('Project has no epic for new tasks');
-    const task = await projects.createTask({
-      epic_id: epic.id, title, priority, status, assignee, source: 'cloud-dashboard', actor: 'cloud-dashboard',
-    }, CLOUD_PROJECT_CONTEXT);
-    return { task };
-  }
-  case 'projects.update_task': {
-    const taskId = companionString(params.taskId, 'Task', 200, true)!;
-    const title = params.title === undefined ? undefined : companionString(params.title, 'Title', 300, true);
-    const statusParam = companionString(params.status, 'Status', 100);
-    const lane = companionString(params.lane, 'Lane', 100);
-    if (statusParam && lane && statusParam !== lane) throw new Error('status and lane must match when both are sent');
-    const status = statusParam ?? lane;
-    const assignee = params.assignee === null ? null : companionString(params.assignee, 'Assignee', 200);
-    if (title === undefined && status === undefined && assignee === undefined) throw new Error('No task changes supplied');
-    const { getProjectsApplicationService } = await import('@pkg/agent/projects/application/ProjectsApplicationService');
-    const projects = getProjectsApplicationService();
-    await projects.ready();
-    const current = await projects.getTask(taskId);
-    if (!current || current.archived) throw new Error('Task not found');
-    const task = await projects.updateTask(taskId, {
-      title, status, assignee, source: 'cloud-dashboard', actor: 'cloud-dashboard',
-    }, CLOUD_PROJECT_CONTEXT);
-    if (!task) throw new Error('Task not found');
-    return { task };
   }
   case 'agents.list': {
     const includeFinishedHours = companionInteger(params.includeFinishedHours, 'includeFinishedHours', 24, 0, 72);
@@ -344,7 +245,6 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       instructions: await SullaSettingsModel.get('heartbeatMobileInstructions', ''),
       status: getHeartbeatService().getStatus(),
       history: getHeartbeatService().getHistory(80),
-      activity: await getProjectsApplicationService().listRecentActivity({ author: 'heartbeat', limit: 50 }),
     };
   case 'heartbeat.update': {
     // This endpoint is only called by an explicit human action in the phone UI.

@@ -17,7 +17,7 @@ When you wake up on a non-trivial task, read these in order:
 6. `~/sulla/identity/human/identity.md` — who you work for, operating model
 7. `~/sulla/identity/business/identity.md` — business model, active deadlines
 8. `~/sulla/identity/human/goals.md` — current goals, financial targets, operating rules
-9. The **project tables** (`work_projects` → `work_epics` → `work_tasks`) — the ONE project-state store. Open the Projects view or call `sulla project/list_project_items`. Filesystem `~/sulla/projects/<slug>/PROJECT.md` are PRDs, not the agenda. `~/sulla/ledger/` is a historical archive.
+9. Read `environment/projects-in-files.md` — projects and task checklists live in Sulla Files.
 
 For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the relevant doc.
 
@@ -32,7 +32,6 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
-- [`agent-patterns/project-files.md`](agent-patterns/project-files.md) — Files-backed project plans, artifact editing, metadata, and lifecycle cleanup
 - [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
 - [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
 - [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/ask_user_question` to pause mid-turn and get an explicit answer or approve/deny from the user
@@ -40,6 +39,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - [`verification-2026-04-23.md`](verification-2026-04-23.md) — what was verified live against the running system, what was wrong, what got fixed
 
 ## environment/
+- [`projects-in-files.md`](environment/projects-in-files.md) — project folders, PROJECT.md and TASKS.md in Sulla Files
 - `architecture.md` — What runs where: Electron main, Lima VM, Vue renderer, Docker containers
 - `files-harness.md` — How agents work with Files: where to save (`files_where`), drafts, publish requests, locks and retention, Use Cases lifecycle, folder descriptions, what not to do
 - `files.md` — Files authority, native helper custody, collection envelopes, migration and verification
@@ -64,7 +64,6 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
 - `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
-- `project.md` — **the project-state store**: projects → epics → tasks → comments in desktop Postgres; Projects view + project tools
 - `knowledge.md` — Knowledge Base nodes, Projects associations, scoped recall, and the two-sided tool surface
 - `ledger.md` — historical: `~/sulla/ledger/` markdown archive + leftover `ledger_scoreboard` tool. Not the pick-path.
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
@@ -126,3 +125,6 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 ## identity/
 - `structure.md` — ~/sulla/identity/ layout, file formats, observational memory, and the frozen ledger at ~/sulla/ledger/
 - `icp.md` — Ideal customer profile, content framing arc, post angles, cache pattern
+
+
+Projects are plain files. See [Projects in Files](environment/projects-in-files.md).

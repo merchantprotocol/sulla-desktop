@@ -627,7 +627,7 @@ Check the roster in your turn context. It lists the active agents and their stat
 
 ## UI Navigation (open windows / tabs in the app)
 
-The agent **can** open Sulla Desktop's built-in views with [`sulla ui/open_tab`](../tools/ui.md). Modes: `marketplace` (also `use-cases` or `packages`), `chat`, `document`, `browser`, `welcome`, `integrations`, `vault`, `routines`, `history`, `secretary`, `agents`, `projects`, `files`, `decide`. Three modes open separate windows, not tabs: `settings`, `models`, and `audio`.
+The agent **can** open Sulla Desktop's built-in views with [`sulla ui/open_tab`](../tools/ui.md). Modes: `marketplace` (also `use-cases` or `packages`), `chat`, `document`, `browser`, `welcome`, `integrations`, `vault`, `routines`, `history`, `secretary`, `agents`, `files`, `decide`. Three modes open separate windows, not tabs: `settings`, `models`, and `audio`.
 
 ### "Open the marketplace"
 ```bash
@@ -658,9 +658,9 @@ sulla secretary/start '{}'
 ```
 See the Secretary Mode section below. `ui/open_tab` with `"mode":"secretary"` only opens the view.
 
-### "Show me the board"
+### "Show me project files"
 ```bash
-sulla ui/open_tab '{"mode":"projects"}'
+sulla ui/open_tab '{"mode":"files"}'
 ```
 
 ### "Open Twenty CRM" (or any extension web UI)
@@ -843,59 +843,9 @@ Never touch `kube-system`, `kube-public`, `kube-node-lease`, or the namespaces S
 
 ---
 
-## Projects / Work-State
+## Projects in Files
 
-The agenda lives in Projects project-state in Postgres: projects, epics, tasks, and task comments. The Projects view is the human board. `sulla project/*` is how agents work the board. A `PROJECT.md` file under `~/sulla/projects/` is a spec, not the agenda. `~/sulla/ledger/` is a historical archive. Don't pick work from it.
-
-**Vocabulary.**
-- Priority is `critical | high | medium | low`.
-- Task status is a pipeline stage key. The seeded default template uses `backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked`.
-- Projects and epics use `working | backlog | done | cancelled | parked`. Projects also take `blocked`.
-- Subtasks use `parent_id`.
-- There is no `bucket` field.
-- Archive is soft. Archiving a project or epic cascades to what's under it. Nothing is hard-deleted.
-
-### "What's on the board?" / "What should we work on?"
-The first turn of a chat already includes a `<project_report>` standup. Lead with that. To refresh it:
-```bash
-sulla project/report '{"hours":24}'
-sulla project/list_project_items '{"kind":"task","limit":20}'
-```
-Optional filters for the report: `project_id`, `assignee` (an agent slug, `heartbeat`, or `human`), and `next_limit`.
-
-### "Show me project X" / "Where are we on X?"
-```bash
-sulla project/search_project_items '{"query":"X","kind":"project"}'
-sulla project/get_project_item '{"id":"<id>"}'
-```
-`get_project_item` returns the epics for a project and the tasks for an epic. Read `~/sulla/projects/<slug>/PROJECT.md` only if you need the spec.
-
-### "Add a task / epic / project"
-Search first to avoid duplicates. Then create it. There's no upsert.
-```bash
-sulla project/search_project_items '{"query":"the title"}'
-sulla project/create_project '{"title":"..."}'
-sulla project/create_epic '{"project_id":"...","title":"..."}'
-sulla project/create_task '{"epic_id":"...","title":"...","priority":"high"}'
-```
-For a subtask, pass `parent_id` to `create_task`.
-
-### "Mark this done" / "Block this" / "Reprioritize"
-```bash
-sulla project/update_task '{"id":"...","status":"done"}'
-sulla project/update_task '{"id":"...","status":"blocked"}'
-sulla project/add_task_comment '{"task_id":"...","body":"[date] blocked: <why> | next: <what unblocks it>"}'
-sulla project/update_task '{"id":"...","priority":"critical"}'
-```
-Changes to status, priority, assignee, due date, parent, or epic stamp `last_moved_at`.
-
-### "Archive this"
-```bash
-sulla project/archive_project_item '{"id":"..."}'
-```
-Soft archive only. Never hard-delete. Never write these tables with `pg/execute`.
-
----
+Projects live in Sulla Files under `Sulla/Projects/<project-slug>/`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: `- [ ] task — owner — note`; tick `- [x]` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 
 ## When the request doesn't fit any of the above
 
@@ -905,3 +855,6 @@ Soft archive only. Never hard-delete. Never write these tables with `pg/execute`
 4. Use `sulla meta/browse_tools '{"query":"..."}'` to find tools you don't know.
 5. Verify the tool exists before you call it. Don't guess a name.
 6. If there's no path, ask one clarifying question or tell the user it isn't supported. Don't fake it.
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

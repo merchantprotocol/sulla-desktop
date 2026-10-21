@@ -1,9 +1,5 @@
-# Knowledge Base / Projects associations
+# Knowledge Base
 
-The associative Knowledge Base is `knowledge_nodes`, `node_aliases`, and `node_links`. Projects stays authoritative in `work_projects → work_epics → work_tasks`. Their only cross-domain store is `work_item_knowledge_links`.
+Projects live in Sulla Files under `Sulla/Projects/<project-slug>/`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: `- [ ] task — owner — note`; tick `- [x]` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 
-Use `project/link_knowledge_item`, `project/unlink_knowledge_item`, and `project/list_linked_knowledge` from the Projects side. Use `memory/episodic_link_project_item`, `memory/episodic_unlink_project_item`, and `memory/episodic_list_linked_project_items` from the Knowledge Base side. Both adapters call `WorkItemKnowledgeModel`.
-
-`memory/episodic_search` and `memory/episodic_resolve` are read-only node discovery. `memory/episodic_recall` accepts one optional `project_id`, `epic_id`, or `task_id`; it ranks direct links, inherited parent links, then ordinary results. Reads do not reinforce graph edges or touch Projects activity ordering.
-
-Project, epic, and task panels show linked knowledge. The Knowledge tab in Projects shows reverse-linked work, ancestry, relation, note, and attribution. Detach acts only on the direct association selected.
+The former Projects row store is retired on Desktop. Existing database tables are retained only for historical data; do not write them.

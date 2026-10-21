@@ -173,7 +173,7 @@ export async function routeChatAgent(message: string, threadId: string | null = 
   }
 }
 
-/** CLI form the model can run, e.g. `sulla ui/open_tab '{"mode":"projects"}'`. */
+/** CLI form the model can run, e.g. `sulla ui/open_tab '{"mode":"files"}'`. */
 export function candidateCommand(c: { toolName: string; params: Record<string, unknown> }): string {
   const category = toolCategory(c.toolName);
   return `sulla ${ category ? `${ category }/` : '' }${ c.toolName } '${ JSON.stringify(c.params ?? {}) }'`;

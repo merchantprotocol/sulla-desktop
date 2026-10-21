@@ -8,7 +8,7 @@ export const agentToolManifests: ToolManifest[] = [
     schemaDef:   {
       tasks: {
         type:        'array',
-        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — database-backed custom agent slug, defaults to the parent/primary agent; agentName is accepted as an alias; pick the right specialist with agents_directory), label (optional — human-readable name for the task), projectTaskId (required when the sub-agent works a Projects task — the job then owns that task for its run and launch is refused if another agent already owns it). A non-empty agentId/agentName that does not match an enabled agent definition is rejected — it is NOT silently run as the default agent.',
+        description: 'Array of task objects. Each task has: prompt (required — the instruction), agentId (optional — database-backed custom agent slug, defaults to the parent/primary agent; agentName is accepted as an alias; pick the right specialist with agents_directory), label (optional — human-readable name for the task), projectTaskId (optional legacy correlation id; does not claim a project task). A non-empty agentId/agentName that does not match an enabled agent definition is rejected — it is NOT silently run as the default agent.',
         items:       {
           type:       'object',
           properties: {
@@ -18,7 +18,7 @@ export const agentToolManifests: ToolManifest[] = [
             provider: { type: 'string', optional: true, description: 'Provider for this run; defaults to the selected agent or primary provider.' },
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
-            projectTaskId: { type: 'string', optional: true, description: 'REQUIRED whenever the sub-agent works a Projects task: the task id (e.g. "AwBS"). The job owns that task for its whole run (assignee = this agent; other sessions stay off it) and hands it back when the job ends. Launch is refused if another agent already owns the task.' },
+            projectTaskId: { type: 'string', optional: true, description: 'Optional legacy task correlation id; project work is tracked in Files.' },
             workspacePath: {
               type:        'string',
               optional:    true,

@@ -1,35 +1,5 @@
-# Outcome Ledger — historical archive
+# Historical Ledger
 
-`~/sulla/ledger/` is **not** the project-state store. The pick-path is the
-Postgres project tables — see [`tools/project.md`](project.md) and the Projects view.
+Projects live in Sulla Files under `Sulla/Projects/<project-slug>/`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: `- [ ] task — owner — note`; tick `- [x]` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 
-These markdown files may still exist on an install that was seeded from
-them. Treat them as a historical archive. Do not open `LEDGER.md` to pick
-work. Do not append `OUTCOMES.md` / `AUDIT.md` as bookkeeping — write the
-project item (`update_task`, `add_task_comment`).
-
-## Leftover tool
-
-```bash
-sulla ledger/scoreboard '{"days":7}'
-```
-
-Deterministic, zero LLM. Counts leftover markdown outcomes / WORKING rows /
-AUDIT lines. Useful only while an install still has those files. New
-installs should ignore this tool and use `sulla project/report` +
-`sulla project/list_project_items`.
-
-## Layout (archive)
-
-```
-~/sulla/ledger/
-├── LEDGER.md      # historical priority stack — do not pick from here
-├── OUTCOMES.md    # historical shipped log
-├── AUDIT.md       # historical gate-free action log
-├── BACKLOG.md     # historical WANT / MIGHT
-└── goals/         # imported into work_projects / work_epics / work_tasks
-```
-
-Scaffolded at boot if missing (template-only, never overwrites user
-content, no user data in shipped code). After the work-tables seeder
-runs, stop writing these files.
+The former Projects row store is retired on Desktop. Existing database tables are retained only for historical data; do not write them.

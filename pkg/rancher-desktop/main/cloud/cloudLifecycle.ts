@@ -7,7 +7,7 @@
  *   - the secure desktop channel (cloud dashboard → this desktop)
  * Plus, only if the owner opted in (Settings → Sulla Cloud):
  *   - conversation sync (SullaSync push/pull)
- *   - vault copy (zero-knowledge) and Projects copy uploads
+ *   - vault copy uploads (zero-knowledge)
  *
  * Signed out ⇒ everything stops.
  */
@@ -91,7 +91,6 @@ function installPrefsListener() {
       (prefs.conversations ? startConversationSync() : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
     }
     if (changed.includes('vault') && prefs.vault) DesktopObjectSync.syncNow('vault', true).catch(() => undefined);
-    if (changed.includes('projects') && prefs.projects) DesktopObjectSync.syncNow('projects', true).catch(() => undefined);
     broadcast();
   });
   DevicesCloudApi.onStateChange((state) => {
@@ -180,12 +179,12 @@ export function initCloudConnectionEvents(): void {
   });
 
   ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: ObjectKind) => {
-    if (kind === 'vault' || kind === 'projects') await DesktopObjectSync.syncNow(kind, true);
+    if (kind === 'vault') await DesktopObjectSync.syncNow(kind, true);
     return getCloudConnectionStatus();
   });
 
   ipc.handle('sulla-cloud-connection:delete-cloud-copy', async(_e: unknown, kind: ObjectKind) => {
-    if (kind === 'vault' || kind === 'projects') await DesktopObjectSync.deleteCloudCopy(kind);
+    if (kind === 'vault') await DesktopObjectSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
   });
 }

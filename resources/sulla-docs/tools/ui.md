@@ -18,7 +18,7 @@ sulla ui/open_tab '{"url":"https://github.com/merchantprotocol"}'   # raw URL â†
 | `url` | Alternative to `mode` â€” opens a raw browser tab inside Sulla Desktop on the given URL |
 
 **Tab modes** (`mode` values the tool accepts):
-`chat`, `use-cases`, `packages`, `marketplace`, `integrations`, `vault`, `routines`, `history`, `secretary`, `document`, `browser`, `welcome`, `agents`, `projects`, `files`, `decide`.
+`chat`, `use-cases`, `packages`, `marketplace`, `integrations`, `vault`, `routines`, `history`, `secretary`, `document`, `browser`, `welcome`, `agents`, `files`, `decide`.
 
 `use-cases`, `packages` and `marketplace` all open the same view. Use `use-cases` in user-facing text. The Use Cases view is the marketplace.
 
@@ -47,7 +47,6 @@ Behavior:
 | `browser` | Standard web browser tab (use `url` for the address) |
 | `welcome` | Onboarding / welcome screen |
 | `agents` | Agent network / jobs |
-| `projects` | Projects view (Postgres project items: projects, epics, tasks) |
 | `settings` | Preferences window (window, not a tab) |
 
 ## Common requests
@@ -72,9 +71,9 @@ sulla ui/open_tab '{"mode":"vault"}'
 sulla ui/open_tab '{"mode":"secretary"}'
 ```
 
-### "Open Projects" / "Show me projects"
+### Project files
 ```bash
-sulla ui/open_tab '{"mode":"projects"}'
+sulla ui/open_tab '{"mode":"files"}'
 ```
 
 ### "Open Twenty CRM"
@@ -93,3 +92,6 @@ sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
 - Manifest: `pkg/rancher-desktop/agent/tools/ui/manifests.ts`
 - Renderer handler: `pkg/rancher-desktop/pages/AgentRouter.vue` (`onAgentCommand`)
 - Window resolver: `getWindow('main-agent')` from `pkg/rancher-desktop/window/index.ts`
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

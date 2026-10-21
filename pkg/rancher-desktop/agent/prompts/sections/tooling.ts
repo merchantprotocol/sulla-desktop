@@ -34,7 +34,7 @@ Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use C
 
 ## Sidebar artifacts
 
-Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.`;
+Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.`;
 
     return {
       id:             'tooling',
@@ -76,7 +76,7 @@ Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use C
 
 ## Sidebar artifacts
 
-Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.`;
+Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.`;
 
     return {
       id:             'tooling',
@@ -126,7 +126,7 @@ Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use C
 
 ## Sidebar artifacts
 
-Plans and working docs for a Projects project are Files-backed project documents, not loose artifacts. Create them with \`chat/artifact_create\` plus project_id, project_name, document_kind, owner_agent, delete_when, and related task/PR metadata. This stores the file at projects/<project-slug>/ and opens the same file in the sidebar. Read before editing, pass expectedVersion, and keep updating it in place with \`chat/artifact_edit\`. Open an existing project file with \`chat/artifact_open\` and its file_id. Never paste a duplicate plan into chat.
+Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 
 ## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
 

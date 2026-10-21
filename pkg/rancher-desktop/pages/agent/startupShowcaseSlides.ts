@@ -13,7 +13,7 @@
 
 export type ShowcaseArt =
   | 'agents' | 'routines' | 'vault' | 'files' | 'models' | 'integrations'
-  | 'projects' | 'heartbeat' | 'secretary' | 'capture' | 'phone' | 'sandbox';
+  | 'heartbeat' | 'secretary' | 'capture' | 'phone' | 'sandbox';
 
 export interface ShowcaseContext {
   /** Built-in integration count from agent/integrations/native, or null before it loads. */
@@ -89,15 +89,6 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     art:     'integrations',
     points:  ['CRMs, ad platforms and databases', 'Slack and GitHub', 'Called through the vault, so keys stay out of the chat'],
     sources: ['pkg/rancher-desktop/agent/integrations/native/index.ts', 'resources/sulla-docs/tools/vault.md (proxy pattern)'],
-  },
-  {
-    id:      'projects',
-    eyebrow: 'Projects',
-    title:   'One board for you and your agents.',
-    body:    'Projects holds the plan as epics and tasks. Agents move their own cards and leave comments, and you see each change on the board.',
-    art:     'projects',
-    points:  ['The plan lives as epics and tasks', 'Agents move their own cards and leave comments', 'Every change shows on the board'],
-    sources: ['resources/sulla-docs/tools/project.md'],
   },
   {
     id:      'heartbeat',

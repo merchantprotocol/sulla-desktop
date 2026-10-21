@@ -59,12 +59,6 @@ interface WorkflowDbRow {
   status?:      string;
 }
 
-interface ProjectSummaryRow {
-  slug:         string;
-  name?:        string;
-  status?:      string;
-  description?: string;
-}
 
 // ─── Module-level cache (shared across component mounts) ─────────
 
@@ -99,14 +93,13 @@ async function loadAll(): Promise<void> {
   if (inflight) return inflight;
 
   inflight = (async() => {
-    const [routines, skills, functions, recipes, integrations, workflows, projects] = await Promise.all([
+    const [routines, skills, functions, recipes, integrations, workflows] = await Promise.all([
       invokeSafe<LibraryRoutineRow>('routines-template-list'),
       invokeSafe<LibrarySkillRow>('library-list-skills'),
       invokeSafe<LibraryFunctionRow>('functions-list'),
       invokeSafe<LibraryRecipeRow>('library-list-recipes'),
       invokeSafe<LibraryIntegrationRow>('library-list-integrations'),
       invokeSafe<WorkflowDbRow>('workflow-db-list'),
-      invokeSafe<ProjectSummaryRow>('projects-list'),
     ]);
 
     const next: MentionTarget[] = [];
@@ -137,10 +130,6 @@ async function loadAll(): Promise<void> {
       // past job. Drafts with no name get labeled by id so they're still
       // findable.
       next.push({ token: toToken('workflow', w.id), label: labelFrom(w), kind: 'workflow' });
-    }
-    for (const p of projects) {
-      if (!p?.slug) continue;
-      next.push({ token: toToken('project', p.slug), label: labelFrom(p), kind: 'project' });
     }
 
     items.value = next;

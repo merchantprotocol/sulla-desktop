@@ -11,7 +11,6 @@ jest.unstable_mockModule('../PostgresClient', () => ({ postgresClient }));
 jest.unstable_mockModule('../migrations', () => ({ migrationsRegistry: [] }));
 jest.unstable_mockModule('../seeders', () => ({ seedersRegistry: [] }));
 jest.unstable_mockModule('../models/SullaSettingsModel', () => ({ SullaSettingsModel: { bootstrap: jest.fn() } }));
-jest.unstable_mockModule('../registry/ProjectRegistry', () => ({ projectRegistry: { initialize: jest.fn() } }));
 jest.unstable_mockModule('../registry/SkillsRegistry', () => ({ skillsRegistry: { initialize: jest.fn() } }));
 
 const { DatabaseManager } = await import('../DatabaseManager');

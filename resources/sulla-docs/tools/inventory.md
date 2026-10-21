@@ -270,43 +270,7 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla mobile/list_messages` — List SMS and voicemail transcripts shown in the mobile Messages tab.
 - `sulla mobile/list_devices` — List every desktop and mobile device registered to the contractor, annotated with online/offline status.
 
-## project (34 tools)
-- `sulla project/reconcile_github_pr_mirror` — Deterministically mirror GitHub pull requests into child Projects issues.
-- `sulla project/list_project_items` — List Projects project-state from Postgres: projects, epics, and/or tasks.
-- `sulla project/get_project_item` — Fetch one project item by id.
-- `sulla project/search_project_items` — Keyword search across project / epic / task titles and descriptions.
-- `sulla project/list_task_comments` — List the comment thread on a task, oldest first.
-- `sulla project/report` — Standup report: recent completions plus open, dependency-held, blocked and planning tasks with project/epic context.
-- `sulla project/list_linked_knowledge` — List direct Knowledge Base links for a Projects item and, when requested, inherited parent links.
-- `sulla project/link_knowledge_item` — Attach an existing Knowledge Base node to exactly one Projects item through the shared association model.
-- `sulla project/unlink_knowledge_item` — Soft-unlink one direct Knowledge Base association from a Projects item.
-- `sulla project/create_task_dependency` — Create one first-class task dependency (dependent depends on a prerequisite).
-- `sulla project/remove_task_dependency` — Remove (soft-archive) one task dependency by id, or by dependent_task_id + depends_on_task_id (+ relation_type).
-- `sulla project/list_task_dependencies` — List a task dependencies (its prerequisites) and its dependents.
-- `sulla project/list_ready_tasks` — Bulk readiness query for a project (optionally one epic): open tasks split into ready (no unresolved dependency holds) vs blocked, with the exact holds for each blocked task, pl...
-- `sulla project/list_pipeline_templates` — List reusable project lane templates, or fetch one template with its ordered stages.
-- `sulla project/create_pipeline_template` — Create a reusable custom project lane template with fully ordered stages.
-- `sulla project/apply_pipeline_template` — Materialize a reusable lane template onto an empty project as its ordered project lanes.
-- `sulla project/update_pipeline_template` — Rename/re-describe a custom pipeline template and/or replace its ordered stage set.
-- `sulla project/archive_pipeline_template` — Archive a custom pipeline template so it stops appearing for new projects.
-- `sulla project/create_project` — Create a NEW project (top of the operator agenda).
-- `sulla project/update_project` — Update an existing project in place (by id).
-- `sulla project/create_epic` — Create a NEW epic under a project (the major chunks of a project).
-- `sulla project/update_epic` — Update an existing epic in place (by id).
-- `sulla project/create_task` — Create a NEW task (issue) under an epic.
-- `sulla project/update_task` — Update an existing task in place (by id).
-- `sulla project/add_task_comment` — Add a note/comment on a task (GitHub-issue style).
-- `sulla project/archive_project_item` — Soft-archive a project, epic, or task by id.
-- `sulla project/list_lanes` — List first-class Projects lane definitions.
-- `sulla project/resolve_lanes` — Resolve the effective ordered lane set for a project with global, project_override, or project_only provenance.
-- `sulla project/create_lane` — Create a global default, project override, or project-only lane.
-- `sulla project/update_lane` — Update lane presentation, order, role, or re-enable it without changing its stable key.
-- `sulla project/archive_lane` — Archive a lane.
-- `sulla project/restore_lane` — Restore an archived lane definition in place.
-- `sulla project/reorder_lanes` — Atomically assign sequential positions to lane keys in one scope.
-- `sulla project/reset_lane_override` — Reset one project customization so the lane inherits its global definition again.
 
-→ See [`tools/project.md`](project.md)
 
 ## ledger (1 tools)
 - `sulla ledger/scoreboard` — Deterministic outcome-ledger scoreboard (zero LLM): outcomes shipped in the window, WORKING items and how many are staged at a gate, unilateral actions logged in AUDIT.md, and a...
@@ -504,3 +468,6 @@ Account IDs are discoverable via `sulla vault/list_accounts '{"account_type":"<s
 | slack | 7 | | ui | 1 |
 | extensions | 7 | | | |
 | | | | **Total** | **353** |
+
+
+Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

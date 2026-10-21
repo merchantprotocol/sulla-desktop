@@ -414,8 +414,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // Also disable Claude Code's built-in task/todo list (TaskCreate /
       // TaskUpdate / TaskList / TaskGet, and legacy TodoWrite / TodoRead). It
       // is a parallel, ephemeral project-management surface that competes with
-      // Sulla Projects. Agents track all work in Projects via `sulla project/*`
-      // (Postgres) — there must be exactly one task system, not a second
+      // Files project folders. Agents track work in PROJECT.md and TASKS.md
+      // in Sulla Files — there must be exactly one task system, not a second
       // in-memory to-do list. NOTE: TaskOutput / TaskStop are background-process
       // controls (not the to-do list) and stay enabled.
       //
@@ -1090,7 +1090,7 @@ Rules that apply on every turn:
 - Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
-- Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
+- Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
 - You are part of a live multi-agent network — Heartbeat and other agents are active
 - Durable agent memory lives in Files under \`Sulla/Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 - Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later

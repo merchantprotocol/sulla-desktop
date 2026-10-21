@@ -16,10 +16,9 @@ function fileName(value: string): string {
 }
 
 export function projectFileInput(input: any): { content: string; path: string } | undefined {
-  const projectId = String(input.project_id ?? '').trim();
-  if (!projectId) return undefined;
-  const projectName = String(input.project_name ?? '').trim();
-  if (!projectName) throw new Error('project_name is required with project_id.');
+  const projectSlug = String(input.project_slug ?? '').trim();
+  if (!projectSlug) return undefined;
+  const projectName = String(input.project_name ?? projectSlug).trim();
   const kind = String(input.document_kind ?? 'plan');
   if (!PROJECT_KINDS.has(kind)) throw new Error(`Unsupported project document kind "${ kind }".`);
   const now = new Date().toISOString();
@@ -29,7 +28,7 @@ export function projectFileInput(input: any): { content: string; path: string } 
     '---',
     `title: ${ scalar(input.name) }`,
     'project:',
-    `  id: ${ scalar(projectId) }`,
+    `  slug: ${ scalar(slug(projectSlug)) }`,
     `  name: ${ scalar(projectName) }`,
     `epic: ${ scalar(input.epic ?? '') }`,
     `kind: ${ scalar(kind) }`,
@@ -45,6 +44,6 @@ export function projectFileInput(input: any): { content: string; path: string } 
   ].join('\n');
   return {
     content: `${ metadata }${ String(input.content ?? '') }`,
-    path: `projects/${ slug(projectName) }/${ fileName(input.file_name ?? input.name) }`,
+    path: `Sulla/Projects/${ slug(projectSlug) }/${ fileName(input.file_name ?? input.name) }`,
   };
 }

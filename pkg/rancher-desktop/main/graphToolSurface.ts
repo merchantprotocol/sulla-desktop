@@ -72,7 +72,7 @@ export function buildGraphToolHandler(
   return async({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
     // `exec` in the surface means full Sulla catalog authority (same rule as
     // the CLI session gate), so dispatched workers can reach github/*,
-    // project/*, etc. here too — sandboxed CLI providers have no other path.
+    // files/*, etc. here too — sandboxed CLI providers have no other path.
     if (!sessionAllowsTool(allowedTools, tool)) {
       return {
         content: [{ type: 'text', text: `sulla_tool: "${ tool }" is not in this agent's graph-stamped tool surface. Allowed: ${ allowedTools.join(', ') }` }],

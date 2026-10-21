@@ -157,7 +157,6 @@ const ART: Record<ShowcaseArt, string[]> = {
   files:        ['M14 8h14l8 8v24H14z', 'M28 8v8h8', 'M10 14v28h20'],
   models:       ['M24 6l16 9v18l-16 9-16-9V15z', 'M24 24l16-9', 'M24 24v18', 'M24 24L8 15'],
   integrations: ['M18 10v8', 'M30 10v8', 'M14 18h20v6a10 10 0 0 1-20 0z', 'M24 34v8'],
-  projects:     ['M8 10h32v28H8z', 'M19 10v28', 'M30 10v28', 'M11 16h5', 'M22 16h5', 'M22 21h5', 'M33 16h4'],
   heartbeat:    ['M6 26h8l4-10 6 20 5-14 3 4h10'],
   secretary:    ['M24 8a6 6 0 0 0-6 6v10a6 6 0 0 0 12 0V14a6 6 0 0 0-6-6z', 'M12 22v2a12 12 0 0 0 24 0v-2', 'M24 36v6'],
   capture:      ['M6 14h26v20H6z', 'M32 21l10-6v18l-10-6', 'M14 20h.01'],
