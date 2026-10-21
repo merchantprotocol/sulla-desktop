@@ -18,9 +18,12 @@ import trio
 
 
 # Keep per-handle data on the bounded container tmpfs, not in Python heap.
-MAX_FILE_BYTES = 16 * 1024 * 1024
+MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
-MAX_OPEN_HANDLES = 8
+MAX_OPEN_HANDLES = 32
+# Open-file buffers spill to a disk-backed volume, never to RAM (tmpfs counts
+# against the container memory limit).
+SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
 MAX_TOKEN_BYTES = 4096
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 1.0
@@ -286,7 +289,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(error.errno) from error
         handle = self.next_handle
         self.next_handle += 1
-        temporary = tempfile.TemporaryFile(mode="w+b", dir="/tmp")
+        temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
         temporary.write(data)
         temporary.flush()
         self.handles[handle] = {
