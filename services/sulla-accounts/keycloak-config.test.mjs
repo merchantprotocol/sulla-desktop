@@ -12,7 +12,7 @@ const config = buildKeycloakConfig({
   webRedirectUris: 'https://accounts.example/web/oidc/callback',
   publicUrl: 'https://accounts.example',
   membershipAudience: 'sulla-membership',
-  resourceAudiences: 'sulla-projects,sulla-files,sulla-vault,sulla-workflows',
+  resourceAudiences: 'sulla-files,sulla-vault,sulla-workflows',
 });
 
 function mappedAudience(scope) {
@@ -40,7 +40,6 @@ test('membership is a distinct default audience scope', () => {
 
 test('resource audiences use the Accounts hyphenated optional scope contract', () => {
   const expected = new Map([
-    ['sulla-audience-sulla-projects', 'sulla-projects'],
     ['sulla-audience-sulla-files', 'sulla-files'],
     ['sulla-audience-sulla-vault', 'sulla-vault'],
     ['sulla-audience-sulla-workflows', 'sulla-workflows'],

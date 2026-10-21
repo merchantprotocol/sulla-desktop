@@ -15,7 +15,7 @@ const config = {
   keycloakAuthorityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', keycloakNativeClientId: 'sulla-desktop',
   keycloakWebClientId: 'sulla-web', keycloakWebClientSecret: 'synthetic-web-secret',
   keycloakAdminUsername: 'synthetic-admin', keycloakAdminPassword: 'synthetic-password',
-  keycloakMembershipAudience: 'sulla-membership', keycloakResourceAudiences: new Set(['sulla-projects']),
+  keycloakMembershipAudience: 'sulla-membership', keycloakResourceAudiences: new Set(['sulla-files']),
   webCallbackUrl: 'https://console.example/accounts-api/v1/web/callback', consoleMainUrl: 'https://console.example/console',
   secureCookies: true, trustedProxy: true,
 } satisfies AccountsConfig;

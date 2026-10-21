@@ -8,7 +8,6 @@ const routes={
   'agents-pods':{title:'Agents & pods',service:'agents',audience:'sulla-agents',href:'/services/agents/'},
   workflows:{title:'Workflows',service:'workflows',audience:'sulla-workflows',href:'/services/workflows/'},
   settings:{title:'Settings',service:'accounts',audience:'sulla-accounts',href:'/services/accounts/?view=settings'},
-  projects:{title:'Projects',service:'projects',audience:'sulla-projects',href:'/services/projects/'},
 };
 const frame=document.getElementById('service-frame');
 const empty=document.getElementById('empty-state');
@@ -203,7 +202,6 @@ window.addEventListener('message',event=>{
     empty.hidden=false;setStatus('Verifying session…','idle');void verifyExpiredAccount();return;
   }
   if(message.type==='sulla.console.open'){
-    if(active.route.service==='accounts'&&message.target==='projects')navigate('projects');
     if(active.route.service==='vault'&&message.target==='credentials')navigate('credentials');
   }
 });

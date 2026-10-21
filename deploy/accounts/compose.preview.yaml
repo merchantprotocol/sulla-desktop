@@ -74,7 +74,7 @@ services:
       SULLA_ACCOUNTS_WEB_CALLBACK_URL: https://authority-a.localhost:8787/v1/web/callback
       SULLA_ACCOUNTS_CONSOLE_MAIN_URL: https://authority-a.localhost:8787/ui/
       SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
-      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-agents,sulla-workflows
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_a
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/database_username
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/database_password
@@ -128,7 +128,7 @@ services:
       SULLA_ACCOUNTS_WEB_CALLBACK_URL: https://authority-b.localhost:8787/v1/web/callback
       SULLA_ACCOUNTS_CONSOLE_MAIN_URL: https://authority-b.localhost:8787/ui/
       SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
-      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-agents,sulla-workflows
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak_b
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/database_username
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/database_password

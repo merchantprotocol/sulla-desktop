@@ -28,7 +28,6 @@ http {
     set $identity_upstream http://accounts:8080;
     set $vault_upstream http://vault:8787;
     set $files_upstream http://files:8792;
-    set $projects_upstream http://projects:8793;
     set $agents_upstream http://agents:8789;
     set $workflows_upstream http://workflows:8788;
 
@@ -44,8 +43,6 @@ http {
     location /services/files/api/v1/ { rewrite ^/services/files/api/v1/(.*)$ /v1/$1 break; proxy_pass $files_upstream; proxy_buffering off; proxy_request_buffering off; proxy_cache off; include /tmp/sulla-proxy-params.conf; }
     location /services/files/api/ { return 404; }
     location /services/files/ { rewrite ^/services/files/(.*)$ /ui/$1 break; proxy_pass $files_upstream; include /tmp/sulla-proxy-params.conf; }
-    location /services/projects/api/ { rewrite ^/services/projects/api/(.*)$ /v1/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
-    location /services/projects/ { rewrite ^/services/projects/(.*)$ /ui/$1 break; proxy_pass $projects_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/agents/api/ { rewrite ^/services/agents/api/(.*)$ /v1/$1 break; proxy_pass $agents_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/agents/ { rewrite ^/services/agents/(.*)$ /ui/$1 break; proxy_pass $agents_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/workflows/api/ { rewrite ^/services/workflows/api/(.*)$ /v1/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }

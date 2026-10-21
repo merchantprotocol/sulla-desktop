@@ -307,10 +307,6 @@
     showView();
     void loadCurrentView();
   });
-  $('#open-projects').addEventListener('click', () => {
-    if (window.parent === window) { window.location.href = '/console'; return; }
-    window.parent.postMessage({ type: 'sulla.console.open', version: 1, service: 'accounts', target: 'projects' }, window.location.origin);
-  });
   $('#refresh-sessions').addEventListener('click', () => void loadSessions());
   $('#show-new-user').addEventListener('click', () => { $('#new-user').hidden = false; });
   $('#show-new-org').addEventListener('click', () => { $('#new-org').hidden = false; });
