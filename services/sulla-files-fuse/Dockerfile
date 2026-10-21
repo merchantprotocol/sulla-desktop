@@ -7,6 +7,9 @@ RUN apt-get update \
 
 FROM python:3.12.12-slim-bookworm
 
+# Keep tini registered as a subreaper even if the runtime wraps the container entrypoint.
+ENV TINI_SUBREAPER=1
+
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates fuse3 tini \
  && rm -rf /var/lib/apt/lists/*
