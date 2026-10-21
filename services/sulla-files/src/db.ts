@@ -1,8 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises'; import { dirname, resolve } from 'node:path'; import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
-export async function connect(url:string) {
-  const db = new pg.Pool({ connectionString: url, max: 10 });
+export async function connect(url:string, max = 10) {
+  const db = new pg.Pool({ connectionString: url, max });
   // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
   db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
   await db.query('SELECT 1'); return db

@@ -73,7 +73,9 @@ const residency = manager && config.filesRoot && config.serverUrl && vaultAuthor
   )
   : undefined;
 const enrichment = config.mode === 'desktop' && config.filesRoot ? new RecordingEnrichmentQueue(db, config.filesRoot) : undefined;
-const search = new FileSearch(db, embedder);
+// Search has a separate, deliberately small pool so expensive recall cannot starve FUSE or listings.
+const searchDb = await connect(config.databaseUrl, 2);
+const search = new FileSearch(searchDb, embedder);
 let initialization:Promise<void> | undefined;
 
 const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
