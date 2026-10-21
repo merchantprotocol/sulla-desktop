@@ -86,7 +86,25 @@ export class GitPushWorker extends BaseTool {
         }
       }
 
-      const forceFlag = force ? ' --force-with-lease' : '';
+      let forceFlag = force ? ' --force-with-lease' : '';
+      if (force && localAuthority && !tags) {
+        // Broker pushes use an ephemeral URL rather than the named remote, so
+        // bare --force-with-lease cannot associate the destination with
+        // refs/remotes/<remote>/<branch> and rejects every existing branch as
+        // stale. Pin the lease explicitly to the ref refreshed by git_fetch.
+        const leaseResult = await runCommand(
+          `git -C "${ repoRoot }" rev-parse --verify refs/remotes/${ remote }/${ targetBranch }`,
+          [],
+          { runInLimaShell: true, timeoutMs: 10_000 },
+        );
+        if (leaseResult.exitCode !== 0) {
+          return {
+            successBoolean: false,
+            responseString: `Git push failed: force push requires a fetched ${ remote }/${ targetBranch } ref`,
+          };
+        }
+        forceFlag = ` --force-with-lease=refs/heads/${ targetBranch }:${ leaseResult.stdout.trim() }`;
+      }
       const cmd = tags
         ? `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
         : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
