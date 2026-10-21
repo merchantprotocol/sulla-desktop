@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ghcr.io/merchantprotocol/sulla-postgres:latest
     container_name: sulla_postgres
     ports:
       - "30116:5432"

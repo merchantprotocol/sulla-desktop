@@ -112,9 +112,10 @@ export class IndexingQueue {
         if (extracted.status === 'indexed' && extracted.text) {
           for (const [ordinal, content] of chunks(extracted.text).entries()) {
             const embedding = this.embedder.embed(content);
+            const vectorTable = await this.hasVectorTable();
             const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
-              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, JSON.stringify(Array.from(embedding))]);
-            if (await this.hasVectorTable()) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::vector)', [inserted.rows[0].id, vectorLiteral(embedding)]);
+              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorTable ? null : JSON.stringify(Array.from(embedding))]);
+            if (vectorTable) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::halfvec)', [inserted.rows[0].id, vectorLiteral(embedding)]);
           }
         }
         await client.query('INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text', [file.id, file.path, extracted.text]);

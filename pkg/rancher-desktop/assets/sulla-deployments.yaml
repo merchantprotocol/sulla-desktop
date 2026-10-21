@@ -28,7 +28,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: postgres
-        image: postgres:16-alpine
+        image: ghcr.io/merchantprotocol/sulla-postgres:latest
         imagePullPolicy: IfNotPresent
         command:
         - postgres

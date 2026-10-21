@@ -56,6 +56,10 @@ export class FileSearch {
     try {
       await client.query('BEGIN');
       await client.query("SET LOCAL statement_timeout = '5s'");
+      if (text.includes('file_search_vectors')) {
+        await client.query("SET LOCAL hnsw.ef_search = 100");
+        await client.query("SET LOCAL hnsw.iterative_scan = strict_order");
+      }
       const result = await client.query<T>(text, values);
       await client.query('COMMIT');
       return result;
@@ -114,10 +118,10 @@ export class FileSearch {
     if (await this.hasVectorTable()) {
       semanticArgs.push(vectorLiteral(vector));
       semantic = (await this.boundedQuery<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
-        1-(sv.embedding <=> $${ semanticArgs.length }::vector) signal
+        1-(sv.embedding <=> $${ semanticArgs.length }::halfvec) signal
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id JOIN file_search_vectors sv ON sv.chunk_id=sc.id
         WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=${ semanticVersion }
-        ORDER BY sv.embedding <=> $${ semanticArgs.length }::vector LIMIT 60`, semanticArgs))?.rows ?? [];
+        ORDER BY sv.embedding <=> $${ semanticArgs.length }::halfvec LIMIT 60`, semanticArgs))?.rows ?? [];
     } else {
       const bounded = (await this.boundedQuery<any>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=v.id
