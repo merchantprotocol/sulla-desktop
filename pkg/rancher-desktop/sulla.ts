@@ -125,13 +125,23 @@ export async function initiateWindowContext(): Promise<void> {
   }
 }
 
+let vaultTransition: Promise<void> = Promise.resolve();
+/** Single event-bus entrypoint for every vault state transition. */
+function publishVaultState(unlocked: boolean): Promise<void> {
+  vaultTransition = vaultTransition.catch(() => undefined).then(async() => {
+    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+    setUserLoggedIn(unlocked);
+    await getServiceLifecycleManager().setVaultUnlocked(unlocked);
+  });
+  return vaultTransition;
+}
+
 /** Refresh non-secret state only; migration and backup run inside the container. */
 async function onVaultUnlocked(): Promise<void> {
   try {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    await getDesktopVaultClient().status();
-    const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
-    await getSullaFilesWatcher().unlockService();
+    const status = await getDesktopVaultClient().status();
+    await publishVaultState(status.unlocked);
   } catch (err) {
     console.warn('[Vault] Container state is unavailable:', (err as Error).message);
   }
@@ -320,6 +330,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       const unlocked = await vaultKeyService.initialize();
 
       console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
+      await publishVaultState(unlocked);
       // Files starts in its own lifecycle stage after the vault is ready.
     },
     async() => {
@@ -364,6 +375,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       await getSullaFilesWatcher().shutdown();
       await stopSullaFilesSourceGateway();
     },
+    { requiresVault: true },
   );
 
   lifecycle.registerOnce('model-provider', ['database-manager', 'redis'],
@@ -384,6 +396,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       console.log('[Background] ModelProviderService initialized');
     },
     async() => { /* no teardown needed */ },
+    { requiresVault: true },
   );
 
   lifecycle.registerOnce('integrations', ['vault'],
@@ -396,6 +409,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
       console.log('[Background] IntegrationConfigLoader ready:', configLoader.getAvailableIntegrations().join(', ') || '(none)');
     },
     async() => { /* no teardown */ },
+    { requiresVault: true },
   );
 
   lifecycle.registerOnce('oauth', ['database-manager', 'vault'],
@@ -410,6 +424,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
       getOAuthService().shutdown();
     },
+    { requiresVault: true },
   );
 
   lifecycle.registerOnce('file-search', [],
@@ -843,10 +858,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       await vaultMigrationRun;
       status = await client.status();
     }
-    if (status.unlocked !== wasUnlocked) {
-      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
-      setUserLoggedIn(status.unlocked);
-    }
+    if (status.unlocked !== wasUnlocked) await publishVaultState(status.unlocked);
     return status;
   };
 
@@ -1053,8 +1065,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     // Mark local state locked immediately, but do not report success until the
     // container confirms it zeroed keys and revoked every session.
     await getDesktopVaultClient().lock();
-    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
-    setUserLoggedIn(false);
+    await publishVaultState(false);
     // Clear focus so every native browser tab detaches and the login
     // screen is the topmost thing in the window.
     tabViewManager.setFocusedTab(null);
