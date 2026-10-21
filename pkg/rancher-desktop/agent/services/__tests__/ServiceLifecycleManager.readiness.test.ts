@@ -113,3 +113,26 @@ describe('ServiceLifecycleManager.waitUntilStarted', () => {
     expect(lifecycle.listenerCount('shutdown:begin')).toBe(0);
   });
 });
+
+describe('ServiceLifecycleManager vault transitions', () => {
+  it('defers, starts once, locks, and starts once again', async() => {
+    const lifecycle = new ServiceLifecycleManager();
+    let starts = 0;
+    let stops = 0;
+
+    lifecycle.register('vault-dependent', [], async() => { starts += 1 }, async() => { stops += 1 }, { requiresVault: true });
+    await lifecycle.startAll();
+    expect(lifecycle.serviceStatuses()[0].status).toBe('waiting-on-unlock');
+
+    await lifecycle.setVaultUnlocked(true);
+    await lifecycle.setVaultUnlocked(true);
+    expect(starts).toBe(1);
+
+    await lifecycle.setVaultUnlocked(false);
+    await lifecycle.setVaultUnlocked(false);
+    expect(stops).toBe(1);
+
+    await lifecycle.setVaultUnlocked(true);
+    expect(starts).toBe(2);
+  });
+});

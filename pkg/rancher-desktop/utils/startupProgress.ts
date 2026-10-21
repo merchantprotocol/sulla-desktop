@@ -50,6 +50,9 @@ export interface StartupFailure {
   message: string;
 }
 
+export type StartupServiceState = 'pending' | 'starting' | 'waiting-on-unlock' | 'waiting-on-dependency' | 'ready' | 'failed';
+export interface StartupServiceStatus { name:string; label:string; status:StartupServiceState; reason?:string; since:number; attempts:number }
+
 export interface StartupProgressSnapshot {
   /** Overall target percent, 0..100, never decreases within one startup. */
   percent:       number;
@@ -74,6 +77,7 @@ export interface StartupProgressSnapshot {
   failures:      StartupFailure[];
   ready:         boolean;
   error:         string | null;
+  services:      StartupServiceStatus[];
 }
 
 export interface BackendProgressInput {
@@ -339,6 +343,7 @@ export class StartupProgressModel {
   private ready = false;
   private error:     string | null = null;
   private backendReady = false;
+  private services = new Map<string, StartupServiceStatus>();
 
   // Lifecycle bookkeeping
   private order: string[] = [];
@@ -349,6 +354,10 @@ export class StartupProgressModel {
     this.startedAt = now();
     this.step = { key: 'boot:0', label: BOOT_CHECKPOINT_LABELS[0], startedAt: this.startedAt };
     this.stageBoundary = this.mapFraction('boot', nextCheckpoint(BOOT_CHECKPOINTS, 0, BOOT_SCALE) / BOOT_SCALE);
+  }
+
+  onServiceStatus(input: Omit<StartupServiceStatus, 'label'>): void {
+    this.services.set(input.name, { ...input, label: lifecycleLabel(input.name) });
   }
 
   /** Start over (backend restart). */
@@ -506,6 +515,7 @@ export class StartupProgressModel {
       failures:      [...this.failures],
       ready:         this.ready,
       error:         this.error,
+      services:      [...this.services.values()],
     };
   }
 

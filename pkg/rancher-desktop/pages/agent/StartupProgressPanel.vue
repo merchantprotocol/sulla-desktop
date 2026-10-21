@@ -74,6 +74,12 @@
       This is taking a while. {{ slowNote }}
     </p>
 
+    <ul v-if="serviceIssues.length" class="sulla-sp-service-status" aria-label="Services still starting">
+      <li v-for="service in serviceIssues" :key="service.name">
+        <strong>{{ service.label }}</strong> · {{ service.status.replaceAll('-', ' ') }}<span v-if="service.reason"> — {{ service.reason }}</span>
+      </li>
+    </ul>
+
     <div
       v-if="snapshot?.error || (snapshot?.failures.length ?? 0) > 0"
       class="sulla-sp-problem"
@@ -135,6 +141,7 @@ export default defineComponent({
     const stepLabel = computed(() => props.snapshot?.stepLabel || props.fallbackLabel);
     const stepElapsed = computed(() => props.snapshot ? Math.max(0, clock.value - props.snapshot.stepStartedAt) : 0);
     const totalElapsed = computed(() => props.snapshot ? Math.max(0, clock.value - props.snapshot.startedAt) : 0);
+    const serviceIssues = computed(() => (props.snapshot?.services ?? []).filter(service => ['waiting-on-unlock', 'waiting-on-dependency', 'failed'].includes(service.status)));
     const slowNote = computed(() => {
       const s = props.snapshot;
 
@@ -403,4 +410,5 @@ export default defineComponent({
   .sulla-sp-pulse,
   .sulla-sp-fill.moving::after { animation: none; }
 }
+.sulla-sp-service-status { margin: .6rem 0 0; padding-left: 1.1rem; color: var(--text-secondary); font-size: 12px; }
 </style>
