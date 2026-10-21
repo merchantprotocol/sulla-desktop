@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { app, BrowserWindow, dialog, protocol, shell, webContents, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
+import { FilesChangeFeed } from './sullaFilesChangeFeed';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { importChatFiles, pickAndImportChatFiles, type ChatFilesReference, type PartialChatFilesImport } from './sullaFilesChatImport';
@@ -506,6 +507,34 @@ function initFilesMediaProtocol():void {
 }
 
 export function initSullaFilesIpc():void {
+  const feeds = new Map<number, FilesChangeFeed>();
+  ipcMain.handle('files-ui:watch', (event, collectionId:string) => {
+    feeds.get(event.sender.id)?.stop();
+    feeds.delete(event.sender.id);
+    if (!collectionId) return;
+    if (!UUID.test(collectionId)) throw new Error('Invalid Files collection');
+    const sender = event.sender;
+    let collectionsSignature:string | undefined;
+    const feed = new FilesChangeFeed(
+      async(after, head) => {
+        const [page, collections] = await Promise.all([
+          json(`/v1/collections/${ collectionId }/journal?after=${ after }&changesOnly=true${ head ? '&head=true' : '' }`, { signal: AbortSignal.timeout(5000) }),
+          json('/v1/collections?changesOnly=true', { signal: AbortSignal.timeout(5000) }),
+        ]);
+        const signature = JSON.stringify(collections);
+        if (collectionsSignature !== undefined && signature !== collectionsSignature && !sender.isDestroyed() && feeds.get(sender.id) === feed) {
+          sender.send('files-ui:changed', { collectionId, seq: page.seq, paths: [] });
+        }
+        collectionsSignature = signature;
+        return page;
+      },
+      (seq, paths) => { if (!sender.isDestroyed()) sender.send('files-ui:changed', { collectionId, seq, paths }) },
+    );
+    feeds.set(sender.id, feed);
+    sender.once('destroyed', () => { feed.stop(); if (feeds.get(sender.id) === feed) feeds.delete(sender.id) });
+    feed.start();
+  });
+
   ipcMain.handle('sulla-files:folders', (_event, input:{ collectionId:string; details?:boolean }) => json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }${ input.details ? '&details=true' : '' }`));
   ipcMain.handle('sulla-files:operation-capabilities', (_event, input:{ collectionId:string }) => json(`/v1/database-file-operations/capabilities?collectionId=${ encodeURIComponent(input.collectionId) }`));
   ipcMain.handle('sulla-files:folder-operation-state', (_event, input:{ collectionId:string; path:string }) => filesClient.folderOperationState(input.collectionId, input.path));

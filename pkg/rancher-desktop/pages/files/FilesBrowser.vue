@@ -514,7 +514,7 @@
                   v-for="entry in virtualListEntries"
                   :key="entry.key"
                   class="row"
-                  :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent }"
+                  :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent, 'is-active': activePaths.has(entry.path) }"
                   :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
                   :data-entry-key="entry.key"
                   @pointerdown="prepareDragSnapshot(entry)"
@@ -667,7 +667,7 @@
             v-for="entry in virtualGridEntries"
             :key="entry.key"
             class="tile"
-            :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key }"
+            :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, 'is-active': activePaths.has(entry.path) }"
             :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
             :data-entry-key="entry.key"
             @pointerdown="prepareDragSnapshot(entry)"
@@ -1994,11 +1994,50 @@ watch([query, section, busy], ([value, requestedSection, mutating]) => {
 function consumeNavigation() { if (!mounted || busy.value || loading.value || !props.navigation || !snapshot.value) return; navigateTo(props.navigation); emit('navigation-consumed') }
 watch(busy, value => { if (!value) consumeNavigation() });
 watch(() => props.navigation, () => consumeNavigation());
+let stopFilesChanged:(() => void) | undefined;
+let changeTimer:ReturnType<typeof setTimeout> | undefined;
+let pendingChange = false;
+let refreshingChange = false;
+function scheduleFilesRefresh() {
+  pendingChange = true;
+  if (changeTimer) clearTimeout(changeTimer);
+  changeTimer = setTimeout(async() => {
+    if (!mounted || busy.value || loading.value || refreshingChange) return;
+    pendingChange = false;
+    refreshingChange = true;
+    try { await refresh(true); consumeNavigation() }
+    finally { refreshingChange = false; if (mounted && pendingChange) scheduleFilesRefresh() }
+  }, 300);
+}
+const ACTIVITY_MS = 2400;
+const activePaths = ref(new Set<string>());
+const activityTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function markActivity(paths:string[]) {
+  const touched = new Set<string>();
+  // Light up the changed file and every folder above it, so changes deep in the tree are visible from here.
+  for (const path of paths.slice(0, 200)) {
+    const parts = path.split('/');
+    for (let depth = parts.length; depth > 0; depth--) touched.add(parts.slice(0, depth).join('/'));
+  }
+  if (!touched.size) return;
+  activePaths.value = new Set([...activePaths.value, ...touched]);
+  for (const path of touched) {
+    const existing = activityTimers.get(path);
+    if (existing) clearTimeout(existing);
+    activityTimers.set(path, setTimeout(() => {
+      activityTimers.delete(path);
+      const next = new Set(activePaths.value); next.delete(path); activePaths.value = next;
+    }, ACTIVITY_MS));
+  }
+}
+function onFilesChanged(change:{ paths:string[] }) { markActivity(change.paths); scheduleFilesRefresh() }
+function refreshVisibleFiles() { if (document.visibilityState !== 'hidden') scheduleFilesRefresh() }
+watch([busy, loading], ([mutating, fetching]) => { if (!mutating && !fetching && pendingChange) scheduleFilesRefresh() });
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
 let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
-onMounted(async() => { mounted = true; gridResizeObserver=new ResizeObserver(updateGridColumns); await nextTick(); if(gridSurface.value)gridResizeObserver.observe(gridSurface.value); window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value = null; uploadLog.value = [] }, 2200); }); await refresh(); if (!mounted) return; explorer.clearForCollection(snapshot.value?.collection.id ?? ''); loadFolderPreferences(); consumeNavigation(); refreshTimer = setInterval(async() => { if (busy.value || loading.value) return; await refresh(true); consumeNavigation() }, 12_000) });
-onBeforeUnmount(() => { mounted = false; gridResizeObserver?.disconnect(); refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
+onMounted(async() => { mounted = true; stopFilesChanged = props.dataSource.onFilesChanged?.(onFilesChanged); window.addEventListener('focus', refreshVisibleFiles); document.addEventListener('visibilitychange', refreshVisibleFiles); gridResizeObserver=new ResizeObserver(updateGridColumns); await nextTick(); if(gridSurface.value)gridResizeObserver.observe(gridSurface.value); window.addEventListener('click', captureGestureClick, true); window.addEventListener('keydown', onKeydown); window.addEventListener('pointerdown', dismissActions); window.addEventListener('resize', closeMenuOnResize); window.addEventListener('dragover', updateDragPointer); stopCapabilitiesChanged = props.dataSource.onCapabilitiesChanged?.(() => triggerRef(snapshot)); stopUploadProgress = props.dataSource.onUploadProgress?.((progress) => { if (uploadDismissTimer) clearTimeout(uploadDismissTimer); trackUpload(progress); uploadProgress.value = progress; if (progress.done) uploadDismissTimer = setTimeout(() => { uploadProgress.value =refreshTimer = setInterval(scheduleFilesRefresh, 12_000) });
+onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) clearTimeout(changeTimer); activityTimers.forEach(clearTimeout); activityTimers.clear(); window.removeEventListener('focus', refreshVisibleFiles); document.removeEventListener('visibilitychange', refreshVisibleFiles); gridResizeObserver?.disconnect(); refreshGeneration++; searchGeneration++; quickLookGeneration++; stopPointerGesture?.(); cancelHoverOpen(); if (searchTimer) clearTimeout(searchTimer); if (gestureClickTimer) clearTimeout(gestureClickTimer); if (uploadDismissTimer) clearTimeout(uploadDismissTimer); window.removeEventListener('click', captureGestureClick, true); window.removeEventListener('keydown', onKeydown); window.removeEventListener('pointerdown', dismissActions); window.removeEventListener('resize', closeMenuOnResize); window.removeEventListener('dragover', updateDragPointer); stopCapabilitiesChanged?.(); stopUploadProgress?.(); if (refreshTimer) clearInterval(refreshTimer); });
 </script>
 
 <style scoped>
@@ -2304,6 +2343,11 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .tile { height:163px; box-sizing:border-box; background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); overflow: hidden; position: relative; cursor: default; }
 .tile[draggable="true"] { cursor: grab; }
 .tile.is-dragging { opacity: .45; }
+.row.is-active td { animation: files-activity 2.4s ease-out; }
+.tile.is-active { animation: files-activity-tile 2.4s ease-out; }
+@keyframes files-activity { 0%, 25% { background: color-mix(in srgb, var(--accent) 18%, transparent); } 100% { background: transparent; } }
+@keyframes files-activity-tile { 0%, 25% { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow); } 100% { border-color: var(--line); box-shadow: var(--shadow-sm); } }
+@media (prefers-reduced-motion: reduce) { .row.is-active td, .tile.is-active { animation: none; outline: 1px solid var(--accent-line); } }
 .tile.drop-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
 .tile:hover, .tile.is-sel { border-color: var(--accent-line); box-shadow: var(--shadow); }
 .tile .th { height: 116px; background: var(--paper-2); display: grid; place-items: center; position: relative; overflow: hidden; }

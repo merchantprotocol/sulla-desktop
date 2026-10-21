@@ -96,6 +96,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
+  private watching = false;
+  private watchedCollectionId = '';
   private collectionId = '';
   private rootId = '';
   private capabilitiesGeneration = 0;
@@ -186,6 +188,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
     this.collectionId = collection.id;
+    if (this.watching && this.watchedCollectionId !== collection.id) {
+      this.watchedCollectionId = collection.id;
+      await ipcRenderer.invoke('files-ui:watch', collection.id);
+    }
     const currentOperationCapabilities = await this.operationCapabilities(collection.id);
     if (capabilitiesGeneration === this.capabilitiesGeneration) Object.assign(this.capabilities, {
       durableOperations:        currentOperationCapabilities.enabled,
@@ -305,6 +311,22 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);
     return () => this.capabilitiesListeners.delete(listener);
+  }
+
+  onFilesChanged(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void {
+    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => listener(change);
+    this.watching = true;
+    ipcRenderer.on('files-ui:changed', wrapped);
+    if (this.collectionId) {
+      this.watchedCollectionId = this.collectionId;
+      void ipcRenderer.invoke('files-ui:watch', this.collectionId);
+    }
+    return () => {
+      this.watching = false;
+      this.watchedCollectionId = '';
+      ipcRenderer.removeListener('files-ui:changed', wrapped);
+      void ipcRenderer.invoke('files-ui:watch', '');
+    };
   }
 
   onUploadProgress(listener:(progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => void):() => void {
