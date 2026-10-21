@@ -671,20 +671,41 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-store');
     response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
   } catch (error) { next(error) } });
+  // The mount can issue the same full-tree lookup concurrently from many processes.
+  // Coalesce those multi-megabyte PostgreSQL results and retain only one serialized
+  // snapshot. Without this service-side boundary, each caller holds its own full
+  // object graph while Express makes another JSON copy, amplifying heap pressure.
+  const FUSE_TREE_SNAPSHOT_TTL_MS = 1_000;
+  let fuseTreeSnapshot:{ body:Buffer; expiresAt:number } | undefined;
+  let fuseTreeSnapshotRequest:Promise<Buffer> | undefined;
+  const loadFuseTreeSnapshot = ():Promise<Buffer> => {
+    const now=Date.now();
+    if (fuseTreeSnapshot && fuseTreeSnapshot.expiresAt>now) return Promise.resolve(fuseTreeSnapshot.body);
+    if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
+    fuseTreeSnapshotRequest=(async()=>{
+      const [collections,files,folders]=await Promise.all([
+        db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+          AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
+          ORDER BY explorer_path,id`),
+        db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
+          f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
+          WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+          ORDER BY f.collection_id,f.path`),
+        db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
+      ]);
+      const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
+      const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
+      fuseTreeSnapshot={body,expiresAt:Date.now()+FUSE_TREE_SNAPSHOT_TTL_MS};
+      return body;
+    })().finally(()=>{fuseTreeSnapshotRequest=undefined});
+    return fuseTreeSnapshotRequest;
+  };
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
-    const collections = await db.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
-      AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
-      ORDER BY explorer_path,id`);
-    const files = await db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
-      f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-      WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-      ORDER BY f.collection_id,f.path`);
-    const folders = await db.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path");
+    const body=await loadFuseTreeSnapshot();
     response.setHeader('Cache-Control', 'private, no-store');
-    const root = collections.rows.find(row => row.tree_path === '') ?? collections.rows.find(row => row.is_default);
-    response.json({ rootCollectionId: root?.id ?? null, collections: collections.rows, files: files.rows, folders: folders.rows });
+    response.type('application/json').send(body);
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect(); try {
