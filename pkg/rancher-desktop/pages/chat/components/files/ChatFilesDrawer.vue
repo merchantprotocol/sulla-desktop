@@ -99,6 +99,13 @@
       </section>
 
       <p
+        v-if="inventoryError"
+        class="inventory-status"
+        role="status"
+      >
+        {{ inventoryError }}
+      </p>
+      <p
         v-if="error"
         class="error"
         role="alert"
@@ -106,7 +113,7 @@
         {{ error }}
       </p>
       <p
-        v-else-if="!attached.length && !madeHere.length && !scratch.length"
+        v-else-if="!inventoryError && !attached.length && !madeHere.length && !scratch.length"
         class="empty"
       >
         No files in this chat yet.
@@ -159,6 +166,8 @@ defineEmits<{ (e:'close'):void; (e:'open-files'):void }>();
 const controller = useChatController();
 const inventory = ref<RefFile[]>([]);
 const error = ref('');
+const inventoryError = ref('');
+let refreshGeneration = 0;
 let timer:ReturnType<typeof setInterval> | undefined;
 
 function timeLabel(timestamp:number):string {
@@ -209,15 +218,24 @@ const scratch = computed(() => inventory.value.filter(file => file.collectionKin
   .map(file => ({ ...file, subtitle: 'Agent run scratch' })));
 
 async function refresh():Promise<void> {
+  const generation = ++refreshGeneration;
   if (!props.open) return;
+  const threadId = controller.thread.value.backendThreadId || controller.thread.value.id;
   try {
-    inventory.value = await ipcRenderer.invoke('files-ui:chat-inventory', {
-      runIds: [...runIds.value], threadId: controller.thread.value.backendThreadId || controller.thread.value.id,
-    }) as RefFile[];
-    error.value = '';
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Files in this chat are temporarily unavailable.';
+    const result = await ipcRenderer.invoke('files-ui:chat-inventory', {
+      runIds: [...runIds.value], threadId,
+    });
+    if (generation !== refreshGeneration) return;
+    inventoryError.value = result.error ?? '';
+    // Keep the last successful inventory visible during a service restart.
+    if (!result.error) inventory.value = result.files;
+  } catch {
+    if (generation === refreshGeneration) inventoryError.value = 'Files temporarily unavailable';
   }
+}
+
+function refreshWhenVisible():void {
+  if (document.visibilityState === 'visible') void refresh();
 }
 
 async function openFile(file:RefFile):Promise<void> {
@@ -241,9 +259,22 @@ async function keep(file:RefFile):Promise<void> {
   }
 }
 
+watch(() => controller.thread.value.id, () => {
+  inventory.value = [];
+  inventoryError.value = '';
+});
 watch([() => props.open, () => controller.thread.value.id, () => [...runIds.value].join('|')], () => refresh(), { immediate: true });
-onMounted(() => { timer = setInterval(() => refresh(), 15_000) });
-onBeforeUnmount(() => { if (timer) clearInterval(timer); });
+onMounted(() => {
+  timer = setInterval(() => refresh(), 15_000);
+  window.addEventListener('focus', refreshWhenVisible);
+  document.addEventListener('visibilitychange', refreshWhenVisible);
+});
+onBeforeUnmount(() => {
+  refreshGeneration++;
+  if (timer) clearInterval(timer);
+  window.removeEventListener('focus', refreshWhenVisible);
+  document.removeEventListener('visibilitychange', refreshWhenVisible);
+});
 </script>
 
 <style scoped>
@@ -270,5 +301,6 @@ h3 { margin:8px 6px 4px;color:var(--nx-read-4);font:600 10.5px var(--font-body,v
 .keep { flex:none;border:1px solid var(--nx-hair-strong);border-radius:6px;padding:3px 8px;background:transparent;color:var(--nx-read-2);font:500 11px var(--font-body,var(--sans)) }
 .keep:hover { border-color:var(--nx-accent);color:var(--nx-accent-2) }
 .empty,.error { margin:12px 8px;padding:14px;border:1px dashed var(--nx-hair-strong);border-radius:9px;color:var(--nx-read-4);font:11px/1.5 var(--font-body,var(--sans));text-align:center }
+.inventory-status { margin:10px 8px;color:var(--nx-read-4);font:11px/1.5 var(--font-body,var(--sans));text-align:center }
 .error { color:var(--err) }
 </style>
