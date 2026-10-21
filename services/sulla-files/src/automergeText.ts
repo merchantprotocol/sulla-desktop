@@ -1,6 +1,6 @@
 import * as Automerge from '@automerge/automerge';
 
-export interface TextDocument { text:string }
+export type TextDocument = { text:string };
 
 export function utf8Text(bytes:Buffer):string | undefined {
   try {
