@@ -72,7 +72,7 @@ sulla extensions/install_extension '{"id":"docker.io/.../X:2.0.0"}'
 ```
 
 ### "Build me a new recipe"
-Author the files in Files under `Sulla/Use Cases/recipes/<slug>/` (use `sulla files/put`; agent writes are drafts):
+Author the files directly under `/mnt/sulla-files/Sulla/Use Cases/recipes/<slug>/` with normal file tools:
 - Write a `compose.yaml` or `docker-compose.yml` (real Docker Compose, with pinned image versions)
 - Write an `installation.yaml` with the recipe manifest
 - Test the stack with `sulla docker/docker_run` or `lima_shell`

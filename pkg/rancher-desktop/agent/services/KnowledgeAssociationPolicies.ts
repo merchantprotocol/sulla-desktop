@@ -4,10 +4,10 @@
  * writers receive only the cross-domain association mutations they need.
  */
 export const KNOWLEDGE_ASSOCIATION_TOOL_POLICIES = {
-  project_reader: ['files_where', 'files_search', 'files_get', 'episodic_search', 'episodic_resolve'],
-  project_writer: ['files_where', 'files_search', 'files_get', 'files_put', 'episodic_search', 'episodic_resolve'],
-  knowledge_reader: ['episodic_search', 'episodic_resolve', 'episodic_recall', 'files_search', 'files_get'],
-  knowledge_writer: ['episodic_search', 'episodic_resolve', 'episodic_recall', 'files_search', 'files_get', 'files_put'],
+  project_reader: ['files_where', 'files_search', 'episodic_search', 'episodic_resolve'],
+  project_writer: ['files_where', 'files_search', 'episodic_search', 'episodic_resolve'],
+  knowledge_reader: ['episodic_search', 'episodic_resolve', 'episodic_recall', 'files_search'],
+  knowledge_writer: ['episodic_search', 'episodic_resolve', 'episodic_recall', 'files_search'],
 } as const;
 
 export type KnowledgeAssociationRole = keyof typeof KNOWLEDGE_ASSOCIATION_TOOL_POLICIES;

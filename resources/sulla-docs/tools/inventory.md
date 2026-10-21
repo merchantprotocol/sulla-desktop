@@ -397,12 +397,9 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla bookmarks/move` — Move or reorder a bookmark or folder in the app Bookmarks pane.
 - `sulla bookmarks/remove` — Remove a bookmark or folder from the app Bookmarks pane.
 
-## files (14 tools)
+## files (10 tools)
 - `sulla files/where` — Find the best described folder before saving. Returns ranked folders plus a suggested folder and filename.
 - `sulla files/create_folder` — Create a folder when no described folder fits. `description` is required.
-- `sulla files/put` — Create a new version of a Sulla file. Agent writes are drafts; they default to the run's scratch collection.
-- `sulla files/get` — Read a current or historical Sulla file version, including drafts for agents.
-- `sulla files/list` — List live files in a collection.
 - `sulla files/history` — List every version of a Sulla file.
 - `sulla files/versions` — List versions with publication, lock, and retention state.
 - `sulla files/request_publish` — Ask for human approval to publish a draft version. Returns at once; the decision appears in Decide. Agents cannot publish directly.
@@ -411,7 +408,6 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla files/shared` — List public links shared by the signed-in user, including views, expiry, keep-available state, source and revocation.
 - `sulla files/revoke_link` — Revoke a public share link and remove any temporary Cloud copy.
 - `sulla files/search` — Hybrid search over files the launching person can access.
-- `sulla files/promote` — Move one scratch file, or every file from an agent run, to a knowledge collection and clear expiry without copying chunks.
 
 ## reflex (7 tools)
 - `sulla reflex/teach` — Teach the Reflex engine what to do for a user message: map an utterance to ONE Sulla tool call (tool + params) that fully satisfies it, or to tool "none" for messages that shoul...

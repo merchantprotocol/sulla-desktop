@@ -71,7 +71,7 @@ export class ToolRegistry {
     chat:               'Controls scoped to the current chat thread, including its independent heartbeat and persistent sidebar artifacts.',
     docker:             'Tools for Docker container management.',
     extensions:         'Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.',
-    files:              'Versioned shared files, knowledge collections, agent scratch artifacts, history, restore, links, search, and promotion.',
+    files:              'Versioned shared files, history, restore, links, search, and sharing.',
     fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',
     gdrive:             'Google Drive (read-only) — list folders, search, read Docs/Sheets/Slides as text, and download PDFs/images/videos to disk. Needs the Google Drive integration connected.',
     github:             'GitHub repository management tools.',
