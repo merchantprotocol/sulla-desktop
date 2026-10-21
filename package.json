@@ -57,7 +57,7 @@
     "@docker/extension-api-client-types": "0.4.2",
     "@echogarden/rnnoise-wasm": "^0.2.0",
     "@kubernetes/client-node": "1.4.0",
-    "@modelcontextprotocol/sdk": "1.27.1",
+    "@modelcontextprotocol/sdk": "1.24.3",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/xattr": "1.0.3",
     "@octokit/rest": "22.0.1",
