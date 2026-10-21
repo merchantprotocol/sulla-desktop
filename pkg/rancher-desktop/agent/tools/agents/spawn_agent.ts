@@ -300,8 +300,6 @@ export class SpawnAgentWorker extends BaseTool {
       contract,
       depth,
     }], parentChannel, parentThreadId, { visibility: 'tab', parentAgentId });
-    const { beginAgentScratch } = await import('../../files/scratchLifecycle');
-    await beginAgentScratch(job.jobId, String(metadata?.userId ?? metadata?.ownerUserId ?? parentChannel), metadata?.orgId);
 
     const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId, refId: job.jobId }));
 
@@ -639,8 +637,6 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
       const job = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
-      const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
-      await beginAgentScratch(job.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -684,7 +680,7 @@ export class SpawnAgentWorker extends BaseTool {
           await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message, parentThreadId);
           wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message);
         })
-        .finally(async() => { stopDeadRunWatch(); await endAgentScratch(job.jobId) });
+        .finally(async() => { stopDeadRunWatch(); });
 
       return {
         successBoolean: true,
@@ -702,8 +698,6 @@ export class SpawnAgentWorker extends BaseTool {
     // Sync launches need a durable job too: otherwise the rail and exchange
     // components would only exist for fire-and-forget work.
     const syncJob = await createJob(jobTasks, parentChannel, parentThreadId, jobOptions);
-    const { beginAgentScratch, endAgentScratch } = await import('../../files/scratchLifecycle');
-    await beginAgentScratch(syncJob.jobId, String((this.state as any)?.metadata?.userId ?? parentChannel), (this.state as any)?.metadata?.orgId);
     let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
     jobAbortSignal = getJobAbortSignal(jobId);

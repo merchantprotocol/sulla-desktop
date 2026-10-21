@@ -1,26 +1,17 @@
 # Files harness: how agents work with files
 
-Sulla Files is the one place for files. The File Manager tree is mounted at `/mnt/sulla-files` in the VM, in workflow runners, and in agent containers. Save and publish through the Files tools. Never write to Postgres directly, and never save to `~/sulla` folders expecting them to load.
+Sulla Files is the one place for files. The File Manager tree is mounted at `/mnt/sulla-files` in the VM, in workflow runners, and in agent containers. Use normal file tools for reads and writes. Use the Files service tools only for search, history, restore, and links. Never write to Postgres directly, and never save to `~/sulla` folders expecting them to load.
 
-## 1. Where to save
+## Files
 
-1. Find a folder first: `sulla files/where '{"what":"<what you are saving>","kind":"<kind>","project":"<project>"}'` (tool `files_where`). It returns ranked described folders, a `suggestedFolder`, and a `suggestedFilename`.
-2. Save into the suggested folder and follow its `namingHint`.
-3. If no folder fits, create one: `sulla files/create_folder '{"collection_id":"<id>","path":"<path>","description":"<what belongs here>"}'`. `description` is required. Add `naming_hint` if it helps the next agent.
-4. Write with `sulla files/put '{"collection_id":"<id>","path":"<path>","content":"..."}'` (tool `files_put`).
-
-`files_where` is guidance, not a lock. If nothing fits, make a sensible folder and describe it.
-
-- **Folder map:** the agent environment prompt lists described folders. Use it to pick a folder, but still run `files/where` for a new file.
-- **Undescribed folders:** a folder an agent creates through the mount gets the placeholder `Created by <agent> on <date> — needs description` until someone describes it.
-- **Scratch vs. knowledge:** agent writes with no collection go to the run's scratch collection. Scratch files from a run expire 14 days after the run ends. Use `sulla files/promote` (tool `files_promote`) to move them to a knowledge collection and clear the expiry.
+Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
 
 ## 2. Drafts
 
 - **Agent writes are drafts.** Any write by an agent creates a new draft version, wherever it lands. The published version does not change.
 - **Exception: `Sulla/Memory/`.** Durable agent memory publishes immediately so recall can see it. Claude Code project memory lives in `Sulla/Memory/claude-code/<project>`, the Codex memory database is snapshotted to `Sulla/Memory/codex`, and Sulla agents use `Sulla/Memory/sulla`. Saving a memory file is not enough on its own: also record the durable fact with the observation tool.
 - **Human writes publish immediately**, unless the file requires approval or the file is under `Sulla/Use Cases/` (see section 5).
-- **Drafts are visible to agents, not to the runtime.** Read a draft with `sulla files/get` or list versions with `sulla files/versions` (tool `files_versions`). Humans see the published version and a **Draft pending** marker in File Manager.
+- **Drafts are visible to agents, not to the runtime.** Read a draft with normal file tools on the mount, or list versions with `sulla files/versions`. Humans see the published version and a **Draft pending** marker in File Manager.
 
 ## 3. Publish requests
 
@@ -76,7 +67,7 @@ Sulla/Use Cases/<type>/<slug>/
 ## 6. What not to do
 
 - **Don't write to Postgres directly** (`agent_definitions`, `skill_definitions`, `workflows`, `files`, `file_versions`, and the like). That skips locks, retention, audit, and publish rules. Use the Files tools.
-- **Don't save to random folders.** Run `files/where` first.
+- **Don't save to random folders.** Check `_folder-metadata.yaml` files to find the right place, or use `sulla files/search`.
 - **Don't treat a draft as live.** Only published versions run.
 - **Don't write to `Logs/` or `Training Data/`.** They are read-only to callers (`403`, `EROFS`).
 - **Don't save to `~/sulla/skills`, `~/sulla/agents`, or `~/sulla/workflows` expecting them to load.** The runtime does not read them.

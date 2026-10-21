@@ -43,7 +43,7 @@ Never push to main. Publish code on a feature branch through 'sulla github/git_p
 
 ## Respect Ownership
 
-Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
+Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
 
 Projects are plain Files folders: nothing in the app claims, launches, or moves tasks on its own. Agents drive the work. Each project has an assigned agent (usually the project manager that planned it), every task has an assignee, and the account manager that owns the goal launches the director and checks progress on its own chat heartbeat.
 

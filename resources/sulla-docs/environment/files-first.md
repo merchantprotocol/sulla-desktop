@@ -2,7 +2,7 @@
 
 Everything Sulla knows and produces lives in the File Manager, so there is one place to look.
 Agents should read these docs from `/mnt/sulla-files/Sulla/Docs/` (the Files FUSE mount), not from the repository path; that keeps the same documentation available in containers and workflows.
-The File Manager tree is mirrored exactly at `/mnt/sulla-files` inside the VM, workflow runners and agent containers.
+The File Manager tree is mounted at `/mnt/sulla-files` inside the VM, workflow runners and agent containers. Use normal file tools (ls, cat, edit, write, mv, cp) on the mount — every change is versioned and audited automatically.
 For how to save, publish, and handle locks, read [files-harness.md](files-harness.md).
 
 Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path `/mnt/data/worktrees`). That path is not a Files collection. Files watches only its configured roots, so worktrees are not indexed unless you track them.
@@ -26,7 +26,10 @@ Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path
 
 ## Rules
 
-- No permission gating. Every agent can read and write every non-system file. Agent writes are drafts until a human publishes them. A future permission design will replace the gating.
+- No permission gating yet. Every agent can read and write every non-system file. Agent writes are drafts until a human publishes them. Per-agent permissions are planned (per-agent identity on every write is already tracked).
+- Every write carries the agent's identity (`X-Sulla-Actor` header through FUSE). This enables audit attribution and future per-agent permissions.
+- Temporary work goes in `/tmp/<job id>/`. Move anything worth keeping into `/mnt/sulla-files`.
+- Every folder has a `_folder-metadata.yaml` file. Read it to understand the folder's purpose and file metadata. When you create a folder, fill in the description.
 - Kept on purpose: the Files service token (`x-sulla-files-token`), the wallet/vault path exclusions, and no host-path mounts.
 - Audit logs are append-only JSONL, one file per subject, named by stable id (renames never break the trail).
   Each line: `ts, actor, action, subjectKind, subjectId, path, result, requestId, prevHash, hash`. Never secret values.

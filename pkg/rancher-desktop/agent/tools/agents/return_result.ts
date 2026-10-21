@@ -83,8 +83,6 @@ async function finishTabJob(job: AgentJob, taskIndex: number): Promise<void> {
 
   releaseJobWatcher(job.jobId);
   await completeJob(job.jobId, [result]);
-  const { endAgentScratch } = await import('../../files/scratchLifecycle');
-  await endAgentScratch(job.jobId);
   await emitSubAgentExchange(job.parentChannel, job.parentThreadId, {
     direction:      'from_agent',
     agentId:        task.agentId,

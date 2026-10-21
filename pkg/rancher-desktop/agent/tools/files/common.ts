@@ -5,6 +5,14 @@ import { BaseTool } from '../base';
 
 import type { FilesCallerContext } from '../../files/containerClient';
 
+
+export interface ResolvedFilePath {
+  collectionId: string;
+  fileId?: string;
+  folderPath?: string;
+  kind: 'file' | 'folder';
+}
+
 export interface UseCaseDraftFile {
   fileId: string;
   versionId: string;
@@ -55,6 +63,12 @@ export abstract class FilesTool extends BaseTool {
   protected async containerRequest(path: string, input: unknown, init: RequestInit = {}): Promise<Response> {
     const context = this.context(input);
     return filesContainerRequest(path, context, init);
+  }
+
+  protected async resolvePath(input: any): Promise<ResolvedFilePath | undefined> {
+    if (!input?.path) return undefined;
+    if (!String(input.path).startsWith('/mnt/sulla-files/')) throw new Error('path must be an absolute /mnt/sulla-files/... path');
+    return this.containerJson<ResolvedFilePath>(`/v1/files/resolve?path=${ encodeURIComponent(input.path) }`, input);
   }
 
   protected async containerJson<T = any>(path: string, input: unknown, init: RequestInit = {}): Promise<T> {

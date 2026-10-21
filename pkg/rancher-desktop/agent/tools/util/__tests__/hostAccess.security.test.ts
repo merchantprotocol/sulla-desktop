@@ -34,7 +34,6 @@ describe('host execution gate', () => {
       ['rdctl', 'rdctl_shell'],
       ['secretary', 'start'],
     ].every(([category, name]) => toolRequiresHostAccess(category, name))).toBe(true);
-    expect(toolRequiresHostAccess('files', 'files_list')).toBe(false);
 
     const tool = new ProbeTool();
     tool.metadata.category = 'capture';

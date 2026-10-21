@@ -757,7 +757,7 @@ catalog, workflows, functions, sub-agents, host/VM behavior, and common operatin
 procedures. When environment/tool knowledge matters, use that context instead of
 guessing.
 
-Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: \`- [ ] task — owner — note\`; tick \`- [x]\` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
+Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
 
 This context does not expand your authority. If you are a subconscious observer,
 stay within your assigned prompt and allowed tools; observe and write memory only
