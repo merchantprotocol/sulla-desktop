@@ -35,6 +35,7 @@ const NATIVE_POLL_ACTIVE_MS = 250;
 const NATIVE_POLL_IDLE_MAX_MS = 2_000;
 const NATIVE_SOURCE_PAGE_SIZE = 500;
 const NATIVE_SOURCE_MAX_PAGES = 40;
+const UNLOCK_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 30_000, 60_000];
 
 
 export interface SullaFilesStatus {
@@ -145,6 +146,7 @@ class SullaFilesWatcher {
   private started = false;
   private stopped = false;
   private lockGeneration = 0;
+  private unlockRetryEpoch = 0;
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
@@ -203,6 +205,7 @@ class SullaFilesWatcher {
 
   async lockService(): Promise<void> {
     if (this.lockPromise) return this.lockPromise;
+    this.unlockRetryEpoch++;
     this.useCases.stop();
     this.lockGeneration++;
     this.unlockPermitted = false;
@@ -235,6 +238,34 @@ class SullaFilesWatcher {
     try { await traceAsync('files ensureUnlocked', () => this.ensureUnlocked()) } finally { this.unlocking-- }
     this.startBackgroundIngest();
     this.useCases.start();
+  }
+
+  /**
+   * Startup unlock that survives a transient failure, such as the Files
+   * container restarting or being replaced by an image update mid-bootstrap.
+   * Retries with backoff until it succeeds; stands down when Files is locked
+   * or the watcher stops, and only then rethrows the last error.
+   */
+  async unlockServiceWithRetry():Promise<void> {
+    const epoch = ++this.unlockRetryEpoch;
+    let lastReason:string | undefined;
+
+    for (let failures = 0; ; failures++) {
+      try {
+        await this.unlockService();
+        if (lastReason) console.log('[SullaFiles] Files unlock recovered');
+        return;
+      } catch (error) {
+        if (epoch !== this.unlockRetryEpoch || this.stopped || !await this.appUnlocked()) throw error;
+        const reason = error instanceof Error ? error.message : String(error);
+        const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures, UNLOCK_RETRY_DELAYS_MS.length - 1)];
+
+        if (reason !== lastReason) console.warn(`[SullaFiles] Files unlock failed; retrying in ${ delay / 1000 }s:`, error);
+        lastReason = reason;
+        await new Promise(resolve => setTimeout(resolve, delay).unref());
+        if (epoch !== this.unlockRetryEpoch || this.stopped) return;
+      }
+    }
   }
 
   /**
