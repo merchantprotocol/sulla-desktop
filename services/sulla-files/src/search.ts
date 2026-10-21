@@ -46,7 +46,7 @@ export class FileSearch {
     return this.vectorTable;
   }
 
-  private async boundedQuery<T>(text:string, values:any[], signal?:AbortSignal):Promise<pg.QueryResult<T> | undefined> {
+  private async boundedQuery<T extends pg.QueryResultRow>(text:string, values:any[], signal?:AbortSignal):Promise<pg.QueryResult<T> | undefined> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
