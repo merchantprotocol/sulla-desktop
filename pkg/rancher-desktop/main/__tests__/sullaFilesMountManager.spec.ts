@@ -294,4 +294,34 @@ describe('SullaFilesMountManager recovery', () => {
     expect(guest.table).toEqual([BASE, ANCHOR, ADAPTER]);
     await manager.stop();
   });
+
+  test('an adapter that mounts inside its container but never reaches the guest fails fast with that reason', async() => {
+    jest.useFakeTimers();
+    const manager = new SullaFilesMountManager();
+    const guest = busyboxGuest([BASE, ANCHOR]);
+    const original = guest.executor.execCommand;
+
+    // The adapter reports itself mounted, but the mount never propagates to the guest table.
+    guest.executor.execCommand = (...args: any[]) => {
+      const command = typeof args[0] === 'object' ? args.slice(1) : args;
+
+      if (command.join(' ').includes('up -d --no-deps --force-recreate sulla_files_fuse')) return Promise.resolve('');
+      if (command[0] === 'docker' && command[1] === 'exec') {
+        return Promise.resolve(JSON.stringify({ phase: 'mounted', updatedAt: new Date().toISOString() }));
+      }
+
+      return original(...args);
+    };
+    manager.configureGuest(guest.executor);
+    manager.reportGuestPreparation();
+    const started = manager.start(provider);
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    await started;
+    expect(manager.status()).toMatchObject({
+      state:  'error',
+      reason: 'The Files adapter mounted inside its container, but the mount did not propagate to the guest',
+    });
+    await manager.stop();
+  });
 });

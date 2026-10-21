@@ -17,6 +17,22 @@ const DISABLED_REASON = 'The Files mount is unavailable.';
 const HEALTH_CHECK_MS = 60_000;
 const RETRY_DELAYS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 const RETRY_STEADY_MS = 5 * 60_000;
+/** Written by the adapter container (services/sulla-files-fuse) on its /tmp tmpfs. */
+const ADAPTER_STATUS_FILE = '/tmp/sulla-files-fuse-status.json';
+/** Upper bound while the adapter keeps reporting progress (token wait, tree load). */
+const ADAPTER_WAIT_MS = 120_000;
+/** The adapter refreshes updatedAt every ~5s; this much silence means it is wedged. */
+const ADAPTER_STATUS_STALE_MS = 20_000;
+/** How long a container may run without any status (starting, or an image that predates status). */
+const ADAPTER_STATUS_GRACE_MS = 15_000;
+const ADAPTER_PROPAGATION_GRACE_MS = 3_000;
+
+interface SullaFilesAdapterStatus {
+  phase:      'waiting-token' | 'starting' | 'mounting' | 'loading-tree' | 'mounted' | 'failed' | string;
+  updatedAt:  string;
+  reason?:    string;
+  error?:     string;
+}
 
 /** Backoff for the n-th consecutive failed attempt (0-based): 5s, 10s, 20s, 40s, 60s, then every 5 minutes. */
 export function sullaFilesMountRetryDelay(failures:number):number {
@@ -189,19 +205,13 @@ export class SullaFilesMountManager extends EventEmitter {
         { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
       ));
-      for (let attempt = 0; attempt < 20; attempt++) {
-        if (await this.isAdapterMounted(executor)) {
-          // Prove adapter health with a real Files-backed directory read.
-          // This does not authorize an agent; that admission remains disabled
-          // until Files can enforce a grant-scoped per-agent/job view.
-          await executor.execCommand({}, 'sh', '-c', 'ls -A "$1" >/dev/null', 'sh', MOUNT_PATH);
-          this.publish('ready', undefined, MOUNT_PATH);
-          this.armRefresh(credentialGeneration);
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      throw new Error('The guest adapter did not produce a verified FUSE mount');
+      await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor));
+      // Prove adapter health with a real Files-backed directory read.
+      // This does not authorize an agent; that admission remains disabled
+      // until Files can enforce a grant-scoped per-agent/job view.
+      await executor.execCommand({}, 'sh', '-c', 'ls -A "$1" >/dev/null', 'sh', MOUNT_PATH);
+      this.publish('ready', undefined, MOUNT_PATH);
+      this.armRefresh(credentialGeneration);
     } catch (error) {
       await this.stopGuest().catch(() => undefined);
       this.publish('error', error instanceof Error ? error.message : String(error));
@@ -333,6 +343,65 @@ export class SullaFilesMountManager extends EventEmitter {
     if (this.healthTimer) clearInterval(this.healthTimer);
     this.refreshTimer = undefined;
     this.healthTimer = undefined;
+  }
+
+  /**
+   * Wait for the adapter's mount to reach the guest. The adapter publishes its
+   * phase and a heartbeat (updatedAt every ~5s), so a slow start keeps waiting
+   * while a failed or wedged one stops at once with its own reason, instead of
+   * being killed on a fixed timer.
+   */
+  private async waitForAdapter(executor:VMExecutor):Promise<void> {
+    const started = Date.now();
+    let lastPhase:string | undefined;
+    let mountedSince:number | undefined;
+
+    for (;;) {
+      if (await this.isAdapterMounted(executor)) return;
+      const status = await this.adapterStatus(executor);
+      const now = Date.now();
+      const phase = status?.phase;
+
+      if (phase !== lastPhase) {
+        traceEvent(`mount: adapter phase ${ phase ?? 'unreported' }`);
+        if (phase) console.log(`[SullaFiles] Files adapter ${ phase }${ status?.reason ? `: ${ status.reason }` : '' }`);
+        lastPhase = phase;
+      }
+      if (phase === 'failed') {
+        throw new Error(`The Files adapter failed: ${ status?.reason ?? 'unknown' }${ status?.error ? ` (${ status.error })` : '' }`);
+      }
+      // Mounted inside the container but not visible here means propagation is broken; waiting cannot fix it.
+      if (phase === 'mounted' || phase === 'loading-tree') {
+        mountedSince ??= now;
+        if (now - mountedSince > ADAPTER_PROPAGATION_GRACE_MS) {
+          throw new Error('The Files adapter mounted inside its container, but the mount did not propagate to the guest');
+        }
+      }
+      if (!status) {
+        if (now - started > ADAPTER_STATUS_GRACE_MS) throw new Error('The Files adapter did not report a status');
+      } else if (now - Date.parse(status.updatedAt) > ADAPTER_STATUS_STALE_MS) {
+        throw new Error(`The Files adapter stopped reporting progress (last phase ${ phase })`);
+      }
+      if (now - started > ADAPTER_WAIT_MS) {
+        throw new Error(`The Files adapter did not mount within ${ ADAPTER_WAIT_MS / 1000 }s (last phase ${ phase ?? 'unreported' })`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+
+  /** The adapter's self-reported status, or undefined while its container is not running yet. */
+  private async adapterStatus(executor:VMExecutor):Promise<SullaFilesAdapterStatus | undefined> {
+    try {
+      const output = await executor.execCommand(
+        { root: true, capture: true, expectFailure: true },
+        'docker', 'exec', 'sulla_files_fuse', 'cat', ADAPTER_STATUS_FILE,
+      );
+      const status = JSON.parse(output);
+
+      return typeof status?.phase === 'string' && typeof status?.updatedAt === 'string' ? status : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async isAdapterMounted(executor:VMExecutor):Promise<boolean> {

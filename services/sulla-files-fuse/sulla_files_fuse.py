@@ -4,6 +4,7 @@
 import argparse
 import datetime
 import errno
+import functools
 import json
 import os
 import stat
@@ -40,6 +41,69 @@ METADATA_HEADER = """# Folder metadata for: {path}
 """
 log = logging.getLogger("sulla-files-fuse")
 request_actor = contextvars.ContextVar("request_actor", default=None)
+# Requests slower than this are logged at INFO even when DEBUG is off.
+SLOW_REQUEST_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS", "1.0"))
+HEARTBEAT_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_HEARTBEAT_SECONDS", "60"))
+# Expected misses (stat of a missing path, absent xattr) stay at DEBUG.
+QUIET_ERRNOS = {errno.ENOENT, errno.ENODATA}
+stats = {"requests": 0, "requestErrors": 0, "slowRequests": 0, "ops": 0, "opErrors": 0, "snapshots": 0, "snapshotsUnchanged": 0}
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line, matching the sulla-files service log shape. Never carries tokens or file bodies."""
+    def format(self, record):
+        entry = {"ts": datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc).isoformat(timespec="milliseconds"),
+                 "source": "sulla-files-fuse", "level": record.levelname.lower(), "event": getattr(record, "event", "log")}
+        if record.args or not hasattr(record, "event"): entry["message"] = record.getMessage()
+        entry.update(getattr(record, "fields", {}))
+        if record.exc_info: entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, default=str, separators=(",", ":"))
+
+
+def emit(event, level=logging.INFO, **fields):
+    log.log(level, event, extra={"event": event, "fields": {key: value for key, value in fields.items() if value is not None}})
+
+
+def _errno_name(code):
+    return errno.errorcode.get(code, str(code)) if isinstance(code, int) else str(code)
+
+
+def _rss_kb():
+    try:
+        with open("/proc/self/status", encoding="ascii") as status:
+            return next((int(line.split()[1]) for line in status if line.startswith("VmRSS:")), None)
+    except OSError:
+        return None
+
+
+def traced(operation, describe=None, mutating=False):
+    """Time a FUSE operation and log its outcome. Mutations log at INFO; reads only at DEBUG."""
+    def decorate(function):
+        @functools.wraps(function)
+        async def wrapper(self, *args):
+            started = time.monotonic()
+            stats["ops"] += 1
+            # Describe before running: unlink/rmdir/release remove the node or handle.
+            details = self._describe(describe, args)
+            try:
+                result = await function(self, *args)
+            except pyfuse3.FUSEError as error:
+                code = error.errno
+                quiet = code in QUIET_ERRNOS and not mutating
+                if not quiet: stats["opErrors"] += 1
+                emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
+                     ms=round((time.monotonic() - started) * 1000, 1), **details)
+                raise
+            except Exception:
+                stats["opErrors"] += 1
+                log.exception("unhandled error in %s", operation, extra={"event": "fuse-op-crash", "fields": {"op": operation, **details}})
+                raise pyfuse3.FUSEError(errno.EIO)
+            if mutating or log.isEnabledFor(logging.DEBUG):
+                emit("fuse-op", logging.INFO if mutating else logging.DEBUG, op=operation, ok=True,
+                     ms=round((time.monotonic() - started) * 1000, 1), **details)
+            return result
+        return wrapper
+    return decorate
 
 
 class ActorResolver:
@@ -60,10 +124,15 @@ class ActorResolver:
             if container_id in self.cache: return self.cache[container_id]
             actor_path = os.path.join(self.actors_root, container_id)
             actor = (await trio.to_thread.run_sync(lambda: open(actor_path, encoding="utf-8").read(1024))).strip()
-            if not actor or "\n" in actor or ":" not in actor: return None
+            if not actor or "\n" in actor or ":" not in actor:
+                emit("actor-invalid", logging.WARNING, pid=pid, container=container_id[:12])
+                return None
             self.cache[container_id] = actor
+            emit("actor-resolved", pid=pid, container=container_id[:12], actor=actor)
             return actor
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            # Host processes have no container identity; that is normal and stays at DEBUG.
+            emit("actor-unresolved", logging.DEBUG, pid=pid, reason=f"{type(error).__name__}: {error}")
             return None
 
 
@@ -94,6 +163,30 @@ class FilesApi:
         return token.decode("ascii")
 
     def _request(self, path: str, method="GET", body=None, headers=None):
+        started = time.monotonic()
+        stats["requests"] += 1
+        outcome = {"status": None, "bytes": 0, "error": None}
+        try:
+            result = self._send(path, method, body, headers)
+            outcome["status"], outcome["bytes"] = result[0], len(result[2])
+            return result
+        except OSError as error:
+            stats["requestErrors"] += 1
+            outcome["status"] = getattr(error, "status", None)
+            outcome["error"] = str(error)
+            outcome["code"] = (getattr(error, "detail", None) or {}).get("code")
+            raise
+        finally:
+            elapsed = time.monotonic() - started
+            slow = elapsed >= SLOW_REQUEST_SECONDS
+            if slow: stats["slowRequests"] += 1
+            level = logging.WARNING if outcome["error"] else logging.INFO if slow else logging.DEBUG
+            if log.isEnabledFor(level):
+                emit("files-request", level, method=method, path=path.split("?", 1)[0], status=outcome["status"],
+                     ms=round(elapsed * 1000, 1), sent=len(body or b""), received=outcome["bytes"], actor=request_actor.get(),
+                     slow=slow or None, error=outcome["error"], code=outcome.get("code"))
+
+    def _send(self, path, method, body, headers):
         request = urllib.request.Request(
             f"{self.base_url}{path}", method=method, data=body,
             headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
@@ -207,6 +300,24 @@ class SullaFiles(pyfuse3.Operations):
         self.refresh_lock = trio.Lock()
         self.metadata_cache = {}
 
+    def _describe(self, describe, args):
+        try:
+            return describe(self, args) if describe else {}
+        except Exception:  # Logging must never break the operation it describes.
+            return {}
+
+    def _inode_info(self, inode, ctx=None):
+        return {"path": (self.nodes.get(inode) or {}).get("path"), "inode": inode, "pid": getattr(ctx, "pid", None)}
+
+    def _child_info(self, parent_inode, name, ctx=None):
+        parent = (self.nodes.get(parent_inode) or {}).get("path", "")
+        return {"path": "/".join(filter(None, [parent, os.fsdecode(name)])), "pid": getattr(ctx, "pid", None)}
+
+    def _handle_info(self, fh):
+        handle = self.handles.get(fh) or {}
+        return {"path": (self.nodes.get(handle.get("inode")) or {}).get("path"), "fh": fh, "actor": handle.get("actor"),
+                "dirty": handle.get("dirty"), "size": handle.get("size")}
+
     async def _actor(self, ctx):
         return await self.api.actor_resolver.resolve(ctx.pid) if self.api.actor_resolver and ctx else None
 
@@ -227,9 +338,26 @@ class SullaFiles(pyfuse3.Operations):
             if not force and self._fresh():
                 return
             started = time.monotonic()
-            snapshot, self.snapshot_etag = await self.api.snapshot(self.snapshot_etag)
+            previous_etag, before = self.snapshot_etag, len(self.path_inode)
+            try:
+                snapshot, self.snapshot_etag = await self.api.snapshot(self.snapshot_etag)
+            except OSError as error:
+                emit("snapshot-failed", logging.WARNING, forced=force, errno=_errno_name(error.errno), error=str(error),
+                     staleSeconds=round(time.monotonic() - self.snapshot_at, 1) if self.snapshot_at else None)
+                raise
+            fetched = time.monotonic()
+            stats["snapshots"] += 1
             if snapshot is not None:
                 self._apply(snapshot)
+                applied = time.monotonic()
+                emit("snapshot-applied", logging.INFO if previous_etag is None or applied - started >= SLOW_REQUEST_SECONDS else logging.DEBUG,
+                     forced=force, collections=len(snapshot.get("collections", [])), folders=len(snapshot.get("folders", [])),
+                     files=len(snapshot.get("files", [])), nodesBefore=before, nodesAfter=len(self.path_inode),
+                     fetchMs=round((fetched - started) * 1000, 1), applyMs=round((applied - fetched) * 1000, 1),
+                     etagChanged=previous_etag != self.snapshot_etag)
+            else:
+                stats["snapshotsUnchanged"] += 1
+                emit("snapshot-unchanged", logging.DEBUG, forced=force, fetchMs=round((fetched - started) * 1000, 1))
             self.snapshot_at = started
 
     def _apply(self, snapshot):
@@ -328,6 +456,7 @@ class SullaFiles(pyfuse3.Operations):
         attrs.attr_timeout = 0
         return attrs
 
+    @traced("getattr", lambda s, a: s._inode_info(a[0], a[-1]))
     async def getattr(self, inode, ctx=None):
         if inode == pyfuse3.ROOT_INODE:
             try:
@@ -336,6 +465,7 @@ class SullaFiles(pyfuse3.Operations):
                 raise pyfuse3.FUSEError(error.errno) from error
         return self._attrs(inode)
 
+    @traced("lookup", lambda s, a: s._child_info(a[0], a[1], a[-1]))
     async def lookup(self, parent_inode, name, ctx=None):
         try:
             await self.refresh()
@@ -350,11 +480,13 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
         return self._attrs(inode)
 
+    @traced("opendir", lambda s, a: s._inode_info(a[0], a[-1]))
     async def opendir(self, inode, ctx):
         if not self.nodes.get(inode, {}).get("directory"):
             raise pyfuse3.FUSEError(errno.ENOTDIR)
         return inode
 
+    @traced("readdir", lambda s, a: s._inode_info(a[0]))
     async def readdir(self, fh, start_id, token):
         try:
             await self.refresh()
@@ -372,6 +504,7 @@ class SullaFiles(pyfuse3.Operations):
         if node.get("collectionId") in self.readonly_collections:
             raise pyfuse3.FUSEError(errno.EROFS)
 
+    @traced("open", lambda s, a: s._inode_info(a[0], a[-1]))
     async def open(self, inode, flags, ctx):
         node = self.nodes.get(inode)
         if not node or node["directory"]:
@@ -494,6 +627,7 @@ class SullaFiles(pyfuse3.Operations):
         handle["dirty"] = True
         return len(buf)
 
+    @traced("setattr", lambda s, a: s._inode_info(a[0], a[-1]), mutating=True)
     async def setattr(self, inode, attr, fields, fh, ctx):
         if fields.update_size:
             self._writable(self.nodes[inode])
@@ -549,16 +683,22 @@ class SullaFiles(pyfuse3.Operations):
         handle["dirty"] = False
         handle["failed"] = False
         node = self.nodes[handle["inode"]]
-        node.update(result)
+        # The result's `path` is collection-relative; the node keys on its full mount path.
+        node.update({key: value for key, value in result.items() if key != "path"})
         node["size"] = handle["size"]
         self.snapshot_at = 0.0
+        emit("file-committed", path=node.get("path"), fileId=handle.get("fileId"), bytes=handle["size"], actor=handle.get("actor"),
+             merged=merged or None, metadata=bool(node.get("virtualMetadata")) or None, versionId=handle.get("versionId") or None)
 
+    @traced("flush", lambda s, a: s._handle_info(a[0]))
     async def flush(self, fh):
         await self._commit(fh)
 
+    @traced("fsync", lambda s, a: s._handle_info(a[0]))
     async def fsync(self, fh, datasync):
         await self._commit(fh)
 
+    @traced("release", lambda s, a: s._handle_info(a[0]))
     async def release(self, fh):
         try:
             await self._commit(fh)
@@ -580,6 +720,7 @@ class SullaFiles(pyfuse3.Operations):
             return node_path
         return node_path[len(root):].lstrip("/")
 
+    @traced("create", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def create(self, parent_inode, name, mode, flags, ctx):
         parent,path=self._child(parent_inode,name)
         self._writable(parent)
@@ -593,6 +734,7 @@ class SullaFiles(pyfuse3.Operations):
         info=await self.open(inode,flags,ctx)
         return info,self._attrs(inode)
 
+    @traced("rename", lambda s, a: {**s._child_info(a[0], a[1], a[-1]), "to": s._child_info(a[2], a[3])["path"]}, mutating=True)
     async def rename(self, parent_inode, name, new_parent_inode, new_name, flags, ctx):
         parent,old_path=self._child(parent_inode,name); target_parent,new_path=self._child(new_parent_inode,new_name)
         inode=self.path_inode.get(old_path); node=self.nodes.get(inode) if inode else None
@@ -630,6 +772,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(mapped) from error
         await self.refresh(force=True)
 
+    @traced("unlink", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def unlink(self, parent_inode, name, ctx):
         _,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("directory"): raise pyfuse3.FUSEError(errno.ENOENT)
@@ -638,6 +781,7 @@ class SullaFiles(pyfuse3.Operations):
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
 
+    @traced("mkdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def mkdir(self, parent_inode, name, mode, ctx):
         parent,path=self._child(parent_inode,name)
         self._writable(parent)
@@ -647,6 +791,7 @@ class SullaFiles(pyfuse3.Operations):
         inode=self._node(path,True); self.nodes[inode].update({"collectionId":parent["collectionId"]})
         return self._attrs(inode)
 
+    @traced("rmdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def rmdir(self, parent_inode, name, ctx):
         parent,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EPERM)
@@ -665,6 +810,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENODATA)
         return decoded[len(prefix):]
 
+    @traced("getxattr", lambda s, a: {**s._inode_info(a[0], a[-1]), "name": os.fsdecode(a[1])})
     async def getxattr(self, inode, name, ctx):
         node = self.nodes.get(inode)
         if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
@@ -675,6 +821,7 @@ class SullaFiles(pyfuse3.Operations):
         value = result["metadata"][key]
         return value.encode() if isinstance(value, str) else json.dumps(value, separators=(",", ":")).encode()
 
+    @traced("listxattr", lambda s, a: s._inode_info(a[0], a[-1]))
     async def listxattr(self, inode, ctx):
         node = self.nodes.get(inode)
         if not node or node.get("virtualMetadata"): return []
@@ -682,6 +829,7 @@ class SullaFiles(pyfuse3.Operations):
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         return [os.fsencode(f"user.sulla.{key}") for key in result.get("metadata", {})]
 
+    @traced("setxattr", lambda s, a: {**s._inode_info(a[0], a[-1]), "name": os.fsdecode(a[1])}, mutating=True)
     async def setxattr(self, inode, name, value, ctx):
         node = self.nodes.get(inode); key = self._xattr_key(name)
         if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
@@ -695,6 +843,7 @@ class SullaFiles(pyfuse3.Operations):
         self.snapshot_at = 0.0
         self._invalidate_metadata(node["collectionId"], self._metadata_path(node))
 
+    @traced("removexattr", lambda s, a: {**s._inode_info(a[0], a[-1]), "name": os.fsdecode(a[1])}, mutating=True)
     async def removexattr(self, inode, name, ctx):
         node = self.nodes.get(inode); key = self._xattr_key(name)
         if not node or node.get("virtualMetadata"): raise pyfuse3.FUSEError(errno.ENODATA)
@@ -704,22 +853,105 @@ class SullaFiles(pyfuse3.Operations):
         self._invalidate_metadata(node["collectionId"], self._metadata_path(node))
 
 
+STATUS_SECONDS = 5.0
+
+
+class StatusFile:
+    """Atomically-replaced JSON status Desktop polls; a stale updatedAt means the adapter is wedged."""
+    def __init__(self, path):
+        self.path = path
+        self.fields = {}
+
+    def set(self, phase, **fields):
+        self.fields = {"phase": phase, **{key: value for key, value in fields.items() if value is not None}}
+        self.write()
+
+    def write(self, **live):
+        if not self.path: return
+        value = {**self.fields, **live, "pid": os.getpid(), "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+        try:
+            with open(f"{self.path}.new", "w", encoding="utf-8") as handle:
+                json.dump(value, handle, default=str, separators=(",", ":"))
+            os.replace(f"{self.path}.new", self.path)
+        except OSError as error:
+            emit("status-write-failed", logging.WARNING, path=self.path, error=str(error))
+
+
 async def main(options):
     token_file = os.environ.get("SULLA_FILES_FUSE_TOKEN_FILE")
     if not token_file:
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
+    status = StatusFile(options.status_file)
     os.makedirs(options.mountpoint, exist_ok=True)
     operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver()))
-    pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
+    emit("daemon-start", pid=os.getpid(), url=options.url, mountpoint=options.mountpoint, spool=SPOOL_DIR,
+         logLevel=logging.getLevelName(log.getEffectiveLevel()), pyfuse3=pyfuse3.__version__, snapshotTtlSeconds=SNAPSHOT_TTL_SECONDS,
+         maxFileBytes=MAX_FILE_BYTES, maxOpenHandles=MAX_OPEN_HANDLES, slowRequestSeconds=SLOW_REQUEST_SECONDS)
+    status.set("mounting")
     try:
-        await pyfuse3.main()
+        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
+    except Exception as error:
+        log.exception("mount failed", extra={"event": "mount-failed", "fields": {"mountpoint": options.mountpoint}})
+        status.set("failed", reason="mount-failed", error=str(error))
+        raise
+    emit("mounted", mountpoint=options.mountpoint)
+    try:
+        async with trio.open_nursery() as nursery:
+            nursery.start_soon(heartbeat, operations)
+            nursery.start_soon(report_status, operations, status)
+            nursery.start_soon(warm_tree, operations, status)
+            await pyfuse3.main()
+            nursery.cancel_scope.cancel()
+    except BaseException as error:
+        log.exception("daemon stopping", extra={"event": "daemon-stopping", "fields": {"reason": type(error).__name__}})
+        status.set("failed", reason="daemon-stopped", error=type(error).__name__)
+        raise
     finally:
         pyfuse3.close(unmount=True)
+        emit("unmounted", mountpoint=options.mountpoint, **stats)
+
+
+async def warm_tree(operations, status):
+    """Load the tree right after mounting: the mount appears immediately and the first agent `ls` is fast."""
+    status.set("loading-tree")
+    started = time.monotonic()
+    try:
+        await operations.refresh(force=True)
+    except OSError as error:
+        # Lookups retry on every access; the mount stays up and Desktop's directory read decides readiness.
+        emit("files-unreachable", logging.WARNING, errno=_errno_name(error.errno), error=str(error))
+        status.set("mounted", tree="unavailable", error=str(error))
+        return
+    nodes = len(operations.path_inode)
+    emit("files-reachable", nodes=nodes, ms=round((time.monotonic() - started) * 1000, 1))
+    status.set("mounted", tree="loaded", nodes=nodes)
+
+
+async def report_status(operations, status):
+    while True:
+        status.write(openHandles=len(operations.handles), requestErrors=stats["requestErrors"],
+                     snapshotAgeSeconds=round(time.monotonic() - operations.snapshot_at, 1) if operations.snapshot_at else None)
+        await trio.sleep(STATUS_SECONDS)
+
+
+async def heartbeat(operations):
+    """Periodic one-line health summary; counters are cumulative since start."""
+    while True:
+        await trio.sleep(HEARTBEAT_SECONDS)
+        emit("heartbeat", rssKb=_rss_kb(), openHandles=len(operations.handles), nodes=len(operations.path_inode),
+             snapshotAgeSeconds=round(time.monotonic() - operations.snapshot_at, 1) if operations.snapshot_at else None,
+             metadataCache=len(operations.metadata_cache), actorCache=len(operations.api.actor_resolver.cache) if operations.api.actor_resolver else None,
+             **stats)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=os.environ.get("SULLA_FILES_FUSE_LOG_LEVEL", "INFO"))
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=os.environ.get("SULLA_FILES_FUSE_LOG_LEVEL", "INFO").upper(), handlers=[handler])
+    # pyfuse3 logs its own per-request noise at DEBUG; keep it at INFO unless explicitly asked for.
+    logging.getLogger("pyfuse3").setLevel(os.environ.get("SULLA_FILES_FUSE_PYFUSE3_LOG_LEVEL", "INFO").upper())
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Files service base URL")
+    parser.add_argument("--status-file", default=os.environ.get("SULLA_FILES_FUSE_STATUS_FILE"), help="JSON status file Desktop polls")
     parser.add_argument("mountpoint")
     trio.run(main, parser.parse_args())
