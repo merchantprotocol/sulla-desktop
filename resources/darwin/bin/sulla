@@ -38,6 +38,20 @@ SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
 SULLA_TOOL_API_URL="${SULLA_TOOL_API_URL%/}"
 FIRST="$1"
 BODY="$2"
+BODY_FILE=""
+BODY_FROM_STDIN=""
+DATA_FLAG="-d"
+
+# Keep large JSON out of argv: Linux limits individual arguments to 128 KiB.
+# A missing body is stdin-backed only for a piped invocation; interactive calls
+# retain the historical default of {}.
+if [ "$BODY" = "-" ]; then
+  BODY_FROM_STDIN=1
+elif [ "${BODY#@}" != "$BODY" ]; then
+  BODY_FILE="${BODY#@}"
+elif [ -z "$BODY" ] && [ ! -t 0 ]; then
+  BODY_FROM_STDIN=1
+fi
 
 tool_api_get() {
   _path="$1"
@@ -71,6 +85,8 @@ sulla — unified CLI for Sulla Desktop
 
 Usage:
   sulla <category>/<tool> '<json>'           # tool call
+  sulla <category>/<tool> - < payload.json    # read JSON from stdin
+  sulla <category>/<tool> @/path/payload.json  # read JSON from a file
   sulla <category> --help                    # list tools in a category
   sulla <account_id>/<slug> '<json>'         # proxy call
   sulla <account>/mcp/<tool> '<json>'        # MCP tool
@@ -91,8 +107,17 @@ elif [ "$BODY" = "--help" ] || [ "$BODY" = "-h" ]; then
 else
   METHOD="POST"
 
-  if [ -z "$BODY" ]; then
+  if [ -z "$BODY" ] && [ -z "$BODY_FILE" ] && [ -z "$BODY_FROM_STDIN" ]; then
     BODY='{}'
+  fi
+  if [ -n "$BODY_FILE" ]; then
+    DATA_FLAG="--data-binary"
+    DATA_ARG="@$BODY_FILE"
+  elif [ -n "$BODY_FROM_STDIN" ]; then
+    DATA_FLAG="--data-binary"
+    DATA_ARG='@-'
+  else
+    DATA_ARG="$BODY"
   fi
 
   case "$FIRST" in
@@ -161,12 +186,12 @@ else
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     else
       exec curl -s -X POST "${SULLA_TOOL_API_URL}${URL}" \
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     fi
   elif [ -S "$SOCKET" ]; then
     if [ -n "$SULLA_API_TOKEN" ]; then
@@ -174,12 +199,12 @@ else
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     else
       exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     fi
   else
     if [ -n "$SULLA_API_TOKEN" ]; then
@@ -187,12 +212,12 @@ else
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     else
       exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
         -H "Content-Type: application/json" \
         -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -d "$BODY"
+        $DATA_FLAG "$DATA_ARG"
     fi
   fi
 fi
