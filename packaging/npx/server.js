@@ -27,7 +27,6 @@ const CONFIG_ENV = [
   'SULLA_KUBERNETES_MODE',
   'SULLA_ORGANIZATION',
   'SULLA_PORT',
-  'SULLA_PROJECTS_IMAGE',
   'SULLA_PUBLIC_URL',
   'SULLA_RUNTIME',
   'SULLA_STORAGE_CLASS',
@@ -49,7 +48,6 @@ const REQUIRED_FILES = [
   'k8s/storage.yaml',
   'k8s/postgres.yaml',
   'k8s/sulla-vault.yaml',
-  'k8s/sulla-projects.yaml',
 ];
 
 class ServerUserError extends Error {}

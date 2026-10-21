@@ -281,7 +281,7 @@ if [ "$mode" = server ]; then
   web_client_id="${SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID:-sulla-web}"
   require_value SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS
   membership_audience="${SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE:-sulla-membership}"
-  resource_audiences="${SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES:-sulla-accounts,sulla-vault,sulla-files,sulla-projects,sulla-agents,sulla-workflows}"
+  resource_audiences="${SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES:-sulla-accounts,sulla-vault,sulla-files,sulla-agents,sulla-workflows}"
 
   export KC_DB=postgres
   export KC_DB_URL="$SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL"

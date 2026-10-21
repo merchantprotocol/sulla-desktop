@@ -13,7 +13,6 @@ const targets = {
   accounts: process.env.SULLA_CONSOLE_ACCOUNTS_URL ?? 'http://127.0.0.1:3020',
   vault: process.env.SULLA_CONSOLE_VAULT_URL ?? 'https://127.0.0.1:30135',
   files: process.env.SULLA_CONSOLE_FILES_URL ?? 'https://127.0.0.1:30124',
-  projects: process.env.SULLA_CONSOLE_PROJECTS_URL ?? 'http://127.0.0.1:30138',
   agents: process.env.SULLA_CONSOLE_AGENTS_URL ?? 'http://127.0.0.1:8789',
   workflows: process.env.SULLA_CONSOLE_WORKFLOWS_URL ?? 'http://127.0.0.1:30122',
 };
@@ -98,7 +97,7 @@ createServer(async(request, response) => {
     proxy(request, response, process.env.SULLA_CONSOLE_IDENTITY_URL ?? targets.accounts, url.pathname, 'accounts');
     return;
   }
-  const serviceMatch = url.pathname.match(/^\/services\/(accounts|vault|files|projects|agents|workflows)\/(api\/)?(.*)$/);
+  const serviceMatch = url.pathname.match(/^\/services\/(accounts|vault|files|agents|workflows)\/(api\/)?(.*)$/);
   if (serviceMatch) {
     const [, service, api, rest] = serviceMatch;
     if ((service === 'accounts' && api) || (service === 'files' && api && /^(?:healthz$|v1\/(?:local|desktop|bootstrap|admin)(?:\/|$))/.test(rest))) {

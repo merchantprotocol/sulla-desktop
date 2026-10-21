@@ -139,7 +139,7 @@ issuer. Its stable response is:
   "nativeRedirectUris": ["http://127.0.0.1:3020/v1/oidc/callback"],
   "scopes": ["openid", "profile"],
   "membershipAudience": "sulla-membership",
-  "resourceAudiences": ["sulla-projects", "sulla-files", "sulla-vault", "sulla-workflows"],
+  "resourceAudiences": ["sulla-files", "sulla-vault", "sulla-workflows"],
   "membershipResolver": "https://accounts.example/v1/authority/membership/resolve"
 }
 ```
@@ -178,8 +178,7 @@ calling service id, configured grant, issuer, subject, authority, organization, 
 enabled user, and current membership before returning context. Tokens never appear in URLs,
 cookies, local/session storage, logs, or HTML.
 
-Exact audiences are `sulla-accounts`, `sulla-vault`, `sulla-files`, `sulla-projects`,
-`sulla-agents`, and `sulla-workflows` for the matching service ids.
+Exact audiences are `sulla-accounts`, `sulla-vault`, `sulla-files`, `sulla-agents`, and `sulla-workflows` for the matching service ids.
 
 The Accounts container serves its owned Users & Organizations UI at `/ui/`. Organization admins
 can create a new hosted user and change only that organization's membership roles/groups. Global

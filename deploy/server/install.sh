@@ -107,7 +107,6 @@ main() {
       [[ -n ${SULLA_KUBECONTEXT:-} ]] || fail "Kubernetes context is required"
       [[ -n ${SULLA_VAULT_IMAGE:-} && "$SULLA_VAULT_IMAGE" != *:latest && "$SULLA_VAULT_IMAGE" != *['| ']* ]] || fail "Kubernetes vault image must be pinned and contain no spaces"
       [[ -n ${SULLA_FILES_IMAGE:-} && "$SULLA_FILES_IMAGE" != *:latest && "$SULLA_FILES_IMAGE" != *['| ']* ]] || fail "Kubernetes Files image must be pinned and contain no spaces"
-      [[ -z ${SULLA_PROJECTS_IMAGE:-} || "$SULLA_PROJECTS_IMAGE" != *:latest && "$SULLA_PROJECTS_IMAGE" != *['| ']* ]] || fail "Kubernetes Projects image must be pinned and contain no spaces"
       [[ -n ${SULLA_ACCOUNTS_IMAGE:-} && "$SULLA_ACCOUNTS_IMAGE" != *:latest && "$SULLA_ACCOUNTS_IMAGE" != *['| ']* ]] || fail "Kubernetes Accounts image must be pinned and contain no spaces"
       [[ -n ${SULLA_AGENTS_IMAGE:-} && "$SULLA_AGENTS_IMAGE" != *:latest && "$SULLA_AGENTS_IMAGE" != *['| ']* ]] || fail "Kubernetes Agents image must be pinned and contain no spaces"
       [[ -n ${SULLA_AGENT_IMAGE:-} && "$SULLA_AGENT_IMAGE" != *:latest && "$SULLA_AGENT_IMAGE" != *['| ']* ]] || fail "Kubernetes agent runner image must be pinned and contain no spaces"
@@ -223,7 +222,6 @@ main() {
       fi
       ask SULLA_VAULT_IMAGE "Pinned vault image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-vault:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_FILES_IMAGE "Pinned Files image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-files:sha-${SULLA_SOURCE_SHA:0:12}"
-      ask SULLA_PROJECTS_IMAGE "Pinned Projects image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-projects:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_ACCOUNTS_IMAGE "Pinned Accounts image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-accounts:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_AGENTS_IMAGE "Pinned Agents image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-agents:sha-${SULLA_SOURCE_SHA:0:12}"
       ask SULLA_AGENT_IMAGE "Pinned agent runner image (tag or digest; never latest)" "ghcr.io/merchantprotocol/sulla-agent:sha-${SULLA_SOURCE_SHA:0:12}"
@@ -258,7 +256,7 @@ main() {
     install-server.sh join-node.sh deploy-sulla.sh compose.yaml
     gateway/nginx.conf.template gateway/nginx.kubernetes.conf.template gateway/entrypoint.sh
     k8s/kustomization.yaml k8s/namespace.yaml k8s/storage.yaml
-    k8s/postgres.yaml k8s/redis.yaml k8s/db-init.yaml k8s/sulla-accounts.yaml k8s/sulla-vault.yaml k8s/sulla-files.yaml k8s/sulla-projects.yaml k8s/sulla-agents.yaml k8s/sulla-workflows.yaml k8s/sulla-tools.yaml k8s/sulla-console.yaml k8s/sulla-gateway.yaml
+    k8s/postgres.yaml k8s/redis.yaml k8s/db-init.yaml k8s/sulla-accounts.yaml k8s/sulla-vault.yaml k8s/sulla-files.yaml k8s/sulla-agents.yaml k8s/sulla-workflows.yaml k8s/sulla-tools.yaml k8s/sulla-console.yaml k8s/sulla-gateway.yaml
   )
 
   if [[ -n ${SULLA_BUNDLE_DIR:-} ]]; then
@@ -305,11 +303,11 @@ main() {
   [[ -f "$env_file" ]] || {
     env_tmp="$env_file.tmp"
     postgres_password="$(openssl rand -hex 32)"; jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"; bootstrap_token="$(openssl rand -hex 32)"
-    projects_database_password="$(openssl rand -hex 32)"; agent_api_token="$(openssl rand -hex 32)"
+    agent_api_token="$(openssl rand -hex 32)"
     authority_hex="$(openssl rand -hex 16)"
     authority_id="${authority_hex:0:8}-${authority_hex:8:4}-4${authority_hex:13:3}-8${authority_hex:17:3}-${authority_hex:20:12}"
-    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_PROJECTS_DATABASE_PASSWORD=%q\nSULLA_PROJECTS_JWT_AUDIENCE=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
-      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$projects_database_password" sulla-projects "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback" >"$env_tmp"
+    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
+      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback" >"$env_tmp"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       tls_dir="$SULLA_DIR/tls"; mkdir -p "$tls_dir"
       [[ -z "$SULLA_TLS_CERT" ]] || cp "$SULLA_TLS_CERT" "$tls_dir/tls.crt"
@@ -323,7 +321,7 @@ main() {
       fi
       printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_CONSOLE_MODE=%q\nCOMPOSE_PROFILES=%q\nSULLA_CONSOLE_UPSTREAM=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$SULLA_CONSOLE_MODE" "$COMPOSE_PROFILES" "$SULLA_CONSOLE_UPSTREAM" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" sulla-server_default "sulla-agent:${SULLA_SOURCE_SHA:0:12}" "sulla-workflows:${SULLA_SOURCE_SHA:0:12}" >>"$env_tmp"
     else
-      printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_PROJECTS_IMAGE=%q\nSULLA_ACCOUNTS_IMAGE=%q\nSULLA_AGENTS_IMAGE=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOWS_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\nSULLA_TOOLS_IMAGE=%q\nSULLA_CONSOLE_IMAGE=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_PROJECTS_IMAGE" "$SULLA_ACCOUNTS_IMAGE" "$SULLA_AGENTS_IMAGE" "$SULLA_AGENT_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_TOOLS_IMAGE" "$SULLA_CONSOLE_IMAGE" sulla-server_default "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
+      printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_ACCOUNTS_IMAGE=%q\nSULLA_AGENTS_IMAGE=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOWS_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\nSULLA_TOOLS_IMAGE=%q\nSULLA_CONSOLE_IMAGE=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_ACCOUNTS_IMAGE" "$SULLA_AGENTS_IMAGE" "$SULLA_AGENT_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_TOOLS_IMAGE" "$SULLA_CONSOLE_IMAGE" sulla-server_default "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
     fi
     mv "$env_tmp" "$env_file"
   }
@@ -372,7 +370,7 @@ main() {
     printf 'SULLA_ACCOUNTS_SESSION_SECRET_FILE=%q\nSULLA_ACCOUNTS_ENCRYPTION_KEY_FILE=%q\nSULLA_ACCOUNTS_ADMIN_SECRET_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE=%q\n' "$SULLA_ACCOUNTS_SESSION_SECRET_FILE" "$SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE" "$SULLA_ACCOUNTS_ADMIN_SECRET_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE" >>"$env_file"
   fi
   declare -A service_tokens=()
-  for service in accounts vault files projects agents workflows; do
+  for service in accounts vault files agents workflows; do
     variable="SULLA_ACCOUNTS_${service^^}_TOKEN_FILE"
     service_file="${!variable:-$secrets_dir/accounts-$service.token}"
     if [[ ! -s "$service_file" ]]; then write_secret "$service_file" "$(openssl rand -hex 32)"; fi
@@ -384,7 +382,7 @@ main() {
   json_tmp="$secrets_dir/accounts-service-tokens.json.tmp"
   printf '{' >"$json_tmp"
   first=true
-  for service in accounts vault files projects agents workflows; do
+  for service in accounts vault files agents workflows; do
     [[ "$first" == true ]] || printf ',' >>"$json_tmp"; first=false
     audience="sulla-$service"
     printf '"%s":{"token":"%s","issuers":["%s/auth/realms/sulla"],"allowedAudiences":["%s"],"pathPrefixes":["/v1/private/ui-sessions/resolve","/v1/private/resolve-context"],"methods":["POST"]}' "$service" "${service_tokens[$service]}" "${SULLA_PUBLIC_URL%/}" "$audience" >>"$json_tmp"
@@ -409,14 +407,12 @@ main() {
   workload_service_token="$(<"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
   [[ ${#workload_service_token} -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 characters"
   [[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
-  for service in accounts vault files projects agents workflows; do
+  for service in accounts vault files agents workflows; do
     [[ "$workload_service_token" != "${service_tokens[$service]}" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
   done
   if ! grep -q '^SULLA_DESKTOP_EXECUTOR_URL=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_URL=%q\n' "${SULLA_DESKTOP_EXECUTOR_URL:-}" >>"$env_file"; fi
   if ! grep -q '^SULLA_DESKTOP_EXECUTOR_TOKEN=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_TOKEN=%q\n' "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" >>"$env_file"; fi
   if ! grep -q '^SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=' "$env_file"; then printf 'SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\n' "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" >>"$env_file"; fi
-  if [[ -z ${SULLA_PROJECTS_DATABASE_PASSWORD:-} ]]; then SULLA_PROJECTS_DATABASE_PASSWORD="$(openssl rand -hex 32)"; printf 'SULLA_PROJECTS_DATABASE_PASSWORD=%q\n' "$SULLA_PROJECTS_DATABASE_PASSWORD" >>"$env_file"; fi
-  if [[ -z ${SULLA_PROJECTS_JWT_AUDIENCE:-} ]]; then SULLA_PROJECTS_JWT_AUDIENCE=sulla-projects; printf 'SULLA_PROJECTS_JWT_AUDIENCE=%q\n' "$SULLA_PROJECTS_JWT_AUDIENCE" >>"$env_file"; fi
   if [[ ${SULLA_RUNTIME:-} == compose ]]; then
     if [[ -z ${SULLA_CONSOLE_MODE:-} ]]; then SULLA_CONSOLE_MODE=standalone; printf 'SULLA_CONSOLE_MODE=%q\n' "$SULLA_CONSOLE_MODE" >>"$env_file"; fi
     if [[ "$SULLA_CONSOLE_MODE" == native-lima ]]; then
@@ -432,7 +428,6 @@ main() {
   fi
   if [[ ${SULLA_RUNTIME:-} == kubernetes ]]; then
     if [[ -z ${SULLA_FILES_IMAGE:-} ]]; then SULLA_FILES_IMAGE="ghcr.io/merchantprotocol/sulla-files:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_FILES_IMAGE=%q\n' "$SULLA_FILES_IMAGE" >>"$env_file"; fi
-    if [[ -z ${SULLA_PROJECTS_IMAGE:-} ]]; then SULLA_PROJECTS_IMAGE="ghcr.io/merchantprotocol/sulla-projects:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_PROJECTS_IMAGE=%q\n' "$SULLA_PROJECTS_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_ACCOUNTS_IMAGE:-} ]]; then SULLA_ACCOUNTS_IMAGE="ghcr.io/merchantprotocol/sulla-accounts:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_ACCOUNTS_IMAGE=%q\n' "$SULLA_ACCOUNTS_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_AGENTS_IMAGE:-} ]]; then SULLA_AGENTS_IMAGE="ghcr.io/merchantprotocol/sulla-agents:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_AGENTS_IMAGE=%q\n' "$SULLA_AGENTS_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_AGENT_IMAGE:-} ]]; then SULLA_AGENT_IMAGE="ghcr.io/merchantprotocol/sulla-agent:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_AGENT_IMAGE=%q\n' "$SULLA_AGENT_IMAGE" >>"$env_file"; fi
@@ -456,19 +451,19 @@ main() {
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
     compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
     docker build --pull -t "$SULLA_AGENT_IMAGE" -f "$SULLA_SOURCE_DIR/services/sulla-agent/Dockerfile" "$SULLA_SOURCE_DIR"
-    build_services=(accounts vault files projects agents workflows tools)
+    build_services=(accounts vault files agents workflows tools)
     [[ "$SULLA_CONSOLE_MODE" != standalone ]] || build_services+=(console)
     "${compose[@]}" build --pull "${build_services[@]}"
     ensure_native_lima_console
-    if ! "${compose[@]}" up -d; then
+    if ! "${compose[@]}" up -d --remove-orphans; then
       "${compose[@]}" ps >&2 || true
-      "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
+      "${compose[@]}" logs --tail=100 vault files gateway >&2 || true
       fail "Sulla services failed to start"
     fi
     healthy=false; deadline=$((SECONDS + 300))
     while (( SECONDS < deadline )); do
-      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"; projects_id="$("${compose[@]}" ps -q projects 2>/dev/null || true)"
-      if [[ -n "$gateway_id" && -n "$files_id" && -n "$projects_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$projects_id" 2>/dev/null || true)" == healthy ]]; then
+      gateway_id="$("${compose[@]}" ps -q gateway 2>/dev/null || true)"; files_id="$("${compose[@]}" ps -q files 2>/dev/null || true)"
+      if [[ -n "$gateway_id" && -n "$files_id" && "$(docker inspect --format '{{.State.Health.Status}}' "$gateway_id" 2>/dev/null || true)" == healthy && "$(docker inspect --format '{{.State.Health.Status}}' "$files_id" 2>/dev/null || true)" == healthy ]]; then
         healthy=true
         break
       fi
@@ -476,14 +471,13 @@ main() {
     done
     if [[ "$healthy" != true ]]; then
       "${compose[@]}" ps >&2 || true
-      "${compose[@]}" logs --tail=100 vault files projects gateway >&2 || true
+      "${compose[@]}" logs --tail=100 vault files gateway >&2 || true
       fail "Sulla services did not become healthy within 5 minutes"
     fi
     "${compose[@]}" exec vault node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
   else
     verify_default_image "$SULLA_VAULT_IMAGE" merchantprotocol/sulla-vault
     verify_default_image "$SULLA_FILES_IMAGE" merchantprotocol/sulla-files
-    verify_default_image "$SULLA_PROJECTS_IMAGE" merchantprotocol/sulla-projects
     verify_default_image "$SULLA_ACCOUNTS_IMAGE" merchantprotocol/sulla-accounts
     verify_default_image "$SULLA_AGENTS_IMAGE" merchantprotocol/sulla-agents
     verify_default_image "$SULLA_AGENT_IMAGE" merchantprotocol/sulla-agent

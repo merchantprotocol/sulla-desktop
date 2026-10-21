@@ -20,8 +20,6 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_POSTGRES_PASSWORD:?missing PostgreSQL password}"
 : "${SULLA_VAULT_JWT_SECRET:?missing JWT secret}"
 : "${SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN:?missing bootstrap token}"
-: "${SULLA_PROJECTS_DATABASE_PASSWORD:?missing Projects database password}"
-: "${SULLA_PROJECTS_JWT_AUDIENCE:?missing Projects JWT audience}"
 : "${SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID:?missing Accounts Keycloak authority id}"
 : "${SULLA_ACCOUNTS_WEB_REDIRECT_URIS:?missing Accounts web redirect URIs}"
 : "${SULLA_ACCOUNTS_IMAGE:?missing pinned Accounts image}"
@@ -44,7 +42,6 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE:?missing Accounts Accounts token file}"
 : "${SULLA_ACCOUNTS_VAULT_TOKEN_FILE:?missing Vault Accounts token file}"
 : "${SULLA_ACCOUNTS_FILES_TOKEN_FILE:?missing Files Accounts token file}"
-: "${SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE:?missing Projects Accounts token file}"
 : "${SULLA_ACCOUNTS_AGENTS_TOKEN_FILE:?missing Agents Accounts token file}"
 : "${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE:?missing Workflows Accounts token file}"
 : "${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE:?missing Agents/Workflows service token file}"
@@ -57,12 +54,11 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 [[ $(wc -c <"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE") -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 bytes"
 workload_service_token="$(cat "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
 [[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
-for accounts_token_file in "$SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE" "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE" "$SULLA_ACCOUNTS_FILES_TOKEN_FILE" "$SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE" "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE" "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE"; do
+for accounts_token_file in "$SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE" "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE" "$SULLA_ACCOUNTS_FILES_TOKEN_FILE" "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE" "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE"; do
   [[ "$workload_service_token" != "$(cat "$accounts_token_file")" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
 done
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
-: "${SULLA_PROJECTS_IMAGE:?missing pinned Projects image}"
 : "${SULLA_CONSOLE_IMAGE:?missing pinned Console image}"
 : "${SULLA_STORAGE_CLASS:?missing storage class}"
 : "${SULLA_STORAGE_SIZE:?missing storage size}"
@@ -95,10 +91,6 @@ done
   --from-literal=database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla" \
   --from-literal=files-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files" \
   --from-literal=postgres-admin-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/postgres" \
-  --from-literal=projects-migration-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_projects" \
-  --from-literal=projects-database-url="postgresql://sulla_projects_service:${SULLA_PROJECTS_DATABASE_PASSWORD}@postgres:5432/sulla_projects" \
-  --from-literal=projects-database-password="$SULLA_PROJECTS_DATABASE_PASSWORD" \
-  --from-literal=projects-jwt-audience="$SULLA_PROJECTS_JWT_AUDIENCE" \
   --from-literal=jwt-secret="$SULLA_VAULT_JWT_SECRET" \
   --from-literal=files-master-key="$SULLA_FILES_MASTER_KEY" \
   --from-literal=bootstrap-token="$SULLA_VAULT_SERVER_BOOTSTRAP_TOKEN" \
@@ -108,7 +100,6 @@ done
   --from-literal=accounts-service-tokens="$(cat "$SULLA_ACCOUNTS_SERVICE_TOKENS_FILE")" \
   --from-literal=accounts-vault-token="$(cat "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE")" \
   --from-literal=accounts-files-token="$(cat "$SULLA_ACCOUNTS_FILES_TOKEN_FILE")" \
-  --from-literal=accounts-projects-token="$(cat "$SULLA_ACCOUNTS_PROJECTS_TOKEN_FILE")" \
   --from-literal=accounts-agents-token="$(cat "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE")" \
   --from-literal=accounts-workflows-token="$(cat "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE")" \
   --from-literal=agents-workflows-service-token="$(cat "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")" \
@@ -137,12 +128,11 @@ done
   sed '/^metadata:$/a\  labels:\n    app.kubernetes.io/managed-by: sulla-server-installer' | \
   "${KUBECTL[@]}" apply -f - >/dev/null
 
-rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_projects="$(mktemp)"; rendered_console="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_projects" "$rendered_console" "$rendered_storage"' EXIT
+rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_console="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_console" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
 sed "s|__SULLA_FILES_IMAGE__|${SULLA_FILES_IMAGE}|g" "$K8S_DIR/sulla-files.yaml" >"$rendered_files"
-sed "s|__SULLA_PROJECTS_IMAGE__|${SULLA_PROJECTS_IMAGE}|g" "$K8S_DIR/sulla-projects.yaml" >"$rendered_projects"
 rendered_accounts="$(mktemp)"; rendered_agents="$(mktemp)"; rendered_workflows="$(mktemp)"; rendered_tools="$(mktemp)"
-trap 'rm -f "$rendered" "$rendered_files" "$rendered_projects" "$rendered_console" "$rendered_storage" "$rendered_accounts" "$rendered_agents" "$rendered_workflows" "$rendered_tools"' EXIT
+trap 'rm -f "$rendered" "$rendered_files" "$rendered_console" "$rendered_storage" "$rendered_accounts" "$rendered_agents" "$rendered_workflows" "$rendered_tools"' EXIT
 sed -e "s|__SULLA_ACCOUNTS_IMAGE__|${SULLA_ACCOUNTS_IMAGE}|g" -e "s|__SULLA_ACCOUNTS_AUTHORITY_ID__|${SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID}|g" -e "s|__SULLA_PUBLIC_URL__|${SULLA_PUBLIC_URL}|g" -e "s|__SULLA_ACCOUNTS_REDIRECT_URIS__|${SULLA_ACCOUNTS_WEB_REDIRECT_URIS}|g" "$K8S_DIR/sulla-accounts.yaml" >"$rendered_accounts"
 sed "s|__SULLA_AGENTS_IMAGE__|${SULLA_AGENTS_IMAGE}|g" "$K8S_DIR/sulla-agents.yaml" >"$rendered_agents"
 sed "s|__SULLA_WORKFLOWS_IMAGE__|${SULLA_WORKFLOWS_IMAGE}|g" "$K8S_DIR/sulla-workflows.yaml" >"$rendered_workflows"
@@ -156,7 +146,6 @@ sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAG
 "${KUBECTL[@]}" --namespace "$NAMESPACE" wait --for=condition=complete job/sulla-db-init --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_files"
-"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_projects"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_accounts"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_agents"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_workflows"
@@ -187,7 +176,6 @@ fi
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/postgres --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-vault --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-files --timeout=5m
-"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-projects --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-accounts --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-agents --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-workflows --timeout=5m
