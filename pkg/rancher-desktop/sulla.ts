@@ -347,7 +347,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
         const filesStartup = (async() => {
           await traceAsync('startup: watcher.initialize', () => watcher.initialize());
           const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-          if (getVaultKeyService().isUnlocked()) await traceAsync('startup: watcher.unlockService', () => watcher.unlockService());
+          if (getVaultKeyService().isUnlocked()) await traceAsync('startup: watcher.unlockService', () => watcher.unlockServiceWithRetry());
           else traceEvent('startup: vault locked; skipping Files unlock');
           console.log('[Background] Sulla Files runtime initialized');
         })();
