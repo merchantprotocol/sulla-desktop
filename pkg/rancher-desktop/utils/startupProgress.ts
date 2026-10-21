@@ -91,6 +91,8 @@ export interface LifecycleStepInput {
   status:      'start' | 'ready' | 'failed' | 'skipped';
   durationMs?: number;
   error?:      string;
+  /** True when a failed start will be retried automatically — not a terminal failure. */
+  retrying?:   boolean;
 }
 
 export const FEED_LIMIT = 5;
@@ -460,6 +462,18 @@ export class StartupProgressModel {
         this.closeBackendStep();
         // Lifecycle steps report their own ready/failed events; an interrupted one stays out of the feed.
         this.step = { key, label, startedAt: this.now() };
+      }
+      this.recomputeServices();
+
+      return;
+    }
+
+    // A retryable failure is transient — it self-heals on the next retry attempt,
+    // so it must not be surfaced as a hard failure. The live per-service status
+    // (via onServiceStatus/services[]) already shows it calmly while it retries.
+    if (event.status === 'failed' && event.retrying) {
+      if (this.step.key === key) {
+        this.step = { key: 'service:waiting', label: 'Moving to the next step', startedAt: this.now() };
       }
       this.recomputeServices();
 
