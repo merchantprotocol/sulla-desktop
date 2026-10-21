@@ -33,6 +33,42 @@ const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
 const MAX_DIRECT_UPLOAD_BYTES = 64 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const filesClient = getSullaFilesClient();
+const FILES_RETRY_DELAY_MS = 1_500;
+let filesReadyRetry:ReturnType<typeof setTimeout> | undefined;
+
+function filesTemporarilyUnavailable(error:unknown):boolean {
+  return error instanceof FilesApiError ? error.status >= 500
+    : error instanceof TypeError || (error instanceof Error &&
+      ['AbortError', 'TimeoutError'].includes(error.name)) ||
+      (error instanceof Error && (error.message === 'Files service is unavailable' ||
+        /net::ERR_(CONNECTION_(REFUSED|RESET|CLOSED|ABORTED)|EMPTY_RESPONSE|TIMED_OUT|NETWORK_CHANGED)\b/.test(error.message)));
+}
+
+function queueFilesReadyRetry():void {
+  if (filesReadyRetry) return;
+  filesReadyRetry = setTimeout(() => {
+    filesReadyRetry = undefined;
+    // request() also performs the watcher's authenticated readiness/unlock check.
+    void filesClient.request('/healthz', { signal: AbortSignal.timeout(3_000) })
+      .then(response => response.body?.cancel()).catch(() => undefined);
+  }, FILES_RETRY_DELAY_MS);
+  filesReadyRetry.unref();
+}
+
+async function readyFilesJson<T>(endpoint:string, init:RequestInit):Promise<T> {
+  try {
+    return await filesClient.json<T>(endpoint, init);
+  } catch (error) {
+    if (!filesTemporarilyUnavailable(error)) throw error;
+    await new Promise(resolve => setTimeout(resolve, FILES_RETRY_DELAY_MS));
+    try {
+      return await filesClient.json<T>(endpoint, init);
+    } catch (retryError) {
+      if (filesTemporarilyUnavailable(retryError)) queueFilesReadyRetry();
+      throw retryError;
+    }
+  }
+}
 
 async function cloudFilesAvailable():Promise<boolean> {
   try {
@@ -651,16 +687,16 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
     try {
-      const files = await filesClient.json<any[]>('/v1/agent-files/query', { method: 'POST', body: JSON.stringify(input) });
+      const files = await readyFilesJson<any[]>('/v1/agent-files/query', { method: 'POST', body: JSON.stringify(input) });
 
-      return files.map(file => reference(file, {
+      return { files: files.map(file => reference(file, {
         id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id,
-      }));
+      })) };
     } catch (error) {
       const status = error instanceof FilesApiError ? error.status : 'request-failed';
 
       console.warn(`[SullaFiles] Chat inventory is temporarily unavailable (status=${ status })`);
-      return [];
+      return { files: [], error: 'Files temporarily unavailable' };
     }
   });
   ipcMain.handle('files-ui:reference-content', async(_event, input:{ fileId:string; versionId?:string }) => {

@@ -491,7 +491,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:set-residency': (input: { fileId: string; desiredState: 'local' | 'online-only' }) => void;
   'files-ui:recent-references': (limit?: number) => SullaFileReference[];
   'files-ui:pick-reference': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
-  'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => SullaFileReference[];
+  'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => { files: SullaFileReference[]; error?: string };
   'files-ui:reference-content': (input: { fileId: string; versionId?: string }) => { mime: string; data: Uint8Array };
   'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => { reference: SullaFileReference };
   'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
