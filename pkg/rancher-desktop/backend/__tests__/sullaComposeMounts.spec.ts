@@ -26,6 +26,13 @@ afterEach(() => {
 });
 
 describe('host bind detection', () => {
+  test('allows the guest-local Files backup and procfs binds', () => {
+    expect(findHostBindMounts({ services: {
+      sulla_files:      { volumes: ['/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave'] },
+      sulla_files_fuse: { volumes: ['/proc:/host/proc:ro'] },
+    } })).toEqual([]);
+  });
+
   test('flags host, relative and home sources; allows named volumes and guest paths', () => {
     const found = findHostBindMounts({
       services: {

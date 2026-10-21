@@ -16,7 +16,8 @@ export type AccountsSecretName = typeof ACCOUNTS_SECRET_NAMES[number];
 
 /** Guest-local bind sources that Desktop provisions (or that the VM owns). */
 const GUEST_BIND_PREFIXES = ['/mnt/data/', '/var/lib/sulla/', '/mnt/sulla-files'];
-const GUEST_BIND_EXACT = ['/var/run/docker.sock'];
+// /mnt/sulla-backups: guest dir for Files backups; /proc: guest procfs read by the FUSE adapter.
+const GUEST_BIND_EXACT = ['/var/run/docker.sock', '/mnt/sulla-backups', '/proc'];
 
 export function accountsSecretBinds() {
   return ACCOUNTS_SECRET_NAMES.map(name => ({
