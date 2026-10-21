@@ -3,6 +3,7 @@
 import { startCaffeinate, stopCaffeinate, scheduleWake } from '../../main/SleepPreventionService';
 import { HeartbeatRunAuditModel } from '../database/models/HeartbeatRunAuditModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { runCommand } from '../tools/util/CommandRunner';
 
 // ── Event History Types ──
 
@@ -17,7 +18,8 @@ export type HeartbeatEventType =
   | 'heartbeat_aborted'
   | 'sleep_prevention_started'
   | 'sleep_prevention_stopped'
-  | 'wake_scheduled';
+  | 'wake_scheduled'
+  | 'container_alert';
 
 export interface HeartbeatEvent {
   ts:          number;
@@ -108,6 +110,11 @@ export class HeartbeatService {
   // asserts on AC power and does not defeat clamshell/lid-close sleep.
   private standingCaffeineHeld = false;
 
+  // Docker health alerts are intentionally in-memory: a single alert per
+  // container incident, re-armed after the container returns to a clean state.
+  private containerRestartCounts = new Map<string, number>();
+  private containerAlerts = new Set<string>();
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     console.log('[HeartbeatService] Initializing scheduler...');
@@ -197,6 +204,9 @@ export class HeartbeatService {
 
   private async checkAndMaybeTrigger(): Promise<void> {
     try {
+      // Run independently of the heartbeat enable/window settings. A disabled
+      // autonomous operator must not make a crashing service invisible.
+      await this.checkContainerHealth();
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
       if (!enabled) {
         this.totalSkips++;
@@ -264,6 +274,64 @@ export class HeartbeatService {
       const msg = err instanceof Error ? err.message : String(err);
       this.recordEvent('heartbeat_error', `Scheduler check failed: ${ msg }`, { error: msg });
       console.error('[HeartbeatService] Scheduler check failed:', err);
+    }
+  }
+
+  private async checkContainerHealth(): Promise<void> {
+    const listed = await runCommand('docker', ['ps', '-aq'], { timeoutMs: 15_000, maxOutputChars: 50_000 });
+    if (listed.exitCode !== 0) return;
+
+    const ids = listed.stdout.split(/\s+/).map(value => value.trim()).filter(Boolean);
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const inspected = await runCommand('docker', ['inspect', '--format', '{{json .}}', id], { timeoutMs: 15_000, maxOutputChars: 100_000 });
+      if (inspected.exitCode !== 0) continue;
+      let container: any;
+      try { container = JSON.parse(inspected.stdout.trim()); } catch { continue; }
+      const name = String(container.Name || id).replace(/^\//, '');
+      seen.add(name);
+      const state = container.State || {};
+      const restartCount = Number(state.RestartCount || 0);
+      const previousCount = this.containerRestartCounts.get(name);
+      this.containerRestartCounts.set(name, restartCount);
+      const restartIncreasing = previousCount !== undefined && restartCount > previousCount;
+      let lastError = String(state.Error || '').trim();
+      let heapError = false;
+
+      if (state.OOMKilled || restartCount > 0 || restartIncreasing || state.Status === 'exited') {
+        const logs = await runCommand('docker', ['logs', '--tail', '40', name], { timeoutMs: 15_000, maxOutputChars: 30_000 });
+        const lines = `${ logs.stdout }\n${ logs.stderr }`.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const heapLine = [...lines].reverse().find(line => /(?:javascript\s+heap|heap)\s+out\s+of\s+memory|out\s+of\s+memory/i.test(line));
+        if (heapLine) { heapError = true; lastError = heapLine; }
+        else if (!lastError && lines.length) lastError = lines[lines.length - 1];
+      }
+
+      const unhealthy = Boolean(state.OOMKilled) || restartCount >= 3 || restartIncreasing || heapError;
+      if (!unhealthy) {
+        this.containerAlerts.delete(name);
+        continue;
+      }
+      if (this.containerAlerts.has(name)) continue;
+
+      this.containerAlerts.add(name);
+      const reason = state.OOMKilled ? 'OOMKilled' : heapError ? 'heap out of memory' : `restarting (${ restartCount } restarts)`;
+      const detail = lastError || `container state: ${ state.Status || 'unknown' }`;
+      const message = `Container ${ name } is unhealthy: ${ reason }; restart count ${ restartCount }; last error: ${ detail.slice(-500) }`;
+      this.recordEvent('container_alert', message, { error: detail, meta: { container: name, restartCount, oomKilled: Boolean(state.OOMKilled) } });
+      this.wakeRequested = `container alert: ${ name }`;
+      try {
+        const { getChromeApi } = await import('@pkg/main/chromeApi');
+        await getChromeApi().notifications.create(`container-health-${ name }`, { title: `Sulla container alert: ${ name }`, message });
+      } catch (error) {
+        console.error('[HeartbeatService] Container alert notification failed:', error);
+      }
+    }
+
+    for (const name of this.containerRestartCounts.keys()) {
+      if (!seen.has(name)) {
+        this.containerRestartCounts.delete(name);
+        this.containerAlerts.delete(name);
+      }
     }
   }
 
