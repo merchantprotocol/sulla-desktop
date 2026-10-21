@@ -948,7 +948,18 @@ export function createApp(
     response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc });
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
 
-  app.post('/v1/search', async(request:RequestWithIdentity, response, next) => { try { if (!search) return response.status(503).json({ error: 'search unavailable' }); response.json(await search.search(request.body, (await db.query("SELECT id FROM collections WHERE published=TRUE AND legacy_source=FALSE")).rows.map(row => ({collectionId:row.id})))) } catch (error) { next(error) } });
+  app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
+    const abort = new AbortController();
+    const disconnected = () => { if (!response.writableEnded) abort.abort() };
+    request.once('aborted', disconnected); response.once('close', disconnected);
+    try {
+      if (!search) return response.status(503).json({ error: 'search unavailable' });
+      const scopes = (await db.query("SELECT id FROM collections WHERE published=TRUE AND legacy_source=FALSE")).rows.map(row => ({ collectionId: row.id }));
+      const result = await search.search(request.body, scopes, abort.signal);
+      if (!abort.signal.aborted) response.json(result);
+    } catch (error) { if (!abort.signal.aborted) next(error) }
+    finally { request.off('aborted', disconnected); response.off('close', disconnected) }
+  });
   const starPrincipal = (request:RequestWithIdentity) => { const actor = identity(request); return actor.agentId || actor.jobId ? { type: 'agent', id: actor.agentId || actor.jobId! } : { type: 'user', id: actor.userId } };
   app.get('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); await requireCollection(request, collectionId, 'view', true, true); const principal = starPrincipal(request);

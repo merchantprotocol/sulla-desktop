@@ -46,7 +46,25 @@ export class FileSearch {
     return this.vectorTable;
   }
 
-  async search(input:SearchInput, granted:CollectionSearchScope[]):Promise<FileSearchResponse> {
+  private async boundedQuery<T>(text:string, values:any[], signal?:AbortSignal):Promise<pg.QueryResult<T> | undefined> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL statement_timeout = '5s'");
+      const result = await client.query<T>({ text, values, signal } as any);
+      await client.query('COMMIT');
+      return result;
+    } catch (error:any) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      if (error?.code === '57014') {
+        console.warn('[SullaFiles] search query reached its 5s database time limit');
+        return undefined;
+      }
+      throw error;
+    } finally { client.release() }
+  }
+
+  async search(input:SearchInput, granted:CollectionSearchScope[], signal?:AbortSignal):Promise<FileSearchResponse> {
     const scopes = input.collectionId ? granted.filter(scope => scope.collectionId === input.collectionId) : granted;
     if (!scopes.length) return { results: [], coverage: { total: 0, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true } };
     const visibleVersion = (_args:any[]) => 'f.current_version_id';
@@ -64,26 +82,32 @@ export class FileSearch {
     const queryText = input.terms?.length ? input.terms.filter(term => /^[a-z0-9_.-]+$/i.test(term)).join(' OR ') : input.query;
     const keywordArgs:any[] = []; const keywordWhere = filteredWhere(input, scopes, keywordArgs); const keywordVersion = visibleVersion(keywordArgs);
     keywordArgs.push(queryText);
-    const keyword = await this.db.query<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
-      ts_rank_cd(sc.search_vector,websearch_to_tsquery('simple',$${ keywordArgs.length })) signal
-      FROM files f JOIN file_versions v ON v.id=${ keywordVersion } LEFT JOIN file_search_chunks sc ON sc.file_id=f.id AND sc.version_id=v.id
-      WHERE ${ keywordWhere.join(' AND ') } AND sc.search_vector @@ websearch_to_tsquery('simple',$${ keywordArgs.length })
-      ORDER BY signal DESC,f.updated_at DESC LIMIT 60`, keywordArgs);
+    const keyword = await this.boundedQuery<Candidate>(`WITH matches AS MATERIALIZED (
+        SELECT sc.file_id,sc.version_id,sc.content,sc.search_vector
+        FROM file_search_chunks sc
+        WHERE sc.search_vector @@ websearch_to_tsquery('simple',$${ keywordArgs.length })
+        LIMIT 200
+      )
+      SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
+        ts_rank_cd(sc.search_vector,websearch_to_tsquery('simple',$${ keywordArgs.length })) signal
+      FROM matches sc JOIN files f ON f.id=sc.file_id JOIN file_versions v ON v.id=${ keywordVersion } AND sc.version_id=v.id
+      WHERE ${ keywordWhere.join(' AND ') }
+      ORDER BY signal DESC,f.updated_at DESC LIMIT 60`, keywordArgs, signal);
 
     const vector = this.embedder.embed(input.query);
     let semantic:Candidate[];
     const semanticArgs:any[] = []; const semanticWhere = filteredWhere(input, scopes, semanticArgs); const semanticVersion = visibleVersion(semanticArgs);
     if (await this.hasVectorTable()) {
       semanticArgs.push(vectorLiteral(vector));
-      semantic = (await this.db.query<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
+      semantic = (await this.boundedQuery<Candidate>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,
         1-(sv.embedding <=> $${ semanticArgs.length }::vector) signal
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id JOIN file_search_vectors sv ON sv.chunk_id=sc.id
         WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=${ semanticVersion }
-        ORDER BY sv.embedding <=> $${ semanticArgs.length }::vector LIMIT 60`, semanticArgs)).rows;
+        ORDER BY sv.embedding <=> $${ semanticArgs.length }::vector LIMIT 60`, semanticArgs, signal))?.rows ?? [];
     } else {
-      const bounded = (await this.db.query<any>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
+      const bounded = (await this.boundedQuery<any>(`SELECT f.id file_id,f.path,f.mime,v.size,f.updated_at,f.created_by_id,sc.content,sc.embedding_json
         FROM files f JOIN file_versions v ON v.id=${ semanticVersion } JOIN file_search_chunks sc ON sc.file_id=f.id WHERE ${ semanticWhere.join(' AND ') } AND sc.version_id=v.id
-        ORDER BY f.updated_at DESC LIMIT 800`, semanticArgs)).rows;
+        ORDER BY f.updated_at DESC LIMIT 800`, semanticArgs, signal))?.rows ?? [];
       semantic = bounded.map(row => ({ ...row, signal: cosine(vector, row.embedding_json) })).sort((a, b) => b.signal - a.signal).slice(0, 60);
     }
     semantic = semantic.filter(row => row.signal >= 0.2);
@@ -95,7 +119,7 @@ export class FileSearch {
       if (candidate.signal > current.bestSignal) { current.content = candidate.content; current.bestSignal = candidate.signal }
       fused.set(candidate.file_id, current);
     };
-    keyword.rows.forEach((row, rank) => add(row, 'keyword', rank)); semantic.forEach((row, rank) => add(row, 'meaning', rank));
+    (keyword?.rows ?? []).forEach((row, rank) => add(row, 'keyword', rank)); semantic.forEach((row, rank) => add(row, 'meaning', rank));
     const results = [...fused.values()].sort((a, b) => b.rank - a.rank).slice(0, Math.min(input.limit ?? 100, 100)).map(row => ({
       id:            row.file_id,
       title:         basename(row.path),
