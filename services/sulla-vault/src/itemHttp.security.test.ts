@@ -14,7 +14,7 @@ const owner = '11111111-1111-4111-8111-111111111111';
 const id = '22222222-2222-4222-8222-222222222222';
 const brokerToken = 'synthetic-broker-identity-'.repeat(3);
 const item = (): VaultItemPlaintext => ({
-  type: 'apiKey', name: 'Synthetic Cloudflare', password: 'synthetic-key-never-returned', username: 'synthetic@example.invalid',
+  type: 'apiKey', name: 'Synthetic Cloudflare', password: 'synthetic-"key-never-returned', username: 'synthetic@example.invalid',
   agentPolicy: { ...DEFAULT_AGENT_POLICY, mode: 'agents', level: 'autofill', agents: ['worker'], sites: ['api.cloudflare.com'] },
   proxy: { hosts: ['api.cloudflare.com'], rules: [
     { source: 'password', target: 'header', name: 'X-Auth-Key', scheme: 'raw' },

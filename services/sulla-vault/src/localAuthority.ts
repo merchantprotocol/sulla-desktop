@@ -1655,7 +1655,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       )) as VaultItemPlaintext;
       const checked = validateVaultItemProxy(plaintext);
       if (!checked.ok) continue;
-      const usable = agentPolicyAllows({ ...(row.agent_policy ?? plaintext.agentPolicy), sites: [] }, {
+      const policy = row.agent_policy ?? plaintext.agentPolicy;
+      if (!Array.isArray(policy?.sites)) continue;
+      const usable = agentPolicyAllows({ ...policy, sites: [] }, {
         agentId: claims.agent_id, level: 'autofill', onServer: false,
       }).allowed;
       if (!usable) continue;
@@ -2032,6 +2034,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const headers = Object.fromEntries(Object.entries(input.headers ?? {}).filter(([name]) => !ruleHeaderNames.has(name.toLowerCase())));
       headers['accept-encoding'] = 'identity';
       const secrets: string[] = [];
+      const rememberSecret = (value: string) => {
+        secrets.push(value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value), new URLSearchParams({ v: value }).toString().slice(2));
+      };
       for (const rule of checked.proxy.rules) {
         let value: string | undefined;
         if (rule.scheme === 'Basic') {
@@ -2040,16 +2045,18 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           }
           if (Buffer.byteLength(plaintext.username) + Buffer.byteLength(plaintext.password) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
           value = `Basic ${ Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64') }`;
-          secrets.push(plaintext.username, plaintext.password, Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64'));
+          rememberSecret(plaintext.username);
+          rememberSecret(plaintext.password);
+          rememberSecret(Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64'));
         } else {
           const source = proxySource(plaintext, rule.source);
           if (typeof source !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Agent usage source is unavailable');
           if (Buffer.byteLength(source) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
           value = rule.scheme === 'raw' ? source : `${ rule.scheme } ${ source }`;
-          secrets.push(source);
+          rememberSecret(source);
         }
         if (rule.target === 'header' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) throw new LocalVaultError('policy_denied', 403, 'Agent usage value is not a valid HTTP header');
-        secrets.push(value, encodeURIComponent(value));
+        rememberSecret(value);
         if (rule.target === 'header') headers[rule.name] = value;
         else target.searchParams.set(rule.name, value);
       }
