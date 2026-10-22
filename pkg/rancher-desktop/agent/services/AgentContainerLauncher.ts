@@ -758,13 +758,19 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           try {
             accountId = await getIntegrationService().getActiveAccountId('claude-code');
             try {
-              // Active account may be an empty placeholder; prefer a connected one.
               const accounts = await getIntegrationService().getAccounts('claude-code');
               if (!accounts.find(a => a.account_id === accountId)?.connected) {
                 const alt = accounts.find(a => a.connected);
-                if (alt) accountId = alt.account_id;
+                if (alt) {
+                  log.info(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected; falling back to "${ alt.account_id }"`);
+                  accountId = alt.account_id;
+                } else {
+                  log.warn(`[AgentContainer] ${ containerName } active claude-code account "${ accountId }" is disconnected with no connected alternative`);
+                }
               }
-            } catch { /* keep the active account */ }
+            } catch (err) {
+              log.warn(`[AgentContainer] Could not verify claude-code account connectivity for ${ containerName }: ${ (err as Error).message }`);
+            }
             integrationId = 'claude-code';
             authMode = accountId === 'oauth' ? 'oauth' : 'api-key';
           } catch (error) {
