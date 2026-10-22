@@ -196,3 +196,40 @@ it('keeps sessionless local git inspection closed under container vault authorit
   expect(res.body.error).toBe('GitHub tool requires a verified tool session');
   expect(issueLocalBrokerContext).not.toHaveBeenCalled();
 });
+
+it('derives a verified vault context for a trusted spawned-agent tool session', async() => {
+  const spawnedState = {
+    metadata: {
+      allowedToolNames: ['vault_list_api_keys'],
+      agentId: 'codex-sol-worker',
+      threadId: 'spawn-agent-worker',
+      delegatedJobId: 'agent-job-1',
+    },
+  };
+  getToolSession.mockReturnValue({ state: spawnedState, executionContext: undefined });
+  issueLocalBrokerContext.mockResolvedValueOnce({
+    ...sessionContext,
+    agent_id: 'codex-sol-worker', pod_id: 'desktop:spawn-agent-worker',
+    thread_id: 'spawn-agent-worker', job_id: 'agent-job-1', credential_scope: {},
+  });
+  createTool.mockResolvedValueOnce({
+    name: 'vault_list_api_keys', metadata: { category: 'vault' }, executionContext: undefined,
+    setState: jest.fn(), call: callTool,
+  });
+  const req = request('verified-session', 'desktop-secret', 'list_api_keys');
+  req.params.slug = 'vault';
+  const server = Object.create(ChatCompletionsServer.prototype) as any;
+  server.apiToken = 'desktop-secret';
+  const res = response();
+
+  await server.handleIntegrationCall(req, res);
+
+  expect(res.statusCode).toBe(200);
+  expect(issueLocalBrokerContext).toHaveBeenCalledWith(expect.objectContaining({
+    agentId: 'codex-sol-worker', podId: 'desktop:spawn-agent-worker',
+    threadId: 'spawn-agent-worker', jobId: 'agent-job-1', credentialScope: {},
+  }));
+  expect(res.body.result.context).toEqual(expect.objectContaining({
+    agent_id: 'codex-sol-worker', pod_id: 'desktop:spawn-agent-worker', job_id: 'agent-job-1',
+  }));
+});
