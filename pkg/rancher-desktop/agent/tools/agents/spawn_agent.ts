@@ -487,6 +487,10 @@ export class SpawnAgentWorker extends BaseTool {
         if (runLocation === 'container') {
           const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
           const provider = String(subState.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+          const CONTAINER_PROVIDERS = ['claude-code', 'codex'];
+          if (!CONTAINER_PROVIDERS.includes(provider)) {
+            throw new Error(`Provider "${ provider }" cannot run in a container. Agent "${ task.agentId ?? task.agentName ?? 'unknown' }" must use ${ CONTAINER_PROVIDERS.join(' or ') }, or set run_location to "vm".`);
+          }
           if (!activityJobId) throw new Error('Container agents require a durable job identity');
           const promptMessage = subState.messages[subState.messages.length - 1];
           if (typeof promptMessage?.content === 'string') {
