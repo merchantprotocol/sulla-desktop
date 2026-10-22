@@ -3983,13 +3983,18 @@ start_pre() {
             if (this.#activeOptionalSullaServices.has(service)) continue;
             try {
               // Files can legitimately spend minutes applying a first-start
-              // schema upgrade. Do not re-run compose against a live starter.
+              // schema upgrade. Do not re-run compose against a live starter;
+              // let it finish, then replace it only if a newer image exists.
               if (service === 'sulla_files') {
                 const state = await this.execCommand(
                   { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
                   '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', container,
                 );
-                if (!state.trim().startsWith('running')) await startOptionalService(service);
+                if (!state.trim().startsWith('running')) {
+                  await startOptionalService(service);
+                } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
+                  await startOptionalService(service);
+                }
               } else {
                 await startOptionalService(service);
               }
@@ -4024,6 +4029,31 @@ start_pre() {
         }
       });
     });
+  }
+
+  /**
+   * After a running service finishes starting, pull its published image and
+   * report whether the container is still on an older one. Failures keep the
+   * running container.
+   */
+  private async sullaServiceImageIsStale(container: string, service: string, generation?: number): Promise<boolean> {
+    await this.waitForDockerServiceHealthy(container, 600, generation);
+    const refreshImage = this.#managedSullaRefreshImages.get(service);
+
+    if (!refreshImage) return false;
+    try {
+      await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
+      const [running, latest] = await Promise.all([
+        this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
+        this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', refreshImage),
+      ]);
+
+      return running.trim() !== latest.trim();
+    } catch (error) {
+      console.warn(`[Sulla] Could not check ${ refreshImage } for ${ service }; keeping the running container:`, error);
+
+      return false;
+    }
   }
 
   /**
