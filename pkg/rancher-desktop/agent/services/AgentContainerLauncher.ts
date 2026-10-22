@@ -208,7 +208,7 @@ def serve(c):
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
   const bridge = String.raw`const n=require('net');n.createServer(c=>{let b=Buffer.alloc(0),done=false;c.on('data',d=>{if(done)return;b=Buffer.concat([b,d]);const i=b.indexOf('\r\n\r\n');if(i<0)return;const m=b.toString('latin1',0,i).match(/^(\S+)\s+\/_sulla\/(\d+)(\/[^\s]*)\s+(HTTP\/\d\.\d)/);if(!m){c.destroy();return}done=true;const u=n.connect('${ HOST_RELAY_SOCKET }',()=>{u.write(m[2]+'\n');u.write(Buffer.from(b.toString('latin1').replace(m[0],m[1]+' '+m[3]+' '+m[4]),'latin1'))});u.on('data',x=>c.write(x));u.on('end',()=>c.end());u.on('error',()=>c.destroy());c.on('data',x=>u.write(x));c.on('end',()=>u.end())})}).listen(${ HOST_RELAY_PORT },'0.0.0.0');`;
-  await limactl(['sh', '-c', 'test -S "$1" || { mkdir -p "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
+  await limactl(['sh', '-c', 'test -S "$1" || { sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
   await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
   const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
   if (!exists) {
@@ -704,7 +704,10 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       network:     AGENT_NETWORK,
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
-      tmpfs:       { '/home/sulla': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700` },
+      tmpfs:       {
+        '/home/sulla/.claude': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
+        '/home/sulla/.codex':  `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
+      },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });
@@ -987,7 +990,10 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       network:     AGENT_NETWORK,
       workingDir:  workspacePath,
       user:        `${ identity.uid }:${ identity.gid }`,
-      tmpfs:       { '/home/sulla': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700` },
+      tmpfs:       {
+        '/home/sulla/.claude': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
+        '/home/sulla/.codex':  `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
+      },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
     });

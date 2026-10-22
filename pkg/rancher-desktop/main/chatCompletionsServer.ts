@@ -1216,6 +1216,27 @@ export class ChatCompletionsServer {
           });
         }
 
+        if (session && canonicalCategory === 'vault' && usesContainerVaultAuthority() && !sessionContext) {
+          const metadata = session.state.metadata as Record<string, any>;
+          const agentId = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
+          const threadId = String(metadata.threadId ?? '').trim();
+          if (!agentId || !threadId) {
+            return res.status(403).json({ success: false, error: 'Vault tool session is missing trusted graph identity' });
+          }
+          const graphPodId = String(metadata.podId ?? '').trim();
+          sessionContext = await issueLocalBrokerContext({
+            agentId,
+            podId:              graphPodId || `desktop:${ threadId}`,
+            credentialScope:    {},
+            threadId,
+            jobId:              metadata.delegatedJobId ?? metadata.jobId,
+            workflowExecutionId: metadata.activeWorkflow?.executionId,
+            orgId:              metadata.orgId,
+            requestId:          req.header('X-Request-Id') ?? crypto.randomUUID(),
+            signal:             AbortSignal.timeout(60_000),
+          });
+        }
+
         let bearerContext: ToolExecutionContext | undefined;
         if (bearer && bearer !== this.apiToken && bearer !== sessionToken) {
           try {
