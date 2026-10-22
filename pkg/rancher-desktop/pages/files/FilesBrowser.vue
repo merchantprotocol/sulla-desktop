@@ -1021,7 +1021,9 @@ function loadPinnedCollectionIds():Set<string> {
   } catch { return new Set() }
 }
 const pinnedCollectionIds = ref(loadPinnedCollectionIds());
-const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => pinnedCollectionIds.value.has(collection.id)) ?? []);
+// Every collection is always listed; pinned ones sort first.
+const visibleCollections = computed(() => [...(snapshot.value?.availableCollections ?? [])]
+  .sort((left, right) => Number(pinnedCollectionIds.value.has(right.id)) - Number(pinnedCollectionIds.value.has(left.id))));
 const currentCollectionPinned = computed(() => Boolean(snapshot.value?.collection.id && pinnedCollectionIds.value.has(snapshot.value.collection.id)));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
 function setCollectionPinned(collectionId:string, pinned:boolean) {
