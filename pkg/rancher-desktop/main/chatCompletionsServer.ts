@@ -12,7 +12,7 @@ import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrok
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
-import { githubRepositoryFromArgs, scopeToolExecutionContext } from '@pkg/agent/tools/credentialScope';
+import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
@@ -38,6 +38,7 @@ function assertSameExecutionIdentity(left: ToolExecutionContext, right: ToolExec
   if (leftScope && rightScope && (
     leftScope.integration_id !== rightScope.integration_id ||
     leftScope.account_id !== rightScope.account_id ||
+    leftScope.item_id !== rightScope.item_id ||
     (leftScope.repository !== undefined && rightScope.repository !== undefined && leftScope.repository !== rightScope.repository)
   )) {
     throw new Error('Tool session credential scope does not match bearer capability');
@@ -1247,6 +1248,13 @@ export class ChatCompletionsServer {
             executionContext = await scopeToolExecutionContext(executionContext, 'github', githubRepositoryFromArgs(params));
           } catch (error) {
             return res.status(403).json({ success: false, error: (error as Error).message });
+          }
+        }
+        if (canonicalCategory === 'vault' && ['request', 'list_api_keys'].includes(endpoint)) {
+          if (!executionContext) return res.status(403).json({ success: false, error: 'Vault item tools require a verified execution context' });
+          if (endpoint === 'request') {
+            try { executionContext = await scopeItemExecutionContext(executionContext, params.item); }
+            catch (error) { return res.status(403).json({ success: false, error: (error as Error).message }); }
           }
         }
         if (executionContext) tool.executionContext = executionContext;

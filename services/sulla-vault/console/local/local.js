@@ -288,6 +288,7 @@
       if (item.uris?.[0]?.uri) fields.append(detailField('Website', item.uris[0].uri));
       for (const field of Array.isArray(item.customFields) ? item.customFields : []) if (field && typeof field.label === 'string') fields.append(customFieldDetail({ ...field, value: typeof field.value === 'string' ? field.value : '' }));
       if (item.notes) fields.append(detailField('Notes', item.notes));
+      if (item.proxy) { fields.append(detailField('Agent usage hosts', item.proxy.hosts.join(', '))); for (const rule of item.proxy.rules) fields.append(detailField(`Usage: ${rule.target} ${rule.name}`, `${rule.scheme} from ${rule.scheme === 'Basic' ? 'username:password' : rule.source}`)); }
       if (!fields.children.length) fields.append(detailField('Details', 'No additional fields'));
       const enabled = itemPolicy.mode === 'agents';
       byId('detail-access-title').textContent = enabled ? 'Agents can use this' : 'Only you can use this';
@@ -340,6 +341,26 @@
     byId('item-form').classList.toggle('policy-disabled', !enabled);
   };
   const showBrowser = () => { auditGeneration += 1; byId('editor-view').hidden = true; byId('audit-view').hidden = true; byId('browser-view').hidden = false; byId('nav-audit').classList.remove('on'); document.querySelectorAll('[data-category]').forEach(button => button.classList.toggle('on', button.dataset.category === category)); };
+  const renderProxyRules = rules => {
+    const container = byId('proxy-rules'); container.replaceChildren();
+    for (const rule of rules || []) {
+      const row = document.createElement('div'); row.className = 'proxy-rule form-grid';
+      row.innerHTML = `<label>Source<input class="proxy-source" placeholder="password, username, custom:Label"></label><label>Target<select class="proxy-target"><option value="header">Header</option><option value="query">Query</option></select></label><label>Name<input class="proxy-name" maxlength="64"></label><label>Scheme<select class="proxy-scheme"><option>raw</option><option>Bearer</option><option>Token</option><option>Basic</option></select></label><button type="button" class="btn sm">Remove rule</button>`;
+      row.querySelector('.proxy-source').value = rule.source || 'password'; row.querySelector('.proxy-target').value = rule.target || 'header'; row.querySelector('.proxy-name').value = rule.name || ''; row.querySelector('.proxy-scheme').value = rule.scheme || 'raw';
+      row.querySelector('button').onclick = () => row.remove(); container.append(row);
+    }
+  };
+  const readProxyRules = () => [...byId('proxy-rules').children].map(row => ({ source: row.querySelector('.proxy-source').value.trim(), target: row.querySelector('.proxy-target').value, name: row.querySelector('.proxy-name').value.trim(), scheme: row.querySelector('.proxy-scheme').value }));
+  const syncProxyFields = () => { byId('proxy-fields').hidden = !['apiKey', 'login'].includes(byId('item-type').value); };
+  byId('add-proxy-rule').onclick = () => { const rules = readProxyRules(); if (rules.length >= 5) return message('At most five usage rules.', true); renderProxyRules([...rules, { source: 'password', target: 'header', name: 'X-API-Key', scheme: 'raw' }]); };
+  byId('proxy-presets').onclick = event => {
+    const preset = event.target.closest('[data-proxy]')?.dataset.proxy; if (!preset) return;
+    const rule = (name, scheme = 'raw', source = 'password', target = 'header') => ({ source, target, name, scheme });
+    const presets = { bearer: [rule('Authorization', 'Bearer')], key: [rule('X-API-Key')], cloudflare: [rule('Authorization', 'Bearer')], global: [rule('X-Auth-Key'), rule('X-Auth-Email', 'raw', 'username')], basic: [rule('Authorization', 'Basic')], query: [rule('api_key', 'raw', 'password', 'query')] };
+    if (['cloudflare', 'global'].includes(preset)) byId('proxy-hosts').value = 'api.cloudflare.com';
+    byId('proxy-hint').textContent = preset === 'global' ? 'put your Cloudflare login email in Username' : '';
+    renderProxyRules(presets[preset]);
+  };
   const openEditor = async item => {
     const generation = ++detailGeneration;
     byId('item-form').reset(); let detail = item;
@@ -349,12 +370,14 @@
       detail = { ...revealed.item, id: revealed.id, revision: revealed.revision };
     }
     editingItem = detail ? JSON.parse(JSON.stringify(detail)) : null;
+    byId('proxy-hosts').value = detail?.proxy?.hosts?.join(', ') || ''; renderProxyRules(detail?.proxy?.rules); byId('proxy-hint').textContent = '';
     const itemPolicy = policy(detail);
     byId('item-id').value = detail?.id || ''; byId('revision').value = detail?.revision || ''; byId('item-type').value = detail?.integration ? 'integration' : detail?.type || 'login';
     byId('name').value = detail?.name || ''; byId('username').value = detail?.username || detail?.integration?.accountId || ''; byId('item-password').value = detail?.password || ''; byId('website').value = detail?.uris?.[0]?.uri || ''; byId('notes').value = detail?.notes || ''; byId('favorite').checked = Boolean(detail?.favorite);
     byId('integration-id').value = detail?.integration?.integrationId || ''; byId('account-id').value = detail?.integration?.accountId || ''; renderIntegrationProperties(detail?.integration?.properties); renderCustomFields(detail?.customFields);
     const agentsEnabled = itemPolicy.mode === 'agents'; byId('agent-enabled').checked = agentsEnabled; byId('only-me-access').checked = !agentsEnabled; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-agents').value = itemPolicy.agents.join(', '); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
     const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration;
+    syncProxyFields();
     byId('delete-item').hidden = !detail?.id; byId('editor-title').textContent = detail?.id ? `Edit ${detail.name}` : 'New vault item'; byId('editor-crumb').textContent = detail?.name || 'New item'; byId('editor-tile').textContent = initials(detail) || '＋';
     byId('browser-view').hidden = true; byId('editor-view').hidden = false; byId('name').focus();
   };
@@ -372,6 +395,10 @@
     else delete item.integration;
     const customFields = readCustomFields();
     if (customFields.length) item.customFields = customFields; else delete item.customFields;
+    if (['apiKey', 'login'].includes(type)) {
+      const hosts = entries(byId('proxy-hosts').value); const rules = readProxyRules();
+      if (hosts.length || rules.length) item.proxy = { hosts, rules }; else delete item.proxy;
+    }
     return item;
   };
   const openIntegrationHint = async() => {
@@ -449,7 +476,7 @@
   byId('audit-search').onchange = () => { auditOffset = 0; void loadAudit(); };
   byId('audit-prev').onclick = () => { auditOffset = Math.max(0, auditOffset - 25); void loadAudit(); };
   byId('audit-next').onclick = () => { if (auditHasMore) { auditOffset += 25; void loadAudit(); } };
-  byId('item-type').onchange = () => { const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration; if (integration && !byId('integration-properties').children.length) renderIntegrationProperties({}); };
+  byId('item-type').onchange = () => { syncProxyFields(); const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration; if (integration && !byId('integration-properties').children.length) renderIntegrationProperties({}); };
   byId('add-integration-property').onclick = () => { if (byId('integration-properties').children.length >= 20) return message('Integration properties are limited to 20.', true); addPropertyRow().focus(); };
   byId('add-custom-field').onclick = () => { if (customFieldRows().length >= CF.LIMITS.maxFields) return message(`Custom fields are limited to ${CF.LIMITS.maxFields}.`, true); addCustomFieldRow().focus(); };
   document.querySelectorAll('input[name="policy-access"]').forEach(input => { input.onchange = syncPolicyEnabled; });

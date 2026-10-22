@@ -480,6 +480,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(localAuthority.brokerStatus(identity.serviceId, identity.token));
     });
+    app.post('/v1/broker/items', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.listBrokerItems(request.body.claims, identity.serviceId, identity.token));
+    });
     app.get('/v1/broker/integrations/:integrationId/metadata', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.integrationMetadata(

@@ -20,6 +20,21 @@ export interface VaultCustomField {
   hidden?: boolean;
 }
 
+export type VaultProxySource = 'password' | 'username' | `custom:${ string }`;
+export type VaultProxyScheme = 'raw' | 'Bearer' | 'Token' | 'Basic';
+
+export interface VaultProxyRule {
+  source: VaultProxySource;
+  target: 'header' | 'query';
+  name:   string;
+  scheme: VaultProxyScheme;
+}
+
+export interface VaultItemProxy {
+  hosts: string[];
+  rules: VaultProxyRule[];
+}
+
 /** Plaintext of one vault item before encryption. */
 export interface VaultItemPlaintext {
   type:             VaultItemType;
@@ -44,9 +59,49 @@ export interface VaultItemPlaintext {
     accountId:     string;
     properties:    Record<string, string>;
   };
+  /** Owner-declared, encrypted outbound use rules. Values are never exposed to agents. */
+  proxy?: VaultItemProxy;
   /** Human-readable folder name, encrypted with the rest of the item. */
   folder?:     string;
   agentPolicy: AgentPolicy;
+}
+
+export type VaultProxyValidation = { ok: true; proxy: VaultItemProxy } | { ok: false; error: string };
+
+const PROXY_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const PROXY_HOST_PATTERN = /^(?:\*\.)?(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const BROKER_OWNED_HEADERS = new Set(['host', 'cookie', 'content-length', 'connection', 'transfer-encoding']);
+
+/** Validates the encrypted declaration before storage or broker use. */
+export function validateVaultItemProxy(item: Pick<VaultItemPlaintext, 'username' | 'password' | 'fields' | 'customFields' | 'proxy'>): VaultProxyValidation {
+  const proxy = item.proxy;
+  if (!proxy || !Array.isArray(proxy.hosts) || proxy.hosts.length < 1 || proxy.hosts.length > 20 ||
+      !Array.isArray(proxy.rules) || proxy.rules.length < 1 || proxy.rules.length > 5) {
+    return { ok: false, error: 'Agent usage requires 1–20 hosts and 1–5 rules' };
+  }
+  const hosts = proxy.hosts.map(host => typeof host === 'string' ? host.trim().toLowerCase() : '');
+  if (hosts.some(host => !PROXY_HOST_PATTERN.test(host))) return { ok: false, error: 'Agent usage contains an invalid host' };
+  const customNames = new Set([
+    ...(item.fields ?? []).map(field => field.name),
+    ...(item.customFields ?? []).map(field => field.label),
+  ]);
+  const rules: VaultProxyRule[] = [];
+  for (const candidate of proxy.rules) {
+    if (!candidate || typeof candidate.source !== 'string' ||
+        (!['password', 'username'].includes(candidate.source) && !candidate.source.startsWith('custom:')) ||
+        !['header', 'query'].includes(candidate.target) || typeof candidate.name !== 'string' || !PROXY_NAME_PATTERN.test(candidate.name) ||
+        !['raw', 'Bearer', 'Token', 'Basic'].includes(candidate.scheme)) {
+      return { ok: false, error: 'Agent usage contains an invalid rule' };
+    }
+    if (candidate.target === 'header' && BROKER_OWNED_HEADERS.has(candidate.name.toLowerCase())) {
+      return { ok: false, error: `Header ${ candidate.name } is owned by the broker` };
+    }
+    if (candidate.source.startsWith('custom:') && !customNames.has(candidate.source.slice(7))) {
+      return { ok: false, error: `Custom source ${ candidate.source.slice(7) } does not exist` };
+    }
+    rules.push({ source: candidate.source, target: candidate.target, name: candidate.name, scheme: candidate.scheme });
+  }
+  return { ok: true, proxy: { hosts: [...new Set(hosts)], rules } };
 }
 
 /** Metadata: agents see the item exists. Autofill: Sulla fills it, agent never sees it. Full: agent can read it. */

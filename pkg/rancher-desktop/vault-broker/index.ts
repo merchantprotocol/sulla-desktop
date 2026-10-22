@@ -7,6 +7,7 @@ import type {
   BrokerClaims,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerItemListResponse,
   BrokerIntegrationMetadataResponse,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
@@ -20,6 +21,7 @@ export type {
   BrokerCredentialRef,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
+  BrokerItemListResponse,
   BrokerIntegrationMetadataResponse,
   BrokerInjection,
   BrokerRelayCreateRequest,
@@ -189,6 +191,17 @@ export class LocalVaultBrokerClient {
     });
     if (!response.ok) await this.throwRelayResponse(response);
     return response.json() as Promise<{ state: string; unlocked: boolean; principalId?: string }>;
+  }
+
+  async listItems(ctx: ToolExecutionContext, signal?: AbortSignal): Promise<BrokerItemListResponse> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/items`, {
+      method:  'POST',
+      headers: await this.serviceHeaders(true),
+      body:    JSON.stringify({ claims: claimsFromContext(ctx) }),
+      signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerItemListResponse>;
   }
 
   async integrationMetadata(

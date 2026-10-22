@@ -220,12 +220,25 @@ export interface BrokerClaims {
   workflow_execution_id?: string;
   /** Signed by the trusted caller and enforced against ref before lookup. */
   credential_scope?: {
-    integration_id: string;
-    account_id:     string;
+    integration_id?: string;
+    account_id?:     string;
+    /** Present only for item.http, after the broker metadata list authorized this id. */
+    item_id?:        string;
     /** Required for github.git; normalized as owner/repository. */
     repository?:    string;
   };
 }
+
+export interface BrokerItemMetadata {
+  id:    string;
+  name:  string;
+  type:  'login' | 'apiKey' | 'note' | 'card' | 'identity';
+  hosts: string[];
+  rules: Array<{ target: 'header' | 'query'; name: string; scheme: 'raw' | 'Bearer' | 'Token' | 'Basic' }>;
+}
+
+export interface BrokerItemListRequest { claims: BrokerClaims }
+export interface BrokerItemListResponse { items: BrokerItemMetadata[] }
 
 export interface BrokerCredentialRef {
   integrationId?: string;

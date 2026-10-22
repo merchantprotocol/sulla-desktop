@@ -24,9 +24,40 @@ This is the most important thing to understand. Every credential has one of four
 | `sulla vault/read_secrets` | `account_type`, `account_id?`, `include_secrets?` | Read fields for an account. Masked unless `include_secrets` is true and the level allows it. |
 | `sulla vault/set_credential` | `account_type`, `property`, `value`, `account_id?`, `confirm?` | Create or update one credential property (encrypted on write). Overwriting a different existing value needs `confirm:true`. |
 | `sulla vault/set_active_account` | `account_type`, `account_id` | Mark which account is the default for an integration |
-| `sulla vault/list` | — | List saved website credentials (for autofill). Returns origin, username and access level. Passwords are never returned. |
+| `sulla vault/list` | — | List saved website credentials only (for autofill); use `vault/list_api_keys` for API keys. Returns origin, username and access level. Passwords are never returned. |
+| `sulla vault/list_api_keys` | — | List agent-usable API key/Login items without secrets. |
+| `sulla vault/request` | `item`, `method`, `url`, `headers?`, `body?` | Make an HTTPS request with owner-declared credential injection. |
 | `sulla vault/autofill` | `origin?`, `account_id?`, `assetId?` | Inject stored username/password into the active tab, or an explicit background tab via `assetId`. Success requires non-empty field verification. |
 | `sulla vault/delete_credential` | `account_type`, `property`, `account_id?`, `confirm` | Soft-delete one credential property. `confirm:true` is required. |
+
+## Plain API key items (no integration required)
+
+`vault/list_api_keys '{}'` lists API key and Login items opened to the calling agent at
+`autofill` or `full`, with valid encrypted **Agent usage** rules and unexpired access.
+It returns only id, name, type, allowed hosts, and target/name/scheme rule metadata.
+It never returns values or rule sources. `only_me` and agent allowlists are enforced.
+
+In the vault editor, set **Agents can use → Autofill**, then configure **Agent usage**.
+Hosts are exact hostnames or `*.example.com`; policy **Only on** is an additional limit.
+Rules inject password, username, or `custom:Label` into a header or query parameter;
+Basic auth uses username:password. Requests are HTTPS-only, non-streaming, block private
+addresses and redirects, and redact injected values from responses. Caller auth headers
+are stripped; only the owner's rules select credentials. **Ask me first** still applies.
+
+For a Cloudflare Global API Key, choose that preset and put your Cloudflare login email
+in Username. It sets `api.cloudflare.com`, `X-Auth-Key` from the secret, and `X-Auth-Email`
+from Username. The Cloudflare API token preset instead uses `Authorization: Bearer`.
+
+```bash
+sulla vault/list_api_keys '{}'
+sulla vault/request '{"item":"Cloudflare Global API Key","method":"GET","url":"https://api.cloudflare.com/client/v4/user","headers":{}}'
+```
+
+`vault/request` accepts an id or exact unique name, method (`GET/POST/PUT/PATCH/DELETE`),
+HTTPS URL, optional non-secret headers and body. It returns status, safe headers and body.
+A missing item means it isn't opened to this agent, has expired, or lacks valid usage
+rules; restricted items aren't disclosed to distinguish those cases. Host denials,
+approval requirements, and locked vault errors are returned explicitly.
 
 ## Common requests
 

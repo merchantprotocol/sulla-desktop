@@ -60,11 +60,30 @@ export const integrationsToolManifests: ToolManifest[] = [
   },
   {
     name:           'vault_list',
-    description:    'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response.',
+    description:    'List all saved website credentials in the vault. Shows website URLs and usernames for accounts where AI access is permitted. Passwords are never included in the response. For API key items, use vault/list_api_keys and vault/request.',
     category:       'vault',
     schemaDef:      {},
     operationTypes: ['read'],
     loader:         () => import('./vault_list'),
+  },
+  {
+    name: 'vault_list_api_keys',
+    description: 'List vault API key and Login items opened to this agent for outbound API requests. Returns id, name, type, allowed hosts and rule metadata only; never secret values or sources.',
+    category: 'vault', schemaDef: {}, operationTypes: ['read'],
+    loader: () => import('./vault_list_api_keys'),
+  },
+  {
+    name: 'vault_request',
+    description: 'Call an HTTPS API using an owner-configured vault item without seeing its secret. Resolve an id or exact name from vault/list_api_keys. The vault enforces hosts, policy, approval and owner-declared auth rules.',
+    category: 'vault',
+    schemaDef: {
+      item: { type: 'string', description: 'Item id or exact unique name from vault/list_api_keys' },
+      method: { type: 'enum', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+      url: { type: 'string', description: 'HTTPS destination allowed by the item' },
+      headers: { type: 'object', optional: true, description: 'Non-secret request headers; owner-declared auth headers override caller values' },
+      body: { type: 'any', optional: true },
+    },
+    operationTypes: ['execute'], loader: () => import('./vault_request'),
   },
   {
     name:        'vault_autofill',

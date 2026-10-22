@@ -23,6 +23,7 @@ import {
   type EncryptedEnvelope,
   isKnownCustomFieldType,
   validateCustomFields,
+  validateVaultItemProxy,
   type VaultItemCustomField,
   type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
@@ -30,7 +31,7 @@ import {
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
-import { trustedOriginsForIntegration, validateOperation } from './operationPolicy.js';
+import { trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
@@ -49,6 +50,7 @@ import type { VaultConfig } from './config.js';
 import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from './filesKeyBundleAuthority.js';
 import type {
   BrokerCredentialRef,
+  BrokerItemListResponse,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerRelayCreateRequest,
@@ -385,6 +387,20 @@ function credentialField(item: VaultItemPlaintext, field: string): string | unde
     item.fields?.find(candidate => candidate.name === field)?.value ??
     // Custom fields are usable by label at the same autofill level as the password; lowest priority.
     item.customFields?.find(candidate => candidate.label === field && typeof candidate.value === 'string')?.value;
+}
+
+function proxySource(item: VaultItemPlaintext, source: string): string | undefined {
+  if (source === 'password') return item.password;
+  if (source === 'username') return item.username;
+  if (!source.startsWith('custom:')) return undefined;
+  const name = source.slice(7);
+  return item.fields?.find(candidate => candidate.name === name)?.value ??
+    item.customFields?.find(candidate => candidate.label === name)?.value;
+}
+
+function proxyHostMatches(host: string, allowed: string): boolean {
+  const normalized = allowed.toLowerCase().replace(/^\*\./, '');
+  return host === normalized || (allowed.startsWith('*.') && host.endsWith(`.${ normalized }`));
 }
 
 function deriveChatgptAccountRoutingForRequest(
@@ -1000,6 +1016,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (checked.fields.length) item.customFields = checked.fields;
       else delete item.customFields;
     }
+    if (item.proxy !== undefined) {
+      const checked = validateVaultItemProxy(item);
+      if (!checked.ok) throw new LocalVaultError('invalid_operation', 400, checked.error);
+      item.proxy = checked.proxy;
+    }
     const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const result = await this.runTransaction(async client => {
       if (!input.id) {
@@ -1393,8 +1414,17 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         (claims.workflow_execution_id !== undefined && !validIdentifier(claims.workflow_execution_id))) {
       throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
     }
+    if (input.operation !== 'item.http' && input.ref?.itemId) {
+      throw new LocalVaultError('policy_denied', 403, 'Direct item references are only accepted for item.http');
+    }
     const scope = claims.credential_scope;
-    if (scope && (!validIdentifier(scope.integration_id) || !validIdentifier(scope.account_id) ||
+    if (scope && input.operation !== 'item.http' &&
+        (!validIdentifier(scope.integration_id) || !validIdentifier(scope.account_id) || scope.item_id !== undefined)) {
+      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker integration scope is invalid');
+    }
+    if (scope && ((scope.integration_id !== undefined && !validIdentifier(scope.integration_id)) ||
+        (scope.account_id !== undefined && !validIdentifier(scope.account_id)) ||
+        (scope.item_id !== undefined && !UUID_PATTERN.test(scope.item_id)) ||
         (scope.repository !== undefined && !validIdentifier(scope.repository)))) {
       throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller scope is invalid');
     }
@@ -1599,6 +1629,43 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code);
       throw error;
     }
+  }
+
+  async listBrokerItems(
+    claims: BrokerExecuteRequest['claims'], serviceId: string, token: string | undefined,
+  ): Promise<BrokerItemListResponse> {
+    this.requireBrokerIdentity(serviceId, token);
+    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
+    if (!claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id)) {
+      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
+    }
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    if (claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
+    const result = await this.db.query<ItemRow>(
+      `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision
+         FROM items WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+           AND agent_policy->>'mode'='agents'`, [keys.userId],
+    );
+    const items: BrokerItemListResponse['items'] = [];
+    for (const row of result.rows) {
+      const plaintext = JSON.parse(await decryptItemText(
+        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
+        { itemId: row.id, ownerId: keys.userId },
+      )) as VaultItemPlaintext;
+      const checked = validateVaultItemProxy(plaintext);
+      if (!checked.ok) continue;
+      const usable = agentPolicyAllows({ ...(row.agent_policy ?? plaintext.agentPolicy), sites: [] }, {
+        agentId: claims.agent_id, level: 'autofill', onServer: false,
+      }).allowed;
+      if (!usable) continue;
+      items.push({
+        id: row.id, name: plaintext.name, type: plaintext.type, hosts: checked.proxy.hosts,
+        rules: checked.proxy.rules.map(({ target, name, scheme }) => ({ target, name, scheme })),
+      });
+    }
+    this.requireGeneration(generation);
+    return { items };
   }
 
   async createRelay(
@@ -1935,6 +2002,60 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       { itemId: item.id, ownerId: item.collection_id ?? item.owner_user_id ?? keys.userId },
     )) as VaultItemPlaintext;
     const itemPolicy = item.agent_policy ?? plaintext.agentPolicy;
+    if (input.operation === 'item.http') {
+      const checked = validateVaultItemProxy(plaintext);
+      if (!checked.ok) throw new LocalVaultError('policy_denied', 403, 'Vault item has no valid agent usage rules');
+      try { validateItemHttpOperation(input) } catch (error) {
+        const reason = error instanceof Error ? error.message : 'policy_denied';
+        throw new LocalVaultError(reason === 'method_denied' ? 'method_denied' : 'invalid_injection', 403,
+          reason === 'injection_denied' ? 'Caller-supplied injections are not allowed for item requests' : 'Item request is not allowed');
+      }
+      if (!checked.proxy.hosts.some(host => proxyHostMatches(target.hostname.toLowerCase(), host))) {
+        throw new LocalVaultError('destination_denied', 403, `Vault item is not allowed on ${ target.hostname }`);
+      }
+      const decision = agentPolicyAllows(itemPolicy, {
+        agentId: input.claims.agent_id, level: 'autofill', host: target.hostname, onServer: false,
+      });
+      if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
+      const digest = operationDigest(input);
+      if (itemPolicy.askFirst) {
+        const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
+        if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
+          if (input.approvalId) this.approvals.delete(input.approvalId);
+          this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
+          throw new LocalVaultError('approval_required', 428, digest);
+        }
+        this.approvals.delete(input.approvalId!);
+      }
+      const ruleHeaderNames = new Set(checked.proxy.rules.map(rule => rule.name.toLowerCase()));
+      ruleHeaderNames.add('authorization');
+      const headers = Object.fromEntries(Object.entries(input.headers ?? {}).filter(([name]) => !ruleHeaderNames.has(name.toLowerCase())));
+      headers['accept-encoding'] = 'identity';
+      const secrets: string[] = [];
+      for (const rule of checked.proxy.rules) {
+        let value: string | undefined;
+        if (rule.scheme === 'Basic') {
+          if (typeof plaintext.username !== 'string' || typeof plaintext.password !== 'string') {
+            throw new LocalVaultError('credential_field_missing', 404, 'Basic auth requires username and password');
+          }
+          if (Buffer.byteLength(plaintext.username) + Buffer.byteLength(plaintext.password) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
+          value = `Basic ${ Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64') }`;
+          secrets.push(plaintext.username, plaintext.password, Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64'));
+        } else {
+          const source = proxySource(plaintext, rule.source);
+          if (typeof source !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Agent usage source is unavailable');
+          if (Buffer.byteLength(source) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
+          value = rule.scheme === 'raw' ? source : `${ rule.scheme } ${ source }`;
+          secrets.push(source);
+        }
+        if (rule.target === 'header' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) throw new LocalVaultError('policy_denied', 403, 'Agent usage value is not a valid HTTP header');
+        secrets.push(value, encodeURIComponent(value));
+        if (rule.target === 'header') headers[rule.name] = value;
+        else target.searchParams.set(rule.name, value);
+      }
+      this.requireGeneration(generation);
+      return { target, headers, body: input.body, secrets, generation, maxRequestBytes: MAX_RESPONSE_BYTES, item, plaintext };
+    }
     let effectivePolicy = itemPolicy;
     if (input.operation.startsWith('oauth.')) {
       try {
@@ -2131,11 +2252,17 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null): Promise<ItemRow> {
     const ref = input.ref ?? {};
     const scope = input.claims.credential_scope;
-    if (!scope || !ref.integrationId || !ref.accountId ||
-        scope.integration_id !== ref.integrationId || scope.account_id !== ref.accountId) {
-      throw new LocalVaultError('policy_denied', 403, 'Credential reference is outside the signed caller scope');
+    if (input.operation === 'item.http') {
+      if (!scope?.item_id || !ref.itemId || scope.item_id !== ref.itemId || scope.integration_id || scope.account_id || ref.integrationId || ref.accountId) {
+        throw new LocalVaultError('policy_denied', 403, 'Vault item reference is outside the signed caller scope');
+      }
+    } else {
+      if (!scope || !ref.integrationId || !ref.accountId ||
+          scope.integration_id !== ref.integrationId || scope.account_id !== ref.accountId) {
+        throw new LocalVaultError('policy_denied', 403, 'Credential reference is outside the signed caller scope');
+      }
+      if (ref.itemId) throw new LocalVaultError('policy_denied', 403, 'Direct item references are not accepted by the local broker');
     }
-    if (ref.itemId) throw new LocalVaultError('policy_denied', 403, 'Direct item references are not accepted by the local broker');
     if (input.operation === 'github.git') {
       const path = new URL(input.url).pathname;
       const match = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/(?:info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
@@ -2164,7 +2291,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!item || !personal || item.collection_id) {
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
-    if (host) {
+    if (host && input.operation !== 'item.http') {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {
         throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
@@ -2494,7 +2621,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       `INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
        VALUES ($1,$2,$3,$4,'vault_outbound_request',$5,$6,$7,$8)`,
       [input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
-        { agentId: input.claims.agent_id, operation: input.operation, destination: new URL(input.url).origin }, blocked, reason],
+        { agentId: input.claims.agent_id, operation: input.operation,
+          destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
+          ...(input.operation === 'item.http' ? { itemId: item.id } : {}) }, blocked, reason],
     );
     this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: item.id, action: 'vault_outbound_request', actor: input.claims.agent_id || input.claims.sub, result: blocked ? 'blocked' : 'allowed', meta: { operation: input.operation, agentId: input.claims.agent_id } });
   }
@@ -2503,7 +2632,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     let destination: string | undefined;
     try {
       const parsed = new URL(input.url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') destination = parsed.origin;
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') destination = input.operation === 'item.http' ? parsed.hostname : parsed.origin;
     } catch {
       // Invalid destinations are represented by the denial reason, never copied into audit metadata.
     }
@@ -2513,6 +2642,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [input.claims.sub, input.claims.pod_id, {
         agentId: input.claims.agent_id,
         operation: input.operation,
+        ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
         ...(destination ? { destination } : {}),
       }, reason],
     );

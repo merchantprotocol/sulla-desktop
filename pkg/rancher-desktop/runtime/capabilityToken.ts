@@ -14,8 +14,9 @@ export interface CapabilityTokenClaims {
   workflow_execution_id?: string;
   device_id?:             string;
   credential_scope?:      {
-    integration_id: string;
-    account_id:     string;
+    integration_id?: string;
+    account_id?:     string;
+    item_id?:        string;
     repository?:    string;
   };
   scopes:                 string[];

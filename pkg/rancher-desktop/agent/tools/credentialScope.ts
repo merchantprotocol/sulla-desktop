@@ -1,3 +1,4 @@
+import { requireConfiguredCredentialBroker } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
 
 import type { ToolExecutionContext } from './executionContext';
@@ -36,4 +37,16 @@ export function githubRepositoryFromArgs(args: unknown): string | undefined {
   const owner = typeof values.owner === 'string' ? values.owner.trim() : '';
   const repo = typeof values.repo === 'string' ? values.repo.trim() : '';
   return owner && repo ? `${ owner }/${ repo }` : undefined;
+}
+
+/** Resolve only from broker-authorized metadata before minting item authority. */
+export async function scopeItemExecutionContext(ctx: ToolExecutionContext, item: string): Promise<ToolExecutionContext> {
+  const { items } = await requireConfiguredCredentialBroker().listItems(ctx);
+  const matches = items.filter(candidate => candidate.id === item || candidate.name === item);
+  if (matches.length !== 1) throw new Error(matches.length ? 'Vault item name is ambiguous; use its id' :
+    'Vault item is not opened to this agent, has expired, or has no usage rules set');
+  if (ctx.credential_scope && ctx.credential_scope.item_id !== matches[0].id) {
+    throw new Error('Verified credential scope does not match the selected vault item');
+  }
+  return { ...ctx, credential_scope: { item_id: matches[0].id } };
 }
