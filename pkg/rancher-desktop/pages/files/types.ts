@@ -397,6 +397,10 @@ export interface ShareActivity {
   detail?: string;
 }
 
+export interface FilesSaveRequest { fileId:string; baseVersionId:string; content:string }
+export interface FilesSaveSuccess { status:'saved' | 'merged'; fileId:string; path:string; mime:string; content:string; versionId:string }
+export interface FilesSaveConflict { code:'VERSION_CONFLICT'; error:string; currentVersionId:string }
+
 export interface FilesDataSource {
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
@@ -413,6 +417,7 @@ export interface FilesDataSource {
   folderOperationState?(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot>;
   history(fileId:string, currentVersionId:string): Promise<FilesVersion[]>;
   preview(fileId:string, versionId?:string): Promise<FilesPreview>;
+  saveContent(request:FilesSaveRequest):Promise<FilesSaveSuccess>;
   detail(fileId:string):Promise<FilesDetail>;
   mediaUrl(fileId:string, versionId?:string):Promise<string>;
   search(query:string): Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }>;

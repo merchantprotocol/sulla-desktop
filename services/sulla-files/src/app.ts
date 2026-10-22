@@ -5,7 +5,7 @@ import * as Automerge from '@automerge/automerge';
 import express from 'express';
 
 import { auditContext } from './auditContext.js';
-import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, type TextDocument } from './automergeText.js';
+import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, versionCheckedTextSave, type TextDocument } from './automergeText.js';
 import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { assertSystemAreaWritable } from './systemAreas.js';
 
@@ -364,14 +364,13 @@ export function createApp(
       ON CONFLICT(version_id) DO NOTHING`,[versionId,fileId,saveTextDocument(document),JSON.stringify(textDocumentHeads(document))]);
   }
 
-  async function textSave(client:pg.PoolClient,file:any,baseVersionId:string,submitted:Buffer,currentBytes:Buffer):Promise<{bytes:Buffer;document?:Automerge.Doc<TextDocument>;merged:boolean}> {
-    const baseBytes=baseVersionId===file.current_version_id?currentBytes:await requireFuseExperiment().readStoredVersion(file.id,baseVersionId);
+  async function textSave(client:pg.PoolClient,file:any,baseVersionId:string,submitted:Buffer,currentBytes:Buffer,readVersion:(fileId:string,versionId:string)=>Promise<Buffer> = (fileId,versionId)=>requireFuseExperiment().readStoredVersion(fileId,versionId)):Promise<{bytes:Buffer;document?:Automerge.Doc<TextDocument>;merged:boolean}> {
+    const baseBytes=baseVersionId===file.current_version_id?currentBytes:await readVersion(file.id,baseVersionId);
     const baseText=utf8Text(baseBytes),currentText=utf8Text(currentBytes),submittedText=utf8Text(submitted);
     const stale=baseVersionId!==file.current_version_id;
-    if(baseText===undefined||currentText===undefined||submittedText===undefined) {
-      if(stale) throw new HttpError(409,'Files mount version changed');
-      return {bytes:submitted,merged:false};
-    }
+    const planned=versionCheckedTextSave({baseVersionId,currentVersionId:file.current_version_id,base:baseBytes,current:currentBytes,submitted});
+    if(planned.status===409)throw new HttpError(409,'Files mount version changed');
+    if(baseText===undefined||currentText===undefined||submittedText===undefined)return {bytes:submitted,merged:false};
     let document:Automerge.Doc<TextDocument>;
     if(stale){
       const savedBase=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[baseVersionId,file.id])).rows[0];
@@ -1643,6 +1642,24 @@ export function createApp(
   app.get('/v1/files/:id/download', (request:RequestWithIdentity, response, next) => stream(request, response, next, true));
   app.get('/v1/files/:id/thumbnail', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const versionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined); const content = await thumbnail(db, config, store, file.id, versionId); if (!content) return response.sendStatus(404); return sendContent(request, response, content, 'private, max-age=86400') } catch (error) { next(error) } });
   app.get('/v1/files/:id/history', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const rows = await db.query(`SELECT *,major_version::text||'.'||minor_version::text AS version_number FROM file_versions WHERE file_id=$1 ORDER BY created_at DESC`, [request.params.id]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
+  app.put('/v1/files/:id/content', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
+    const baseVersionId=String(request.body?.baseVersionId??''); const content=request.body?.content;
+    if(!UUID.test(baseVersionId)||typeof content!=='string') throw new HttpError(400,'baseVersionId and text content are required');
+    await client.query('BEGIN'); let file=await requireFile(request,request.params.id,'edit',client); await lockStoredNamespace(client,file.collection_id); file=await requireFile(request,file.id,'edit',client);
+    const base=(await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted',[baseVersionId,file.id])).rows[0];
+    if(!base){await client.query('ROLLBACK');return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited Files version is no longer available.',currentVersionId:file.current_version_id})}
+    const readVersion=async(fileId:string,versionId:string):Promise<Buffer>=>{const loaded=await loadFileContent(db,config,store,fileId,versionId);if(!loaded)throw new HttpError(409,'Files version content is unavailable');return loaded.buffer};
+    const currentBytes=await readVersion(file.id,file.current_version_id); let saved;
+    try{saved=await textSave(client,file,baseVersionId,Buffer.from(content,'utf8'),currentBytes,readVersion)}catch(error){
+      if(baseVersionId!==file.current_version_id){await client.query('ROLLBACK');return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited version could not be merged safely.',currentVersionId:file.current_version_id})}
+      throw error;
+    }
+    const actor=identity(request); const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,bytes:saved.bytes,actor,
+      createdByType:actor.agentId?'agent':actor.jobId?'agent-run':undefined,createdById:actor.agentId??actor.jobId??actor.userId,message:'Saved with version check',baseVersionId:file.current_version_id});
+    if(saved.document)await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document); await client.query('COMMIT');
+    await audit(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
+    response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
+  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()} });
   app.put('/v1/files/upload', express.raw({ type: '*/*', limit: '2gb' }), async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request); await client.query('BEGIN'); await lockStoredNamespace(client, collectionId); const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0]; if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } } else await requirePath(request, collectionId, path, 'edit'); const file = await insertVersion(client, { collectionId, fileId: existing?.id, path, mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor, message: 'Uploaded' }); await client.query('COMMIT'); await audit(request, 'upload', file); response.status(201).json(file) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
