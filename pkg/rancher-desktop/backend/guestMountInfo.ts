@@ -130,3 +130,36 @@ export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string 
 
   return probe.state;
 }
+
+/** True when `path` can be listed. A dead or snapshot-less FUSE adapter fails with ENOENT/ENOTCONN here. */
+export async function isGuestPathUsable(exec: GuestExec, path: string): Promise<boolean> {
+  try {
+    await exec.execCommand({ root: true, expectFailure: true }, 'ls', '-A', path);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detach every stacked Files FUSE adapter layer at `path`, topmost first, so the owned
+ * anchor underneath is visible again. A dead adapter often refuses a normal unmount, so
+ * fall back to a lazy detach. Returns how many layers were detached.
+ */
+export async function drainFilesAdapterLayers(exec: GuestExec, path: string, maxLayers = 8): Promise<number> {
+  const topIsAdapter = async(): Promise<boolean> => {
+    const entries = parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo'));
+
+    return classifyFilesAnchor(entries, path).state === 'adapter';
+  };
+  let drained = 0;
+
+  while (drained < maxLayers && await topIsAdapter()) {
+    await exec.execCommand({ root: true, expectFailure: true }, 'umount', path).catch(() => undefined);
+    if (await topIsAdapter()) await exec.execCommand({ root: true, expectFailure: true }, 'umount', '-l', path).catch(() => undefined);
+    drained++;
+  }
+
+  return drained;
+}

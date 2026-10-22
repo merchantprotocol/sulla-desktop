@@ -1,0 +1,63 @@
+/** @jest-environment node */
+import { describe, expect, test } from '@jest/globals';
+
+import { drainFilesAdapterLayers } from '../guestMountInfo';
+import { MAX_AUTO_RECREATES, STATEFUL_GRACE_MS, STATELESS_GRACE_MS, planUnhealthyRecreates } from '../sullaContainerHealth';
+
+const row = (over: Record<string, unknown>) => ({ container: 'sulla_x', service: 'x', state: 'running', health: 'healthy', runningForMs: 5 * 60_000, ...over }) as any;
+
+describe('planUnhealthyRecreates', () => {
+  test('recreates unhealthy stateless services after the grace period only', () => {
+    const rows = [
+      row({ container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', health: 'unhealthy' }),
+      row({ container: 'sulla_tools', service: 'tools', health: 'unhealthy', runningForMs: STATELESS_GRACE_MS - 1 }),
+      row({ container: 'sulla_redis_ok', service: 'x', health: 'healthy' }),
+    ];
+
+    expect(planUnhealthyRecreates(rows, new Map()).map(a => a.container)).toEqual(['sulla_files_fuse_logs']);
+  });
+
+  test('gives stateful services (a slow Files migration) a long grace period', () => {
+    const files = row({ container: 'sulla_files', service: 'sulla_files', health: 'unhealthy', runningForMs: STATEFUL_GRACE_MS - 1 });
+
+    expect(planUnhealthyRecreates([files], new Map())).toEqual([]);
+    expect(planUnhealthyRecreates([{ ...files, runningForMs: STATEFUL_GRACE_MS }], new Map()).length).toBe(1);
+  });
+
+  test('stops after the per-container cap and treats restart loops as unhealthy', () => {
+    const loop = row({ container: 'sulla_loop', service: 'loop', state: 'restarting', health: 'none' });
+
+    expect(planUnhealthyRecreates([loop], new Map())[0].reason).toBe('restart loop');
+    expect(planUnhealthyRecreates([loop], new Map([['sulla_loop', MAX_AUTO_RECREATES]]))).toEqual([]);
+  });
+});
+
+describe('drainFilesAdapterLayers', () => {
+  test('detaches stacked adapter layers topmost first and stops at the owned anchor', async() => {
+    const adapter = '710 489 0:91 / /mnt/sulla-logs ro - fuse sulla-files ro,user_id=0';
+    const anchor = '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw';
+    let layers = 2;
+    const commands: string[] = [];
+    const exec = {
+      execCommand: async(...args: any[]) => {
+        const command = args.filter(a => typeof a === 'string');
+
+        commands.push(command.join(' '));
+        if (command[0] === 'cat') return [anchor, ...Array(layers).fill(adapter)].join('\n');
+        if (command[0] === 'umount' && command[1] === '-l') layers--;
+
+        return '';
+      },
+    };
+
+    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-logs')).toBe(2);
+    expect(layers).toBe(0);
+    expect(commands.filter(c => c.startsWith('umount -l')).length).toBe(2);
+  });
+
+  test('does nothing when the path is a plain anchor', async() => {
+    const exec = { execCommand: async() => '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw' };
+
+    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-logs')).toBe(0);
+  });
+});
