@@ -1092,7 +1092,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
 - You are part of a live multi-agent network — Heartbeat and other agents are active
-- Durable agent memory lives in Files under \`Sulla/Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
+- Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 - Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later
 </platform_context>`);
 

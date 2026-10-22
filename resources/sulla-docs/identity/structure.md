@@ -22,7 +22,7 @@
     ├── identity.md          # External market, competitive landscape
     └── goals.md             # Market-level targets
 
-Sulla Files: Sulla/Projects/     # PROJECT.md and TASKS.md per project
+Sulla Files: Projects/     # PROJECT.md and TASKS.md per project
 
 ~/sulla/projects/<slug>/     # PRDs + workspaces (specs, not the agenda)
 ~/sulla/ledger/              # Legacy markdown. Frozen. Do not pick from it.

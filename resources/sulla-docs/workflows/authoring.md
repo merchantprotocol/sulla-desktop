@@ -7,7 +7,7 @@ Companion to `schema.md` (structure), `node-types.md` (every node subtype), and 
 | Location | Purpose | Who writes there |
 |----------|---------|------------------|
 | `~/sulla/routines/<slug>/routine.yaml` | **Routine source** — scaffolded by `marketplace/scaffold` and imported with `workflow/import_workflow` | Agent (preferred for net-new) |
-| `~/sulla/workflows/{draft,production,archive}/<slug>.yaml` | **Flat-file workflow** — folder per status; mirrored into the File Manager at `Sulla/Use Cases/workflows/` | Agent (legacy / quick scripts) |
+| `~/sulla/workflows/{draft,production,archive}/<slug>.yaml` | **Flat-file workflow** — folder per status; mirrored into the File Manager at `Use Cases/workflows/` | Agent (legacy / quick scripts) |
 | `workflows` table (Postgres) | **Active workflows** — what the executor and scheduler run | Written by `workflow/import_workflow` and the app |
 
 The row's `status` decides what runs: `draft` | `production` | `archive`. Only `production` rows get scheduled. Moving a file between folders does not change the row.

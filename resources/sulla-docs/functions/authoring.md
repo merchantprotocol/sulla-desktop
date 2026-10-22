@@ -7,7 +7,7 @@ Companion to `schema.md` (full YAML spec), `runtimes.md` (handler signatures), a
 Functions are stored in Postgres (`function_definitions`). `function_list` and `function_run` read from there. Each function also has a folder that is its File Manager copy:
 
 ```
-~/sulla/functions/<slug>/          # File Manager: Sulla/Use Cases/functions/<slug>/
+~/sulla/functions/<slug>/          # File Manager: Use Cases/functions/<slug>/
   function.yaml                    # required — manifest
   main.py | main.js | main.sh      # handler code (per runtime)
   requirements.txt                 # python deps (pip), if any

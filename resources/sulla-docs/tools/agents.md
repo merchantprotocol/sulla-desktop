@@ -248,7 +248,7 @@ sulla meta/spawn_agent '{
 
 ## Where do `agentId` configs live?
 
-Agent definitions are runtime rows in `agent_definitions`, indexed from the published `Sulla/Use Cases/agents/<slug>/agent.json` version in Files. Nothing under `~/sulla/agents/` is read. Use `sulla agents/directory` to find a slug. A non-empty `agentId` that matches no enabled agent is rejected with an error; it is not silently run as the default agent.
+Agent definitions are runtime rows in `agent_definitions`, indexed from the published `Use Cases/agents/<slug>/agent.json` version in Files. Nothing under `~/sulla/agents/` is read. Use `sulla agents/directory` to find a slug. A non-empty `agentId` that matches no enabled agent is rejected with an error; it is not silently run as the default agent.
 
 ## Hard rules
 
@@ -261,7 +261,7 @@ Agent definitions are runtime rows in `agent_definitions`, indexed from the publ
 
 - Tool dir: `pkg/rancher-desktop/agent/tools/agents/`
 - Manifest: `pkg/rancher-desktop/agent/tools/agents/manifests.ts`
-- Agent definitions: `Sulla/Use Cases/agents/<slug>/` in Files (see [files-harness.md](../environment/files-harness.md))
+- Agent definitions: `Use Cases/agents/<slug>/` in Files (see [files-harness.md](../environment/files-harness.md))
 - Channel routing: see `agent-patterns/channels.md`
 
 ### Per-run model and container overrides

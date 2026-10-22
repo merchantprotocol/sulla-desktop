@@ -80,7 +80,7 @@ sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 
 ### `@project:<slug>`
 
-Read Sulla/Projects/<slug>/PROJECT.md and TASKS.md with Files tools.
+Read Projects/<slug>/PROJECT.md and TASKS.md with Files tools.
 
 
 ## Intent inference

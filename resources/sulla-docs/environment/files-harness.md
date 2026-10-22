@@ -9,8 +9,8 @@ Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, yo
 ## 2. Drafts
 
 - **Agent writes are drafts.** Any write by an agent creates a new draft version, wherever it lands. The published version does not change.
-- **Exception: `Sulla/Memory/`.** Durable agent memory publishes immediately so recall can see it. Claude Code project memory lives in `Sulla/Memory/claude-code/<project>`, the Codex memory database is snapshotted to `Sulla/Memory/codex`, and Sulla agents use `Sulla/Memory/sulla`. Saving a memory file is not enough on its own: also record the durable fact with the observation tool.
-- **Human writes publish immediately**, unless the file requires approval or the file is under `Sulla/Use Cases/` (see section 5).
+- **Exception: `Memory/`.** Durable agent memory publishes immediately so recall can see it. Claude Code project memory lives in `Memory/claude-code/<project>`, the Codex memory database is snapshotted to `Memory/codex`, and Sulla agents use `Memory/sulla`. Saving a memory file is not enough on its own: also record the durable fact with the observation tool.
+- **Human writes publish immediately**, unless the file requires approval or the file is under `Use Cases/` (see section 5).
 - **Drafts are visible to agents, not to the runtime.** Read a draft with normal file tools on the mount, or list versions with `sulla files/versions`. Humans see the published version and a **Draft pending** marker in File Manager.
 
 ## 3. Publish requests
@@ -39,10 +39,10 @@ sulla files/request_publish '{"file_id":"<id>","version_id":"<draft version id>"
 Agent, skill, workflow, function, and recipe definitions live in Files, not in `~/sulla`:
 
 ```
-Sulla/Use Cases/<type>/<slug>/
+Use Cases/<type>/<slug>/
 ```
 
-`<type>` is `agents`, `skills`, `workflows`, `functions`, or `recipes`. In File Manager this shows as **Sulla/Use Cases**. In the VM it is `/mnt/sulla-files/Sulla/Use Cases`.
+`<type>` is `agents`, `skills`, `workflows`, `functions`, or `recipes`. In File Manager this shows as **Sulla/Use Cases**. In the VM it is `/mnt/sulla-files/Use Cases`.
 
 **Files per type:**
 
@@ -56,13 +56,13 @@ Sulla/Use Cases/<type>/<slug>/
 
 **Lifecycle:**
 
-1. Every edit under `Sulla/Use Cases/` is a draft, whether a human or an agent makes it. A draft never activates anything.
+1. Every edit under `Use Cases/` is a draft, whether a human or an agent makes it. A draft never activates anything.
 2. Request publication (agents) or publish the version (humans).
 3. The runtime poller (about every 2 seconds) reads published versions and rebuilds its Postgres index rows. Only published versions are active.
 4. **Rollback** = publish an older version.
 5. If a newly published version is invalid, Sulla keeps the last valid version active and posts a notice.
 
-**Migration:** on the first run of this build, Sulla exported the old Postgres definitions into Files once. Existing Files content under `Use Cases/` that matched no live definition was moved to `Sulla/Use Cases/_legacy-import/`. Nothing in `_legacy-import` is activated.
+**Migration:** on the first run of this build, Sulla exported the old Postgres definitions into Files once. Existing Files content under `Use Cases/` that matched no live definition was moved to `Use Cases/_legacy-import/`. Nothing in `_legacy-import` is activated.
 
 ## 6. What not to do
 
@@ -76,8 +76,8 @@ Sulla/Use Cases/<type>/<slug>/
 
 ## Read the docs from Files
 
-Agents read these docs at `/mnt/sulla-files/Sulla/Docs/`, not from the repository path.
+Agents read these docs at `/mnt/sulla-files/Docs/`, not from the repository path.
 
 ## Projects
 
-See [Projects in Files](projects-in-files.md) for the Sulla/Projects/<project-slug>/ convention.
+See [Projects in Files](projects-in-files.md) for the Projects/<project-slug>/ convention.

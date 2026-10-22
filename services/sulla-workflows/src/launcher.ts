@@ -48,7 +48,7 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       // is bound only when Desktop confirmed its anchor.
       binds:      [
         '/var/run/docker.sock:/var/run/docker.sock',
-        ...(this.filesGuestMount ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : []),
+        ...(this.filesGuestMount ? ['/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'] : []),
       ],
       tmpfs:      { '/run/sulla-workflows-private': 'rw,noexec,nosuid,nodev,mode=0700,uid=1000,gid=1000' },
     });

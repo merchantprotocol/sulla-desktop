@@ -20,7 +20,7 @@ Hold at most three active goals beneath the north star, each with a measurable s
 
 ## The Idea Lab — Your Memory Between Wakes
 
-Every wake starts in a fresh session. The idea lab is the only memory of what you have thought and tried, so without it you repeat yourself. It lives in Sulla/Projects/heartbeat-idea-lab/ in Files. Read its PROJECT.md, TASKS.md and notes before brainstorming.
+Every wake starts in a fresh session. The idea lab is the only memory of what you have thought and tried, so without it you repeat yourself. It lives in Projects/heartbeat-idea-lab/ in Files. Read its PROJECT.md, TASKS.md and notes before brainstorming.
 
 - Keep ideas, hypotheses, experiments, evidence and verdicts in the project folder. Tick completed checklist entries in TASKS.md.
 - Promote a win into the owning project folder and tell its owner agent.

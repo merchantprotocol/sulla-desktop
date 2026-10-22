@@ -44,6 +44,6 @@ export function projectFileInput(input: any): { content: string; path: string } 
   ].join('\n');
   return {
     content: `${ metadata }${ String(input.content ?? '') }`,
-    path: `Sulla/Projects/${ slug(projectSlug) }/${ fileName(input.file_name ?? input.name) }`,
+    path: `Projects/${ slug(projectSlug) }/${ fileName(input.file_name ?? input.name) }`,
   };
 }

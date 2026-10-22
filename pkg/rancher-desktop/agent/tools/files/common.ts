@@ -19,7 +19,7 @@ export interface UseCaseDraftFile {
   path: string;
 }
 
-/** Write a use-case definition into the Sulla system collection.
+/** Write a use-case definition into the home collection.
  * Files creates these versions as drafts; only files_request_publish can make
  * one active, published version.
  */

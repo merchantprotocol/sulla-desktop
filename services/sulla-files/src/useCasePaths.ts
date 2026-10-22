@@ -3,5 +3,5 @@ export { USE_CASE_PATH_PREFIX } from './systemPaths.js';
 import { USE_CASE_PATH_PREFIX } from './systemPaths.js';
 
 export function isUseCasePath(collection: { system_area?: string | null }, path: string): boolean {
-  return collection.system_area === 'sulla' && path.startsWith(USE_CASE_PATH_PREFIX);
+  return collection.system_area !== 'logs' && collection.system_area !== 'training-data' && path.startsWith(USE_CASE_PATH_PREFIX);
 }

@@ -1,4 +1,4 @@
--- Working project folders (Sulla/Projects/<slug>/PROJECT.md, TASKS.md, ...) are shared and live as soon as
+-- Working project folders (Projects/<slug>/PROJECT.md, TASKS.md, ...) are shared and live as soon as
 -- they are written, like Memory. Otherwise every agent task update would sit as an invisible draft.
 CREATE OR REPLACE FUNCTION files_prepare_version_lifecycle() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE target files%ROWTYPE; latest_major INTEGER; latest_minor INTEGER;

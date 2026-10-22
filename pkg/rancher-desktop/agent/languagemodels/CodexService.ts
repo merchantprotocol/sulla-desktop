@@ -246,7 +246,7 @@ export class CodexService extends BaseLanguageModel {
     // Codex has no memory-dir setting, and SQLite locking over FUSE is not
     // safe. Keep the live db local; restore it from Files after a VM restart
     // wiped it, and snapshot the current copy into Files on every launch.
-    const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then M=/mnt/sulla-files/Sulla/Memory/codex; L="$HOME/.codex/memories_1.sqlite"; ` +
+    const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then M=/mnt/sulla-files/Memory/codex; L="$HOME/.codex/memories_1.sqlite"; ` +
       `mkdir -p "$M" "$HOME/.codex"; ` +
       `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
       `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
@@ -728,7 +728,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
 - You are part of a live multi-agent network — Heartbeat and other agents are active
-- Durable agent memory lives in Files under \`Sulla/Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
+- Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 
     stableParts.push(`<environment>
