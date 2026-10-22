@@ -283,7 +283,7 @@ export class SharesService {
     if (input.password !== undefined && (input.password.length < 8 || input.password.length > 256)) throw Object.assign(new Error('password must be 8 to 256 characters'), { status: 400 });
     let targetType: 'file' | 'folder'; let fileId: string | null = null; let collectionId: string; let folderPath: string | null = null; let name: string; let mime: string;
     if (input.fileId) {
-      const result = await this.db.query('SELECT id,collection_id,path,mime FROM files WHERE id=$1 AND deleted_at IS NULL AND published_version_id IS NOT NULL', [input.fileId]);
+      const result = await this.db.query('SELECT id,collection_id,path,mime FROM files WHERE id=$1 AND deleted_at IS NULL AND current_version_id IS NOT NULL', [input.fileId]);
       if (!result.rows[0]) throw Object.assign(new Error('file not found'), { status: 404 });
       ({ id: fileId, collection_id: collectionId, mime } = result.rows[0]); name = basename(result.rows[0].path); targetType = 'file';
     } else {
@@ -500,9 +500,9 @@ export class SharesService {
       file = (await this.db.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL', [share.collection_id, `${ share.folder_path }/${ relative }`])).rows[0];
     }
     if (!file) throw Object.assign(new Error('shared file not found'), { status: 404 });
-    if (!file.published_version_id) throw Object.assign(new Error('shared file has no published version'), { status: 404 });
+    if (!file.current_version_id) throw Object.assign(new Error('shared file has no version'), { status: 404 });
     await assertUnprotectedFile(this.db, file);
-    const stream = await streamFileContent(this.db, this.config, this.store, file.id, file.published_version_id, rangeHeader, signal);
+    const stream = await streamFileContent(this.db, this.config, this.store, file.id, file.current_version_id, rangeHeader, signal);
     if (!stream) throw Object.assign(new Error('shared file has no readable version'), { status: 404 });
     return { body: stream.body, mime: stream.mime, name: basename(stream.path), status: stream.range ? 206 : 200,
       contentLength: stream.contentLength, contentRange: stream.range ? `bytes ${ stream.range.start }-${ stream.range.end }/${ stream.size }` : undefined };
@@ -516,7 +516,7 @@ export class SharesService {
     if (share.target_type === 'folder' && !requestedPath) {
       const prefix = `${ share.folder_path }/`;
       const escapedPrefix = prefix.replace(/[\\%_]/g, '\\$&');
-      const files = (await queryable.query("SELECT path,mime,size FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NULL AND published_version_id IS NOT NULL AND path LIKE $2 ESCAPE E'\\\\' ORDER BY path", [share.collection_id, `${ escapedPrefix }%`])).rows
+      const files = (await queryable.query("SELECT path,mime,size FROM files WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=files.id) AND collection_id=$1 AND deleted_at IS NULL AND current_version_id IS NOT NULL AND path LIKE $2 ESCAPE E'\\\\' ORDER BY path", [share.collection_id, `${ escapedPrefix }%`])).rows
         .filter(row => !isProtectedPath(row.path)).map(row => ({ ...row, path: row.path.slice(prefix.length) }));
       return { bytes: Buffer.from(JSON.stringify({ name: share.display_name, files })), mime: 'application/json', name: `${ share.display_name }.json` };
     }
@@ -529,9 +529,9 @@ export class SharesService {
       file = (await queryable.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL', [share.collection_id, full])).rows[0];
     }
     if (!file) throw Object.assign(new Error('shared file not found'), { status: 404 });
-    if (!file.published_version_id) throw Object.assign(new Error('shared file has no published version'), { status: 404 });
+    if (!file.current_version_id) throw Object.assign(new Error('shared file has no version'), { status: 404 });
     await assertUnprotectedFile(queryable, file);
-    const version = (await queryable.query(`SELECT v.chunk_collection_id,m.chunk_ids FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.deleted=FALSE AND v.publication_status='published'`, [file.published_version_id])).rows[0];
+    const version = (await queryable.query(`SELECT v.chunk_collection_id,m.chunk_ids FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1 AND v.deleted=FALSE`, [file.current_version_id])).rows[0];
     if (!version) throw Object.assign(new Error('shared file has no readable version'), { status: 404 });
     const key = (await this.config.keyring!.keys(version.chunk_collection_id, queryable)).data;
     const chunks: Buffer[] = []; for (const chunkId of version.chunk_ids) chunks.push(await decryptChunk(await this.store.get(version.chunk_collection_id, chunkId), key, chunkId));

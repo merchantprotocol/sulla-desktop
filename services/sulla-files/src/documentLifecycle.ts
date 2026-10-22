@@ -15,7 +15,7 @@ export function lifecycleFields(file:any) {
   const { search_text: _st, search_vector: _sv, ...rest } = file;
   return {
     ...rest,
-    publication_state: rest.draft_version_id ? 'draft' : 'published',
+    publication_state: 'published',
     versioning: { enabled: file.versioning_enabled, majorMinor: file.major_minor_enabled, requireApproval: file.require_approval, requireCheckout: file.require_checkout },
     checkout: file.checked_out_by_user_id ? { userId: file.checked_out_by_user_id, deviceId: file.checked_out_by_device_id, at: iso(file.checked_out_at) } : null,
     retention: { mode: file.retention_mode, retainUntil: iso(file.retain_until), eventType: file.retention_event_type, eventOccurredAt: iso(file.retention_event_at), durationDays: file.retention_duration_days },
@@ -24,16 +24,15 @@ export function lifecycleFields(file:any) {
   };
 }
 
-export function lifecycleCapabilities(_role:string | undefined, draftVisible:boolean) {
-  return {canEdit:true,canManage:true,canViewDraft:draftVisible,canPublish:true};
+export function lifecycleCapabilities(_role:string | undefined, _draftVisible:boolean) {
+  return {canEdit:true,canManage:true,canViewDraft:true,canPublish:true};
 }
 
-export async function authorizedVersionId(db:pg.Pool, file:any, draftVisible:boolean, requested?:string):Promise<string> {
-  const fallback = draftVisible ? file.current_version_id : file.published_version_id;
-  const versionId = requested ?? fallback;
-  if (!versionId) throw httpError(404, 'no published version is available');
-  const version = (await db.query('SELECT id,publication_status FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE', [versionId, file.id])).rows[0];
-  if (!version || (!draftVisible && version.publication_status !== 'published')) throw httpError(404, 'version not found');
+export async function authorizedVersionId(db:pg.Pool, file:any, _draftVisible:boolean, requested?:string):Promise<string> {
+  const versionId = requested ?? file.current_version_id;
+  if (!versionId) throw httpError(404, 'no version is available');
+  const version = (await db.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE', [versionId, file.id])).rows[0];
+  if (!version) throw httpError(404, 'version not found');
   return version.id;
 }
 
@@ -185,8 +184,8 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
     const reason = request.body?.reason == null ? null : String(request.body.reason).slice(0, 2000);
     const row = await transaction(async client => {
       const file = await locked(client, request.params.id);
-      const version = (await client.query("SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE AND publication_status='draft'", [request.params.versionId,file.id])).rows[0];
-      if (!version) throw httpError(404, 'draft version not found');
+      const version = (await client.query("SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND deleted=FALSE AND (publication_status IS NULL OR publication_status='draft')", [request.params.versionId,file.id])).rows[0];
+      if (!version) throw httpError(404, 'version not found');
       return (await client.query(`INSERT INTO files_publish_requests(file_id,version_id,requested_by,reason) VALUES($1,$2,$3,$4)
         ON CONFLICT(file_id,version_id) WHERE status='pending' DO UPDATE SET reason=COALESCE(EXCLUDED.reason,files_publish_requests.reason) RETURNING *`,
       [file.id,version.id,actor.jobId ?? actor.agentId ?? actor.userId,reason])).rows[0];
@@ -234,8 +233,8 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
       const versionId = String(request.body?.versionId ?? file.draft_version_id ?? ''); const kind = request.body?.kind === 'major' ? 'major' : 'minor';
       const major = kind === 'major' ? Number((await client.query('SELECT COALESCE(MAX(major_version),0)::int n FROM file_versions WHERE file_id=$1', [file.id])).rows[0].n) + 1 : Number((await client.query('SELECT COALESCE(MAX(major_version),0)::int n FROM file_versions WHERE file_id=$1', [file.id])).rows[0].n);
       const minor = kind === 'major' ? 0 : Number((await client.query('SELECT COALESCE(MAX(minor_version),0)::int n FROM file_versions WHERE file_id=$1 AND major_version=$2', [file.id, major])).rows[0].n) + 1;
-      const result = await client.query(`UPDATE file_versions SET version_comment=COALESCE($3,version_comment),version_kind=$4,major_version=$5,minor_version=$6 WHERE id=$1 AND file_id=$2 AND publication_status='draft' RETURNING id`, [versionId, file.id, request.body?.comment ?? null, kind, major, minor]);
-      if (!result.rowCount) throw httpError(404, 'draft version not found');
+      const result = await client.query(`UPDATE file_versions SET version_comment=COALESCE($3,version_comment),version_kind=$4,major_version=$5,minor_version=$6 WHERE id=$1 AND file_id=$2 AND (publication_status IS NULL OR publication_status='draft') RETURNING id`, [versionId, file.id, request.body?.comment ?? null, kind, major, minor]);
+      if (!result.rowCount) throw httpError(404, 'version not found');
       const updated = (await client.query(`UPDATE files SET checked_out_by_user_id=NULL,checked_out_by_device_id=NULL,checked_out_at=NULL,lifecycle_generation=lifecycle_generation+1 WHERE id=$1 RETURNING *`, [file.id])).rows[0];
       await journalLifecycle(client, updated); return updated;
     });
