@@ -14,17 +14,24 @@ import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '@pkg/vaul
 const console = Logging.background;
 async function executeThroughRegistry(
   ctx: RelayToolExecutionContext,
-  _category: string,
+  category: string,
   toolName: string,
   args: unknown,
   signal: AbortSignal,
 ): Promise<RelayToolResult> {
+  // Registry keys are category-prefixed (e.g. `vault_list_api_keys`); callers
+  // send the bare tool name, so prefer the prefixed name when it's registered
+  // and fall back to the bare name otherwise, matching chatCompletionsServer.
+  const prefixed = `${ category }_${ toolName }`;
+  const resolvedName = !toolName.startsWith(`${ category }_`) && toolRegistry.isRegistered(prefixed)
+    ? prefixed
+    : toolName;
   // Tool instances carry mutable state, approval signals, and verified caller
   // identity. A cached singleton lets concurrent calls overwrite each other.
-  const tool = await toolRegistry.createTool(toolName);
+  const tool = await toolRegistry.createTool(resolvedName);
   tool.approvalSignal = signal;
   tool.executionContext = ctx;
-  const executionTarget = toolRegistry.getExecutionTarget(toolName);
+  const executionTarget = toolRegistry.getExecutionTarget(resolvedName);
   const registered = ctx.thread_id ? GraphRegistry.get(ctx.thread_id)?.state : undefined;
   const isolatedState = {
     ...(registered ?? {}),

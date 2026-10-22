@@ -223,7 +223,7 @@ def serve(c):
  try:
   line=b''
   while not line.endswith(b'\n') and len(line)<16: line+=c.recv(1)
-  port=int(line.strip());u=socket.create_connection(('host.lima.internal',port),5)
+  port=int(line.strip());u=socket.create_connection(('host.lima.internal',port),5);u.settimeout(None)
   threading.Thread(target=copy,args=(c,u),daemon=True).start();copy(u,c)
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
@@ -231,7 +231,37 @@ while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).sta
   // 0711 (not 0700): the relay dir is owned by the Lima user, but the sulla-host-relay
   // container binds it as uid 10001 and must still be able to traverse into it to reach
   // relay.sock (0666); only the socket itself needs to stay unreadable to other users.
-  await limactl(['sh', '-c', 'test -S "$1" || { sudo install -d -m 0711 -o "$(id -u)" -g "$(id -g)" "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
+  //
+  // The relay is versioned by a hash of its own source: if an old relay process is
+  // still listening on a socket from a previous Desktop build, bootstrap kills it
+  // (tracked by the pidfile it wrote, never by pattern-matching `pkill -f`) before
+  // starting the current version, so a code change here takes effect without
+  // requiring a VM reboot.
+  const relayVersion = crypto.createHash('sha256').update(vmRelay).digest('hex').slice(0, 12);
+  const bootstrap = String.raw`sock="$1"; ver="$2"
+dir=$(dirname "$sock")
+verfile="$dir/relay.version"
+pidfile="$dir/relay.pid"
+need_restart=0
+if test -S "$sock"; then
+  if ! test -f "$verfile" || [ "$(cat "$verfile" 2>/dev/null)" != "$ver" ]; then need_restart=1; fi
+else
+  need_restart=1
+fi
+if [ "$need_restart" = "1" ]; then
+  sudo install -d -m 0711 -o "$(id -u)" -g "$(id -g)" "$dir"
+  if test -f "$pidfile"; then
+    old_pid=$(cat "$pidfile" 2>/dev/null)
+    if [ -n "$old_pid" ]; then kill "$old_pid" 2>/dev/null; fi
+  fi
+  rm -f "$sock"
+  nohup python3 -c "$3" >/dev/null 2>&1 &
+  echo $! > "$pidfile"
+  echo "$ver" > "$verfile"
+fi
+for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
+exit 1`;
+  await limactl(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
   await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
   const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
   if (!exists) {

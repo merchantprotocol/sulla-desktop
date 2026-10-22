@@ -7,6 +7,7 @@ import errno
 import functools
 import json
 import os
+import random
 import stat
 import tempfile
 import time
@@ -31,6 +32,10 @@ MAX_OPEN_HANDLES = 32
 # against the container memory limit).
 SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
 MAX_TOKEN_BYTES = 4096
+# Methods whose outcome doesn't depend on how many times they're applied, so
+# retrying a transient 409 from Files' own SERIALIZABLE-conflict retry loop is safe.
+IDEMPOTENT_RETRY_METHODS = ("DELETE", "PUT")
+MAX_CONFLICT_RETRIES = 3
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
 METADATA_NAME = "_folder-metadata.yaml"
@@ -168,9 +173,27 @@ class FilesApi:
         stats["requests"] += 1
         outcome = {"status": None, "bytes": 0, "error": None}
         try:
-            result = self._send(path, method, body, headers)
-            outcome["status"], outcome["bytes"] = result[0], len(result[2])
-            return result
+            attempt = 0
+            while True:
+                try:
+                    result = self._send(path, method, body, headers)
+                    outcome["status"], outcome["bytes"] = result[0], len(result[2])
+                    return result
+                except OSError as error:
+                    detail = getattr(error, "detail", None) or {}
+                    transient = getattr(error, "status", None) == 409 and "concurrently or are busy" in detail.get("error", "")
+                    if method not in IDEMPOTENT_RETRY_METHODS or not transient:
+                        raise
+                    if attempt < MAX_CONFLICT_RETRIES:
+                        attempt += 1
+                        time.sleep(0.05 * attempt + random.uniform(0, 0.05))
+                        continue
+                    # Files' own SERIALIZABLE-conflict retries were exhausted too: this is
+                    # still transient DB contention, not a permission denial, so give agents
+                    # a retryable errno instead of EPERM ("Operation not permitted").
+                    busy = OSError(errno.EBUSY, str(error))
+                    busy.status, busy.detail = error.status, error.detail
+                    raise busy from error
         except OSError as error:
             stats["requestErrors"] += 1
             outcome["status"] = getattr(error, "status", None)

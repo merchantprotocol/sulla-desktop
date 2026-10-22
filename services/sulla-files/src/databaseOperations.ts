@@ -108,25 +108,39 @@ export function parseDatabaseOperation(value:any):DatabaseOperationRequest {
   };
 }
 
+const SERIALIZATION_RETRY_CODES = ['40001', '40P01'];
+const MAX_TRANSACTION_ATTEMPTS = 4;
+
 export async function transaction<T>(db:pg.Pool, run:(client:pg.PoolClient)=>Promise<T>):Promise<T> {
-  const client = await db.connect();
-  let commitAttempted=false; let committed=false;
-  try {
-    await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
-    await client.query("SET LOCAL lock_timeout='5s'");
-    await client.query("SET LOCAL statement_timeout='15s'");
-    // Namespace triggers serialize legacy writers per collection. SERIALIZABLE
-    // protects ACL/custody predicates without a service-wide lock across the
-    // operation. External identity membership is prepared before BEGIN.
-    const result = await run(client);
-    commitAttempted=true;
-    await client.query('COMMIT'); committed=true;
-    return result;
-  } catch (error:any) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    if (['40001', '40P01', '23505', '55P03', '57014'].includes(error?.code)) throw fail(409, 'Files changed concurrently or are busy; refresh before retrying. Receipt requests must reuse their idempotency key');
-    throw error;
-  } finally { client.release(commitAttempted && !committed) }
+  for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt++) {
+    const client = await db.connect();
+    let commitAttempted=false; let committed=false; let retry=false;
+    try {
+      await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      await client.query("SET LOCAL lock_timeout='5s'");
+      await client.query("SET LOCAL statement_timeout='15s'");
+      // Namespace triggers serialize legacy writers per collection. SERIALIZABLE
+      // protects ACL/custody predicates without a service-wide lock across the
+      // operation. External identity membership is prepared before BEGIN.
+      const result = await run(client);
+      commitAttempted=true;
+      await client.query('COMMIT'); committed=true;
+      return result;
+    } catch (error:any) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      // ROLLBACK guarantees nothing from run() persisted, so re-running it in a
+      // fresh transaction is safe — but only retry failures from the body, not
+      // from COMMIT itself, and only for the two codes that mean "try again",
+      // not a real conflict (23505), lock timeout (55P03), or statement timeout (57014).
+      retry = !commitAttempted && SERIALIZATION_RETRY_CODES.includes(error?.code) && attempt < MAX_TRANSACTION_ATTEMPTS;
+      if (!retry) {
+        if (['40001', '40P01', '23505', '55P03', '57014'].includes(error?.code)) throw fail(409, 'Files changed concurrently or are busy; refresh before retrying. Receipt requests must reuse their idempotency key');
+        throw error;
+      }
+    } finally { client.release(commitAttempted && !committed) }
+    await new Promise(resolve => setTimeout(resolve, 10 * attempt + Math.floor(Math.random() * 20)));
+  }
+  throw fail(409, 'Files changed concurrently or are busy; refresh before retrying. Receipt requests must reuse their idempotency key');
 }
 
 export async function lockedFile(client:pg.PoolClient, id:string, access:DatabaseOperationAccess):Promise<any> {
