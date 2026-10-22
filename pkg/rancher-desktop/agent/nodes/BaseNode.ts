@@ -844,6 +844,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],
+      ['brain_memory', 'brainMemoryContext'],
     ];
     const blocks = fields.flatMap(([tag, key]) => {
       const value = key === 'conversationContext'

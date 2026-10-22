@@ -152,6 +152,7 @@ export async function runSubconsciousMiddleware(
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
   meta.filesContext = '';
+  meta.brainMemoryContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -375,6 +376,16 @@ export async function runSubconsciousMiddleware(
   if (typeof meta.threadId === 'string' && meta.threadId) {
     launched.push('subagent-directory');
     awaitedTasks.push(runSubagentDirectory(state));
+  }
+
+  // R13. Brain v2 recall — semantic recall from the specialist brain engine
+  // (typed knowledge nodes ingested from YouTube content). Direct HTTP call
+  // to the brain container's /recall endpoint, no LLM round-trip. Typically
+  // 300-400ms (dominated by embedding). Returns pre-formatted <brain_memory>
+  // XML that the engine already builds. Gated on the brainMemory setting.
+  if (options.includeObservations && analyzable) {
+    launched.push('brain-recall');
+    awaitedTasks.push(timed('brain-recall', 'Recalling brain knowledge', runBrainRecall(state)));
   }
 
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -965,6 +976,62 @@ async function runSubagentDirectory(state: BaseThreadState): Promise<void> {
   }
 }
 
+/** Brain v2 recall — semantic search over typed knowledge nodes. */
+async function runBrainRecall(state: BaseThreadState): Promise<void> {
+  const meta = state.metadata as any;
+  try {
+    const enabled = await SullaSettingsModel.get('brainMemory', 'on');
+    if (enabled === 'off') {
+      meta.brainMemoryContext = '';
+      return;
+    }
+    const brainUrl = process.env.BRAIN_V2_URL || 'http://127.0.0.1:7423';
+    const cue = extractLatestUserText(state);
+    if (!cue) {
+      meta.brainMemoryContext = '';
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const res = await fetch(`${ brainUrl }/recall`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ cue, top_k: 20 }),
+        signal:  controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) {
+        console.warn(`[SubconsciousMiddleware] brain recall HTTP ${ res.status }`);
+        meta.brainMemoryContext = '';
+        return;
+      }
+      const data = await res.json() as { block?: string; items?: unknown[]; ms?: number };
+      if (data.block && typeof data.block === 'string') {
+        // The engine wraps the block in <brain_memory>...</brain_memory>;
+        // BaseNode re-wraps it, so strip the outer tags to avoid doubling.
+        meta.brainMemoryContext = data.block
+          .replace(/^<brain_memory[^>]*>\n?/, '')
+          .replace(/\n?<\/brain_memory>\s*$/, '');
+      } else {
+        meta.brainMemoryContext = '';
+      }
+      perf.log(`[BrainRecall] threadId=${ meta.threadId } items=${ data.items?.length ?? 0 } ms=${ data.ms ?? '?' }`);
+    } catch (fetchErr: any) {
+      clearTimeout(timer);
+      if (fetchErr?.name === 'AbortError') {
+        console.warn('[SubconsciousMiddleware] brain recall timed out (5s)');
+      } else {
+        console.warn('[SubconsciousMiddleware] brain recall fetch failed:', fetchErr?.message ?? fetchErr);
+      }
+      meta.brainMemoryContext = '';
+    }
+  } catch (err) {
+    console.warn('[SubconsciousMiddleware] brain recall failed:', err instanceof Error ? err.message : err);
+    meta.brainMemoryContext = '';
+  }
+}
+
 /**
  * Spawned sub-agents and subconscious observer/recall graphs never trigger
  * Files recall: the parent turn already searched, and a nested search per
@@ -1028,7 +1095,7 @@ function finalizeFilesRecall(state: BaseThreadState, result: FilesRecallTurnResu
       existingContexts: [
         meta.observationContext, meta.userObservationContext, meta.selfObservationContext, meta.businessObservationContext,
         meta.environmentObservationContext, meta.projectsObservationContext, meta.worldObservationContext,
-        meta.skillsObservationContext, meta.conversationContext, meta.skillRecallContext,
+        meta.skillsObservationContext, meta.conversationContext, meta.skillRecallContext, meta.brainMemoryContext,
       ],
       currentThreadId:    typeof meta.threadId === 'string' ? meta.threadId : undefined,
       incompleteCoverage: outcome.incompleteCoverage,
