@@ -95,6 +95,10 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
       { field: 'api_key', target: 'header', name: 'api-key', scheme: 'raw' },
     ],
   },
+  'item.http': {
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    injections: [],
+  },
   'provider.inference': {
     integrations: ['openai', 'anthropic', 'google', 'grok', 'kimi', 'nvidia', 'alibaba', 'groq', 'mistral', 'cerebras', 'together', 'cohere', 'deepseek', 'arcee', 'custom'],
     requireItemSites: true,
@@ -368,6 +372,16 @@ export function validateOperation(
   }
   if (!input.injections.length && !policy.credentialOptional) throw new Error('credential_injection_required');
   return policy;
+}
+
+/** item.http is owner-declared and deliberately bypasses the integration injection allowlist. */
+export function validateItemHttpOperation(input: BrokerExecuteRequest): void {
+  const policy = BROKER_OPERATION_POLICIES['item.http'];
+  if (!policy.methods.includes(input.method.toUpperCase())) throw new Error('method_denied');
+  if (input.responseType === 'stream' || input.responseType === 'binary-stream' || input.bodyEncoding !== undefined) {
+    throw new Error('streaming_denied');
+  }
+  if (input.injections.length) throw new Error('injection_denied');
 }
 
 export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {

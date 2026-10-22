@@ -200,3 +200,6 @@
 .detail-field .v.bool-value::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--read-5)}
 .detail-field .v.bool-value.yes::before{background:var(--success)}
 @media(max-width:720px){.cf-head{grid-template-columns:minmax(0,1fr) auto auto auto}.cf-head .cf-type{grid-column:1/-1;grid-row:2}}
+
+#proxy-presets { flex-wrap: wrap; gap: 6px; }
+.proxy-rule { margin: 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--border); }

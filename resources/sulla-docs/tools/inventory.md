@@ -217,13 +217,15 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla settings/get` — Read a Sulla Desktop setting through SullaSettingsModel (Redis cache → Postgres → file fallback).
 - `sulla settings/set` — Write a Sulla Desktop setting through SullaSettingsModel so Postgres and the Redis cache stay in sync.
 
-## vault (8 tools)
+## vault (10 tools)
 - `sulla vault/read_secrets` — Retrieve the credentials and connection status for a specific integration.
 - `sulla vault/is_enabled` — Check whether a specific integration is enabled (connected).
 - `sulla vault/list_accounts` — List all accounts configured for an integration.
 - `sulla vault/set_active_account` — Set which account is active for an integration.
 - `sulla vault/set_credential` — Store or update a credential for an integration account.
-- `sulla vault/list` — List all saved website credentials in the vault.
+- `sulla vault/list` — List website credentials only; API keys use list_api_keys.
+- `sulla vault/list_api_keys` — List API key/Login items this agent may use through owner-declared proxy rules; no secrets.
+- `sulla vault/request` — Request an allowed HTTPS API using an item id or exact name, without exposing credentials.
 - `sulla vault/autofill` — Autofill a login form on the active browser tab, or an explicitly requested background tab, with saved vault credentials.
 - `sulla vault/delete_credential` — Delete a single credential property from the vault.
 
