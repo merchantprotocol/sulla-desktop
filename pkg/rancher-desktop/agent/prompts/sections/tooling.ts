@@ -30,13 +30,13 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Files
 
 Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
 
-Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
+Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
 
     return {
       id:             'tooling',
@@ -74,13 +74,13 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Files
 
 Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
 
-Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
+Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
 
     return {
       id:             'tooling',
@@ -126,13 +126,13 @@ Make parallel tool calls when possible.
 
 ## Use-case files
 
-Agents, skills, workflows, functions, and recipes are stored under \`Sulla/Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
 
 ## Files
 
 Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
 
-Projects live in Sulla Files under \`Sulla/Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.
+Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.
 
 ## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
 

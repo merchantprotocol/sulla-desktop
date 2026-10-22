@@ -71,7 +71,7 @@ ${ sullaHome }/
 │   ├── business/               # {identity.md, goals.md}
 │   ├── world/                  # {identity.md, goals.md}
 │   └── agent/                  # {identity.md, goals.md}
-├── projects/                   # Historical workspace (projects now live in Sulla Files: Sulla/Projects/)
+├── projects/                   # Historical workspace (projects now live in Sulla Files: Projects/)
 ├── logs/                       # Execution logs (playbook-debug.log, etc.)
 ├── conversations/              # Conversation history
 ├── captures/                   # Capture Studio recordings

@@ -5,8 +5,9 @@ import type { ToolResponse } from '../base';
 export class FilesListWorker extends FilesTool {
   name = ''; description = '';
   protected async _validatedCall(input:any):Promise<ToolResponse> {
-    if (!input.collection_id) throw new Error('collection_id is required; use files_collections to find it');
-    const files = await this.containerJson<any[]>(`/v1/files?collectionId=${ encodeURIComponent(input.collection_id) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`, input);
+    const collectionId = input.collection_id || (await this.containerJson<any[]>('/v1/collections', input)).find(collection => !collection.systemArea && (collection.is_default || collection.explorer_path === ''))?.id;
+    if (!collectionId) throw new Error('Home collection is unavailable');
+    const files = await this.containerJson<any[]>(`/v1/files?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(input.path ?? '') }&trash=${ input.trash === true }`, input);
     const limit = Math.min(Math.max(Number(input.limit) || 200, 1), 2000);
     return { successBoolean: true, responseString: JSON.stringify({
       total: files.length,

@@ -144,10 +144,11 @@ def _mtime_ms(value):
 
 
 class FilesApi:
-    def __init__(self, base_url: str, token_file: str, actor_resolver=None):
+    def __init__(self, base_url: str, token_file: str, actor_resolver=None, system_area=""):
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
         self.actor_resolver = actor_resolver
+        self.system_area = system_area
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -217,7 +218,7 @@ class FilesApi:
 
     async def snapshot(self, etag=None):
         headers = {"If-None-Match": etag} if etag else None
-        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree", "GET", None, headers)
+        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree" + (("?systemArea=" + urllib.parse.quote(self.system_area)) if self.system_area else ""), "GET", None, headers)
         next_etag = response_headers.get("ETag", etag)
         return (None if status == 304 else json.loads(body)), next_etag
 
@@ -883,13 +884,13 @@ async def main(options):
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     status = StatusFile(options.status_file)
     os.makedirs(options.mountpoint, exist_ok=True)
-    operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver()))
+    operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver(), options.system_area))
     emit("daemon-start", pid=os.getpid(), url=options.url, mountpoint=options.mountpoint, spool=SPOOL_DIR,
          logLevel=logging.getLevelName(log.getEffectiveLevel()), pyfuse3=pyfuse3.__version__, snapshotTtlSeconds=SNAPSHOT_TTL_SECONDS,
          maxFileBytes=MAX_FILE_BYTES, maxOpenHandles=MAX_OPEN_HANDLES, slowRequestSeconds=SLOW_REQUEST_SECONDS)
     status.set("mounting")
     try:
-        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
+        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other", *({"ro"} if options.read_only else set())})
     except Exception as error:
         log.exception("mount failed", extra={"event": "mount-failed", "fields": {"mountpoint": options.mountpoint}})
         status.set("failed", reason="mount-failed", error=str(error))
@@ -952,6 +953,8 @@ if __name__ == "__main__":
     logging.getLogger("pyfuse3").setLevel(os.environ.get("SULLA_FILES_FUSE_PYFUSE3_LOG_LEVEL", "INFO").upper())
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Files service base URL")
+    parser.add_argument("--system-area", default=os.environ.get("SULLA_FILES_FUSE_SYSTEM_AREA", ""), choices=("", "logs", "training-data"))
+    parser.add_argument("--read-only", action="store_true", default=os.environ.get("SULLA_FILES_FUSE_READ_ONLY", "").lower() in ("1", "true"))
     parser.add_argument("--status-file", default=os.environ.get("SULLA_FILES_FUSE_STATUS_FILE"), help="JSON status file Desktop polls")
     parser.add_argument("mountpoint")
     trio.run(main, parser.parse_args())

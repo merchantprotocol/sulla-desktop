@@ -7,6 +7,7 @@ import https from 'node:https';
 
 import { installAuditContext } from './auditContext.js';
 import { ensureSystemAreas } from './systemAreas.js';
+import { migrateSullaCollection } from './sullaCollectionMigration.js';
 import { createApp } from './app.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
@@ -99,6 +100,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
       const { principalId } = await vaultAuthority.unlockedPrincipal();
       await adoptVaultPrincipal(db, config, principalId);
     }
+    await migrateSullaCollection(db, config);
     await ensureSystemAreas(db, config);
     if (manager) {
       reportStage('manager-initialization');

@@ -41,7 +41,7 @@ const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
 
 const KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS: Record<KnowledgeAssociationRole, string> = {
   project_reader: `Read project folders in Sulla Files and relevant Knowledge Base context. Read-only; never mutate files or knowledge.`,
-  project_writer: `Maintain project notes in Sulla Files under Sulla/Projects/<project-slug>/. Read the current file before updating it. Never mutate Knowledge Base content.`,
+  project_writer: `Maintain project notes in Sulla Files under Projects/<project-slug>/. Read the current file before updating it. Never mutate Knowledge Base content.`,
   knowledge_reader: `Recall Knowledge Base nodes and relevant project files in Sulla Files. Read-only; never mutate files or knowledge.`,
   knowledge_writer: `Recall Knowledge Base context and update associated project notes in Sulla Files. Never mutate Knowledge Base content.`,
 };

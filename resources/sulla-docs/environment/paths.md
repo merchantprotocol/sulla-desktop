@@ -21,7 +21,7 @@ For a packaged macOS app this is
 `Sulla Desktop.app/Contents/Resources/resources/`.
 The exact Linux installation prefix is installer-dependent, not `/usr/lib/sulla`
 by contract. App resources are mounted read-only into Lima at the same path.
-Agents should use `/mnt/sulla-files/Sulla/Docs` for the Files-published docs.
+Agents should use `/mnt/sulla-files/Docs` for the Files-published docs.
 
 ## Electron application paths
 

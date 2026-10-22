@@ -17,12 +17,6 @@
           S
         </div><div><b>Sulla</b><span>{{ brandLine }}</span></div>
       </div>
-      <div v-if="visibleCollections.length" class="tree-roots" aria-label="Pinned file tree roots">
-        <div class="grp">Folders</div>
-        <button v-for="collection in visibleCollections" :key="collection.id" type="button"
-          :class="{ on: collection.id === snapshot?.collection.id }" :disabled="busy || loading"
-          @click="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></button>
-      </div>
       <div v-if="dragTargets.length && dragSourceCapability !== 'unavailable' && (snapshot?.availableCollections?.length ?? 0) > 1" class="collection-drops" aria-label="Move selection to collection">
         <button v-for="collection in otherCollections" :key="collection.id" class="btn sm" type="button" @dragover.prevent.stop="setCollectionDropEffect" @drop.prevent.stop="onCollectionDrop(collection.id, $event)">Move to {{ collection.name }}</button>
       </div>
@@ -42,6 +36,10 @@
         class="cnt"
         :class="{ warn: entry.warn }"
       >{{ entry.count }}</span></a>
+      <a href="#" :class="{ on: moreExpanded }" @click.prevent="moreExpanded = !moreExpanded"><span class="sv" v-html="icons.chevronRight" /><span>More</span></a>
+      <template v-if="moreExpanded">
+        <a v-for="collection in moreCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.systemArea === 'training-data' ? 'Training Data' : 'Logs' }}</span></a>
+      </template>
       <template v-if="sharedFolders.length">
         <div class="grp">
           Shared folders
@@ -275,14 +273,6 @@
           </div><h1 v-else>{{ pageTitle }}</h1><span v-if="section !== 'files'" class="meta">{{ summaryText }}</span>
           <div class="right">
             <button
-              v-if="snapshot?.collection.id"
-              class="btn sm ghost"
-              type="button"
-              :aria-pressed="currentCollectionPinned"
-              :title="currentCollectionPinned ? 'Remove this collection from the sidebar' : 'Pin this collection to the sidebar'"
-              @click="setCollectionPinned(snapshot.collection.id, !currentCollectionPinned)"
-            >{{ currentCollectionPinned ? 'Unpin from sidebar' : 'Pin to sidebar' }}</button>
-            <button
               v-if="snapshot?.collection.memberCount !== undefined"
               class="btn sm ghost"
               type="button"
@@ -421,8 +411,8 @@
         <div v-if="busy && !operationReceipt" class="operation-panel" role="status">Working…</div>
 
         <nav v-if="section === 'files'" class="path-breadcrumbs" aria-label="Current folder path">
-          <template v-if="inOtherCollection"><button type="button" @click="openHome">My Files</button><span aria-hidden="true">›</span></template>
-          <button type="button" :class="{ current: !currentPath }" data-drop-path="" @dragover.prevent="onNavigationDragOver('', $event)" @drop.prevent="onNavigationDrop('', $event)" @click="openRoot">{{ inOtherCollection ? snapshot?.collection.name : rootLabel }}</button>
+
+          <button type="button" :class="{ current: !currentPath }" data-drop-path="" @dragover.prevent="onNavigationDragOver('', $event)" @drop.prevent="onNavigationDrop('', $event)" @click="openRoot">{{ snapshot?.collection.systemArea ? snapshot.collection.name : rootLabel }}</button>
           <template v-for="(crumb, index) in crumbs" :key="crumb.path">
             <span aria-hidden="true">›</span><button type="button" :class="{ current: index === crumbs.length - 1 }" :data-drop-path="crumb.path" @dragover.prevent="onNavigationDragOver(crumb.path, $event)" @drop.prevent="onNavigationDrop(crumb.path, $event)" @click="openPath(crumb.path)">{{ crumb.label }}</button>
           </template>
@@ -530,7 +520,7 @@
                   :key="entry.key"
                   class="row"
                   :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, agent: entry.agent, 'is-active': activePaths.has(entry.path) }"
-                  :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key && !entry.openCollectionId"
+                  :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
                   :data-entry-key="entry.key"
                   @pointerdown="prepareDragSnapshot(entry)"
                   @click="focusEntry(entry, $event)"
@@ -560,7 +550,7 @@
                   </td>
                   <td>
                     <div class="name">
-                      <button v-if="entry.folder && !entry.openCollectionId" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
+                      <button v-if="entry.folder" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
                       <span
                         class="fi"
                         :class="entry.kindClass"
@@ -683,7 +673,7 @@
             :key="entry.key"
             class="tile"
             :class="{ 'is-sel': selectedKeys.has(entry.key), 'is-cut': isCut(entry), 'is-dragging': draggedKeys.has(entry.key), 'drop-target': dropTargetKey === entry.key, 'is-active': activePaths.has(entry.path) }"
-            :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key && !entry.openCollectionId"
+            :draggable="section === 'files' && !readOnlyArea && !busy && editingKey !== entry.key"
             :data-entry-key="entry.key"
             @pointerdown="prepareDragSnapshot(entry)"
             @click="focusEntry(entry, $event)"
@@ -890,7 +880,7 @@ const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigati
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; openCollectionId?: string; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
 interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
@@ -1015,22 +1005,9 @@ const folderFavorites = computed(() => {
       available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
     }));
 });
-function loadPinnedCollectionIds():Set<string> {
-  try {
-    const stored = JSON.parse(localStorage.getItem('sulla:files:pinned-collections') ?? '[]');
-    return new Set(Array.isArray(stored) ? stored.filter((id):id is string => typeof id === 'string') : []);
-  } catch { return new Set() }
-}
-const pinnedCollectionIds = ref(loadPinnedCollectionIds());
-const visibleCollections = computed(() => snapshot.value?.availableCollections?.filter(collection => pinnedCollectionIds.value.has(collection.id)) ?? []);
-const currentCollectionPinned = computed(() => Boolean(snapshot.value?.collection.id && pinnedCollectionIds.value.has(snapshot.value.collection.id)));
+const moreExpanded = ref(false);
+const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
-function setCollectionPinned(collectionId:string, pinned:boolean) {
-  const next = new Set(pinnedCollectionIds.value);
-  if (pinned) next.add(collectionId); else next.delete(collectionId);
-  pinnedCollectionIds.value = next;
-  localStorage.setItem('sulla:files:pinned-collections', JSON.stringify([...next]));
-}
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1153,17 +1130,6 @@ function compareEntries(a:DisplayEntry, b:DisplayEntry) {
 }
 // The first collection loaded is the person's home; other collections appear as
 // top-level folders there, mirroring the single tree agents see at /mnt/sulla-files.
-const homeCollectionId = ref('');
-watch(() => snapshot.value?.collection.id, id => { if (id && !homeCollectionId.value) homeCollectionId.value = id }, { immediate: true });
-const inOtherCollection = computed(() => Boolean(homeCollectionId.value && snapshot.value?.collection.id && snapshot.value.collection.id !== homeCollectionId.value));
-function collectionEntries():DisplayEntry[] {
-  return (snapshot.value?.availableCollections ?? []).filter(collection => collection.id !== homeCollectionId.value).map(collection => ({
-    id: `collection:${ collection.id }`, key: `collection:${ collection.id }`, path: collection.name, name: collection.name, folder: true, openCollectionId: collection.id,
-    agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder, subtitle: collection.systemArea === 'logs' || collection.systemArea === 'training-data' ? 'Read only' : 'Folder',
-    mime: 'inode/directory', size: 0, updatedAt: '', sortTimestamp: 0, currentVersionId: '', versionCount: 0, createdByType: 'user', createdById: '',
-    syncState: 'synced', indexStatus: 'indexed', indexReason: '',
-  }));
-}
 const visibleEntries = computed<DisplayEntry[]>(() => {
   if (section.value === 'trash') {
     const search = query.value.trim().toLowerCase();
@@ -1194,7 +1160,6 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
       }
     }
     for (const aggregate of aggregation.folders.values()) entries.push(folderEntry(prefix, aggregate, folderStates.get(aggregate.name)));
-    if (section.value === 'files' && !prefix && !inOtherCollection.value) entries.push(...collectionEntries());
   }
   if (section.value === 'starred') {
     for (const key of starred.value) {
@@ -1207,7 +1172,7 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
       }
     }
   }
-  return entries.filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date)).sort(compareEntries);
+  return entries.filter(entry => !(section.value === 'files' && !currentPath.value && entry.name === '_folder-metadata.yaml')).filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date)).sort(compareEntries);
 });
 function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
   const prefix = `${ folder.path }/`; const aggregation = aggregateFolderChildren(activeFiles.value, prefix); const states = new Map<string, FilesFolderState | undefined>();
@@ -1240,7 +1205,7 @@ const displayedEntryMap = computed(() => new Map(displayedEntries.value.map(entr
 const displayedEntryKeys = computed(() => new Set(displayedEntryMap.value.keys()));
 const allVisibleSelected = computed(() => Boolean(displayedEntryKeys.value.size) && displayedEntryKeys.value.size === selectedKeys.value.size && [...displayedEntryKeys.value].every(key => selectedKeys.value.has(key)));
 // Collection rows only navigate; bulk actions never apply to them.
-const selectedEntries = computed(() => [...selectedKeys.value].map(key => displayedEntryMap.value.get(key)).filter((entry):entry is DisplayEntry => Boolean(entry) && !entry?.openCollectionId));
+const selectedEntries = computed(() => [...selectedKeys.value].map(key => displayedEntryMap.value.get(key)).filter((entry):entry is DisplayEntry => Boolean(entry)));
 const selectedFileForShare = computed(() => selectedEntries.value.find(entry => !entry.folder) ?? selected.value);
 const canPaste = computed(() => Boolean(snapshot.value && section.value === 'files' && clipboard.value?.targets.length &&
   (clipboard.value.collectionId === snapshot.value.collection.id ||
@@ -1347,7 +1312,7 @@ function applyLocation(location:ExplorerLocation) {
 function navigate(location:ExplorerLocation, track = true) { if (busy.value || loading.value) return; const current = currentLocation(); if (track) explorer.visit(current, location); applyLocation(location) }
 function selectSection(next:Section) { navigate({ ...currentLocation(), section: next, path: '' }) }
 function openRoot() { navigate({ ...currentLocation(), section: 'files', path: '' }) }
-function openHome() { if (inOtherCollection.value) void selectCollection(homeCollectionId.value); else selectSection('files') }
+function openHome() { const home=(snapshot.value?.availableCollections ?? []).find(collection => !collection.systemArea); if(home && snapshot.value?.collection.id!==home.id) void selectCollection(home.id); else selectSection('files') }
 function openPath(next:string) { navigate({ ...currentLocation(), section: 'files', path: next }) }
 function openParent() { openPath(parentPath.value) }
 function goBack() { if (busy.value || loading.value) return; const location = explorer.back(currentLocation()); if (location) applyLocation(location) }
@@ -1396,7 +1361,7 @@ async function saveFolderGuidance(){const details=folderDetails.value;const stat
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-function activate(entry:DisplayEntry) { if (entry.openCollectionId) { void selectCollection(entry.openCollectionId); return } if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else selectEntry(entry) }
+function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else selectEntry(entry) }
 function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
@@ -1592,7 +1557,7 @@ function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set()
 async function toggleStar(id:string) { if (!snapshot.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
 function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
 async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
-  if (entry.openCollectionId) return;
+
   closeBackgroundActions();
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
   menuTrigger = event.currentTarget as HTMLElement; const rect = menuTrigger.getBoundingClientRect();

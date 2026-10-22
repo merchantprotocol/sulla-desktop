@@ -110,8 +110,7 @@ export async function probeFilesAnchor(exec: GuestExec, path: string = SULLA_FIL
  * it shared only when no adapter is live (never change propagation on a live
  * FUSE mount), and refuse to reuse any unexpected mount.
  */
-export async function prepareSullaFilesGuestAnchor(exec: GuestExec): Promise<'anchor' | 'adapter'> {
-  const path = SULLA_FILES_GUEST_MOUNT_PATH;
+export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string = SULLA_FILES_GUEST_MOUNT_PATH): Promise<'anchor' | 'adapter'> {
 
   await exec.execCommand({ root: true }, 'install', '-d', '-m', '0700', SULLA_FILES_GUEST_RUNTIME_ROOT);
   await exec.execCommand({ root: true }, 'install', '-d', '-m', '0755', path);

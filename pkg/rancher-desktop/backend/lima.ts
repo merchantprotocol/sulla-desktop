@@ -3516,7 +3516,7 @@ start_pre() {
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30122:8788'],
-      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
       restart: 'unless-stopped',
       mem_limit: '1g',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -3744,6 +3744,20 @@ start_pre() {
           interval: '5s', timeout: '3s', retries: 10,
         },
       };
+      for (const [serviceName, mountPath, systemArea] of [
+        ['sulla_files_fuse_logs', '/mnt/sulla-logs', 'logs'],
+        ['sulla_files_fuse_training_data', '/mnt/sulla-training-data', 'training-data'],
+      ] as const) {
+        compose.services[serviceName] = {
+          ...compose.services.sulla_files_fuse,
+          container_name: serviceName,
+          environment: { ...compose.services.sulla_files_fuse.environment,
+            SULLA_FILES_FUSE_MOUNT_PATH: mountPath, SULLA_FILES_FUSE_SYSTEM_AREA: systemArea, SULLA_FILES_FUSE_READ_ONLY: '1',
+            SULLA_FILES_FUSE_STATUS_FILE: `/tmp/${serviceName}-status.json` },
+          volumes: compose.services.sulla_files_fuse.volumes.map((volume:string) => volume.startsWith('/mnt/sulla-files:') ? `${mountPath}:${mountPath}:rshared` : volume),
+          healthcheck: { ...compose.services.sulla_files_fuse.healthcheck, test: ['CMD','python3','-c',`import os; assert os.path.ismount('${mountPath}')`] },
+        };
+      }
     }
 
     // Modify dynamic values like passwords
@@ -3791,6 +3805,8 @@ start_pre() {
   private async prepareSullaFilesGuestMount(compose: any): Promise<boolean> {
     try {
       await prepareSullaFilesGuestAnchor(this);
+      await prepareSullaFilesGuestAnchor(this, '/mnt/sulla-logs');
+      await prepareSullaFilesGuestAnchor(this, '/mnt/sulla-training-data');
       this.#lastFilesGuestMountFailure = undefined;
       getSullaFilesMountManager().reportGuestPreparation();
       // The workflow manager image cannot ask Desktop; this marker tells it

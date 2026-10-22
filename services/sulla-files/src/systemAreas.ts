@@ -6,7 +6,7 @@ import type pg from 'pg';
 const AREAS = [
   { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault', 'app'] },
   { key: 'training-data', name: 'Training Data', explorerPath: 'Training Data', folders: [] },
-  { key: 'sulla', name: 'Sulla', explorerPath: 'Sulla', folders: [
+  { key: 'home', name: 'Files', explorerPath: '', folders: [
     { path: 'Docs' }, { path: 'Use Cases/skills' }, { path: 'Use Cases/workflows' }, { path: 'Use Cases/agents' },
     { path: 'Use Cases/functions' }, { path: 'Use Cases/recipes' }, { path: 'Projects' }, { path: 'Identity' },
     { path: 'Memory', description: 'Durable agent memory. Memory files are live as soon as they are written (no publish step). Record durable facts as observations too.' },
@@ -23,13 +23,15 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
     await client.query('BEGIN');
     for (const area of AREAS) {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`system-area:${ area.key }`]);
-      let collection = (await client.query('SELECT * FROM collections WHERE system_area=$1', [area.key])).rows[0];
+      let collection = area.key === 'home'
+        ? (await client.query("SELECT * FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1", [config.userId])).rows[0]
+        : (await client.query('SELECT * FROM collections WHERE system_area=$1', [area.key])).rows[0];
       if (!collection) {
         const id = randomUUID();
         collection = (await client.query(`INSERT INTO collections
           (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,explorer_path,system_area)
           VALUES($1,$2,$3,$4,'knowledge','desktop-only',$5,$6,'{}',$8,$7) RETURNING *`,
-        [id, config.orgId ?? null, config.userId, area.name, {}, {}, area.key, area.explorerPath])).rows[0];
+        [id, config.orgId ?? null, config.userId, area.name, {}, {}, area.key === 'home' ? null : area.key, area.explorerPath])).rows[0];
         const wrapped = await config.keyring.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
       }

@@ -54,7 +54,7 @@ viewport:                                 # Optional canvas state
 
 Filename convention: `<workflow-id>.yaml` or descriptive name like `daily-social-posts.yaml`.
 
-The status that decides whether a workflow runs lives on the database row, set by `workflow/import_workflow` (`status`) or `workflow/set_workflow_status`. Moving a file between these folders does not change the row. The `~/sulla/workflows/` folder is mirrored into the File Manager at `Sulla/Use Cases/workflows/`.
+The status that decides whether a workflow runs lives on the database row, set by `workflow/import_workflow` (`status`) or `workflow/set_workflow_status`. Moving a file between these folders does not change the row. The `~/sulla/workflows/` folder is mirrored into the File Manager at `Use Cases/workflows/`.
 
 ---
 

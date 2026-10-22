@@ -127,8 +127,8 @@ export class SullaUseCaseFiles {
 
   /** Publish a human-authored use-case package through Files, never Postgres. */
   async publishPackage(type:UseCaseType, slug:string, files:Record<string,Buffer|string>):Promise<void> {
-    const area = (await this.areas()).find(item => item.systemArea === 'sulla');
-    if (!area) throw new Error('Sulla Files system area is unavailable');
+    const area = (await this.areas()).find(item => !item.systemArea);
+    if (!area) throw new Error('Sulla Files home collection is unavailable');
     for (const [name, value] of Object.entries(files)) {
       await this.ingestPublished(area.id, `${ ROOT }/${ type }/${ slug }/${ name }`, typeof value === 'string' ? Buffer.from(value) : value);
     }
@@ -232,7 +232,7 @@ export class SullaUseCaseFiles {
   async scan():Promise<void> {
     if (this.running) return; this.running = true;
     try {
-      const area = (await this.areas()).find(item => item.systemArea === 'sulla'); if (!area) return;
+      const area = (await this.areas()).find(item => !item.systemArea); if (!area) return;
       let rows = await this.list(area.id); await this.initialExport(area.id, rows); rows = await this.list(area.id);
       const relevant = rows.filter(row => row.path.startsWith(`${ ROOT }/`) && !row.path.startsWith(`${ ROOT }/_legacy-import/`));
       const signature = relevant.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|');

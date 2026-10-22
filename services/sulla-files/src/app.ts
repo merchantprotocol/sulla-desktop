@@ -543,7 +543,7 @@ export function createApp(
     const collectionId = String(request.query.collectionId ?? '');
     const path = cleanPath(String(request.query.path ?? ''), false);
     const collection = await collectionRow(collectionId);
-    if (!isSystemArea(collection.system_area)) throw new HttpError(409, 'system-area ingestion requires a system collection');
+    if (!isSystemArea(collection.system_area) && collection.system_area !== null) throw new HttpError(409, 'system-area ingestion requires the home or a system collection');
     const mime = request.header('content-type') ?? 'application/octet-stream';
     const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
     const result = await mirrorSystemAreaFile(db, {
@@ -558,13 +558,13 @@ export function createApp(
     });
     response.status(result.unchanged ? 200 : 201).json(result);
   } catch (error) { next(error) } });
-  /** Desktop-only migration helpers for the Sulla system collection. */
+  /** Desktop-only helpers for system-authored files in the home collection. */
   app.post('/v1/local/system-areas/move', async(request, response, next) => { const client = await db.connect(); try {
     const fileId = String(request.body.fileId ?? ''); const targetPath = cleanPath(String(request.body.targetPath ?? ''), false);
     await client.query('BEGIN');
     const file = (await client.query(`SELECT f.* FROM files f JOIN collections c ON c.id=f.collection_id
-      WHERE f.id=$1 AND c.system_area='sulla' FOR UPDATE`, [fileId])).rows[0];
-    if (!file) throw new HttpError(404, 'Sulla system-area file not found');
+      WHERE f.id=$1 AND c.system_area IS NULL FOR UPDATE`, [fileId])).rows[0];
+    if (!file) throw new HttpError(404, 'Home collection file not found');
     await lockStoredNamespace(client, file.collection_id); await ensureStoredFileParents(client, file.collection_id, targetPath, identity(request));
     await assertStoredFilePath(client, file.collection_id, targetPath, file.id);
     const moved = (await client.query('UPDATE files SET path=$2,updated_at=NOW() WHERE id=$1 RETURNING *', [file.id,targetPath])).rows[0];
@@ -575,8 +575,8 @@ export function createApp(
   app.post('/v1/local/system-areas/audit', async(request, response, next) => { try {
     const fileId = request.body.fileId || null; const versionId = request.body.versionId || null;
     if (fileId) {
-      const row = (await db.query(`SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 AND c.system_area='sulla'`,[fileId])).rows[0];
-      if (!row) throw new HttpError(404,'Sulla system-area file not found');
+      const row = (await db.query(`SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 AND c.system_area IS NULL`,[fileId])).rows[0];
+      if (!row) throw new HttpError(404,'Home collection file not found');
     }
     await db.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
       VALUES('user',$1,$2,$3,$4,$5,$6)`,[config.userId,config.deviceId,fileId,versionId,String(request.body.action??'system-area-event'),request.body.details??{}]);
@@ -675,12 +675,12 @@ export function createApp(
   // Cache one serialized tree by a database-owned change marker. Most FUSE
   // lookups now pay for a scalar revision read and receive 304, rather than
   // rebuilding and transferring the complete multi-megabyte tree every second.
-  let fuseTreeSnapshot:{ body:Buffer; revision:string } | undefined;
+  const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
   let fuseTreeSnapshotRequest:Promise<{ body:Buffer; revision:string }> | undefined;
   const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
-  const loadFuseTreeSnapshot = async():Promise<{ body:Buffer; revision:string }> => {
+  const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
     const revision=await fuseTreeRevision();
-    if (fuseTreeSnapshot?.revision===revision) return fuseTreeSnapshot;
+    const cached=fuseTreeSnapshots.get(area); if (cached?.revision===revision) return cached;
     if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
     fuseTreeSnapshotRequest=(async()=>{
       // One consistent database snapshot avoids retry starvation during active
@@ -690,20 +690,20 @@ export function createApp(
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
         const revision=String((await client.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0].revision);
         const [collections,files,folders]=await Promise.all([
-          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE
+          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
             AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
-            ORDER BY explorer_path,id`),
+            ORDER BY explorer_path,id`,[area,config.userId]),
           client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
             f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-            WHERE f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-            ORDER BY f.collection_id,f.path`),
-          client.query("SELECT id,collection_id,path,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE deleted_at IS NULL ORDER BY collection_id,path"),
+            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+            ORDER BY f.collection_id,f.path`,[area,config.userId]),
+          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
         ]);
 
         const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
         const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
         await client.query('COMMIT');
-        return (fuseTreeSnapshot={body,revision});
+        const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
     })().finally(()=>{fuseTreeSnapshotRequest=undefined});
     return fuseTreeSnapshotRequest;
@@ -716,7 +716,9 @@ export function createApp(
     response.setHeader('Cache-Control', 'private, no-cache');
     response.setHeader('ETag', etag);
     if (request.header('if-none-match')===etag) return response.status(304).end();
-    const snapshot=await loadFuseTreeSnapshot();
+    const area=String(request.query.systemArea??'');
+    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
+    const snapshot=await loadFuseTreeSnapshot(area);
     response.setHeader('ETag', `"${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
@@ -1203,11 +1205,11 @@ export function createApp(
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
   } catch (error) { next(error) } });
-  // Agents write Use Case drafts into the Sulla system collection; /v1/local/* is desktop-only.
+  // Agents write Use Case drafts into the home collection; /v1/local/* is desktop-only.
   app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
     identity(request);
-    const row = (await db.query("SELECT id FROM collections WHERE system_area='sulla' LIMIT 1")).rows[0];
-    if (!row) throw new HttpError(404, 'Sulla collection is not initialized');
+    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
+    if (!row) throw new HttpError(404, 'Home collection is not initialized');
     response.json({ collectionId: row.id });
   } catch (error) { next(error) } });
   app.get('/v1/agent-files/:id', async(request:RequestWithIdentity, response, next) => { try {

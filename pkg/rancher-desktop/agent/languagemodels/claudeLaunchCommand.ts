@@ -26,7 +26,7 @@ export function buildClaudeLaunchCommand(envAssignments: string[], claudeArgs: s
   // append-heavy session logs never churn Files versions). Skipped entirely
   // when the Files mount is not up, so nothing lands on the bare mountpoint.
   const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then ` +
-    `P="$HOME/.claude/projects"; M=/mnt/sulla-files/Sulla/Memory/claude-code; ` +
+    `P="$HOME/.claude/projects"; M=/mnt/sulla-files/Memory/claude-code; ` +
     `mkdir -p "$P/$(pwd | sed 's/[^A-Za-z0-9]/-/g')"; ` +
     `for d in "$P"/*/; do d="\${d%/}"; m="$d/memory"; [ -L "$m" ] && continue; ` +
     `t="$M/\${d##*/}"; mkdir -p "$t" 2>/dev/null || continue; ` +

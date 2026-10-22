@@ -106,7 +106,7 @@ export const chatToolManifests: ToolManifest[] = [
       path:     { type: 'string', optional: true, description: 'Displayed file path when kind is code.' },
       focus:    { type: 'boolean', optional: true, default: true, description: 'Focus the sidebar tab; defaults to true.' },
       expectedVersion: { type: 'number', optional: true, description: 'When updating an existing artifact by name, reject unless this is still the current version.' },
-      project_slug: { type: 'string', optional: true, description: 'Project folder slug. Saves the document under Sulla/Projects/<slug>/ in Files.' },
+      project_slug: { type: 'string', optional: true, description: 'Project folder slug. Saves the document under Projects/<slug>/ in Files.' },
       project_name: { type: 'string', optional: true, description: 'Optional display name for the project folder.' },
       file_name: { type: 'string', optional: true, description: 'Project document filename; defaults to the artifact name and .md.' },
       document_kind: { type: 'enum', enum: ['plan', 'spec', 'notes', 'report'], optional: true, description: 'Project document kind.' },

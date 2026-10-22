@@ -1,7 +1,7 @@
 # Files-first Sulla
 
 Everything Sulla knows and produces lives in the File Manager, so there is one place to look.
-Agents should read these docs from `/mnt/sulla-files/Sulla/Docs/` (the Files FUSE mount), not from the repository path; that keeps the same documentation available in containers and workflows.
+Agents should read these docs from `/mnt/sulla-files/Docs/` (the Files FUSE mount), not from the repository path; that keeps the same documentation available in containers and workflows.
 The File Manager tree is mounted at `/mnt/sulla-files` inside the VM, workflow runners and agent containers. Use normal file tools (ls, cat, edit, write, mv, cp) on the mount — every change is versioned and audited automatically.
 For how to save, publish, and handle locks, read [files-harness.md](files-harness.md).
 

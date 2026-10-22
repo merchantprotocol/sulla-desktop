@@ -109,7 +109,7 @@ export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'ins
  * a shared or slave mount, so without the anchor the agent starts without it.
  */
 export function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): string[] {
-  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : [];
+  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'] : [];
 }
 
 function safeName(value: string): string {
