@@ -264,6 +264,11 @@ export class SullaFilesMountManager extends EventEmitter {
       if (await this.mountState(executor) === 'adapter') {
         await executor.execCommand({ root: true, expectFailure: true }, 'umount', MOUNT_PATH).catch(() => undefined);
       }
+      // A dead adapter left behind by a killed container ("transport endpoint
+      // is not connected") can refuse both; a lazy detach always clears it.
+      if (await this.mountState(executor) === 'adapter') {
+        await executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', MOUNT_PATH).catch(() => undefined);
+      }
     }
     const mountState = await this.mountState(executor);
     await executor.execCommand(
