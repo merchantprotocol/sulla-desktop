@@ -182,7 +182,7 @@ export class HeartbeatNode extends BaseNode {
         (outcome.status === 'in_progress' && !state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
-        runSubconsciousObservationWriters(state, { includeObservations });
+        runSubconsciousObservationWriters(state, { includeObservations, finalAssistantText: userVisibleText });
       } catch (err) {
         console.warn('[HeartbeatNode] post-turn observation writers failed to launch:', err);
       }

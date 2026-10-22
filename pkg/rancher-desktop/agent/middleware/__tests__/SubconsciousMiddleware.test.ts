@@ -18,7 +18,7 @@ jest.unstable_mockModule('../../database/models/ObservationsModel', () => ({
 const countActiveMock: any = jest.fn(() => Promise.resolve(0));
 const recallRelevantMock: any = jest.fn(() => Promise.resolve([]));
 const recallThreadsMock: any = jest.fn(() => Promise.resolve([]));
-const settings: Record<string, unknown> = {};
+const settings: Record<string, unknown> = { brainMemory: 'off' };
 
 jest.unstable_mockModule('../../database/models/IdentityObservationsModel', () => ({
   IdentityObservationsModel: {
@@ -158,6 +158,25 @@ function stateWithMessages(count: number): any {
 }
 
 describe('runSubconsciousMiddleware team recall', () => {
+  it('continues the turn with an empty brain context when the engine is down', async() => {
+    const originalFetch = global.fetch;
+    const fetchMock: any = jest.fn(() => Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:7420')));
+
+    global.fetch = fetchMock;
+    settings.brainMemory = 'on';
+    try {
+      const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+      const state: any = { messages: [{ role: 'user', content: 'What do you remember?' }], metadata: { threadId: 'brain-down', brainContext: 'stale' } };
+
+      await expect(runSubconsciousMiddleware(state, { includeObservations: false })).resolves.toBeUndefined();
+      expect(state.metadata.brainContext).toBe('');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      settings.brainMemory = 'off';
+      global.fetch = originalFetch;
+    }
+  });
+
   it('gives a lead agent the team section and a directory ranked by the latest user message', async() => {
     const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
     const state: any = {

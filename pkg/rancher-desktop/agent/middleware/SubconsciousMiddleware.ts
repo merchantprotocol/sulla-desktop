@@ -20,6 +20,7 @@ import { ConversationKeywordsModel } from '../database/models/ConversationKeywor
 import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { recallBrainMemory, writeBrainMemory } from '../memory/BrainMemoryService';
 import { filesRecallCounters, formatFilesRecall, startFilesRecallForTurn, type FilesRecallTurnDeps, type FilesRecallTurnResult } from '../memory/FilesRecallService';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -152,6 +153,8 @@ export async function runSubconsciousMiddleware(
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
   meta.filesContext = '';
+  meta.brainContext = '';
+  meta.brainRecallItems = [];
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
@@ -360,6 +363,15 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(runTeamRecall(state, teamAgentSlug));
   }
 
+  // R11. Sulla Brain recall — a bounded local HTTP lookup, not an LLM
+  // subconscious graph. It joins the same pre-turn fan-out and is hard-capped
+  // at 300ms inside BrainMemoryService so an unavailable engine cannot hold up
+  // the primary turn.
+  if (analyzable) {
+    launched.push('brain-recall');
+    awaitedTasks.push(timed('brain-recall', 'Recalling from the brain', recallBrainMemory(state)));
+  }
+
   // R12. Skill recall — installed skills (skill_definitions) whose title,
   // triggers, tags or description match the current turn, injected as
   // <installed_skills>. Keyword ranking over one table read: no LLM call.
@@ -425,13 +437,19 @@ export async function runSubconsciousMiddleware(
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,
-  options: { includeObservations: boolean },
+  options: { includeObservations: boolean; finalAssistantText?: string },
 ): void {
   const meta = state.metadata as any;
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     return; // inside a workflow — writers stay off, same as the recall pass
   }
   if (!hasAnalyzableUserMessage(state)) return;
+
+  // The Brain writer is plain local HTTP and has its own setting. Keep it out
+  // of the LLM writer gate and never await it on the response path.
+  void writeBrainMemory(state, options.finalAssistantText).catch((error) => {
+    console.warn('[SubconsciousMiddleware] Post-turn brain writer failed (fire-and-forget):', error instanceof Error ? error.message : error);
+  });
 
   // Reflex Trainer learns from every human turn (independent of whether this
   // agent opts into observation injection) — never from sub-agent prompts.

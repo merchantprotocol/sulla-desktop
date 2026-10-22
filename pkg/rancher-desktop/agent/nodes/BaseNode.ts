@@ -789,8 +789,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|brain_memory|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|conversation_context|brain_memory|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -841,6 +841,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['installed_skills', 'skillRecallContext'],
       ['conversation_context', 'conversationContext'],
       ['related_files', 'filesContext'],
+      ['brain_memory', 'brainContext'],
       ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],
