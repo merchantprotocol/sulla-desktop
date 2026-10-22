@@ -1008,7 +1008,7 @@ const folderFavorites = computed(() => {
 const moreExpanded = ref(false);
 const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
-const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id) ?? []);
+const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
 const retentionLabel = computed(() => snapshot.value?.collection.retentionPolicy?.mode === 'none' ? 'No automatic disposal' : snapshot.value?.collection.retentionPolicy?.mode ? `Retention: ${ snapshot.value.collection.retentionPolicy.mode }` : `Trash is recoverable for ${ retentionDays.value } days`);

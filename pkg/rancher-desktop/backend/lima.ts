@@ -3703,7 +3703,7 @@ start_pre() {
       );
       const resolvedFuseImage = fuseImage.build ? fuseImage.image : `\${SULLA_FILES_FUSE_IMAGE:-${ fuseImage.image }}`;
       if (shouldRefreshSullaServiceImage(fuseImage, process.env.SULLA_FILES_FUSE_IMAGE)) {
-        this.#managedSullaRefreshImages.set('sulla_files_fuse', fuseImage.image);
+        for (const service of ['sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data']) this.#managedSullaRefreshImages.set(service, fuseImage.image);
       }
       compose.services.sulla_files_fuse = {
         ...fuseImage,
@@ -3970,7 +3970,9 @@ start_pre() {
       }
 
       if (configuredServices.split(/\s+/).includes('sulla_files_fuse')) {
-        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' });
+        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' },
+          { service: 'sulla_files_fuse_logs', container: 'sulla_files_fuse_logs' },
+          { service: 'sulla_files_fuse_training_data', container: 'sulla_files_fuse_training_data' });
       }
 
       // Attempt dependencies before their consumers. Optional failure remains
@@ -3987,7 +3989,7 @@ start_pre() {
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
         const order = ['sulla_accounts', 'sulla_vault', 'sulla_relay', 'sulla_files',
-          'sulla_files_fuse', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
+          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });

@@ -490,7 +490,10 @@ export function createApp(
   } catch(error){next(error)} });
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
-    response.json((await db.query('SELECT id,system_area AS \"systemArea\" FROM collections WHERE system_area IS NOT NULL')).rows);
+    // The 'sulla' ingest lane (bundled Docs) now writes into the owner's home collection.
+    response.json((await db.query(`SELECT id,system_area AS "systemArea" FROM collections WHERE system_area IN ('logs','training-data')
+      UNION ALL (SELECT id,'sulla' FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE
+      ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1)`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
@@ -700,7 +703,9 @@ export function createApp(
           client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
         ]);
 
-        const root=collections.rows.find(row=>row.tree_path==='')??collections.rows.find(row=>row.is_default);
+        // Each mount serves exactly one collection at its root (home, Logs or Training Data).
+        for (const row of collections.rows) row.tree_path='';
+        const root=collections.rows[0];
         const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
         await client.query('COMMIT');
         const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
@@ -1079,11 +1084,11 @@ export function createApp(
 
   app.get('/v1/collections', async(_request, response, next) => { try {
     if (_request.query.changesOnly === 'true') {
-      const rows = await db.query('SELECT id,name,explorer_path,system_area FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY id');
+      const rows = await db.query("SELECT id,name,explorer_path,system_area FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY id");
       response.json(rows.rows);
       return;
     }
-    const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY explorer_path,name");
+    const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY explorer_path,name");
     response.json(rows.rows.map(row => ({...row, systemArea:row.system_area ?? null, access_role:'manage',shared_folders:[],shared_files:[]})));
   } catch (error) { next(error) } });
   app.post('/v1/collections/default', async(request:RequestWithIdentity, response, next) => {
@@ -1174,7 +1179,7 @@ export function createApp(
     if (expectedVersionId !== undefined && (!existing || existing.current_version_id !== expectedVersionId)) {
       throw new HttpError(409, `file version conflict; current version is ${ existing?.current_version_id ?? 'missing' }`);
     }
-    const sharedSullaPath = collection.system_area === 'sulla' && isSullaWritablePath(path);
+    const sharedSullaPath = (collection.system_area === 'sulla' || collection.system_area === null) && isSullaWritablePath(path);
     if (existing && !sharedSullaPath && (existing.created_by_type !== 'agent-run' || existing.created_by_id !== creatorId)) {
       throw new HttpError(409, 'artifact path belongs to another creator');
     }
