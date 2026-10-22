@@ -103,13 +103,33 @@ export interface AgentContainerLifecycle {
 
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
 
+/** True when `path` can be listed from the Lima guest; a dead FUSE adapter fails ENOTCONN here. */
+async function guestPathUsable(path: string): Promise<boolean> {
+  try {
+    await limactl(['sudo', 'ls', '-A', path]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The Files guest mount bind, only when the backend confirmed the shared
+ * The Files guest mount binds, only when the backend confirmed the shared
  * anchor this generation. Docker rejects an rslave bind of a path that is not
  * a shared or slave mount, so without the anchor the agent starts without it.
+ * The logs/training-data adapters have no mount manager of their own, so a
+ * dead one is dropped instead of failing the whole agent launch.
  */
-export function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): string[] {
-  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'] : [];
+export async function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): Promise<string[]> {
+  if (!available) return [];
+  const optional: Array<[path: string, bind: string]> = [
+    ['/mnt/sulla-logs', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave'],
+    ['/mnt/sulla-training-data', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
+  ];
+  const usable = await Promise.all(optional.map(([path]) => guestPathUsable(path)));
+
+  return ['/mnt/sulla-files:/mnt/sulla-files:rslave', ...optional.filter((_entry, index) => usable[index]).map(([, bind]) => bind)];
 }
 
 function safeName(value: string): string {
@@ -208,7 +228,10 @@ def serve(c):
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
   const bridge = String.raw`const n=require('net');n.createServer(c=>{let b=Buffer.alloc(0),done=false;c.on('data',d=>{if(done)return;b=Buffer.concat([b,d]);const i=b.indexOf('\r\n\r\n');if(i<0)return;const m=b.toString('latin1',0,i).match(/^(\S+)\s+\/_sulla\/(\d+)(\/[^\s]*)\s+(HTTP\/\d\.\d)/);if(!m){c.destroy();return}done=true;const u=n.connect('${ HOST_RELAY_SOCKET }',()=>{u.write(m[2]+'\n');u.write(Buffer.from(b.toString('latin1').replace(m[0],m[1]+' '+m[3]+' '+m[4]),'latin1'))});u.on('data',x=>c.write(x));u.on('end',()=>c.end());u.on('error',()=>c.destroy());c.on('data',x=>u.write(x));c.on('end',()=>u.end())})}).listen(${ HOST_RELAY_PORT },'0.0.0.0');`;
-  await limactl(['sh', '-c', 'test -S "$1" || { sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
+  // 0711 (not 0700): the relay dir is owned by the Lima user, but the sulla-host-relay
+  // container binds it as uid 10001 and must still be able to traverse into it to reach
+  // relay.sock (0666); only the socket itself needs to stay unreadable to other users.
+  await limactl(['sh', '-c', 'test -S "$1" || { sudo install -d -m 0711 -o "$(id -u)" -g "$(id -g)" "$(dirname "$1")"; nohup python3 -c "$2" >/dev/null 2>&1 & for i in 1 2 3 4 5; do test -S "$1" && exit 0; sleep 0.1; done; exit 1; }', 'sh', HOST_RELAY_SOCKET, vmRelay]);
   await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
   const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
   if (!exists) {
@@ -680,7 +703,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       `${ workspacePath }:${ workspacePath }:rw`,
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      ...sullaFilesGuestBinds(),
+      ...await sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
       name:   containerName,
@@ -980,7 +1003,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      ...sullaFilesGuestBinds(),
+      ...await sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
       name:   containerName,

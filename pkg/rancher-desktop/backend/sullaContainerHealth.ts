@@ -27,24 +27,34 @@ export const MAX_AUTO_RECREATES = 3;
 
 export interface HealthAction { container: string; service: string; reason: string }
 
-export function planUnhealthyRecreates(rows: ManagedContainerRow[], recreateCounts: ReadonlyMap<string, number>): HealthAction[] {
-  const actions: HealthAction[] = [];
-
-  for (const row of rows) {
-    if (row.health !== 'unhealthy' && row.state !== 'restarting') continue;
-    if ((recreateCounts.get(row.container) ?? 0) >= MAX_AUTO_RECREATES) continue;
-    const grace = STATEFUL_SERVICES.has(row.service) ? STATEFUL_GRACE_MS : STATELESS_GRACE_MS;
-
-    if (row.runningForMs < grace) continue;
-    actions.push({ container: row.container, service: row.service, reason: row.state === 'restarting' ? 'restart loop' : 'unhealthy' });
-  }
-
-  return actions;
-}
-
 /** FUSE adapter services and the guest path each one mounts. */
 export const FILES_ADAPTER_MOUNTS: Record<string, string> = {
   sulla_files_fuse:               '/mnt/sulla-files',
   sulla_files_fuse_logs:          '/mnt/sulla-logs',
   sulla_files_fuse_training_data: '/mnt/sulla-training-data',
 };
+
+export function planUnhealthyRecreates(rows: ManagedContainerRow[], recreateCounts: ReadonlyMap<string, number>): HealthAction[] {
+  const actions: HealthAction[] = [];
+
+  for (const row of rows) {
+    // A Files adapter whose bind source was already a dead FUSE mount never starts and
+    // never gets a health status (Docker State.Status stays "created"), so it would
+    // otherwise never be caught below. Heal it immediately; no grace period applies
+    // since it never ran.
+    const stuckCreated = row.state === 'created' && row.service in FILES_ADAPTER_MOUNTS;
+
+    if (!stuckCreated && row.health !== 'unhealthy' && row.state !== 'restarting') continue;
+    if ((recreateCounts.get(row.container) ?? 0) >= MAX_AUTO_RECREATES) continue;
+    const grace = STATEFUL_SERVICES.has(row.service) ? STATEFUL_GRACE_MS : STATELESS_GRACE_MS;
+
+    if (!stuckCreated && row.runningForMs < grace) continue;
+    actions.push({
+      container: row.container,
+      service:   row.service,
+      reason:    stuckCreated ? 'stuck created' : row.state === 'restarting' ? 'restart loop' : 'unhealthy',
+    });
+  }
+
+  return actions;
+}

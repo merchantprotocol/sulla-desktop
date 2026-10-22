@@ -30,6 +30,18 @@ describe('planUnhealthyRecreates', () => {
     expect(planUnhealthyRecreates([loop], new Map())[0].reason).toBe('restart loop');
     expect(planUnhealthyRecreates([loop], new Map([['sulla_loop', MAX_AUTO_RECREATES]]))).toEqual([]);
   });
+
+  test('heals a Files adapter stuck in "created" immediately, with no health status and no grace period', () => {
+    const stuckAdapter = row({
+      container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', state: 'created', health: 'none', runningForMs: 0,
+    });
+    const stuckUnrelated = row({ container: 'sulla_x', service: 'x', state: 'created', health: 'none', runningForMs: 0 });
+
+    expect(planUnhealthyRecreates([stuckAdapter], new Map())).toEqual([
+      { container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', reason: 'stuck created' },
+    ]);
+    expect(planUnhealthyRecreates([stuckUnrelated], new Map())).toEqual([]);
+  });
 });
 
 describe('drainFilesAdapterLayers', () => {
