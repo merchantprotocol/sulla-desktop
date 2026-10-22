@@ -39,6 +39,7 @@ import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sull
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
+import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import { reconcileComposeService } from './sullaServiceReconcile';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -64,7 +65,7 @@ import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
-import { SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchor } from '@pkg/backend/guestMountInfo';
+import { SULLA_FILES_GUEST_MOUNT_PATH, drainFilesAdapterLayers, isGuestPathUsable, prepareSullaFilesGuestAnchor } from '@pkg/backend/guestMountInfo';
 import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
@@ -327,6 +328,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #managedServicesReconciliation?: Promise<void>;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
+  /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
+  #staleFilesAdapters = new Set<string>();
+  #containerRecreates = new Map<string, number>();
+  #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   #sullaCredentialsReady = false;
   #sullaCredentialsWaiters = new Set<() => void>();
@@ -3755,7 +3760,7 @@ start_pre() {
             SULLA_FILES_FUSE_MOUNT_PATH: mountPath, SULLA_FILES_FUSE_SYSTEM_AREA: systemArea, SULLA_FILES_FUSE_READ_ONLY: '1',
             SULLA_FILES_FUSE_STATUS_FILE: `/tmp/${serviceName}-status.json` },
           volumes: compose.services.sulla_files_fuse.volumes.map((volume:unknown) => typeof volume === 'string' && volume.startsWith('/mnt/sulla-files:') ? `${mountPath}:${mountPath}:rshared` : volume),
-          healthcheck: { ...compose.services.sulla_files_fuse.healthcheck, test: ['CMD','python3','-c',`import os; assert os.path.ismount('${mountPath}')`] },
+          healthcheck: { ...compose.services.sulla_files_fuse.healthcheck, test: ['CMD','python3','-c',`import os; assert os.path.ismount('${mountPath}'); os.listdir('${mountPath}')`] },
         };
       }
     }
@@ -3805,8 +3810,30 @@ start_pre() {
   private async prepareSullaFilesGuestMount(compose: any): Promise<boolean> {
     try {
       await prepareSullaFilesGuestAnchor(this);
-      await prepareSullaFilesGuestAnchor(this, '/mnt/sulla-logs');
-      await prepareSullaFilesGuestAnchor(this, '/mnt/sulla-training-data');
+      // The logs and training-data views are optional extras with no mount manager of their
+      // own. A failure here must not disable the main Files mount, and a surviving but broken
+      // adapter must be detached (and its container recreated) instead of wedging startup.
+      for (const [serviceName, mountPath] of Object.entries(FILES_ADAPTER_MOUNTS)) {
+        if (mountPath === SULLA_FILES_GUEST_MOUNT_PATH) continue;
+        try {
+          if (!await isGuestPathUsable(this, mountPath)) {
+            const drained = await drainFilesAdapterLayers(this, mountPath);
+
+            if (drained > 0) {
+              console.warn(`[Sulla] ${ mountPath } had ${ drained } stale adapter mount(s); detached them and will recreate ${ serviceName }`);
+              this.#staleFilesAdapters.add(serviceName);
+            }
+          }
+          await prepareSullaFilesGuestAnchor(this, mountPath);
+        } catch (error) {
+          console.warn(`[Sulla] ${ mountPath } is unavailable; continuing without ${ serviceName }:`, (error as Error).message?.split('\n')[0]);
+          delete compose.services?.[serviceName];
+          for (const service of Object.values<any>(compose.services ?? {})) {
+            if (!Array.isArray(service?.volumes)) continue;
+            service.volumes = service.volumes.filter((volume: any) => (typeof volume === 'string' ? volume.split(':')[0] : volume?.source) !== mountPath);
+          }
+        }
+      }
       this.#lastFilesGuestMountFailure = undefined;
       getSullaFilesMountManager().reportGuestPreparation();
       // The workflow manager image cannot ask Desktop; this marker tells it
@@ -3850,6 +3877,12 @@ start_pre() {
     // Never race a startup reconciliation; it regenerates compose itself.
     await this.#managedServicesReconciliation?.catch(() => undefined);
     this.assertManagedServicesGeneration(generation);
+    // Regenerating compose is ~100 guest commands; never do it more than twice a minute
+    // however often the mount manager retries.
+    const sinceLast = Date.now() - this.#lastGuestRecovery;
+
+    if (sinceLast < 30_000 && this.#lastFilesGuestMountFailure) throw new Error(this.#lastFilesGuestMountFailure);
+    this.#lastGuestRecovery = Date.now();
     await this.prepareSullaComposeFile();
     this.assertManagedServicesGeneration(generation);
     if (!getSullaFilesMountManager().guestMountAvailable()) {
@@ -3909,6 +3942,12 @@ start_pre() {
         checkpoint:   () => this.assertManagedServicesGeneration(generation),
       });
       const startOptionalService = async(service: string): Promise<void> => {
+        if (this.#staleFilesAdapters.delete(service)) {
+          // Its mount was detached above; the old process holds a dead FUSE session.
+          await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', service);
+
+          return;
+        }
         try {
           await reconcileOptionalService(service);
         } catch (error) {
@@ -4046,7 +4085,60 @@ start_pre() {
           console.warn('[Sulla] Optional service background reconciliation stopped:', error);
         }
       });
+      this.watchManagedContainerHealth(generation, composeCommand);
     });
+  }
+
+  /**
+   * Keep managed containers honest: every minute, recreate any Sulla container that Docker
+   * reports unhealthy (or restart-looping) past its grace period. FUSE adapters get their
+   * stale mount detached first so the replacement can mount cleanly.
+   */
+  private watchManagedContainerHealth(generation: number, composeCommand: string[]): void {
+    this.#containerRecreates.clear();
+    const tick = async(): Promise<void> => {
+      this.assertManagedServicesGeneration(generation);
+      const listing = await this.execCommand(
+        { capture: true, root: true, expectFailure: true }, 'docker', 'ps', '-a',
+        '--filter', 'label=com.docker.compose.project=sulla',
+        '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}',
+      );
+      const rows: ManagedContainerRow[] = [];
+
+      for (const line of listing.split('\n').filter(Boolean)) {
+        const [container, service] = line.split('\t');
+        const state = (await this.execCommand(
+          { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
+          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.State.StartedAt}}', container,
+        ).catch(() => '')).trim().split(' ');
+
+        if (state.length < 3) continue;
+        rows.push({ container, service, state: state[0], health: state[1], runningForMs: Date.now() - Date.parse(state[2]) });
+      }
+      for (const action of planUnhealthyRecreates(rows, this.#containerRecreates)) {
+        this.#containerRecreates.set(action.container, (this.#containerRecreates.get(action.container) ?? 0) + 1);
+        console.warn(`[Sulla] ${ action.container } is ${ action.reason }; recreating it`);
+        const mountPath = FILES_ADAPTER_MOUNTS[action.service];
+
+        if (mountPath && mountPath !== SULLA_FILES_GUEST_MOUNT_PATH) {
+          await this.execCommand({ root: true, expectFailure: true }, 'docker', 'stop', '-t', '5', action.container).catch(() => undefined);
+          await drainFilesAdapterLayers(this, mountPath).catch(() => 0);
+        }
+        await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service)
+          .catch(error => console.warn(`[Sulla] Could not recreate ${ action.container }:`, (error as Error).message?.split('\n')[0]));
+      }
+    };
+    const run = (): void => {
+      tick().catch((error) => {
+        if (error instanceof ManagedServicesReconciliationCancelled) clearInterval(timer);
+      });
+    };
+    const timer = setInterval(run, 60_000);
+
+    timer.unref?.();
+    // Containers that survived a crash can be broken before Desktop even starts: sweep once soon
+    // after startup settles instead of waiting a full interval.
+    setTimeout(run, 45_000).unref?.();
   }
 
   /**
