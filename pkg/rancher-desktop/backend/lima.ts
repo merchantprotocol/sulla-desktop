@@ -3754,7 +3754,7 @@ start_pre() {
           environment: { ...compose.services.sulla_files_fuse.environment,
             SULLA_FILES_FUSE_MOUNT_PATH: mountPath, SULLA_FILES_FUSE_SYSTEM_AREA: systemArea, SULLA_FILES_FUSE_READ_ONLY: '1',
             SULLA_FILES_FUSE_STATUS_FILE: `/tmp/${serviceName}-status.json` },
-          volumes: compose.services.sulla_files_fuse.volumes.map((volume:string) => volume.startsWith('/mnt/sulla-files:') ? `${mountPath}:${mountPath}:rshared` : volume),
+          volumes: compose.services.sulla_files_fuse.volumes.map((volume:unknown) => typeof volume === 'string' && volume.startsWith('/mnt/sulla-files:') ? `${mountPath}:${mountPath}:rshared` : volume),
           healthcheck: { ...compose.services.sulla_files_fuse.healthcheck, test: ['CMD','python3','-c',`import os; assert os.path.ismount('${mountPath}')`] },
         };
       }
