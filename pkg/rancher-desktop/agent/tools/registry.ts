@@ -225,6 +225,10 @@ export class ToolRegistry {
     return await loader();
   }
 
+  isRegistered(name: string): boolean {
+    return this.loaders.has(name);
+  }
+
   async getToolsByCategory(category: string): Promise<any[]> {
     const names = this.categories.get(category) || [];
     return Promise.all(names.map(name => this.getTool(name)));

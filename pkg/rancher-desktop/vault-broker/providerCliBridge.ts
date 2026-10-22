@@ -5,7 +5,11 @@ import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from './index';
 
+import Logging from '@pkg/utils/logging';
+
 import type { BrokerInjection, ToolExecutionContext, LocalVaultBrokerClient } from './index';
+
+const console = Logging.background;
 
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const SAFE_REQUEST_HEADERS = new Set([
@@ -366,9 +370,16 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       response.writeHead(upstream.status, responseHeaders(upstream.headers));
       if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
       else response.end();
-    } catch {
+    } catch (error) {
+      // Log only the error class/code: never the request body, headers, or any
+      // credential/token material that could be flowing through this bridge.
+      const errorClass = error instanceof Error ? error.constructor.name : typeof error;
+      const errorCode = (error as NodeJS.ErrnoException | undefined)?.code;
+      console.error(`[ProviderCliBridge] request failed: ${ errorClass }${ errorCode ? ` (${ errorCode })` : '' }`);
+      // Reply before destroying the request/socket: once abort() tears the
+      // socket down, writeHead can no longer send a body for the caller to read.
+      if (!response.headersSent) sendError(response, 502, 'provider_bridge_failed');
       abort();
-      sendError(response, 502, 'provider_bridge_failed');
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
     }

@@ -1956,7 +1956,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       await this.sendStream(prepared, streamInput, sink);
       if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
     } catch (error) {
-      if (error instanceof LocalVaultError) await this.auditBrokerDenial(streamInput, error.code);
+      if (error instanceof LocalVaultError) {
+        // invalid_upstream_response covers two distinct sendStream checks (compressed
+        // encoding, non-textual content-type); fold in the observed header values so
+        // audit_log says which one actually fired instead of just the shared code.
+        const reason = error.code === 'invalid_upstream_response' ? `${ error.code }: ${ error.message }` : error.code;
+        await this.auditBrokerDenial(streamInput, reason);
+      }
       throw error;
     }
   }
@@ -2315,6 +2321,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const method = input.method.toUpperCase();
     const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
+    headers['accept-encoding'] = 'identity';
     const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
     let payload: Buffer | undefined;
     if (prepared.body !== undefined && method !== 'GET' && method !== 'HEAD') {
@@ -2353,13 +2360,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         const contentEncoding = String(response.headers['content-encoding'] ?? 'identity').toLowerCase();
         if (contentEncoding && contentEncoding !== 'identity') {
           response.resume();
-          request.destroy(new LocalVaultError('invalid_upstream_response', 502, 'Compressed broker streams are not accepted'));
+          request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Compressed broker streams are not accepted (content-encoding: ${ contentEncoding })`));
           return;
         }
         const bodyless = streamResponseIsBodyless(method, response.statusCode ?? 0, response.headers['content-length']);
         if (!binary && !bodyless && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
           response.resume();
-          request.destroy(new LocalVaultError('invalid_upstream_response', 502, 'Streaming adapter requires a textual upstream response'));
+          request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Streaming adapter requires a textual upstream response (content-type: ${ contentType || 'none' })`));
           return;
         }
         const blockedResponseHeaders = /^(set-cookie|cookie|authorization|proxy-authenticate|www-authenticate|x-api-key|content-length)$/i;
