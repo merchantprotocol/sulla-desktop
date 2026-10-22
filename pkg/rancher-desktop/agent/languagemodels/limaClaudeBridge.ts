@@ -12,9 +12,11 @@ import { getIntegrationService } from '../services/IntegrationService';
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
+const log = Logging.background;
 /** How often a bridge checks whether the `claude` process it serves is still alive. */
 const PROCESS_WATCH_MS = 5_000;
 /** Short-lived caller claims; renewed on every bridge request while the process lives. */
@@ -40,14 +42,20 @@ async function resolveAccount(): Promise<{
   try {
     let accountId = await integrations.getActiveAccountId('claude-code');
     try {
-      // The active account may be an empty placeholder; prefer a connected one.
       const accounts = await integrations.getAccounts('claude-code');
       const active = accounts.find(a => a.account_id === accountId);
       if (!active?.connected) {
         const alt = accounts.find(a => a.connected);
-        if (alt) accountId = alt.account_id;
+        if (alt) {
+          log.info(`[ClaudeBridge] Active claude-code account "${ accountId }" is disconnected; falling back to connected account "${ alt.account_id }"`);
+          accountId = alt.account_id;
+        } else {
+          log.warn(`[ClaudeBridge] Active claude-code account "${ accountId }" is disconnected and no connected alternative exists`);
+        }
       }
-    } catch { /* keep the active account */ }
+    } catch (err) {
+      log.warn(`[ClaudeBridge] Could not verify claude-code account connectivity: ${ (err as Error).message }`);
+    }
     return { integrationId: 'claude-code', accountId, authMode: accountId === 'oauth' ? 'oauth' : 'api-key' };
   } catch (error) {
     if ((error as Error).message !== MISSING_ACCOUNT) throw error;
