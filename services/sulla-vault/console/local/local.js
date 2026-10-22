@@ -294,7 +294,6 @@
       byId('detail-access-title').textContent = enabled ? 'Agents can use this' : 'Only you can use this';
       byId('detail-access-copy').textContent = enabled ? (itemPolicy.level === 'autofill' ? 'Sulla can use it without revealing the secret.' : `Agents have ${itemPolicy.level} access.`) : 'Agents cannot use this item.';
       [...byId('detail-ladder').children].forEach((node, index) => node.classList.toggle('on', index === (enabled ? { metadata: 1, autofill: 2, full: 3 }[itemPolicy.level] : 0)));
-      byId('detail-agents').textContent = enabled ? (itemPolicy.agents.length ? itemPolicy.agents.join(', ') : 'All my agents') : 'None';
       byId('detail-sites').textContent = itemPolicy.sites.length ? itemPolicy.sites.join(', ') : 'Any registered destination';
       byId('detail-expiry').textContent = dateText(itemPolicy.expiresAt); byId('detail-ask').textContent = itemPolicy.askFirst ? 'Every use' : 'No';
       const events = activity.events || []; byId('activity-count').textContent = String(events.length);
@@ -375,7 +374,7 @@
     byId('item-id').value = detail?.id || ''; byId('revision').value = detail?.revision || ''; byId('item-type').value = detail?.integration ? 'integration' : detail?.type || 'login';
     byId('name').value = detail?.name || ''; byId('username').value = detail?.username || detail?.integration?.accountId || ''; byId('item-password').value = detail?.password || ''; byId('website').value = detail?.uris?.[0]?.uri || ''; byId('notes').value = detail?.notes || ''; byId('favorite').checked = Boolean(detail?.favorite);
     byId('integration-id').value = detail?.integration?.integrationId || ''; byId('account-id').value = detail?.integration?.accountId || ''; renderIntegrationProperties(detail?.integration?.properties); renderCustomFields(detail?.customFields);
-    const agentsEnabled = itemPolicy.mode === 'agents'; byId('agent-enabled').checked = agentsEnabled; byId('only-me-access').checked = !agentsEnabled; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-agents').value = itemPolicy.agents.join(', '); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
+    const agentsEnabled = itemPolicy.mode === 'agents'; byId('agent-enabled').checked = agentsEnabled; byId('only-me-access').checked = !agentsEnabled; setPolicyLevel(itemPolicy.level); byId('ask-first').checked = Boolean(itemPolicy.askFirst); byId('allow-server-agents').checked = Boolean(itemPolicy.allowServerAgents); byId('policy-sites').value = itemPolicy.sites.join(', '); byId('policy-expiry').value = localDateValue(itemPolicy.expiresAt); syncPolicyEnabled();
     const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration;
     syncProxyFields();
     byId('delete-item').hidden = !detail?.id; byId('editor-title').textContent = detail?.id ? `Edit ${detail.name}` : 'New vault item'; byId('editor-crumb').textContent = detail?.name || 'New item'; byId('editor-tile').textContent = initials(detail) || '＋';
@@ -390,7 +389,7 @@
     item.name = byId('name').value.trim(); item.favorite = byId('favorite').checked;
     item.username = byId('username').value; item.password = byId('item-password').value; item.notes = byId('notes').value;
     item.uris = origin ? [{ ...(existingUris[0] || {}), uri: origin }, ...existingUris.slice(1)] : existingUris.slice(1);
-    item.agentPolicy = { mode: byId('policy-mode').value, level: byId('policy-level').value, agents: entries(byId('policy-agents').value), sites: sites(byId('policy-sites').value), expiresAt: expiry ? new Date(expiry).toISOString() : null, askFirst: byId('ask-first').checked, allowServerAgents: byId('allow-server-agents').checked };
+    item.agentPolicy = { mode: byId('policy-mode').value, level: byId('policy-level').value, agents: [], sites: sites(byId('policy-sites').value), expiresAt: expiry ? new Date(expiry).toISOString() : null, askFirst: byId('ask-first').checked, allowServerAgents: byId('allow-server-agents').checked };
     if (type === 'integration') item.integration = { ...(item.integration || {}), integrationId: byId('integration-id').value.trim(), accountId: byId('account-id').value.trim(), properties: readIntegrationProperties() };
     else delete item.integration;
     const customFields = readCustomFields();

@@ -111,7 +111,7 @@ export interface AgentPolicy {
   /** 'only_me' blocks every agent regardless of the other fields. */
   mode:              'only_me' | 'agents';
   level:             AgentAccessLevel;
-  /** Agent ids allowed; empty = all of the owner's agents. */
+  /** Ignored: agent identity access belongs to the accounts service, not the vault. */
   agents:            string[];
   /** Hostnames the credential may be used on; empty = any. */
   sites:             string[];
@@ -149,12 +149,11 @@ export function agentPolicyAllows(
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
   if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
-  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.agents) || !Array.isArray(policy.sites)) {
+  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.sites)) {
     return { allowed: false, reason: 'The agent access policy is invalid' };
   }
   const rank: Record<AgentAccessLevel, number> = { metadata: 0, autofill: 1, full: 2 };
   if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };
-  if (policy.agents.length && !policy.agents.includes(request.agentId)) return { allowed: false, reason: 'This agent is not on the allowed list' };
   if (policy.expiresAt) {
     const expiry = Date.parse(policy.expiresAt);
     if (!Number.isFinite(expiry)) return { allowed: false, reason: 'The agent access expiry is invalid' };

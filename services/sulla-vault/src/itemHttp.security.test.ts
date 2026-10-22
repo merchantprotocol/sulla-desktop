@@ -15,7 +15,7 @@ const id = '22222222-2222-4222-8222-222222222222';
 const brokerToken = 'synthetic-broker-identity-'.repeat(3);
 const item = (): VaultItemPlaintext => ({
   type: 'apiKey', name: 'Synthetic Cloudflare', password: 'synthetic-"key-never-returned', username: 'synthetic@example.invalid',
-  agentPolicy: { ...DEFAULT_AGENT_POLICY, mode: 'agents', level: 'autofill', agents: ['worker'], sites: ['api.cloudflare.com'] },
+  agentPolicy: { ...DEFAULT_AGENT_POLICY, mode: 'agents', level: 'autofill', agents: [], sites: ['api.cloudflare.com'] },
   proxy: { hosts: ['api.cloudflare.com'], rules: [
     { source: 'password', target: 'header', name: 'X-Auth-Key', scheme: 'raw' },
     { source: 'username', target: 'header', name: 'X-Auth-Email', scheme: 'raw' },
@@ -88,7 +88,6 @@ test('item.http keeps owner-declared credentials behind policy and redacts the f
 
   const cases: Array<[string, (p: VaultItemPlaintext, r: BrokerExecuteRequest) => void]> = [
     ['owner-only', p => { p.agentPolicy.mode = 'only_me'; }],
-    ['wrong agent', p => { p.agentPolicy.agents = ['another']; }],
     ['expired', p => { p.agentPolicy.expiresAt = '2000-01-01T00:00:00Z'; }],
     ['metadata only', p => { p.agentPolicy.level = 'metadata'; }],
     ['host outside usage', p => { p.proxy!.hosts = ['other.example.com']; }],
