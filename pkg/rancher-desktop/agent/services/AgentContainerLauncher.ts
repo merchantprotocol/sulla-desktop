@@ -610,7 +610,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     throw new Error(`Provider "${ run.provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
   }
   const image = await ensureAgentImage();
+  log.info('[AgentContainer] Image ready');
   await ensureHostRelay(image);
+  log.info('[AgentContainer] Host relay ready');
   const runtime = new LimaDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
@@ -714,6 +716,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     await registerSullaFilesActor(containerId, agentId, run.jobId);
     await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
     await runtime.start(containerId);
+    log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
     await limactl([
       'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
@@ -721,6 +724,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     ]).catch(error => {
       throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
     });
+    log.info(`[AgentContainer] ${ containerName } can reach graph MCP host`);
     const binding = {
       podId:         containerName,
       subject,

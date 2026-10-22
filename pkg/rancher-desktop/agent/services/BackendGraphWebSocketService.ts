@@ -460,9 +460,14 @@ export class BackendGraphWebSocketService {
       if (state.metadata.agent?.runLocation === 'container') {
         const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+        const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+        const CONTAINER_PROVIDERS = ['claude-code', 'codex'];
+        if (!CONTAINER_PROVIDERS.includes(provider)) {
+          throw new Error(`Provider "${ provider }" cannot run in a container. Supported: ${ CONTAINER_PROVIDERS.join(', ') }. Change the agent's provider or set run_location to "vm".`);
+        }
         const lifecycle = await createAgentContainerLifecycle({
           jobId: `chat-${ threadId }`, taskIndex: 0,
-          provider: state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok'),
+          provider,
           model: state.metadata.agent?.model, state, signal: runAbort.signal,
         });
         try { await lifecycle.execute(() => graph.execute(state, startNode)) } finally { await lifecycle.close() }
