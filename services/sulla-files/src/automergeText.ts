@@ -20,3 +20,19 @@ export function mergeTextDocuments(baseText:string,currentText:string,submittedT
 export const saveTextDocument=(document:Automerge.Doc<TextDocument>)=>Buffer.from(Automerge.save(document));
 export const loadTextDocument=(bytes:Buffer)=>Automerge.load<TextDocument>(bytes);
 export const textDocumentHeads=(document:Automerge.Doc<TextDocument>)=>Automerge.getHeads(document);
+
+export type VersionCheckedTextSave =
+  | { status:200; merged:boolean; document:Automerge.Doc<TextDocument>; content:string }
+  | { status:409; currentVersionId:string };
+
+export function versionCheckedTextSave(input:{baseVersionId:string;currentVersionId:string;base:Buffer;current:Buffer;submitted:Buffer}):VersionCheckedTextSave {
+  const base=utf8Text(input.base),current=utf8Text(input.current),submitted=utf8Text(input.submitted);
+  if(base===undefined||current===undefined||submitted===undefined){
+    if(input.baseVersionId!==input.currentVersionId)return{status:409,currentVersionId:input.currentVersionId};
+    const content=input.submitted.toString('utf8');
+    return{status:200,merged:false,document:newTextDocument(content),content};
+  }
+  const merged=input.baseVersionId!==input.currentVersionId;
+  const document=merged?mergeTextDocuments(base,current,submitted):editTextDocument(newTextDocument(current),submitted);
+  return{status:200,merged,document,content:document.text};
+}
