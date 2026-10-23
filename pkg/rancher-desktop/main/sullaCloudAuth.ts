@@ -24,7 +24,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '@pkg/vault-broker';
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
@@ -156,6 +156,32 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
   if (!account) return null;
   // Today userId === activeContractorId (single-contractor server response).
   return { userId: account.account_id, activeContractorId: account.account_id, contractors: [] };
+}
+
+class VaultNotReadyError extends Error {}
+
+/**
+ * Startup-restore variant of loadSessionIdentity. getAccounts() swallows vault
+ * errors and returns [] so settings stay usable while the vault boots — but
+ * the vault container comes up minutes after Electron, and reading that []
+ * as "signed out" skipped device heartbeat and the secure channel for the
+ * whole app session (phone and Cloud dashboard saw the desktop as offline).
+ * Here "vault not reachable/unlocked yet" throws so restore keeps waiting.
+ */
+async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> {
+  if (!usesContainerVaultAuthority()) return loadSessionIdentity();
+  let metadata;
+  try {
+    const broker = requireConfiguredCredentialBroker();
+    const status = await broker.status();
+    if (!status.unlocked) throw new Error('vault is locked');
+    metadata = await broker.integrationMetadata(INTEGRATION_ID);
+  } catch (err) {
+    throw new VaultNotReadyError(`vault not ready: ${ (err as Error)?.message || err }`);
+  }
+  const accountId = metadata.activeAccountId ?? metadata.accounts.find(a => a.active)?.accountId ?? metadata.accounts[0]?.accountId;
+  if (!accountId) return null;
+  return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
 async function clearSession(): Promise<void> {
@@ -734,6 +760,7 @@ export function initSullaCloudAuthEvents(): void {
     let delay = RETRY_BASE_MS;
 
     const isTransient = (err: any): boolean => {
+      if (err instanceof VaultNotReadyError) return true;
       const code = err?.code ?? err?.cause?.code;
       if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' || code === 'ECONNRESET') return true;
       const msg = String(err?.message || err || '').toLowerCase();
@@ -742,7 +769,7 @@ export function initSullaCloudAuthEvents(): void {
 
     while (true) {
       try {
-        const session = await loadSessionIdentity();
+        const session = await loadSessionIdentityForRestore();
         if (session) {
           await getDesktopRelayClient().setPairedUserId(session.userId);
           // Always connected while signed in: registration, heartbeat,
@@ -760,7 +787,9 @@ export function initSullaCloudAuthEvents(): void {
         // Success (either a session was restored or none exists) — stop retrying.
         return;
       } catch (err) {
-        if (!isTransient(err) || (Date.now() - startedAt) >= RETRY_GIVEUP_MS) {
+        // A locked vault waits for the owner to unlock it, however long that takes.
+        const giveUp = !(err instanceof VaultNotReadyError) && (Date.now() - startedAt) >= RETRY_GIVEUP_MS;
+        if (!isTransient(err) || giveUp) {
           console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
           return;
         }
