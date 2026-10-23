@@ -155,7 +155,8 @@ export class SullaFilesRootRegistry {
     };
     await this.persist([...roots, root]);
     await this.startBookmarks();
-    return { ...publicRoot(root), activation: 'pending-restart', removable: true, state: 'offline', pendingFiles: 0 };
+    const runtime=await getSullaFilesWatcher().enrollRoot(root);
+    return { ...publicRoot(root), ...runtime, activation:'active', removable:true };
   }
 
   async update(id:string, input:{ syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }):Promise<SullaFilesRootView> {
@@ -171,7 +172,8 @@ export class SullaFilesRootRegistry {
     if (input.exclusions !== undefined) next.exclusions = cleanPatterns(input.exclusions);
     roots[index] = next;
     await this.persist(roots);
-    return { ...publicRoot(next), ...runtime, activation: runtime ? 'active' : 'pending-restart', removable: id !== 'default' };
+    const enrolled=runtime ? await getSullaFilesWatcher().enrollRoot(next) : undefined;
+    return { ...publicRoot(next), ...(enrolled ?? runtime), activation: enrolled || runtime ? 'active' : 'offline', removable: id !== 'default' };
   }
 
   async remove(id:string):Promise<void> {
@@ -186,6 +188,7 @@ export class SullaFilesRootRegistry {
     }
     if (runtimeRoots.some(root => root.id === id)) await getSullaFilesWatcher().detachRoot(id);
     await this.persist(roots.filter(root => root.id !== id));
+    await getSullaFilesWatcher().forgetRoot(id);
     this.bookmarkStops.get(id)?.(); this.bookmarkStops.delete(id);
   }
 

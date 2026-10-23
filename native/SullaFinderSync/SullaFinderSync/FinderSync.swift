@@ -7,21 +7,17 @@ private let syncAttribute = "io.sulla.files.sync-state"
 private let appGroup = "group.io.sulla.desktop"
 
 final class FinderSync: FIFinderSync {
-    private var watchedRoot: URL?
-    private var eventStream: FSEventStreamRef?
+    private var watchedRoots: [URL] = []
+    private var eventStreams: [FSEventStreamRef] = []
     private var visibleURLs = Set<URL>()
 
     override init() {
         super.init()
-        if let configured = UserDefaults(suiteName: appGroup)?.string(forKey: "FilesRoot"), !configured.isEmpty {
-            let root = URL(fileURLWithPath: configured, isDirectory: true).standardizedFileURL
-            watchedRoot = root
-            FIFinderSyncController.default().directoryURLs = [root]
-            subscribe(to: root)
-        } else {
-            // Fail closed: the extension's sandbox home is not the user's home.
-            FIFinderSyncController.default().directoryURLs = []
-        }
+        let defaults = UserDefaults(suiteName: appGroup)
+        let configured = defaults?.stringArray(forKey: "FilesRoots") ?? defaults?.string(forKey: "FilesRoot").map { [$0] } ?? []
+        watchedRoots = configured.filter { !$0.isEmpty }.map { URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }
+        FIFinderSyncController.default().directoryURLs = Set(watchedRoots)
+        for root in watchedRoots { subscribe(to: root) }
         registerBadges()
     }
 
@@ -126,7 +122,7 @@ final class FinderSync: FIFinderSync {
             FSEventStreamRelease(stream)
             return
         }
-        eventStream = stream
+        eventStreams.append(stream)
     }
 
     private func refreshVisibleBadges() {
@@ -168,8 +164,7 @@ final class FinderSync: FIFinderSync {
     }
 
     private func isInsideWatchedRoot(_ url: URL) -> Bool {
-        guard let watchedRoot else { return false }
-        return isWithinDirectory(url, inside: watchedRoot)
+        return watchedRoots.contains { isWithinDirectory(url, inside: $0) }
     }
 
     private func isWithinDirectory(_ candidate: URL, inside directory: URL) -> Bool {
@@ -188,10 +183,10 @@ final class FinderSync: FIFinderSync {
     }
 
     deinit {
-        if let eventStream {
-            FSEventStreamStop(eventStream)
-            FSEventStreamInvalidate(eventStream)
-            FSEventStreamRelease(eventStream)
+        for stream in eventStreams {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
         }
     }
 }
