@@ -216,7 +216,9 @@ export async function loadWorkflowRunSummaries(): Promise<WorkflowRunSummaries> 
     postgresClient.queryAll(`SELECT id, status, enabled, location, definition->'nodes' AS nodes FROM workflows`, []),
     postgresClient.queryAll(
       `SELECT ${ RUN_COLUMNS } FROM (
-         SELECT *, ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY started_at DESC NULLS LAST) AS rn
+         SELECT execution_id, workflow_id, status, started_at, completed_at, error, terminal_reason,
+                trigger_key, schedule_node_id, parent_execution_id, trigger_input,
+                ROW_NUMBER() OVER (PARTITION BY workflow_id ORDER BY started_at DESC NULLS LAST) AS rn
            FROM workflow_executions
        ) ranked
        WHERE rn <= 12
