@@ -2,7 +2,6 @@
   <div
     ref="browserSurface"
     class="files-browser"
-    :class="{ dragging }"
     @dragenter.prevent="onBrowserDragEnter"
     @dragover.prevent="onBrowserDragOver"
     @dragleave="onDragLeave"
@@ -48,7 +47,7 @@
           v-for="folder in sharedFolders"
           :key="folder"
           href="#"
-          :class="{ on: section === 'files' && currentPath === folder }"
+          :class="{ on: section === 'files' && currentPath === folder, 'drop-target': externalNavigationTarget === folder }"
           @dragover.prevent="onNavigationDragOver(folder, $event)"
           @drop.prevent="onNavigationDrop(folder, $event)"
           @click.prevent="openPath(folder)"
@@ -473,6 +472,7 @@
           v-else-if="view === 'list'"
           ref="listSurface"
           class="card files virtual-surface"
+          :class="{ 'drop-background': dragging }"
           @scroll="updateVirtualScroll"
           @pointerdown="startMarquee"
           @click.self="clearSelection"
@@ -661,6 +661,7 @@
           v-else
           ref="gridSurface"
           class="gridv virtual-surface"
+          :class="{ 'drop-background': dragging }"
           @scroll="updateVirtualScroll"
           @pointerdown="startMarquee"
           @click.self="clearSelection"
@@ -787,12 +788,6 @@
       @open-linked="openLinked"
     />
 
-    <div
-      v-if="dragging && dataSource.capabilities.upload"
-      class="drop-overlay"
-    >
-      <span v-html="icons.upload" /><strong>Drop to add to {{ pageTitle }}</strong><p>{{ dropCopy }}</p>
-    </div>
     <Teleport to="body">
       <div v-if="quickLookEntry" ref="quickLookDialog" class="quick-look" role="dialog" aria-modal="true" :aria-label="`Quick Look: ${quickLookEntry.name}`" @click.self="closeQuickLook">
         <button class="quick-look-close" type="button" aria-label="Close Quick Look" @click="closeQuickLook" v-html="icons.close" />
@@ -952,6 +947,7 @@ const searchResults = ref<FilesItem[] | null>(null); const searchInput = ref<HTM
 const searchCoverage = ref<FilesIndexCoverage | null>(null);
 const selectedKeys = ref(new Set<string>()); const uploadProgress = ref<{ current: number; total: number; name: string; percent: number; done: boolean } | null>(null);
 const draggedKeys = ref(new Set<string>()); const dropTargetKey = ref('');
+const externalNavigationTarget = ref('');
 const dragTargets = ref<ExplorerTarget[]>([]); const dragPointer = ref({ x: 0, y: 0 }); let hoverOpenTimer:ReturnType<typeof setTimeout> | undefined;
 const dragSnapshots = new Map<string, DragSnapshot>(); const dragSnapshotRequests = new Map<string, DragSnapshotRequest>(); const dragSnapshotGenerations = new Map<string, number>(); let dragPreparation:DragPreparation | undefined; let dragPreparationGeneration=0; let dragSourceCollectionId = ''; let dragSourceCapability:FilesCrossCollectionCapability = 'unavailable';
 const selectionAnchor = ref<string | null>(null);
@@ -1057,7 +1053,6 @@ function openFilePreferences():void {
 }
 const emptyTitle = computed(() => ({ files: 'This folder is empty', shared: 'Nothing shared with you yet', sharedByMe: 'No public links yet', recent: 'No recent files', starred: 'No starred files', agent: 'No agent files to keep', trash: 'Trash is empty' }[section.value]));
 const emptyCopy = computed(() => ({ files: 'Drop files here or choose files. Files are stored securely and versioned on every change.', shared: 'Folders teammates share with you appear here.', sharedByMe: 'Links you create appear here.', recent: 'Files you change will appear here.', starred: 'Star important files to find them quickly.', agent: 'Files created by agent runs will appear here with their provenance.', trash: 'Deleted files remain discoverable until the Files service permits disposal.' }[section.value]));
-const dropCopy = computed(() => snapshot.value?.status.serverConfigured ? 'Files sync to the server and are versioned on every change.' : 'Files are encrypted and versioned in Sulla.');
 const filters = computed(() => [
   { key: 'type' as const, label: 'Type', any: 'Any', options: [...new Set(activeFiles.value.map(file => kindLabel(file.mime, file.path)))].sort() },
   { key: 'person' as const, label: 'Person', any: 'Anyone', options: [...new Set(activeFiles.value.map(ownerName))].sort() },
@@ -1368,8 +1363,9 @@ function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([ent
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
 function isExternalFileDrag(event:DragEvent) { return !internalDragActive && !event.dataTransfer?.types.includes('application/x-sulla-files') && Boolean(event.dataTransfer?.types.includes('Files')) }
-function onBrowserDragEnter(event:DragEvent) { if (isExternalFileDrag(event) && props.dataSource.capabilities.upload) { externalDragDepth++; dragging.value = true } }
-function onBrowserDragOver(event:DragEvent) { if (isExternalFileDrag(event) && props.dataSource.capabilities.upload) dragging.value = true }
+function acceptsExternalDrop(event:DragEvent) { return isExternalFileDrag(event) && props.dataSource.capabilities.upload && !readOnlyArea.value && section.value === 'files' }
+function onBrowserDragEnter(event:DragEvent) { if (acceptsExternalDrop(event)) { externalDragDepth++; dragging.value = true } }
+function onBrowserDragOver(event:DragEvent) { if (acceptsExternalDrop(event)) { dragging.value = true; if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy' } }
 function onDragLeave(_event:DragEvent) { if (!dragging.value) return; externalDragDepth = Math.max(0, externalDragDepth - 1); if (!externalDragDepth) dragging.value = false }
 async function onDrop(event:DragEvent) {
   if (readOnlyArea.value) { clearInternalDrag(); return }
@@ -1383,11 +1379,7 @@ async function onDrop(event:DragEvent) {
   const destination = currentPath.value;
   await runMutation(async() => {
     if (props.dataSource.uploadDroppedFiles) await props.dataSource.uploadDroppedFiles(files, destination);
-    else {
-      const paths = files.map(file => (file as File & { path?:string }).path).filter((value):value is string => Boolean(value));
-      if (paths.length !== files.length) throw new Error('This Desktop build cannot read one or more dropped files. Use Choose files instead.');
-      await props.dataSource.uploadPaths(paths, destination);
-    }
+    else throw new Error('This Files source cannot read dropped files. Use Choose files instead.');
   });
 }
 async function keepBothConflict(entry:DisplayEntry) { if (!props.dataSource.keepConflictCopies) return; selectedKeys.value = new Set([entry.key]); selectEntry(entry); await runMutation(() => props.dataSource.keepConflictCopies!(entry)); const updated = snapshot.value?.files.find(file => file.id === entry.id); selected.value = updated ? toDisplay(updated) : null }
@@ -1447,13 +1439,18 @@ function onEntryDragStart(entry:DisplayEntry, event:DragEvent) {
   event.dataTransfer.setData('application/x-sulla-files', JSON.stringify(dragTargets.value));
   if (!missingFolders.length) invalidateDragPreparation();
 }
-function canDropOnFolder(entry:DisplayEntry) { return entry.folder && draggedKeys.value.size > 0 && !busy.value }
-function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); dropTargetKey.value = entry.key; scheduleHoverOpen(entry) } }
-function onFolderDragOver(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry)) { event.preventDefault(); event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; dropTargetKey.value = entry.key; updateDragPointer(event) } }
+function canDropOnFolder(entry:DisplayEntry, event:DragEvent) { return entry.folder && !busy.value && (draggedKeys.value.size > 0 || acceptsExternalDrop(event)) }
+function onFolderDragEnter(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry,event)) { event.preventDefault(); event.stopPropagation(); dragging.value=false; dropTargetKey.value = entry.key; if (dragTargets.value.length) scheduleHoverOpen(entry) } }
+function onFolderDragOver(entry:DisplayEntry, event:DragEvent) { if (canDropOnFolder(entry,event)) { event.preventDefault(); event.stopPropagation(); dragging.value=false; if (event.dataTransfer) event.dataTransfer.dropEffect = dragTargets.value.length ? 'move' : 'copy'; dropTargetKey.value = entry.key; updateDragPointer(event) } }
 function onFolderDragLeave(entry:DisplayEntry, event:DragEvent) { if (dropTargetKey.value === entry.key && !(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) { dropTargetKey.value = ''; cancelHoverOpen() } }
 async function onFolderDrop(entry:DisplayEntry, event:DragEvent) {
-  if (!canDropOnFolder(entry)) return;
+  if (!canDropOnFolder(entry,event)) return;
   event.preventDefault(); event.stopPropagation();
+  if (!dragTargets.value.length && event.dataTransfer?.files.length) {
+    const files=[...event.dataTransfer.files]; dropTargetKey.value=''; dragging.value=false; externalDragDepth=0;
+    await runMutation(() => props.dataSource.uploadDroppedFiles ? props.dataSource.uploadDroppedFiles(files, entry.path) : Promise.reject(new Error('This Desktop build cannot read dropped files.')));
+    return;
+  }
   const targets = dragTargets.value.map(target => operationTarget(target, entry.path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability;
   clearInternalDrag();
   if (targets.length) await perform('move', targets, sourceCollectionId, sourceCapability);
@@ -1534,8 +1531,13 @@ async function setFolderFavorite(path:string, favorite:boolean) {
   if (!collectionId || busy.value || loading.value || starred.value.has(`folder:${ path }`) === favorite) return;
   await runMutation(() => props.dataSource.setStar(collectionId, { folderPath: path }, favorite));
 }
-function onNavigationDragOver(_path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'; updateDragPointer(event) }
-async function onNavigationDrop(path:string, event:DragEvent) { if (!dragTargets.value.length) return; event.stopPropagation(); const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability) }
+function onNavigationDragOver(path:string, event:DragEvent) { if (!dragTargets.value.length && !acceptsExternalDrop(event)) return; event.stopPropagation(); externalNavigationTarget.value=path; if (event.dataTransfer) event.dataTransfer.dropEffect = dragTargets.value.length ? 'move' : 'copy'; updateDragPointer(event) }
+async function onNavigationDrop(path:string, event:DragEvent) {
+  if (!dragTargets.value.length && !acceptsExternalDrop(event)) return;
+  event.stopPropagation(); externalNavigationTarget.value='';
+  if (!dragTargets.value.length && event.dataTransfer?.files.length) { const files=[...event.dataTransfer.files]; await runMutation(() => props.dataSource.uploadDroppedFiles ? props.dataSource.uploadDroppedFiles(files,path) : Promise.reject(new Error('This Desktop build cannot read dropped files.'))); return }
+  const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability)
+}
 function clearInternalDrag() { cancelHoverOpen(); internalDragActive=false; draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
@@ -2393,11 +2395,7 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .state-icon :deep(svg) { width: 38px; height: 38px; }
 .error-state .state-icon { color: var(--bad); }
 .loader { display: inline-block; width: 22px; height: 22px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
-.drop-overlay { position: absolute; z-index: 30; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 2px dashed var(--accent-line); color: var(--accent-2); background: color-mix(in srgb, var(--paper) 90%, transparent); backdrop-filter: blur(12px); pointer-events: none; }
-.drop-overlay > span { display: grid; width: 48px; height: 48px; }
-.drop-overlay > span :deep(svg) { width: 48px; height: 48px; }
-.drop-overlay strong { margin-top: 12px; color: var(--text); font-size: 15px; font-weight: 600; }
-.drop-overlay p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.virtual-surface.drop-background { outline: 2px dashed var(--accent-line); outline-offset: -3px; background: color-mix(in srgb, var(--paper) 94%, var(--accent)); }
 .path-breadcrumbs { display:flex; align-items:center; gap:6px; min-height:36px; margin:8px 0; padding:6px 10px; overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:var(--paper-2); }
 .path-breadcrumbs button { flex:none; padding:3px 5px; border:0; border-radius:5px; color:var(--muted); background:transparent; font:12px var(--mono); }
 .path-breadcrumbs button:hover { color:var(--text); background:var(--card); }

@@ -5,10 +5,12 @@
 */
 
 import { onMounted, onBeforeUnmount, ref } from 'vue';
+import { webUtils } from 'electron';
 
 import { AttachmentService } from '../services/AttachmentService';
 import { useChatController } from '../controller/useChatController';
 import type { ChatController } from '../controller/ChatController';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export function useDragDrop(controllerOverride?: ChatController) {
   const active = ref(false);
@@ -38,15 +40,19 @@ export function useDragDrop(controllerOverride?: ChatController) {
     depth = Math.max(0, depth - 1);
     if (depth === 0) active.value = false;
   }
-  function onDrop(e: DragEvent) {
+  async function onDrop(e: DragEvent) {
     if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
     e.preventDefault();
     depth = 0;
     active.value = false;
-    for (const file of Array.from(e.dataTransfer.files)) {
-      const att = AttachmentService.fromFile(file);
-      controller?.stageAttachment(att);
+    const paths = Array.from(e.dataTransfer.files, file => webUtils.getPathForFile(file));
+    if (paths.some(value => !value)) throw new Error('Sulla could not read one or more dropped files.');
+    const result = await ipcRenderer.invoke('files-ui:import-path-references', { paths }) as any[] | { references:any[]; error:string };
+    const references = Array.isArray(result) ? result : result.references;
+    for (const reference of references) {
+      controller?.stageAttachment(AttachmentService.fromFilesReference(reference));
     }
+    if (!Array.isArray(result) && result.error) console.warn('[Chat] Some dropped files could not be imported:', result.error);
   }
 
   onMounted(() => {

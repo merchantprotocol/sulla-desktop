@@ -12,7 +12,7 @@ import { getIpcMainProxy } from './ipcMain';
 import { FilesChangeFeed } from './sullaFilesChangeFeed';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
-import { importChatFiles, pickAndImportChatFiles, type ChatFilesReference, type PartialChatFilesImport } from './sullaFilesChatImport';
+import { importChatFiles, pickAndImportChatFiles } from './sullaFilesChatImport';
 import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesRootRegistry, isProtectedTrackedPath } from './sullaFilesRootRegistry';
@@ -686,33 +686,13 @@ export function initSullaFilesIpc():void {
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)).slice(0, Math.max(1, Math.min(Number(limit), 20)));
   });
   ipcMain.handle('files-ui:pick-reference', async(event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    const roots = (await getSullaFilesRootRegistry().list()).filter(root => root.activation === 'active' && root.collectionId);
-    const options:Electron.OpenDialogOptions = {
-      title:       'Attach from Sulla Files',
-      properties:  ['openFile', 'multiSelections'],
-    };
-    const defaultRoot = roots.find(root => root.id === 'default')?.path;
-    if (defaultRoot) options.defaultPath = defaultRoot;
-    const picked = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
-    if (picked.canceled) return [];
-
-    const references:ChatFilesReference[] = [];
-    const importPaths:string[] = [];
-    for (const selected of picked.filePaths) {
-      const resolved = await fs.promises.realpath(selected);
-      const info = await fs.promises.stat(resolved);
-      if (!info.isFile()) continue;
-      const root = roots.find(candidate => pathWithin(candidate.path, resolved));
-      const existing = root ? await findReferenceByPath(path.relative(root.path, resolved), root.collectionId) : undefined;
-      if (existing?.versionId) references.push(existing);
-      else importPaths.push(resolved);
+    try {
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+      return await pickAndImportChatFiles(owner);
+    } catch (error) {
+      console.warn('[SullaFiles] pick-reference failed:', error instanceof Error ? error.message : String(error));
+      throw error;
     }
-    if (!importPaths.length) return references;
-    const imported = await importChatFiles(importPaths);
-    if (Array.isArray(imported)) return [...references, ...imported];
-
-    return { references: [...references, ...imported.references], error: imported.error } satisfies PartialChatFilesImport;
   });
   ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
     try {
@@ -735,12 +715,14 @@ export function initSullaFilesIpc():void {
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
   ipcMain.handle('files-ui:capture-screenshot', async(_event, mode:ScreenshotMode = 'area') => {
-    const capture = await getSullaFilesCaptureService().screenshot(mode);
-    const primaryRoot = (await getSullaFilesRootRegistry().list()).find(root => root.id === 'default' && root.activation === 'active' && root.collectionId);
-    const file = primaryRoot ? await findReferenceByPath(capture.relativePath, primaryRoot.collectionId) : undefined;
-    if (!file?.versionId) throw new Error('The screenshot was saved to Files, but its durable version is not ready yet. Try again in a moment.');
-
-    return { reference: file };
+    try {
+      const capture = await getSullaFilesCaptureService().screenshot(mode);
+      if (!capture.reference?.versionId) throw new Error('Files did not return the durable screenshot version.');
+      return { reference: capture.reference };
+    } catch (error) {
+      if (!(error as { cancelled?:boolean })?.cancelled) console.warn('[SullaFiles] capture-screenshot failed:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   });
   ipcMain.handle('files-ui:toggle-recording', (_event, input:{ mic: boolean; camera: boolean }) => getSullaFilesCaptureService().toggleRecording(input));
   ipcMain.handle('files-ui:create-link', (_event, input:CreateShareInput) => getSullaFilesLinkService().create(input));
@@ -810,8 +792,13 @@ export function initSullaFilesIpc():void {
     return importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress), collectionId);
   });
   ipcMain.handle('files-ui:pick-upload-references', async(event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
-    return pickAndImportChatFiles(owner);
+    try {
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+      return await pickAndImportChatFiles(owner);
+    } catch (error) {
+      console.warn('[SullaFiles] pick-upload-references failed:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   });
   ipcMain.handle('files-experiment:pick-native-source', async(event) => {
     if (!mountManager.status().ready) throw new Error('Native Files runtime is not ready');
@@ -938,5 +925,16 @@ export function initSullaFilesIpc():void {
       throw error;
     }
   });
-  ipcMain.handle('files-ui:upload-paths', (event, input:{ paths: string[]; destination?: string; collectionId?: string }) => importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId));
+  ipcMain.handle('files-ui:upload-paths', async(event, input:{ paths: string[]; destination?: string; collectionId?: string }) => {
+    try { return await importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId) } catch (error) {
+      console.warn('[SullaFiles] upload-paths failed:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  });
+  ipcMain.handle('files-ui:import-path-references', async(_event, input:{ paths:string[] }) => {
+    try { return await importChatFiles(input.paths) } catch (error) {
+      console.warn('[SullaFiles] import-path-references failed:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  });
 }

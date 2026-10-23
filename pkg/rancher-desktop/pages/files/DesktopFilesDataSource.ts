@@ -4,7 +4,7 @@ import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folder
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { FilesRevealResult, FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from './types';
-import type { IpcRendererEvent } from 'electron';
+import { webUtils, type IpcRendererEvent } from 'electron';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 
 interface RemoteCapabilities {
@@ -312,6 +312,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
   listNativeSources():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> { return ipcRenderer.invoke('files-experiment:list-native-sources') }
   async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
   uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
+  uploadDroppedFiles(files:File[], destination = ''):Promise<number> {
+    const paths = files.map(file => webUtils.getPathForFile(file));
+    if (paths.some(value => !value)) throw new Error('Sulla could not read one or more dropped files. Use Choose files instead.');
+    return this.uploadPaths(paths, destination);
+  }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
   updateFolderDescription(folderId:string, description:string, namingHint?:string):Promise<void> { return ipcRenderer.invoke('files-ui:update-folder-description', { folderId, description, namingHint }) }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
