@@ -177,11 +177,14 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
     const session = await loadSession();
     return session ? { userId: session.userId, activeContractorId: session.activeContractorId, contractors: session.contractors } : null;
   }
-  const accounts = await getIntegrationService().getAccounts(INTEGRATION_ID);
-  const account = accounts.find(a => a.active) ?? accounts[0];
-  if (!account) return null;
+  const broker = requireConfiguredCredentialBroker();
+  const status = await broker.status();
+  if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Waiting for the vault to be unlocked.', 423);
+  const metadata = await broker.integrationMetadata(INTEGRATION_ID);
+  const accountId = metadata.activeAccountId ?? metadata.accounts.find(a => a.active)?.accountId ?? metadata.accounts[0]?.accountId;
+  if (!accountId) return null;
   // Today userId === activeContractorId (single-contractor server response).
-  return { userId: account.account_id, activeContractorId: account.account_id, contractors: [] };
+  return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
 class VaultNotReadyError extends Error {}
@@ -476,6 +479,11 @@ export async function getCurrentAccessToken(): Promise<string> {
     return refreshed || current;
   }
   return current;
+}
+
+/** True when non-secret Sulla Cloud account metadata identifies an active session. */
+export async function isCloudSignedIn(): Promise<boolean> {
+  return (await loadSessionIdentity()) !== null;
 }
 
 /**

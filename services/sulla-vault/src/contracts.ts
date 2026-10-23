@@ -310,6 +310,16 @@ export interface SullaCloudSessionResponse {
   activeContractorId: string;
 }
 
+/** Trusted Desktop-main request; credentials are injected and retained by the vault. */
+export interface SullaCloudDesktopRequest {
+  method:        string;
+  path:          string;
+  headers?:      Record<string, string>;
+  body?:         unknown;
+  bodyEncoding?: 'base64';
+  responseType?: 'json' | 'text';
+}
+
 /**
  * /v1/broker/execute-stream returns upstream status and sanitized headers as
  * HTTP status/headers, then writes the sanitized body directly. It never wraps

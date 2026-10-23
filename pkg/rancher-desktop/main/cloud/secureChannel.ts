@@ -22,9 +22,9 @@
  */
 
 import { getDesktopDeviceId } from '../deviceIdentity';
-import { getCurrentAccessToken, getCurrentUserId } from '../sullaCloudAuth';
+import { cloudRequest, isCloudSignedIn } from './cloudFetch';
+import { getCurrentUserId } from '../sullaCloudAuth';
 import { ApprovedClients } from './approvedClients';
-import { CLOUD_API_BASE } from './cloudEndpoints';
 import { getCloudPreferences } from './cloudSettings';
 import { signDeviceMessage } from './deviceKey';
 import {
@@ -123,16 +123,14 @@ export class SecureDesktopChannel {
     if (!this.running) return;
     this.setState('connecting');
     try {
-      const token = await getCurrentAccessToken();
       const userId = await getCurrentUserId();
-      if (!token || !userId) throw new Error('not signed in to Sulla Cloud');
+      if (!await isCloudSignedIn() || !userId) throw new Error('not signed in to Sulla Cloud');
       this.deviceId = await getDesktopDeviceId();
       this.userId = userId;
 
       const proof = signDeviceMessage('relay-desktop', [userId, this.deviceId]);
-      const res = await fetch(`${ CLOUD_API_BASE }/desktop-channel/tickets`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ token }` },
+      const res = await cloudRequest('POST', '/desktop-channel/tickets', {
+        headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ deviceId: this.deviceId, role: 'desktop', ts: proof.ts, signature: proof.signature }),
       });
       const body = await res.json().catch(() => ({})) as { url?: string; error?: string };

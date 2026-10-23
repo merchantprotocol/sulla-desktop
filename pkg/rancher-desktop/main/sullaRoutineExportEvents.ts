@@ -345,9 +345,8 @@ export function initSullaRoutineExportEvents(): void {
       return { error: 'workflowId is required' };
     }
 
-    const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
-    const token = await getCurrentAccessToken();
-    if (!token) {
+    const { isCloudSignedIn } = await import('@pkg/main/cloud/cloudFetch');
+    if (!await isCloudSignedIn()) {
       return { needs_auth: true as const };
     }
 

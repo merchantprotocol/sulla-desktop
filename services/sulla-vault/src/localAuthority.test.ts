@@ -133,6 +133,12 @@ test('Sulla Cloud session mutation rejects non-Desktop service principals', asyn
     authority.clearSullaCloudSession('sulla-tools', TOKEN.broker),
     (error: any) => error.code === 'invalid_service_identity',
   );
+  await assert.rejects(
+    authority.executeDesktopSullaCloudRequest('sulla-tools', TOKEN.broker, {
+      method: 'POST', path: '/devices/heartbeat', body: {}, responseType: 'json',
+    }),
+    (error: any) => error.code === 'invalid_service_identity',
+  );
 });
 
 test('lock linearizes behind in-flight plaintext reads and mutations', async() => {

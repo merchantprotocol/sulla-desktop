@@ -11,12 +11,11 @@ import { getCloudPreferences } from './cloud/cloudSettings';
 import { getDevicePublicKey } from './cloud/deviceKey';
 import { getDesktopDeviceMetadata, getDesktopDeviceId } from './deviceIdentity';
 
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const HEARTBEAT_INTERVAL_MS = 45_000;
 
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -55,13 +54,10 @@ const failCounts = new Map<string, number>();
 
 async function postJson(path: string, body: unknown): Promise<{ ok: boolean; status: number; data: any }> {
   try {
-    const token = await getCurrentAccessToken();
-    if (!token) return { ok: false, status: 0, data: null };
-    const res = await fetch(`${ API_BASE }${ path }`, {
-      method:  'POST',
+    if (!await isCloudSignedIn()) return { ok: false, status: 0, data: null };
+    const res = await cloudRequest('POST', path, {
       headers: {
         'Content-Type':  'application/json',
-        Authorization:  `Bearer ${ token }`,
       },
       body: JSON.stringify(body),
     });

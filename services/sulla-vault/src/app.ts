@@ -506,6 +506,10 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(await localAuthority.clearSullaCloudSession(identity.serviceId, identity.token));
     });
+    app.post('/v1/broker/sulla-cloud/request', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.executeDesktopSullaCloudRequest(identity.serviceId, identity.token, request.body));
+    });
     app.post('/v1/broker/execute', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token));
