@@ -50,6 +50,29 @@
           >{{ item.shortcut }}</span>
         </button>
       </template>
+
+      <template v-if="safeRailApps.length">
+        <div
+          class="rail-divider"
+          aria-hidden="true"
+        />
+        <button
+          v-for="app in safeRailApps"
+          :key="`recipe:${app.slug}`"
+          type="button"
+          :class="['mode-btn', 'recipe-app-btn', `status-${app.level}`]"
+          :data-tooltip="app.tooltip"
+          :data-noir-tooltip="app.tooltip"
+          :aria-label="app.tooltip"
+          @click="$emit('open-rail-app', app.slug)"
+        >
+          <span
+            class="icon"
+            v-html="app.icon"
+          />
+          <span class="item-label">{{ app.label }}</span>
+        </button>
+      </template>
     </div>
 
     <div class="rail-spacer" />
@@ -124,6 +147,7 @@
 </template>
 
 <script setup lang="ts">
+import DOMPurify from 'dompurify';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useDecisions } from '@pkg/composables/useDecisions';
@@ -138,13 +162,23 @@ const props = defineProps<{
   activeSubTab?:  string;
   bookmarksOpen?: boolean;
   chatFilesOpen?: boolean;
+  railApps?:      RecipeRailApp[];
 }>();
 
 defineEmits<{
   (e: 'set-mode', mode: string, subTab?: string): void;
   (e: 'toggle-bookmarks'): void;
   (e: 'toggle-chat-files'): void;
+  (e: 'open-rail-app', slug: string): void;
 }>();
+
+interface RecipeRailApp {
+  slug:    string;
+  label:   string;
+  icon:    string;
+  level:   'ok' | 'warn' | 'bad' | 'unknown';
+  summary: string;
+}
 
 interface ModeItem {
   mode:        string;
@@ -169,6 +203,16 @@ const indicatorStyle = computed<CSSProperties>(() => ({
   height:    `${ indicatorHeight.value }px`,
   transform: `translateY(${ indicatorTop.value }px)`,
 }));
+
+const safeRailApps = computed(() => (props.railApps ?? []).map(app => ({
+  ...app,
+  tooltip: app.summary ? `${ app.label } · ${ app.summary }` : app.label,
+  icon: DOMPurify.sanitize(app.icon, {
+    USE_PROFILES: { svg: true, svgFilters: false },
+    FORBID_TAGS:  ['script', 'style', 'foreignObject', 'iframe', 'object', 'embed'],
+    FORBID_ATTR:  ['style', 'href', 'xlink:href', 'src'],
+  }),
+})));
 
 function readExpandedPreference(): boolean {
   try {
@@ -535,6 +579,18 @@ const items: readonly ModeItem[] = Object.freeze([
 
 .theme-noir .mode-btn.active .icon {
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--nx-accent-2) 60%, transparent));
+}
+
+.theme-noir .recipe-app-btn.status-ok { color: var(--nx-success); }
+.theme-noir .recipe-app-btn.status-warn { color: var(--nx-warning); }
+.theme-noir .recipe-app-btn.status-bad { color: var(--nx-danger); }
+.theme-noir .recipe-app-btn.status-bad .icon {
+  animation: recipe-danger-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes recipe-danger-pulse {
+  0%, 100% { filter: drop-shadow(0 0 3px color-mix(in srgb, var(--nx-danger) 35%, transparent)); }
+  50% { filter: drop-shadow(0 0 10px color-mix(in srgb, var(--nx-danger) 75%, transparent)); }
 }
 
 .theme-noir .expanded .mode-btn {

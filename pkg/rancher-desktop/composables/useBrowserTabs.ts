@@ -22,6 +22,8 @@ export interface BrowserTab {
   content?: string;
   /** Consumed by a Files tab after it mounts, so navigation is never timer-dependent. */
   filesNavigation?: FilesNavigationPayload;
+  /** Recipe rail identity used to refocus its single app tab. */
+  recipeAppSlug?: string;
   /**
    * Last time something touched this tab (create, updateTab, URL/title/content
    * change from backend). Used for idle-close of agent tabs. Only populated
@@ -448,7 +450,7 @@ export function useBrowserTabs() {
     usage:        'Usage',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; recipeAppSlug?: string }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -460,6 +462,7 @@ export function useBrowserTabs() {
       lastAccessedAt: Date.now(),
       ...(opts?.agentChat ? { agentChat: opts.agentChat } : {}),
       ...(opts?.filesNavigation ? { filesNavigation: opts.filesNavigation } : {}),
+      ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
     };
 
     tabs.push(tab);

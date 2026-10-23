@@ -15,6 +15,42 @@ export interface RecipeRuntimePlan {
   webPorts:    number[];
 }
 
+export type RecipeRailStatusLevel = 'ok' | 'warn' | 'bad' | 'unknown';
+
+export interface RecipeRailDefinition {
+  label:  string;
+  icon:   string;
+  open:   { port: number; path: string };
+  status?: { port: number; path: string; every: number };
+}
+
+function railEndpoint(value: unknown, includeEvery = false): RecipeRailDefinition['open'] | RecipeRailDefinition['status'] | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const endpoint = value as Record<string, unknown>;
+  const port = Number(endpoint.port);
+  const endpointPath = endpoint.path;
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof endpointPath !== 'string' || !endpointPath.startsWith('/') || endpointPath.startsWith('//')) return null;
+
+  return includeEvery
+    ? { port, path: endpointPath, every: Math.max(10, Number.isFinite(Number(endpoint.every)) ? Math.floor(Number(endpoint.every)) : 30) }
+    : { port, path: endpointPath };
+}
+
+/** Parse the untrusted, optional rail app declaration from a recipe manifest. */
+export function parseRecipeRail(manifest: unknown): RecipeRailDefinition | null {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return null;
+  const rail = (manifest as Record<string, unknown>).rail;
+  if (!rail || typeof rail !== 'object' || Array.isArray(rail)) return null;
+  const value = rail as Record<string, unknown>;
+  const label = typeof value.label === 'string' ? value.label.trim().slice(0, 80) : '';
+  const icon = typeof value.icon === 'string' ? value.icon.trim() : '';
+  const open = railEndpoint(value.open);
+  const status = value.status === undefined ? undefined : railEndpoint(value.status, true);
+  if (!label || !/^<svg(?:\s|>)/i.test(icon) || icon.length > 20_000 || !open || (value.status !== undefined && !status)) return null;
+
+  return { label, icon, open, ...(status ? { status: status as NonNullable<RecipeRailDefinition['status']> } : {}) };
+}
+
 function safePart(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'data';
 }

@@ -1162,6 +1162,10 @@ export interface IpcMainInvokeEvents {
     containers: { name: string; service: string; state: string; status: string; ports: string[] }[];
     error?:     string;
   };
+  'recipe-rail-apps': () => {
+    slug: string; label: string; icon: string; url: string;
+    level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;
+  }[];
   'recipe-logs-start':   (slug: string, service?: string) => { sessionId: string };
   'recipe-logs-stop':    (sessionId: string) => { ok: boolean };
   'recipe-shell-open':   (slug: string, containerName: string, cols?: number, rows?: number) => { sessionId?: string; error?: string };
@@ -1179,6 +1183,10 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'recipe-rail-apps-changed': (apps: {
+    slug: string; label: string; icon: string; url: string;
+    level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;
+  }[]) => void;
   'files-ui:changed': (change:{ collectionId:string; seq:string; paths:string[] }) => void;
   'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
   'files-ui:native-runtime-changed': (status: import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus) => void;
