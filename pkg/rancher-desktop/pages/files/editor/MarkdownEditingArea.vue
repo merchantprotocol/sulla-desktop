@@ -1,6 +1,6 @@
 <template>
-  <div class="markdown-wrap">
-    <div class="block-gutter" aria-hidden="true"><button tabindex="-1" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button><button tabindex="-1" type="button"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg></button></div>
+  <div ref="wrap" class="markdown-wrap" @pointerdown.capture="rememberSelection" @mousemove="trackLine" @contextmenu="openContextMenu" @mouseleave="gutterVisible=false">
+    <div v-if="!readOnly" class="block-gutter" :class="{ visible:gutterVisible }" :style="{top:`${gutterTop}px`}"><button type="button" aria-label="Insert block on this line" @mousedown.prevent @click="openGutterMenu">＋</button></div>
     <div ref="host" class="editing-area" />
   </div>
 </template>
@@ -12,7 +12,8 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import type { EditorView as Editor } from '@codemirror/view';
 import { textPatch, createEditor, type EditorCollaboration } from './codeMirror';
 const props=defineProps<{ modelValue:string; readOnly:boolean; live?:EditorCollaboration|null }>();
-const emit=defineEmits<{ 'update:modelValue':[value:string] }>();
+const emit=defineEmits<{ 'update:modelValue':[value:string]; insertMenu:[point:{x:number;y:number}] }>();
+const wrap=ref<HTMLElement>(),gutterVisible=ref(false),gutterTop=ref(4);let gutterLine=0,contextHadSelection=false;
 const host=ref<HTMLElement>(); let view:Editor|undefined; let applying=false;
 class ImageWidget extends WidgetType { constructor(private readonly src:string,private readonly alt:string){super()} toDOM(){const image=document.createElement('img');image.src=this.src;image.alt=this.alt;image.className='cm-md-image';image.loading='lazy';return image} eq(other:ImageWidget){return other.src===this.src&&other.alt===this.alt} }
 function livePreview(state:EditorState):DecorationSet{
@@ -33,7 +34,7 @@ function livePreview(state:EditorState):DecorationSet{
  return Decoration.set(decorations,true);
 }
 const preview=EditorView.decorations.compute(['doc','selection'],state=>livePreview(state));
-function build(){view?.destroy();view=undefined;if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'var(--font-display, Georgia, serif)',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'1.45rem',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'var(--nx-accent, #3a7fa0)',textDecoration:'underline'},'.cm-md-task':{color:'var(--nx-accent, #3a7fa0)'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})],props.live);}
+function build(){view?.destroy();view=undefined;if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'22px',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'#3a7fa0',textDecoration:'underline'},'.cm-md-task':{color:'#3a7fa0'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})],props.live);}
 onMounted(build);
 // Live editing arrives after the file loads; rebind CodeMirror to the Automerge-backed Y.Text.
 watch(()=>props.live,()=>{build();startAfterFrontMatter();});
@@ -41,9 +42,15 @@ watch(()=>props.modelValue,value=>{if(!view||view.state.doc.toString()===value)r
 function startAfterFrontMatter(){if(!view)return;const match=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(view.state.doc.toString());if(match)view.dispatch({selection:{anchor:Math.min(match[0].length+1,view.state.doc.length)}})}
 onMounted(startAfterFrontMatter);
 function revealProperties(){if(!view)return;view.focus();view.dispatch({selection:{anchor:Math.min(4,view.state.doc.length)},scrollIntoView:true})}
-defineExpose({revealProperties});
+function trackLine(event:MouseEvent){if(!view||!wrap.value||props.readOnly)return;const rect=wrap.value.getBoundingClientRect();const block=view.lineBlockAtHeight(event.clientY-view.documentTop);gutterLine=view.state.doc.lineAt(block.from).from;gutterTop.value=view.documentTop+block.top-rect.top+4;gutterVisible.value=true}
+function rememberSelection(event:PointerEvent){if(event.button===2)contextHadSelection=!!view&&!view.state.selection.main.empty}
+function openContextMenu(event:MouseEvent){if(!view||props.readOnly||contextHadSelection||!view.state.selection.main.empty)return;const pos=view.posAtCoords({x:event.clientX,y:event.clientY});if(pos===null)return;event.preventDefault();view.dispatch({selection:{anchor:pos}});emit('insertMenu',{x:event.clientX,y:event.clientY})}
+function openGutterMenu(event:MouseEvent){if(!view||props.readOnly)return;view.dispatch({selection:{anchor:gutterLine}});const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();emit('insertMenu',{x:rect.right+6,y:rect.top})}
+function insertBlock(text:string){if(!view||props.readOnly)return;const line=view.state.doc.lineAt(view.state.selection.main.head);const empty=!line.text.trim();const from=empty?line.from:line.to;const insert=(empty?'':'\n')+text;view.dispatch({changes:{from,to:empty?line.to:from,insert},selection:{anchor:from+(empty?0:1)+Math.min(text.length,!text.includes('\n')?text.length:text.indexOf('\n'))},scrollIntoView:true});view.focus()}
+function addProperty(){if(!view||props.readOnly)return;const source=view.state.doc.toString(),match=/^---\r?\n(?:[\s\S]*?\r?\n)?---(?:\r?\n|$)/.exec(source);const eol=source.startsWith('---\r\n')?'\r\n':'\n';let from=0,insert='',keyStart=0;if(match){const close=match[0].lastIndexOf(eol+'---');from=close+eol.length;insert=`property: value${eol}`;keyStart=from}else{insert='---\nproperty: value\n---\n';keyStart=4}view.dispatch({changes:{from,insert},selection:{anchor:keyStart,head:keyStart+8},scrollIntoView:true});view.focus()}
+defineExpose({revealProperties,insertBlock,addProperty});
 onBeforeUnmount(()=>view?.destroy());
 </script>
 <style scoped>
-.markdown-wrap{position:relative;min-height:420px}.editing-area{min-height:420px}.block-gutter{position:absolute;left:-54px;top:7px;z-index:2;display:flex;opacity:0;transition:opacity .15s}.markdown-wrap:hover .block-gutter{opacity:1}.block-gutter button{width:24px;height:24px;border:0;border-radius:5px;background:transparent;color:var(--nx-text-tertiary,#8a96a6);font-size:14px}.block-gutter svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}.block-gutter button:hover{background:var(--nx-bg-subtle,#f4f7fb)}
+.markdown-wrap{position:relative;min-height:420px;padding-left:52px;margin-left:-52px}.editing-area{min-height:420px}.block-gutter{position:absolute;left:0;z-index:2;display:flex;opacity:0;transition:opacity .15s}.block-gutter.visible,.block-gutter:focus-within{opacity:1}.block-gutter button{width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#8a96a6;font-size:13px;cursor:pointer}.block-gutter button:hover{background:#f4f7fb}
 </style>

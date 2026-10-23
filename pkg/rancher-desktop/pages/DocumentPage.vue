@@ -2,6 +2,7 @@
   <DocumentEditorShell
     v-if="item"
     :data-source="dataSource"
+    :collection-id="documentFile.collectionId"
     :item="item"
     :files="[item]"
     @back="backToFiles"
