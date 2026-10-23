@@ -46,7 +46,7 @@ export function useMediaSources() {
   const screenQuality: Ref<QualityPreset> = ref('auto');
   const cameraQuality: Ref<QualityPreset> = ref('720p');
   let rawScreenStream: MediaStream | null = null;
-  let cropAnimationFrame: number | null = null;
+  let cropTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Acquire a specific screen/window source via desktopCapturer.
@@ -107,9 +107,11 @@ export function useMediaSources() {
           Math.round(video.videoWidth * crop.x), Math.round(video.videoHeight * crop.y),
           Math.round(video.videoWidth * crop.width), Math.round(video.videoHeight * crop.height),
           0, 0, canvas.width, canvas.height);
-        cropAnimationFrame = requestAnimationFrame(draw);
       };
+      // A timer, not requestAnimationFrame: rAF stops while the studio window
+      // is minimized or covered, which would freeze the recording.
       draw();
+      cropTimer = setInterval(draw, 1000 / 30);
       stream = canvas.captureStream(30);
     }
     screenStream.value = stream;
@@ -135,9 +137,9 @@ export function useMediaSources() {
   }
 
   function releaseScreen() {
-    if (cropAnimationFrame !== null) {
-      cancelAnimationFrame(cropAnimationFrame);
-      cropAnimationFrame = null;
+    if (cropTimer !== null) {
+      clearInterval(cropTimer);
+      cropTimer = null;
     }
     if (screenStream.value) {
       screenStream.value.getTracks().forEach(t => t.stop());
