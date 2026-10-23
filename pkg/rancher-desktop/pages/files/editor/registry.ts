@@ -1,12 +1,13 @@
 import type { Component } from 'vue';
 
+import { documentEditorExtensions, documentEditorTypeIdForPath, type DocumentEditorTypeId } from './editorTypes';
 import MarkdownEditingArea from './MarkdownEditingArea.vue';
 import TextEditingArea from './TextEditingArea.vue';
 
 export interface DocumentProperties { [key:string]: string }
 export interface ParsedDocument { content:string; properties:DocumentProperties }
 export interface DocumentEditorType {
-  id:'text' | 'markdown';
+  id:DocumentEditorTypeId;
   label:string;
   extensions:string[];
   component:Component;
@@ -29,13 +30,13 @@ function parseMarkdown(content:string):ParsedDocument {
 }
 
 const types:DocumentEditorType[] = [
-  { id: 'markdown', label: 'Markdown', extensions: ['.sulla.md', '.md'], component: MarkdownEditingArea, parse: parseMarkdown, serialize: document => document.content },
-  { id: 'text', label: 'Text', extensions: ['.txt'], component: TextEditingArea, parse: identity, serialize: document => document.content },
+  { id: 'markdown', label: 'Markdown', extensions: [...documentEditorExtensions.markdown], component: MarkdownEditingArea, parse: parseMarkdown, serialize: document => document.content },
+  { id: 'text', label: 'Text', extensions: [...documentEditorExtensions.text], component: TextEditingArea, parse: identity, serialize: document => document.content },
 ];
 
 export function editorTypeForPath(path:string):DocumentEditorType | undefined {
-  const normalized = path.toLowerCase();
-  return types.find(type => type.extensions.some(extension => normalized.endsWith(extension)));
+  const id = documentEditorTypeIdForPath(path);
+  return types.find(type => type.id === id);
 }
-export function supportsDocumentEditor(path:string):boolean { return Boolean(editorTypeForPath(path)) }
+export { supportsDocumentEditor } from './editorTypes';
 export const documentEditorTypes = types;
