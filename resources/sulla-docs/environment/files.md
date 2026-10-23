@@ -2,6 +2,8 @@
 
 This is the detailed reference for the Sulla Files system. For quick agent guidance,
 see the prompt-injected Files block. For working rules, see [files-harness.md](files-harness.md).
+For the native `.sulla.md` document format used by the File Manager editor, see
+[sulla-file-format.md](sulla-file-format.md).
 
 ## How agents use Files
 
