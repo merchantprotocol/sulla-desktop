@@ -18,6 +18,8 @@ export interface ScreenSource {
   thumbnailDataUrl: string;
 }
 
+export interface CropRegion { x: number; y: number; width: number; height: number }
+
 export type QualityPreset = '480p' | '720p' | '1080p' | '4k' | 'auto';
 
 export interface QualityConfig {
@@ -43,12 +45,14 @@ export function useMediaSources() {
   const activeCameraDeviceId = ref('');
   const screenQuality: Ref<QualityPreset> = ref('auto');
   const cameraQuality: Ref<QualityPreset> = ref('720p');
+  let rawScreenStream: MediaStream | null = null;
+  let cropTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Acquire a specific screen/window source via desktopCapturer.
    * If no sourceId is given, picks the first available screen.
    */
-  async function acquireScreen(sourceId?: string): Promise<MediaStream> {
+  async function acquireScreen(sourceId?: string, crop?: CropRegion): Promise<MediaStream> {
     releaseScreen();
 
     // If no source specified, pick the first screen
@@ -86,6 +90,30 @@ export function useMediaSources() {
       throw new Error('Screen capture returned no video tracks');
     }
 
+    rawScreenStream = stream;
+    if (crop && crop.width > 0 && crop.height > 0) {
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(2, Math.round(video.videoWidth * crop.width));
+      canvas.height = Math.max(2, Math.round(video.videoHeight * crop.height));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Could not create the selected-area recorder');
+      const draw = () => {
+        context.drawImage(video,
+          Math.round(video.videoWidth * crop.x), Math.round(video.videoHeight * crop.y),
+          Math.round(video.videoWidth * crop.width), Math.round(video.videoHeight * crop.height),
+          0, 0, canvas.width, canvas.height);
+      };
+      // A timer, not requestAnimationFrame: rAF stops while the studio window
+      // is minimized or covered, which would freeze the recording.
+      draw();
+      cropTimer = setInterval(draw, 1000 / 30);
+      stream = canvas.captureStream(30);
+    }
     screenStream.value = stream;
     activeScreenSourceId.value = sourceId;
 
@@ -109,12 +137,18 @@ export function useMediaSources() {
   }
 
   function releaseScreen() {
+    if (cropTimer !== null) {
+      clearInterval(cropTimer);
+      cropTimer = null;
+    }
     if (screenStream.value) {
       screenStream.value.getTracks().forEach(t => t.stop());
       screenStream.value = null;
       activeScreenName.value = '';
       activeScreenSourceId.value = '';
     }
+    if (rawScreenStream && rawScreenStream !== screenStream.value) rawScreenStream.getTracks().forEach(t => t.stop());
+    rawScreenStream = null;
   }
 
   /**

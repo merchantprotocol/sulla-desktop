@@ -207,6 +207,17 @@ let filesShotMode = 'area';
 let filesUploadMode = 'view';
 let filesToastTimer;
 
+function setFilesRecording(recording) {
+  filesRecording = recording === true;
+  document.getElementById('files-record').classList.toggle('rec', filesRecording);
+  if (filesRecording) document.getElementById('files-record-state').textContent = 'Recording · click to stop';
+}
+
+ipcRenderer.on('capture-studio:recording-state', (_event, state) => {
+  setFilesRecording(state?.recording);
+  if (!filesRecording) refreshFilesDashboard();
+});
+
 const FILES_ICONS = {
   doc:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
   play:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z"/></svg>',
@@ -352,6 +363,7 @@ async function refreshFilesDashboard() {
   filesRefreshing = true;
   try {
     const dashboard = await ipcRenderer.invoke('tray-panel:files-dashboard');
+    setFilesRecording(dashboard.recording);
     const files = dashboard.files || [];
     updateFilesSync(dashboard.status, files);
     if (dashboard.filesError) document.getElementById('files-recent').innerHTML = '<div class="it empty">Recent files unavailable right now</div>';
@@ -396,8 +408,7 @@ document.getElementById('files-cap-shot').addEventListener('click', (event) => {
 document.getElementById('files-record').addEventListener('click', async(event) => {
   if (event.target.closest('.tg')) return;
   try {
-    const result = await ipcRenderer.invoke('tray-panel:capture-record', { mic: filesMic, camera: filesCam }); filesRecording = result.recording;
-    document.getElementById('files-record').classList.toggle('rec', filesRecording);
+    const result = await ipcRenderer.invoke('tray-panel:capture-record', { mic: filesMic, camera: filesCam }); setFilesRecording(result.recording);
     if (filesRecording) document.getElementById('files-record-state').textContent = 'Recording · click to stop';
     else if (result.error) document.getElementById('files-record-state').textContent = result.error;
     else refreshFilesDashboard();
