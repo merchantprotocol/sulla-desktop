@@ -239,7 +239,7 @@ export class CloudVaultSyncRunner {
           if (prior && record.generation < num(prior.generation)) throw new EnvelopeError('rollback', 'Cloud served an older record generation');
           merged.set(record.id, record);
         }
-        envelope.verifyHead(head, userKey, { vaultId: state.vault_id, scope: 'personal', records: merged.values() as Iterable<SyncRecord>, minSeq: since });
+        envelope.verifyHead(head, userKey, { vaultId: state.vault_id, scope: 'personal', records: merged.values() as Iterable<SyncRecord>, minSeq: since, expectedPrevHeadMac: state.head_mac });
         assertCurrent();
         let applied = 0;
         let conflictCopies = 0;

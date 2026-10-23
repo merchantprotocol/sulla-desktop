@@ -97,6 +97,7 @@ test('rollback, omission and replayed generations fail the head check', async() 
   const expect = { vaultId, scope: 'personal' };
   const { head, records } = kat.browser;
   rejects(() => env.verifyHead(head, userKey, { ...expect, records, minSeq: head.seq + 1 }), 'rollback');
+  rejects(() => env.verifyHead(head, userKey, { ...expect, records, minSeq: head.seq - 1, expectedPrevHeadMac: flip(head.prevHeadMac) }), 'head_chain');
   rejects(() => env.verifyHead(head, userKey, { ...expect, records: records.slice(1) }), 'state_mismatch');
   // A validly MAC'd older generation of a record (what a replaying server would hold) doesn't match the head.
   const older = env.buildRecord({ ...records[1], generation: records[1].generation - 1 }, userKey);

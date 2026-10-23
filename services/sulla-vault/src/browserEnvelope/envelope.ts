@@ -389,7 +389,7 @@ export function createSyncEnvelope(sodium: Sodium) {
    */
   function verifyHead(
     head: unknown, scopeKey: Uint8Array,
-    { vaultId, scope, records, minSeq = 0 }: { vaultId: string; scope: string; records: Iterable<SyncRecord>; minSeq?: number },
+    { vaultId, scope, records, minSeq = 0, expectedPrevHeadMac }: { vaultId: string; scope: string; records: Iterable<SyncRecord>; minSeq?: number; expectedPrevHeadMac?: string },
   ): void {
     checkHeadShape(head);
     if (head.vaultId !== vaultId || head.scope !== scope) throw new EnvelopeError('head_moved', 'Manifest head belongs to another vault or scope');
@@ -400,6 +400,9 @@ export function createSyncEnvelope(sodium: Sodium) {
       macKey.fill(0);
     }
     if (head.seq < minSeq) throw new EnvelopeError('rollback', 'Sulla Cloud served an older copy than this browser has seen');
+    if (expectedPrevHeadMac !== undefined && head.seq > minSeq && head.prevHeadMac !== expectedPrevHeadMac) {
+      throw new EnvelopeError('head_chain', 'Manifest head does not extend the previously verified head');
+    }
     if (stateHash(records) !== head.stateHash) throw new EnvelopeError('state_mismatch', 'Records do not match the signed manifest');
   }
 
