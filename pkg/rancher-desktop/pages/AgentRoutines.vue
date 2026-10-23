@@ -640,6 +640,52 @@
       </button>
     </div>
 
+    <!-- Run details for the past run being viewed (same fields as the
+         Sulla Cloud run page). Fields with no backing data show a dash. -->
+    <div
+      v-if="viewingPastRun && runDetail && runDetail.executionId === viewingPastRun.executionId"
+      class="run-details-card nodrag"
+    >
+      <div class="rd-head">
+        Run details
+      </div>
+      <dl class="rd-kv">
+        <dt>Run</dt>
+        <dd class="rd-mono">
+          #{{ runDetail.runNumber }}
+        </dd>
+        <dt>Result</dt>
+        <dd :class="`rd-${ runDetail.outcome }`">
+          {{ OUTCOME_LABEL[runDetail.outcome] }}
+        </dd>
+        <dt>Ran on</dt>
+        <dd>
+          <WorkflowLocTag
+            location="desktop"
+            :device-name="runDetail.deviceName"
+          />
+        </dd>
+        <dt>Trigger</dt>
+        <dd>{{ runDetail.trigger }}</dd>
+        <dt>Started</dt>
+        <dd>{{ formatWhen(runDetail.startedAt) }}</dd>
+        <dt>Duration</dt>
+        <dd>{{ formatDuration(durationMs(runDetail.startedAt, runDetail.completedAt)) }}</dd>
+        <dt>Agent</dt>
+        <dd>{{ runDetail.agents.length ? runDetail.agents.join(', ') : '—' }}</dd>
+        <dt>Tokens</dt>
+        <dd>—</dd>
+        <dt>Next run</dt>
+        <dd>{{ runDetail.nextRunAt ? formatNext(runDetail.nextRunAt) : (runDetail.nextRunOn || '—') }}</dd>
+        <template v-if="runDetail.error && runDetail.outcome !== 'ok'">
+          <dt>Error</dt>
+          <dd class="rd-err">
+            {{ runDetail.error }}
+          </dd>
+        </template>
+      </dl>
+    </div>
+
     <!-- Edit mode — right-hand config drawer for the selected node.
          Run mode uses NodeOutputPanel instead (output + turns, no form). -->
     <NodeConfigPanel
@@ -843,10 +889,15 @@ import {
 } from './routines/libraryMapping';
 
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+import WorkflowLocTag from '@pkg/components/routines/WorkflowLocTag.vue';
+import {
+  OUTCOME_LABEL, durationMs, formatDuration, formatNext, formatWhen,
+} from '@pkg/components/routines/runFormat';
 import { useLiveClock } from '@pkg/composables/useLiveClock';
 import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
 import { concurrencyInputValue, concurrencyValueForSave } from '@pkg/pages/editor/workflow/workflowConcurrencyEditor';
+import type { WorkflowRunDetail } from '@pkg/main/workflowRunSummaries';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Mode = 'edit' | 'run';
@@ -859,8 +910,10 @@ type Mode = 'edit' | 'run';
 // card clicks from the playbill land in run mode, the explicit Edit button
 // opens in edit mode. Emitting `back-to-home` returns to the playbill.
 const props = defineProps<{
-  workflowId?:  string;
-  initialMode?: 'edit' | 'run';
+  workflowId?:   string;
+  initialMode?:  'edit' | 'run';
+  /** Opens straight into this past run (clicked from the workflows list). */
+  initialRunId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -2000,6 +2053,17 @@ const runsFlyoutOpen = ref(false);
 const pastRuns = ref<PastRunSummary[]>([]);
 const pastRunsLoading = ref(false);
 const viewingPastRun = ref<{ executionId: string; startedAt: string; endedAt: string } | null>(null);
+const runDetail = ref<WorkflowRunDetail | null>(null);
+
+watch(() => viewingPastRun.value?.executionId, async(executionId) => {
+  if (!executionId || runDetail.value?.executionId === executionId) return;
+  try {
+    runDetail.value = await ipcRenderer.invoke('workflow-run-detail', executionId);
+  } catch (err) {
+    console.warn('[AgentRoutines] Failed to load run details:', err);
+    runDetail.value = null;
+  }
+});
 
 async function fetchPastRuns() {
   if (!props.workflowId) {
@@ -2972,6 +3036,10 @@ onMounted(async() => {
   }
   hasHydrated.value = true;
 
+  if (props.workflowId && props.initialRunId && mode.value === 'run') {
+    void openPastRun(props.initialRunId);
+  }
+
   if (props.workflowId) {
     try {
       ipcRenderer.send('app-state:set-routine-context' as any, {
@@ -3814,6 +3882,39 @@ watch(
   font-size: 12px;
   color: var(--steel-100);
 }
+.run-details-card {
+  position: absolute;
+  top: 64px;
+  left: 52px;
+  z-index: 8;
+  width: 300px;
+  padding: 12px 16px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 12.5px;
+}
+.run-details-card .rd-head {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.run-details-card .rd-kv {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 9px 10px;
+  margin: 0;
+}
+.run-details-card dt { color: var(--text-muted); }
+.run-details-card dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.run-details-card .rd-mono { font-family: var(--mono); }
+.run-details-card .rd-ok { color: var(--text-success); }
+.run-details-card .rd-failed,
+.run-details-card .rd-err { color: var(--text-error); }
+.run-details-card .rd-err { max-height: 72px; overflow-y: auto; font-size: 11.5px; }
 .past-run-banner .banner-dot {
   width: 8px;
   height: 8px;

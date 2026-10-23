@@ -481,6 +481,21 @@ export function initSullaWorkflowEvents(): void {
     }
   });
 
+  // Studio workflows list: last 12 runs, trigger, next run and location per
+  // workflow. Read-only over workflow_executions + workflow definitions.
+  ipcMainProxy.handle('workflow-run-summaries', async() => {
+    const { loadWorkflowRunSummaries } = await import('@pkg/main/workflowRunSummaries');
+
+    return loadWorkflowRunSummaries();
+  });
+
+  ipcMainProxy.handle('workflow-run-detail', async(_event: unknown, executionId: string) => {
+    if (!executionId) return null;
+    const { loadWorkflowRunDetail } = await import('@pkg/main/workflowRunSummaries');
+
+    return loadWorkflowRunDetail(executionId);
+  });
+
   // ── Registry dispatch handler ──
   // Used by external trigger sources (calendar, chat apps, heartbeat, API)
   // to find the right workflow based on trigger type.
