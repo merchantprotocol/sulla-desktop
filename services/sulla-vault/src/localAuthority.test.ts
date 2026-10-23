@@ -119,6 +119,28 @@ test('ChatGPT account routing extraction accepts only bounded authority-owned JW
   assert.equal(extractBoundedChatgptAccountId('not-a-jwt'), undefined);
 });
 
+test('Sulla Cloud session mutation rejects non-Desktop service principals', async() => {
+  const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
+  const session = {
+    userId: 'user-1', activeContractorId: 'contractor-1', contractors: [{ id: 'contractor-1' }],
+    accessToken: 'header.payload.signature', refreshToken: 'refresh',
+  };
+  await assert.rejects(
+    authority.adoptSullaCloudSession('sulla-tools', TOKEN.broker, session),
+    (error: any) => error.code === 'invalid_service_identity',
+  );
+  await assert.rejects(
+    authority.clearSullaCloudSession('sulla-tools', TOKEN.broker),
+    (error: any) => error.code === 'invalid_service_identity',
+  );
+  await assert.rejects(
+    authority.executeDesktopSullaCloudRequest('sulla-tools', TOKEN.broker, {
+      method: 'POST', path: '/devices/heartbeat', body: {}, responseType: 'json',
+    }),
+    (error: any) => error.code === 'invalid_service_identity',
+  );
+});
+
 test('lock linearizes behind in-flight plaintext reads and mutations', async() => {
   const actorId = '11111111-1111-4111-8111-111111111111';
   const itemId = '22222222-2222-4222-8222-222222222222';

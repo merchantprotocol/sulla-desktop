@@ -13,6 +13,9 @@ import type {
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
   LocalVaultErrorResponse,
+  SullaCloudSessionAdoptRequest,
+  SullaCloudSessionResponse,
+  SullaCloudDesktopRequest,
 } from '../../../services/sulla-vault/src/contracts';
 
 export type {
@@ -28,6 +31,9 @@ export type {
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
   LocalVaultErrorResponse,
+  SullaCloudSessionAdoptRequest,
+  SullaCloudSessionResponse,
+  SullaCloudDesktopRequest,
 } from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 export {
@@ -414,6 +420,50 @@ export class LocalVaultApprovalClient {
       throw new VaultBrokerError(body.error, body.message, response.status);
     }
     return response.json() as Promise<BrokerApprovalResponse>;
+  }
+
+  async adoptSullaCloudSession(request: SullaCloudSessionAdoptRequest): Promise<SullaCloudSessionResponse> {
+    return this.sullaCloudSession('PUT', request) as Promise<SullaCloudSessionResponse>;
+  }
+
+  async clearSullaCloudSession(): Promise<{ cleared: number }> {
+    return this.sullaCloudSession('DELETE') as Promise<{ cleared: number }>;
+  }
+
+  async sullaCloudRequest(request: SullaCloudDesktopRequest): Promise<BrokerExecuteResponse> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/request`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ identity.serviceToken }`,
+        'content-type': 'application/json',
+        'x-sulla-service-id': identity.serviceId,
+      },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json() as Promise<BrokerExecuteResponse>;
+  }
+
+  private async sullaCloudSession(method: 'PUT' | 'DELETE', body?: SullaCloudSessionAdoptRequest): Promise<unknown> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/session`, {
+      method,
+      headers: {
+        authorization: `Bearer ${ identity.serviceToken }`,
+        'x-sulla-service-id': identity.serviceId,
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json();
   }
 }
 

@@ -19,8 +19,8 @@
 import crypto from 'crypto';
 
 import { getDesktopDeviceId } from '../deviceIdentity';
-import { getCurrentAccessToken, getCurrentUserId } from '../sullaCloudAuth';
-import { CLOUD_API_BASE } from './cloudEndpoints';
+import { cloudRequest, isCloudSignedIn } from './cloudFetch';
+import { getCurrentUserId } from '../sullaCloudAuth';
 import { getCloudPreferences } from './cloudSettings';
 import { signDeviceMessage } from './deviceKey';
 
@@ -99,12 +99,9 @@ class DesktopObjectSyncImpl {
 
   /** Owner turned the sync off and asked to remove the cloud copy. */
   async deleteCloudCopy(kind: ObjectKind): Promise<boolean> {
-    const token = await getCurrentAccessToken();
-    if (!token) return false;
+    if (!await isCloudSignedIn()) return false;
     const deviceId = await getDesktopDeviceId();
-    const res = await fetch(`${ CLOUD_API_BASE }/desktop-sync/${ encodeURIComponent(deviceId) }/${ kind }`, {
-      method: 'DELETE', headers: { Authorization: `Bearer ${ token }` },
-    });
+    const res = await cloudRequest('DELETE', `/desktop-sync/${ encodeURIComponent(deviceId) }/${ kind }`);
     if (res.ok) {
       await SullaSettingsModel.set(LAST_HASH_KEY[kind], '', 'string');
       this.status[kind] = { kind };
@@ -116,9 +113,8 @@ class DesktopObjectSyncImpl {
     try {
       const prefs = await getCloudPreferences();
       if (!prefs[kind]) return this.set(kind, { skipped: 'disabled' });
-      const token = await getCurrentAccessToken();
       const userId = await getCurrentUserId();
-      if (!token || !userId) return this.set(kind, { skipped: 'signed_out' });
+      if (!await isCloudSignedIn() || !userId) return this.set(kind, { skipped: 'signed_out' });
 
       const built = await buildSealedVaultBody();
       if (!built) return this.set(kind, { skipped: 'vault_locked' });
@@ -129,11 +125,9 @@ class DesktopObjectSyncImpl {
       const bytes = Buffer.from(built.body, 'utf8');
       const sha = crypto.createHash('sha256').update(bytes).digest('hex');
       const proof = signDeviceMessage('sync-upload', [userId, deviceId, kind, sha]);
-      const res = await fetch(`${ CLOUD_API_BASE }/desktop-sync/${ encodeURIComponent(deviceId) }/${ kind }`, {
-        method:  'PUT',
+      const res = await cloudRequest('PUT', `/desktop-sync/${ encodeURIComponent(deviceId) }/${ kind }`, {
         headers: {
           'Content-Type':             'application/json',
-          Authorization:              `Bearer ${ token }`,
           'X-Sulla-Timestamp':        String(proof.ts),
           'X-Sulla-Device-Signature': proof.signature,
         },

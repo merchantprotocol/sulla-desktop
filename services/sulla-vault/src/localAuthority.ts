@@ -60,6 +60,9 @@ import type {
   HumanBackupEnvelope,
   LegacyMigrationResponse,
   LocalVaultState,
+  SullaCloudSessionAdoptRequest,
+  SullaCloudDesktopRequest,
+  SullaCloudSessionResponse,
 } from './contracts.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
@@ -1396,6 +1399,176 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return this.integrationMetadata(callerId, token, integrationId);
   }
 
+  /**
+   * Adopt tokens returned by Desktop's fixed-host Sulla Cloud authentication
+   * flow. This deliberately uses the Desktop approval identity rather than
+   * the general tools broker identity, and never returns secret material.
+   */
+  async adoptSullaCloudSession(
+    callerId: string, token: string | undefined, input: SullaCloudSessionAdoptRequest,
+  ): Promise<SullaCloudSessionResponse> {
+    this.requireDesktopIdentity(callerId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const identifier = /^[A-Za-z0-9._:@-]{1,200}$/;
+    if (!input || !identifier.test(input.userId) || !identifier.test(input.activeContractorId) ||
+        typeof input.accessToken !== 'string' || !input.accessToken || Buffer.byteLength(input.accessToken) > MAX_CREDENTIAL_BYTES ||
+        typeof input.refreshToken !== 'string' || !input.refreshToken || Buffer.byteLength(input.refreshToken) > MAX_CREDENTIAL_BYTES ||
+        !Array.isArray(input.contractors) || input.contractors.length > 100) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud session is invalid');
+    }
+    // The token is received only from the hard-coded Sulla Cloud HTTPS origin.
+    // Bind the handoff to that authenticated identity and reject opaque,
+    // expired, unsigned, or differently-subjected JWTs.
+    let claims: Record<string, unknown>;
+    try {
+      const parts = input.accessToken.split('.');
+      if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error('malformed');
+      const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as Record<string, unknown>;
+      claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+      if (header.alg === 'none' || typeof header.alg !== 'string') throw new Error('unsigned');
+    } catch {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is invalid');
+    }
+    const subjects = [claims.sub, claims.userId, claims.user_id, claims.contractorId, claims.contractor_id]
+      .filter((value): value is string => typeof value === 'string');
+    if (!subjects.includes(input.userId) && !subjects.includes(input.activeContractorId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud token subject does not match the session');
+    }
+    if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is expired');
+    }
+    const contractorIds = input.contractors.map(contractor => contractor?.id);
+    if (contractorIds.some(id => typeof id !== 'string' || !identifier.test(id)) ||
+        (contractorIds.length > 0 && !contractorIds.includes(input.activeContractorId))) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud contractor identity is invalid');
+    }
+    const policy = {
+      mode: 'only_me' as const, level: 'metadata' as const, agents: [], sites: [], expiresAt: null,
+      askFirst: false, allowServerAgents: false,
+    };
+    const itemId = randomUUID();
+    const plaintext: VaultItemPlaintext = {
+      type: 'apiKey', name: 'Sulla Cloud', agentPolicy: policy,
+      integration: {
+        integrationId: SULLA_CLOUD_INTEGRATION_ID,
+        accountId: input.userId,
+        properties: {
+          access_token: input.accessToken, refresh_token: input.refreshToken,
+          user_id: input.userId, active_contractor_id: input.activeContractorId,
+          contractors_json: JSON.stringify(input.contractors), connection_status: 'connected',
+        },
+      },
+    };
+    const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+    await this.runSecurityOperation(() => this.runTransaction(async client => {
+      this.requireGeneration(generation);
+      await client.query(
+        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
+          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+            AND split_part(integration_ref,'/',1)=$2`,
+        [keys.userId, SULLA_CLOUD_INTEGRATION_ID],
+      );
+      await client.query(
+        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
+         VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
+        [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
+          `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`],
+      );
+      await client.query(
+        `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
+         VALUES ($1,$2,$3)
+         ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
+        [keys.userId, SULLA_CLOUD_INTEGRATION_ID, input.userId],
+      );
+      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_adopted', itemId);
+      this.requireGeneration(generation);
+    }));
+    return { userId: input.userId, activeContractorId: input.activeContractorId };
+  }
+
+  async clearSullaCloudSession(callerId: string, token: string | undefined): Promise<{ cleared: number }> {
+    this.requireDesktopIdentity(callerId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    return this.runSecurityOperation(() => this.runTransaction(async client => {
+      const result = await client.query(
+        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
+          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+            AND split_part(integration_ref,'/',1)=ANY($2::text[]) RETURNING id`,
+        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
+      );
+      await client.query(
+        `DELETE FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=ANY($2::text[])`,
+        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
+      );
+      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_cleared');
+      this.requireGeneration(generation);
+      return { cleared: result.rowCount ?? 0 };
+    }));
+  }
+
+  async executeDesktopSullaCloudRequest(
+    callerId: string, token: string | undefined, input: SullaCloudDesktopRequest,
+  ): Promise<BrokerExecuteResponse> {
+    this.requireDesktopIdentity(callerId, token);
+    const keys = this.requireKeys();
+    const method = String(input?.method ?? '').toUpperCase();
+    let target: URL;
+    try { target = new URL(input.path, `https://${ SULLA_CLOUD_HOST }`); } catch {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud request path is invalid');
+    }
+    if (target.origin !== `https://${ SULLA_CLOUD_HOST }` || input.path !== `${ target.pathname }${ target.search }`) {
+      throw new LocalVaultError('destination_denied', 403, 'Sulla Cloud request must use an allowlisted relative path');
+    }
+    const rules: Array<[RegExp, readonly string[]]> = [
+      [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
+      [/^\/desktop-channel\/tickets$/, ['POST']],
+      [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
+      [/^\/sync\/(?:push|pull)$/, ['GET', 'POST']],
+      [/^\/marketplace\/(?:browse|topics|mine)$/, ['GET']],
+      [/^\/marketplace\/submit-manifest$/, ['POST']],
+      [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}(?:\/bundle)?$/, ['GET', 'PUT', 'DELETE']],
+    ];
+    if (!rules.some(([pattern, methods]) => pattern.test(target.pathname) && methods.includes(method))) {
+      throw new LocalVaultError('policy_denied', 403, 'Sulla Cloud request path or method is not allowlisted');
+    }
+    const state = await this.db.query<{ active_account_id: string }>(
+      `SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2`,
+      [keys.userId, SULLA_CLOUD_INTEGRATION_ID],
+    );
+    const accountId = state.rows[0]?.active_account_id;
+    if (!accountId) throw new LocalVaultError('credential_field_missing', 404, 'Sulla Cloud session is unavailable; sign in again');
+    const request: BrokerExecuteRequest = {
+      claims: {
+        sub: keys.userId, agent_id: 'sulla-desktop-main', pod_id: 'desktop-main',
+        credential_scope: { integration_id: SULLA_CLOUD_INTEGRATION_ID, account_id: accountId },
+      },
+      operation: 'sulla-cloud.desktop', ref: { integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId },
+      url: target.toString(), method, headers: {}, body: input.body, bodyEncoding: input.bodyEncoding,
+      injections: [], responseType: input.responseType ?? 'json',
+    };
+    const { credential, item } = await this.withCredentialQueue(request.ref, () => this.freshSullaCloudAccessToken(request, true));
+    const allowedHeaders = new Set(['accept', 'content-type', 'x-sulla-timestamp', 'x-sulla-device-signature']);
+    const headers = Object.fromEntries(Object.entries(input.headers ?? {})
+      .filter(([name, value]) => allowedHeaders.has(name.toLowerCase()) && typeof value === 'string'));
+    headers.authorization = `Bearer ${ credential }`;
+    const body = input.bodyEncoding === 'base64' && typeof input.body === 'string' ? Buffer.from(input.body, 'base64') : input.body;
+    const pinned = await this.validateTarget(target.toString());
+    const result = await this.send(
+      pinned, method, headers, body, input.responseType ?? 'json', [credential], this.generation, true,
+      target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : MAX_RESPONSE_BYTES,
+    );
+    await this.audit(request, item, false, null);
+    return result;
+  }
+
+  private requireDesktopIdentity(callerId: string, token: string | undefined): void {
+    if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
+      throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
+    }
+  }
+
   private requireBrokerIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
@@ -1856,7 +2029,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       responseType: 'json',
     };
     const generation = this.generation;
-    const { credential, item } = await this.withCredentialQueue(input.ref, () => this.freshSullaCloudAccessToken(request));
+    const trustedDesktopRelay = input.claims.agent_id === 'sulla' && input.claims.pod_id === 'desktop-relay';
+    const { credential, item } = await this.withCredentialQueue(
+      input.ref, () => this.freshSullaCloudAccessToken(request, trustedDesktopRelay),
+    );
     let targetUrl: string;
     try {
       targetUrl = sullaCloudRelayUrl(params, credential).toString();
@@ -1887,11 +2063,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   /** Returns a usable access token, refreshing (and persisting the rotation) inside the vault. */
-  private async freshSullaCloudAccessToken(request: BrokerExecuteRequest): Promise<{ credential: string; item: ItemRow }> {
+  private async freshSullaCloudAccessToken(request: BrokerExecuteRequest, trustedDesktopPath = false): Promise<{ credential: string; item: ItemRow }> {
     const keys = this.requireKeys();
     const generation = this.generation;
     if (request.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const item = await this.loadBrokerItem(request, SULLA_CLOUD_HOST);
+    const item = await this.loadBrokerItem(request, SULLA_CLOUD_HOST, trustedDesktopPath);
     const plaintext = JSON.parse(await decryptItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
@@ -2121,7 +2297,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       ? Buffer.from(input.body, 'base64')
       : input.body;
     for (const injection of input.injections) {
-      const value = credentialField(plaintext, injection.field);
+      const value = credentialField(plaintext, injection.field) ??
+        (input.operation.startsWith('sulla-cloud.') && injection.field === 'api_token'
+          ? credentialField(plaintext, 'access_token')
+          : undefined);
       if (typeof value !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Requested credential field is unavailable');
       if (Buffer.byteLength(value) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
       secrets.push(value);
@@ -2262,7 +2441,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return Object.assign(url, { pinnedAddress: addresses[0].address, pinnedFamily: addresses[0].family as 4 | 6 });
   }
 
-  private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null): Promise<ItemRow> {
+  private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy = false): Promise<ItemRow> {
     const ref = input.ref ?? {};
     const scope = input.claims.credential_scope;
     if (input.operation === 'item.http') {
@@ -2304,7 +2483,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!item || !personal || item.collection_id) {
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
-    if (host && input.operation !== 'item.http') {
+    const trustedFirstParty = bypassAgentPolicy ||
+      (input.operation === 'sulla-cloud.shares' && input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files');
+    if (host && input.operation !== 'item.http' && !trustedFirstParty) {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {
         throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');

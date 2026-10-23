@@ -296,6 +296,30 @@ export interface BrokerIntegrationMetadataResponse {
 
 export interface BrokerSetActiveAccountRequest { accountId: string }
 
+/** Trusted Desktop-only handoff after a fixed-host Sulla Cloud auth flow. */
+export interface SullaCloudSessionAdoptRequest {
+  userId:             string;
+  activeContractorId: string;
+  contractors:        Array<{ id: string; phone?: string; businessName?: string | null; name?: string | null; email?: string | null }>;
+  accessToken:        string;
+  refreshToken:       string;
+}
+
+export interface SullaCloudSessionResponse {
+  userId:             string;
+  activeContractorId: string;
+}
+
+/** Trusted Desktop-main request; credentials are injected and retained by the vault. */
+export interface SullaCloudDesktopRequest {
+  method:        string;
+  path:          string;
+  headers?:      Record<string, string>;
+  body?:         unknown;
+  bodyEncoding?: 'base64';
+  responseType?: 'json' | 'text';
+}
+
 /**
  * /v1/broker/execute-stream returns upstream status and sanitized headers as
  * HTTP status/headers, then writes the sanitized body directly. It never wraps

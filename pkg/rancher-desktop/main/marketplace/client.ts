@@ -27,7 +27,8 @@ import * as path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
+import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 import Logging from '@pkg/utils/logging';
 import type { MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 
@@ -122,6 +123,11 @@ export interface TakedownResult {
 // ─── Helpers ────────────────────────────────────────────────────────
 
 async function authHeaders(): Promise<Record<string, string>> {
+  if (usesContainerVaultAuthority()) {
+    if (!await isCloudSignedIn()) throw new Error('Not signed in to Sulla Cloud — cannot call marketplace API');
+    return {};
+  }
+  const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
   const token = await getCurrentAccessToken();
   if (!token) {
     throw new Error('Not signed in to Sulla Cloud — cannot call marketplace API');
@@ -141,13 +147,18 @@ async function fetchWithAuthRetry(
   init: RequestInit = {},
 ): Promise<Response> {
   const headers = { ...(init.headers ?? {}), ...(await authHeaders()) };
-  let res = await fetch(url, { ...init, headers });
+  const path = new URL(url).pathname + new URL(url).search;
+  let res = usesContainerVaultAuthority()
+    ? await cloudRequest(init.method ?? 'GET', path, { headers: headers as Record<string, string>, body: init.body, responseType: 'json' })
+    : await fetch(url, { ...init, headers });
 
   if (res.status === 401) {
     // Force a refresh by reading the token again (getCurrentAccessToken
     // refreshes lazily when expired). Then retry once.
     const retryHeaders = { ...(init.headers ?? {}), ...(await authHeaders()) };
-    res = await fetch(url, { ...init, headers: retryHeaders });
+    res = usesContainerVaultAuthority()
+      ? await cloudRequest(init.method ?? 'GET', path, { headers: retryHeaders as Record<string, string>, body: init.body, responseType: 'json' })
+      : await fetch(url, { ...init, headers: retryHeaders });
   }
 
   return res;
@@ -207,6 +218,8 @@ export interface MarketplaceTopic {
 
 async function optionalAuthHeaders(): Promise<Record<string, string>> {
   try {
+    if (usesContainerVaultAuthority()) return {};
+    const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
     const token = await getCurrentAccessToken();
 
     return token ? { Authorization: `Bearer ${ token }` } : {};
@@ -216,6 +229,13 @@ async function optionalAuthHeaders(): Promise<Record<string, string>> {
 }
 
 export async function publicFetch(pathAndQuery: string): Promise<Response> {
+  // Bundle downloads are public and not on the vault allowlist; anything the
+  // vault refuses (or a locked vault) falls back to an anonymous fetch.
+  if (usesContainerVaultAuthority() && !pathAndQuery.split('?')[0].endsWith('/download')) {
+    try {
+      if (await isCloudSignedIn()) return await cloudRequest('GET', pathAndQuery);
+    } catch { /* fall through to anonymous fetch */ }
+  }
   return fetch(`${ API_BASE }${ pathAndQuery }`, { headers: await optionalAuthHeaders() });
 }
 
@@ -291,6 +311,15 @@ export async function downloadBundleToFile(
   destFile:   string,
 ): Promise<number> {
   const url = `${ API_BASE }/marketplace/templates/${ encodeURIComponent(templateId) }/download`;
+  if (usesContainerVaultAuthority()) {
+    // Bundle downloads are public and may exceed the bounded JSON broker response cap.
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`[downloadBundleToFile] ${ res.status } ${ res.statusText }`);
+    if (!res.body) throw new Error('[downloadBundleToFile] empty response body');
+    await fs.promises.mkdir(path.dirname(destFile), { recursive: true });
+    await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(destFile));
+    return (await fs.promises.stat(destFile)).size;
+  }
   const res = await fetchWithAuthRetry(url, { method: 'GET' });
 
   if (!res.ok) {

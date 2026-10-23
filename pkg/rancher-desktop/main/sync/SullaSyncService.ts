@@ -15,7 +15,7 @@
  * on the next tick.
  */
 
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
 
 import { syncHandlers, type SyncItem } from './syncHandlers';
@@ -25,7 +25,6 @@ import { getLastSeq, setLastSeq } from './syncMeta';
 
 const log = Logging.background;
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const POLL_INTERVAL_MS = 15_000;
 const PUSH_DEBOUNCE_MS = 300;
 
@@ -190,8 +189,7 @@ class SullaSyncServiceImpl {
   }
 
   private async authedFetch(path: string, init?: RequestInit): Promise<Response | null> {
-    const token = await getCurrentAccessToken();
-    if (!token) {
+    if (!await isCloudSignedIn()) {
       // Not signed in — sync is effectively disabled until the user auths.
       return null;
     }
@@ -199,13 +197,12 @@ class SullaSyncServiceImpl {
     const failKey = `fetch ${ path.split('?')[0] }`;
 
     try {
-      const res = await fetch(`${ API_BASE }${ path }`, {
-        ...init,
+      const res = await cloudRequest(init?.method ?? 'GET', path, {
         headers: {
           'Content-Type':  'application/json',
-          Authorization:   `Bearer ${ token }`,
           ...(init?.headers as Record<string, string> | undefined),
         },
+        body: init?.body,
       });
 
       this.clearFailures(failKey);

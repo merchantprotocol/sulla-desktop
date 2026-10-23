@@ -24,13 +24,12 @@ import * as path from 'path';
 import yazl from 'yazl';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 type DraftKind = 'skill' | 'function' | 'recipe' | 'integration';
 
 // ─── Reference the manifest builder exposed from sullaLibraryEvents ─
@@ -224,8 +223,7 @@ export function initSullaLibraryDraftEvents(): void {
   // pulled forward from base_slug) and runs the v3 two-step submission.
   ipcMainProxy.handle('library-draft-publish-marketplace', async(_event, id: string) => {
     try {
-      const token = await getCurrentAccessToken();
-      if (!token) return { error: 'Sign in to Sulla Cloud to publish to the marketplace.' };
+      if (!await isCloudSignedIn()) return { error: 'Sign in to Sulla Cloud to publish to the marketplace.' };
 
       const { LibraryDraftModel } = await import('@pkg/agent/database/models/LibraryDraftModel');
       const draft = await LibraryDraftModel.findById(id);
@@ -242,57 +240,21 @@ export function initSullaLibraryDraftEvents(): void {
 
       const zipPath = await writeZip(entries);
       try {
-        const zipBytes = fs.readFileSync(zipPath);
-
         // Step 1: submit-manifest
-        const submitRes = await fetch(`${ API_BASE }/marketplace/submit-manifest`, {
-          method:  'POST',
-          headers: {
-            Authorization:  `Bearer ${ token }`,
-            'Content-Type':  'application/json',
-          },
-          body: JSON.stringify({
+        const { submitManifest, uploadBundle } = await import('@pkg/main/marketplace/client');
+        const submitted = await submitManifest({
             kind:        draft.kind,
             name:        draft.name,
             description: (draft.manifest_json as any)?.metadata?.description ?? '',
             version:     (draft.manifest_json as any)?.metadata?.version ?? '1.0.0',
             tags:        (draft.manifest_json as any)?.metadata?.tags ?? [],
             manifest:    draft.manifest_json,
-          }),
         });
-        if (!submitRes.ok) {
-          const body = await submitRes.text().catch(() => '');
-
-          return { error: `submit-manifest failed: ${ submitRes.status } ${ body.slice(0, 200) }` };
-        }
-        const submitJson = await submitRes.json() as {
-          template: { id: string; bundle_upload_url: string };
-        };
-
-        // Step 2: PUT bundle
-        const putRes = await fetch(`${ API_BASE }${ submitJson.template.bundle_upload_url }`, {
-          method:  'PUT',
-          headers: {
-            Authorization:    `Bearer ${ token }`,
-            'Content-Type':   'application/zip',
-            'Content-Length': String(zipBytes.byteLength),
-          },
-          // Node's undici fetch accepts BodyInit; a Buffer (which is a
-          // Uint8Array view) satisfies the type in practice but the
-          // DOM-flavored lib.d.ts doesn't advertise Uint8Array on BodyInit,
-          // so we cast to Blob-ish to keep TS quiet without stripping safety.
-          body: zipBytes as unknown as BodyInit,
-        });
-        if (!putRes.ok) {
-          const body = await putRes.text().catch(() => '');
-
-          return { error: `bundle upload failed: ${ putRes.status } ${ body.slice(0, 200) }` };
-        }
-        const putJson = await putRes.json() as { template: { bundle_status: string } };
+        const uploaded = await uploadBundle(submitted.id, zipPath);
 
         return {
-          templateId:   submitJson.template.id,
-          bundleStatus: putJson.template.bundle_status,
+          templateId:   submitted.id,
+          bundleStatus: uploaded.bundle_status,
         };
       } finally {
         try { fs.unlinkSync(zipPath) } catch { /* best effort */ }
