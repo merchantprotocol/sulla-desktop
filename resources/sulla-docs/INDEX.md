@@ -41,7 +41,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 ## environment/
 - [`projects-in-files.md`](environment/projects-in-files.md) — project folders, PROJECT.md and TASKS.md in Sulla Files
 - `architecture.md` — What runs where: Electron main, Lima VM, Vue renderer, Docker containers
-- `files-harness.md` — How agents work with Files: normal tools on the FUSE mount, drafts, publish requests, locks and retention, Use Cases lifecycle, folder metadata, what not to do
+- `files-harness.md` — Working in your Human's files: shared-desk etiquette, disk-backed scratch, normal tools on the FUSE mount, drafts, publish requests, locks and retention, Use Cases lifecycle, folder metadata, what not to do
 - `files.md` — Files architecture: FUSE mount, Automerge versioning, per-agent identity, `_folder-metadata.yaml`, agent access rules, authority and custody
 - `files-first.md` — Files layout, system areas, audit logs, and Use Cases source of truth
 - [`sulla-file-format.md`](environment/sulla-file-format.md) — the `.sulla` document format: front matter properties, Markdown body, editor behaviour, live sync, links

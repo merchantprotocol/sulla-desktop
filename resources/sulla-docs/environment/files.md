@@ -29,8 +29,10 @@ merge, audit, and identity automatically.
 
 ### Temporary work
 
-Use `/tmp/<your job id>/` for scratch work. Move anything worth keeping into
-`/mnt/sulla-files` when done. There is no scratch collection system.
+- In the VM, / is a RAM disk. /tmp, your home directory and everything outside /mnt live in memory: files there eat RAM and vanish on restart. Never put work there.
+- Code: /mnt/worktrees/<repo>-<branch>.
+- Scratch (briefs, scripts, downloads, previews, exports): /mnt/worktrees/_scratch/<your job id>/. Inside an agent container, use your working directory instead. Delete your scratch folder when you finish.
+- Move only finished work into /mnt/sulla-files.
 
 ### Folder metadata: `_folder-metadata.yaml`
 

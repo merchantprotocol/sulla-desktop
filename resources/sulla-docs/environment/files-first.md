@@ -1,6 +1,6 @@
 # Files-first Sulla
 
-Everything Sulla knows and produces lives in the File Manager, so there is one place to look.
+Finished work lives in your Human's File Manager. Scratch work stays outside it.
 Agents should read these docs from `/mnt/sulla-files/Docs/` (the Files FUSE mount), not from the repository path; that keeps the same documentation available in containers and workflows.
 The File Manager tree is mounted at `/mnt/sulla-files` inside the VM, workflow runners and agent containers. Use normal file tools (ls, cat, edit, write, mv, cp) on the mount — every change is versioned and audited automatically.
 For how to save, publish, and handle locks, read [files-harness.md](files-harness.md).
@@ -28,7 +28,7 @@ Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path
 
 - No permission gating yet. Every agent can read and write every non-system file. Agent writes are drafts until a human publishes them. Per-agent permissions are planned (per-agent identity on every write is already tracked).
 - Every write carries the agent's identity (`X-Sulla-Actor` header through FUSE). This enables audit attribution and future per-agent permissions.
-- Temporary work goes in `/tmp/<job id>/`. Move anything worth keeping into `/mnt/sulla-files`.
+- In the VM, /, /tmp and your home directory are RAM-backed. Never put work there. Code goes in /mnt/worktrees/<repo>-<branch>. Scratch goes in /mnt/worktrees/_scratch/<your job id>/, or your working directory inside an agent container. Delete scratch when done. Move only finished work into /mnt/sulla-files.
 - Every folder has a `_folder-metadata.yaml` file. Read it to understand the folder's purpose and file metadata. When you create a folder, fill in the description.
 - Kept on purpose: the Files service token (`x-sulla-files-token`), the wallet/vault path exclusions, and no host-path mounts.
 - Audit logs are append-only JSONL, one file per subject, named by stable id (renames never break the trail).
