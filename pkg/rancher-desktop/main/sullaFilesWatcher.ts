@@ -109,6 +109,15 @@ function ignored(relativePath:string, patterns:string[]):boolean {
   const normalized = relativePath.split(path.sep).join('/'); const parts = normalized.split('/');
   return patterns.some(raw => { const pattern = raw.trim().replace(/^\//, ''); if (!pattern || pattern.startsWith('#')) return false; if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1)); const expression = new RegExp(`^${ pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*') }$`); return expression.test(normalized) || parts.some(part => expression.test(part)) });
 }
+function isSensitiveTrackedPath(relativePath:string):boolean {
+  return relativePath.split(/[\\/]/).some(part=>{const value=part.toLowerCase();return value.includes('wallet')||value==='vault'||value==='vaults'});
+}
+function trackedMime(relativePath:string):string {
+  const extension=path.extname(relativePath).toLowerCase();
+  return ({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.pdf':'application/pdf','.json':'application/json','.md':'text/markdown','.txt':'text/plain','.csv':'text/csv','.html':'text/html'} as Record<string,string>)[extension]??'application/octet-stream';
+}
+
+
 
 interface NativeSourceIngestInput {
   operationId:    string;
@@ -128,6 +137,10 @@ interface NativeSourceIngestInput {
 class SullaFilesWatcher {
   readonly folder = resolveSullaFilesUserRoot().activePath;
   private watchers = new Map<string, fs.FSWatcher>();
+  private brokeredFingerprints = new Map<string, string>();
+  private brokeredFingerprintsLoaded = false;
+  private brokeredScans = new Map<string, Promise<void>>();
+  private brokeredRescanQueued = new Set<string>();
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
@@ -364,18 +377,11 @@ class SullaFilesWatcher {
     const registry = getSullaFilesRootRegistry();
     await traceAsync('files startBookmarks', () => registry.startBookmarks());
     app.once('before-quit', () => { registry.stopBookmarks(); this.shutdown().catch(error => console.warn('[SullaFiles] shutdown failed:', error)) }); await fs.promises.mkdir(this.folder, { recursive: true, mode: 0o700 });
-    if (process.platform === 'darwin') {
-      try { await spawnFile('/usr/bin/defaults', ['write', 'group.io.sulla.desktop', 'FilesRoot', this.folder]) } catch (error) { console.warn('[SullaFiles] Finder extension root configuration failed:', error) }
-    }
-    for (const root of await traceAsync('files registry.stored', () => registry.stored())) {
-      try {
-        const watcher = fs.watch(root.path, { recursive: process.platform !== 'linux', persistent: false }, (_event, filename) => {
-          if (!filename) return;
-          if (root.id === 'default') this.trackCustomerWork(this.changed(filename.toString())).catch(error => console.warn('[SullaFiles] watch event failed:', error));
-          else this.scheduleRescan();
-        });
-        this.watchers.set(root.id, watcher);
-      } catch (error) { console.warn(`[SullaFiles] watcher unavailable for root ${ root.id }; periodic rescans remain active:`, error) }
+    const storedRoots=await traceAsync('files registry.stored', () => registry.stored());
+    await this.configureFinderRoots(storedRoots.map(root=>root.path));
+    for (const root of storedRoots) {
+      this.watchRoot(root.id,root.path);
+      this.enrollRoot(root).catch(error=>console.warn(`[SullaFiles] tracked root ${root.id} enrollment failed:`,error));
     }
     try {
       const docsRoot = resolveSullaDocsDir();
@@ -394,6 +400,75 @@ class SullaFilesWatcher {
       this.nativeTimer = setInterval(() => this.pollNativePublications().catch(error => console.debug('[SullaFiles] native publication poll failed:', error)), 250);
       this.nativeTimer.unref();
     }
+  }
+
+  private watchRoot(id:string,rootPath:string):void {
+    this.watchers.get(id)?.close();
+    try { this.watchers.set(id,fs.watch(rootPath,{recursive:process.platform !== 'linux',persistent:false},()=>{
+      this.scanBrokeredRoot(id,rootPath).catch(error=>console.warn(`[SullaFiles] tracked root ${id} scan failed:`,error));
+    })) } catch(error){console.warn(`[SullaFiles] watcher unavailable for root ${id}:`,error)}
+  }
+
+  private async configureFinderRoots(paths:string[]):Promise<void>{
+    if(process.platform!=='darwin')return;
+    try{
+      await spawnFile('/usr/bin/defaults',['write','group.io.sulla.desktop','FilesRoots','-array',...paths]);
+      if(paths[0])await spawnFile('/usr/bin/defaults',['write','group.io.sulla.desktop','FilesRoot',paths[0]]);
+    }catch(error){console.warn('[SullaFiles] Finder extension roots configuration failed:',error)}
+  }
+
+  async enrollRoot(root:{id:string;name:string;path:string;syncMode:'local'|'server';paused:boolean;exclusions:string[]}):Promise<SullaFilesRootStatus>{
+    const attached=await this.rawLocalRequest('/v1/local/roots',{method:'POST',body:JSON.stringify({id:root.id,name:root.name,syncMode:root.syncMode,paused:root.paused,exclusions:root.exclusions})});
+    if(!attached.ok)throw new Error(`Files rejected the tracked folder (${attached.status}): ${await attached.text()}`);
+    this.watchRoot(root.id,root.path);
+    const {getSullaFilesRootRegistry}=await import('./sullaFilesRootRegistry');
+    await this.configureFinderRoots((await getSullaFilesRootRegistry().stored()).map(item=>item.path));
+    if(!root.paused)this.scanBrokeredRoot(root.id,root.path).catch(error=>console.warn(`[SullaFiles] tracked root ${root.id} scan failed:`,error));
+    return (await this.rootStatuses()).find(item=>item.id===root.id)!;
+  }
+
+  async forgetRoot(id:string):Promise<void>{
+    this.watchers.get(id)?.close(); this.watchers.delete(id); this.finderBadges.delete(id);
+    const {getSullaFilesRootRegistry}=await import('./sullaFilesRootRegistry');
+    await this.configureFinderRoots((await getSullaFilesRootRegistry().stored()).filter(root=>root.id!==id).map(root=>root.path));
+  }
+
+  private scanBrokeredRoot(id:string,rootPath:string):Promise<void>{
+    // A change that lands mid-scan queues exactly one follow-up pass instead of being dropped.
+    const running=this.brokeredScans.get(id); if(running){this.brokeredRescanQueued.add(id);return running}
+    const scan=this.scanBrokeredRootNow(id,rootPath).finally(()=>{
+      if(this.brokeredScans.get(id)===scan)this.brokeredScans.delete(id);
+      if(this.brokeredRescanQueued.delete(id))this.scanBrokeredRoot(id,rootPath).catch(error=>console.warn(`[SullaFiles] tracked root ${id} scan failed:`,error));
+    });
+    this.brokeredScans.set(id,scan); return scan;
+  }
+
+  private async scanBrokeredRootNow(id:string,rootPath:string):Promise<void>{
+    const roots=await this.rootStatuses(); const root=roots.find(item=>item.id===id); if(!root||root.paused)return;
+    const state=async(state:'scanning'|'idle'|'error',pendingFiles=0,lastError?:string)=>{const response=await this.rawLocalRequest(`/v1/local/roots/${encodeURIComponent(id)}/scan-state`,{method:'POST',body:JSON.stringify({state,pendingFiles,lastError})});if(!response.ok)throw new Error(`Files scan state failed (${response.status})`)};
+    try{
+      await state('scanning'); let count=0;
+      if(!this.brokeredFingerprintsLoaded){const saved=await SullaSettingsModel.get('sullaFilesRootFingerprints',{});if(saved&&typeof saved==='object'&&!Array.isArray(saved))for(const [key,value] of Object.entries(saved))if(typeof value==='string')this.brokeredFingerprints.set(key,value);this.brokeredFingerprintsLoaded=true}
+      const currentResponse=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);
+      if(!currentResponse.ok)throw new Error(`Could not read tracked collection (${currentResponse.status})`);
+      const current=new Map((await currentResponse.json() as {path:string;size:number}[]).map(file=>[file.path,Number(file.size)]));
+      const walk=async(directory:string):Promise<void>=>{for(const entry of await fs.promises.readdir(directory,{withFileTypes:true})){
+        const absolute=path.join(directory,entry.name); const relative=path.relative(rootPath,absolute).split(path.sep).join('/');
+        if(ignored(relative,DEFAULT_IGNORES)||ignored(relative,root.exclusions)||isSensitiveTrackedPath(relative))continue;
+        if(entry.isSymbolicLink())continue; if(entry.isDirectory()){await walk(absolute);continue} if(!entry.isFile())continue;
+        if(++count>100_000)throw new Error('Tracked folder exceeds the 100,000-file safety limit');
+        if(count%25===0)await state('scanning',count);
+        const stat=await fs.promises.stat(absolute); if(stat.size>2*1024*1024*1024)throw new Error(`${relative} exceeds the 2 GB tracked-file limit`);
+        // Unchanged size + mtime means the stored version is current; skip reading the file at all.
+        const key=`${id}:${relative}`; const stamp=`${stat.size}:${stat.mtimeMs}`;
+        if(this.brokeredFingerprints.get(key)?.startsWith(`${stamp}:`)&&current.get(relative)===stat.size)continue;
+        const bytes=await fs.promises.readFile(absolute); const fingerprint=`${stamp}:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+        if(this.brokeredFingerprints.get(key)?.split(':').pop()===fingerprint.split(':').pop()&&current.get(relative)===stat.size){this.brokeredFingerprints.set(key,fingerprint);continue}
+        const response=await this.requestFiles(`/v1/files/upload?collectionId=${encodeURIComponent(root.collectionId)}&path=${encodeURIComponent(relative)}`,{method:'PUT',headers:{'content-type':trackedMime(relative)},body:bytes});
+        if(!response.ok)throw new Error(`Could not index ${relative} (${response.status})`); this.brokeredFingerprints.set(key,fingerprint); current.set(relative,stat.size);
+      }};
+      await walk(rootPath); await SullaSettingsModel.set('sullaFilesRootFingerprints',Object.fromEntries(this.brokeredFingerprints),'json'); await state('idle',0); await this.refreshFinderBadges();
+    }catch(error){const message=error instanceof Error?error.message:String(error);await state('error',0,message).catch(()=>undefined);throw error}
   }
 
   async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
@@ -604,26 +679,18 @@ class SullaFilesWatcher {
     } catch (error) { console.debug('[SullaFiles] optional container is offline; folder remains local-only:', error) }
   }
 
-  private finderBadges?: FinderBadgeSync;
+  private finderBadges = new Map<string, FinderBadgeSync>();
 
   private async refreshFinderBadges():Promise<void> {
     if (process.platform !== 'darwin') return;
-    this.finderBadges ??= new FinderBadgeSync(this.folder, async(target, state) => {
-      const { setAttribute } = await import('@napi-rs/xattr');
-
-      await setAttribute(target, FINDER_BADGE_ATTRIBUTE, state);
-    });
-    if (!this.finderBadges.begin()) return;
-    try {
-      const collectionsResponse = await this.requestFiles('/v1/collections');
-      if (!collectionsResponse.ok) return;
-      const collections = await collectionsResponse.json() as { id: string }[];
-      for (const collection of collections) {
-        const response = await this.requestFiles(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`);
-        if (!response.ok) continue;
-        await this.finderBadges.apply(await response.json() as { path: string; sync_state?: string }[]);
-      }
-    } finally { this.finderBadges.end() }
+    const {getSullaFilesRootRegistry}=await import('./sullaFilesRootRegistry');
+    for(const root of await getSullaFilesRootRegistry().list()){
+      if(root.activation!=='active'||!root.collectionId)continue;
+      let badges=this.finderBadges.get(root.id);
+      if(!badges){badges=new FinderBadgeSync(root.path,async(target,state)=>{const{setAttribute}=await import('@napi-rs/xattr');await setAttribute(target,FINDER_BADGE_ATTRIBUTE,state)});this.finderBadges.set(root.id,badges)}
+      if(!badges.begin())continue;
+      try{const response=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);if(response.ok)await badges.apply(await response.json() as {path:string;sync_state?:string}[])}finally{badges.end()}
+    }
   }
 
   async status():Promise<SullaFilesStatus> {
