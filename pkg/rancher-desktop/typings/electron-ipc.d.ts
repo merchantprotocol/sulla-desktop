@@ -557,6 +557,7 @@ export interface IpcMainInvokeEvents {
   'sulla-files:live-sync': (input:{peerId:string;message:string}) => {message?:string|null;error?:string};
   'sulla-files:live-leave': (input:{peerId:string}) => {error?:string};
   'sulla-files:preview':         (input: { fileId: string; versionId?: string; thumbnail?: boolean }) => { mime: string; data: Uint8Array };
+  'sulla-files:save-content':    (input: { fileId: string; baseVersionId: string; content: string }) => import('@pkg/pages/files/types').FilesSaveSuccess | { conflict: import('@pkg/pages/files/types').FilesSaveConflict };
   'sulla-files:history':         (input: { fileId: string }) => any[];
   'sulla-files:restore-version': (input: { fileId: string; versionId: string }) => { ok: boolean; versionId: string };
   'sulla-files:lifecycle': (input: { fileId: string; settings: import('@pkg/rancher-desktop/pages/files/types').FilesVersioningSettings }) => void;
