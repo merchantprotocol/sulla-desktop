@@ -27,6 +27,7 @@ import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } f
 import { bootstrapFirstOwner } from './serverBootstrap.js';
 import { registerCloudSyncRoutes } from './browserEnvelope/routes.js';
 import { CloudVaultSyncRunner } from './browserEnvelope/syncRunner.js';
+import { FilesCloudEscrowService, registerFilesCloudEscrowRoute } from './filesCloudEscrow.js';
 
 import type { VaultConfig } from './config.js';
 import { isTransientDbError, warnDatabaseUnavailable } from './db.js';
@@ -511,6 +512,16 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.post('/v1/broker/sulla-cloud/request', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.executeDesktopSullaCloudRequest(identity.serviceId, identity.token, request.body));
+    });
+    registerFilesCloudEscrowRoute(app, new FilesCloudEscrowService(db, {
+      withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
+      sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
+        config.approvalServiceId ?? '', config.approvalServiceToken, input,
+      ),
+    }, filesAudit), request => {
+      // Main calls with the approval service identity; Files/agents cannot invoke this route directly.
+      const identity = serviceIdentity(request);
+      localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     });
     // Passwords sync v3: the container builds/applies every body; main only signs hashes.
     registerCloudSyncRoutes(app, new CloudVaultSyncRunner(db, {

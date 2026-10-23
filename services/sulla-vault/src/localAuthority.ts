@@ -86,6 +86,7 @@ const APPROVAL_TTL_MS = 2 * 60_000;
 const HUMAN_SESSION_TTL_MS = 15 * 60_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
 const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
+const MAX_FILES_SYNC_UPLOAD_BYTES = 6 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
 // Git pack transfers for a full fetch routinely exceed the API stream cap.
 const MAX_GIT_STREAM_BYTES = 4 * 1024 * 1024 * 1024;
@@ -1554,6 +1555,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
+      [/^\/files-sync\/v1\/(?:collections|usage)(?:\/.*)?$/, ['GET', 'POST', 'PUT', 'DELETE']],
+      [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}(?:\/chunks\/[0-9a-f]{64})?$/, ['GET', 'PUT']],
       [/^\/sync\/(?:push|pull)$/, ['GET', 'POST']],
       [/^\/marketplace\/(?:browse|topics|mine)$/, ['GET']],
       [/^\/marketplace\/submit-manifest$/, ['POST']],
@@ -1586,7 +1589,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const pinned = await this.validateTarget(target.toString());
     const result = await this.send(
       pinned, method, headers, body, input.responseType ?? 'json', [credential], this.generation, true,
-      target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : MAX_RESPONSE_BYTES,
+      target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : /^\/files-sync\/v1\/uploads\//.test(target.pathname) ? MAX_FILES_SYNC_UPLOAD_BYTES : MAX_RESPONSE_BYTES,
     );
     await this.audit(request, item, false, null);
     return result;

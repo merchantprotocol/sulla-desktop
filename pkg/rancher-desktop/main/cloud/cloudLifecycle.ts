@@ -21,6 +21,7 @@ import { ApprovedClients } from './approvedClients';
 import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, type CloudPreferences } from './cloudSettings';
 import { type ObjectKind } from './desktopObjectSync';
 import { VaultSyncV3 } from './vaultSyncV3';
+import { FilesSyncV1 } from './filesSyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -141,8 +142,8 @@ function installPrefsListener() {
   DevicesCloudApi.onStateChange((state) => {
     // Revoked from the dashboard: stop the channel; heartbeats keep polling
     // so a restore brings it back without a restart.
-    if (state.revoked) getChannel().stop();
-    else if (signedIn && state.registered) getChannel().start();
+    if (state.revoked) { getChannel().stop(); FilesSyncV1.stop() }
+    else if (signedIn && state.registered) { getChannel().start(); FilesSyncV1.start() }
     broadcast();
   });
 }
@@ -160,6 +161,7 @@ export async function startCloudServices(): Promise<void> {
   if (prefs.conversations) await startConversationSync().catch(err => console.warn('[CloudLifecycle] SullaSync start failed:', err));
   ConversationSyncService.start();
   VaultSyncV3.start();
+  FilesSyncV1.start();
   DeviceInstallSync.start();
   CloudRuntimeProjectionSync.start();
   broadcast();
@@ -169,6 +171,7 @@ export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   channel?.stop();
   VaultSyncV3.stop();
+  FilesSyncV1.stop();
   DeviceInstallSync.stop();
   CloudRuntimeProjectionSync.stop();
   await stopConversationSync().catch(() => undefined);

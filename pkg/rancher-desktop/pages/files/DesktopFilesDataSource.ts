@@ -175,9 +175,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilities.crossCollectionOperations = 'unavailable';
     const capabilitiesGeneration = ++this.capabilitiesGeneration;
     this.resetRemoteCapabilities();
-    const [collections, status] = await Promise.all([
+    const [collections, status, cloudBackupStatus] = await Promise.all([
       ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
       ipcRenderer.invoke('files-ui:status'),
+      ipcRenderer.invoke('files-ui:cloud-backup-status').catch(() => null) as Promise<import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus|null>,
     ]);
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
     const availableCollections = collections.map(collection => ({ id: collection.id,
@@ -247,6 +248,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         systemArea:      (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
         sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
         cloudCatalogSync: Boolean((collection as FilesApiCollection & { cloud_catalog_sync?: boolean }).cloud_catalog_sync),
+        cloudBackup: (() => { const backup=cloudBackupStatus?.collections.find(item=>item.collectionId===collection.id); return backup ? { ...backup, cryptoModule:cloudBackupStatus!.cryptoModule } : undefined })(),
       },
       availableCollections,
       files: this.files,
@@ -321,6 +323,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
   updateFolderDescription(folderId:string, description:string, namingHint?:string):Promise<void> { return ipcRenderer.invoke('files-ui:update-folder-description', { folderId, description, namingHint }) }
   setCollectionCloudSync(collectionId:string, enabled:boolean):Promise<void> { return ipcRenderer.invoke('files-ui:set-collection-cloud-sync', { collectionId, enabled }) }
+  async setCloudBackup(collectionId:string, enabled:boolean):Promise<void> { await ipcRenderer.invoke('files-ui:set-cloud-backup', { collectionId, enabled }) }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {

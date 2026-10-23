@@ -1,0 +1,55 @@
+/** Files backup driver: prepare -> device-sign -> send, plus Vault escrow relay. */
+import { getDesktopDeviceId } from '../../deviceIdentity';
+import { getCurrentUserId } from '../../sullaCloudAuth';
+import { DevicesCloudApi } from '../../devicesCloudApi';
+import { isCloudSignedIn } from '../cloudFetch';
+import { signDeviceMessage } from '../deviceKey';
+import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus } from './containerClient';
+import Logging from '@pkg/utils/logging';
+
+const console=Logging.background;
+const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
+export type FilesSyncCaller={kind:'human'}|{kind:'agent';agentId:string};
+export function requireHumanFilesSync(caller:FilesSyncCaller):void { if(caller.kind!=='human') throw new FilesSyncClientError('human_only',403,'Only the person using this desktop can change Files Cloud backup.'); }
+
+class FilesSyncV1Impl {
+  private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
+  start():void { this.stopped=false; this.schedule(0) }
+  stop():void { this.stopped=true; if(this.timer) clearTimeout(this.timer); this.timer=null }
+  wake():void { if(!this.stopped) this.schedule(0) }
+  async status():Promise<FilesSyncStatus> { return FilesSyncContainer.status() }
+  async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
+  async deleteCloudCopy(collectionId:string,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.deleteCloudCopy(collectionId); this.wake(); return this.status() }
+  private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
+  private async identity():Promise<{userId:string;deviceId:string}|null> {
+    if(!await isCloudSignedIn())return null;
+    const state=DevicesCloudApi.getState(); if(!state.registered||state.revoked)return null;
+    const userId=await getCurrentUserId().catch(()=>''); return userId?{userId,deviceId:await getDesktopDeviceId()}:null;
+  }
+  private async relayEscrow():Promise<void> {
+    const request=await FilesSyncContainer.escrowRequest();
+    const wrapped=await FilesSyncContainer.vaultEscrowKey(request);
+    await FilesSyncContainer.escrowKey({requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch});
+  }
+  private async tick():Promise<void> {
+    if(this.running||this.stopped)return; this.running=true;
+    try {
+      const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}
+      const status=await this.status(); const enabled=status.collections.filter(c=>c.enabled);
+      if(!enabled.length){this.backoff=1_000;this.schedule(IDLE_MS);return}
+      if(enabled.some(c=>c.status==='needs-vault')) await this.relayEscrow();
+      const prepared=await FilesSyncContainer.prepare();
+      if(!prepared){this.backoff=1_000;this.schedule(IDLE_MS);return}
+      const wait=Math.max(0,MIN_SIGNATURE_MS-(Date.now()-this.lastSignatureAt)); if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
+      const proof=signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
+      const sent=await FilesSyncContainer.send(prepared.handle,who.deviceId,proof.ts,proof.signature);
+      if(sent.status==='failed')throw new FilesSyncClientError('send_failed',502);
+      this.backoff=sent.status==='retry'?Math.min(this.backoff*2,MAX_BACKOFF_MS):1_000; this.schedule(sent.status==='retry'?this.backoff:MIN_SIGNATURE_MS);
+    } catch(error) {
+      const code=error instanceof FilesSyncClientError?error.code:(error instanceof Error?error.message:String(error));
+      if(code!=='vault_locked'&&code!=='no_cloud_vault')console.warn(`[FilesSyncV1] driver retry: ${code}`);
+      this.schedule(this.backoff=Math.min(this.backoff*2,MAX_BACKOFF_MS));
+    } finally { this.running=false }
+  }
+}
+export const FilesSyncV1=new FilesSyncV1Impl();
