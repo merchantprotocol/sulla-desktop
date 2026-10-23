@@ -226,7 +226,14 @@ function registerIpcHandlers(): void {
       return { ok: false, error: 'superseded', micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
     }
 
-    await mic.start(sid, event.sender, { formats });
+    const startResult = await mic.start(sid, event.sender, { formats });
+
+    if (micRequestSeq.get(sid) !== seq) {
+      return { ok: false, error: 'superseded', micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+    }
+    if (!startResult.ok) {
+      return { ok: false, error: startResult.error, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
+    }
     return { ok: true, micRunning: mic.running, speakerRunning: speaker.running, running: mic.running || speaker.running };
   });
 

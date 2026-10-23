@@ -46,7 +46,7 @@
  * | onGatewayStatus(cb)       | gateway-status                         | on (listener)   |
  * | onStartMic(cb)            | audio-driver:renderer-start-mic        | on (listener)   |
  * | onStopMic(cb)             | audio-driver:renderer-stop-mic         | on (listener)   |
- * | ackMicStarted(info)       | audio-driver:mic-started               | send            |
+ * | ackMicStarted(id, info)   | audio-driver:mic-started               | send            |
  * | ackMicStopped()           | audio-driver:mic-stopped               | send            |
  * | onSpeakerLevel(cb)        | audio-driver:speaker-level             | on (listener)   |
  * | broadcastMicVad(data)     | audio-driver:mic-vad-update            | send            |
@@ -101,8 +101,8 @@ window.audioDriver = {
 
   // Worker commands from MicrophoneDriverController / SpeakerDriverController (main process)
   onStartMic:    (callback) => ipcRenderer.on('audio-driver:renderer-start-mic', (_e, opts) => callback(opts)),
-  onStopMic:     (callback) => ipcRenderer.on('audio-driver:renderer-stop-mic', () => callback()),
-  ackMicStarted: (deviceInfo) => ipcRenderer.send('audio-driver:mic-started', deviceInfo),
+  onStopMic:     (callback) => ipcRenderer.on('audio-driver:renderer-stop-mic', (_e, opts) => callback(opts)),
+  ackMicStarted: (requestId, deviceInfo) => ipcRenderer.send('audio-driver:mic-started', requestId, deviceInfo),
   ackMicStopped: () => ipcRenderer.send('audio-driver:mic-stopped'),
 
   // Broadcast mic VAD state to main process for relay to holder windows

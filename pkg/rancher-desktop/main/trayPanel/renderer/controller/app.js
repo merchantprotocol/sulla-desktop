@@ -59,52 +59,82 @@ function onMicLevel(micLevel) {
 // the mic on the same formats when its device disappears.
 let activeMicOpts = null;
 let micRestarting = false;
+let micOperation = Promise.resolve();
+let micGeneration = 0;
 
-window.audioDriver.onStartMic(async(opts) => {
+window.audioDriver.onStartMic((opts) => {
+  const requestId = opts?.requestId;
+  const generation = ++micGeneration;
+
   log.info('Controller', '>>> renderer-start-mic received', opts);
-  try {
-    const deviceInfo = await startMicPipeline(opts);
-    log.info('Controller', 'Sending ackMicStarted to main process');
-    window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
-  } catch (e) {
-    log.error('Controller', 'audioCapture.start() FAILED', { error: e.message, stack: e.stack });
-    activeMicOpts = null;
-    window.audioDriver.ackMicStarted(null);
-  }
+  micOperation = micOperation.catch((e) => {
+    log.error('Controller', 'Previous mic operation failed', { error: e.message });
+  }).then(async() => {
+    try {
+      const deviceInfo = await startMicPipeline(opts, () => generation === micGeneration);
+
+      if (!deviceInfo || generation !== micGeneration) {
+        stopMicPipeline();
+        window.audioDriver.ackMicStarted(requestId, null);
+        return;
+      }
+      log.info('Controller', 'Sending ackMicStarted to main process', { requestId });
+      window.audioDriver.ackMicStarted(requestId, { ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
+    } catch (e) {
+      log.error('Controller', 'audioCapture.start() FAILED', { error: e.message, stack: e.stack });
+      activeMicOpts = null;
+      stopMicPipeline();
+      window.audioDriver.ackMicStarted(requestId, null);
+    }
+  });
 });
 
-audioCapture.onDeviceLost(async(reason) => {
+audioCapture.onDeviceLost((reason) => {
   if (!activeMicOpts || micRestarting) return;
   micRestarting = true;
-  const opts = activeMicOpts;
-  log.info('Controller', 'Mic device lost — reopening on current default', { reason });
-  try {
-    stopMicPipeline();
-    // A device picked explicitly is gone; fall back to the system default.
-    const deviceInfo = await startMicPipeline(reason === 'device-removed' ? { ...opts, deviceId: undefined } : opts);
-    if (!activeMicOpts) {
-      // Main stopped the mic while we were reopening it.
-      stopMicPipeline();
+  const generation = micGeneration;
+
+  micOperation = micOperation.catch((e) => {
+    log.error('Controller', 'Previous mic operation failed before reopen', { error: e.message });
+  }).then(async() => {
+    const opts = activeMicOpts;
+
+    if (!opts || generation !== micGeneration) {
+      micRestarting = false;
       return;
     }
-    log.info('Controller', 'Mic reopened after device change', { micName: deviceInfo?.micName });
-    window.audioDriver.ackMicStarted({ ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
-  } catch (e) {
-    log.error('Controller', 'Mic reopen failed', { error: e.message });
-    activeMicOpts = null;
-  } finally {
-    micRestarting = false;
-  }
+    log.info('Controller', 'Mic device lost — reopening on current default', { reason });
+    try {
+      stopMicPipeline();
+      // A device picked explicitly is gone; fall back to the system default.
+      const reopenOpts = reason === 'device-removed' ? { ...opts, deviceId: undefined } : opts;
+      const deviceInfo = await startMicPipeline(reopenOpts, () => generation === micGeneration);
+
+      if (!deviceInfo || generation !== micGeneration) {
+        stopMicPipeline();
+        return;
+      }
+      log.info('Controller', 'Mic reopened after device change', { micName: deviceInfo.micName });
+      window.audioDriver.ackMicStarted(null, { ...deviceInfo, pcmSampleRate: audioCapture.getPcmSampleRate() });
+    } catch (e) {
+      log.error('Controller', 'Mic reopen failed', { error: e.message });
+      activeMicOpts = null;
+      stopMicPipeline();
+    } finally {
+      micRestarting = false;
+    }
+  });
 });
 
-async function startMicPipeline(opts) {
+async function startMicPipeline(opts, isCurrent = () => true) {
   const formats = opts?.formats || ['webm-opus']; // default: gateway format
   activeMicOpts = opts || {};
   vad.reset();
   feedbackDetection.reset();
   log.info('Controller', 'VAD + feedback detection reset, calling audioCapture.start()');
 
-  const deviceInfo = await audioCapture.start(onMicLevel, opts?.deviceId);
+  const deviceInfo = await audioCapture.start(onMicLevel, opts?.deviceId, isCurrent);
+  if (!deviceInfo || !isCurrent()) return null;
   log.info('Controller', 'audioCapture.start() succeeded', {
     micName:     deviceInfo?.micName,
     speakerName: deviceInfo?.speakerName,
@@ -126,6 +156,8 @@ async function startMicPipeline(opts) {
       log.warn('Controller', 'Mic socket connect failed', { error: e.message });
     }
 
+    if (!isCurrent()) return null;
+
     audioCapture.startRecording((buffer) => {
       micSocket.send(buffer);
     });
@@ -134,6 +166,7 @@ async function startMicPipeline(opts) {
 
   // Start raw PCM capture → IPC (for whisper, local STT, capture studio)
   if (formats.includes('pcm-s16le') || formats.includes('pcm-s16le-raw')) {
+    if (!isCurrent()) return null;
     audioCapture.startPcmCapture((buffer) => {
       window.audioDriver.sendMicPcm(buffer);
     });
@@ -156,12 +189,20 @@ function stopMicPipeline() {
   feedbackDetection.reset();
 }
 
-window.audioDriver.onStopMic(() => {
+window.audioDriver.onStopMic((opts) => {
+  const generation = ++micGeneration;
+
   log.info('Controller', '>>> renderer-stop-mic received');
   activeMicOpts = null;
-  stopMicPipeline();
-  log.info('Controller', 'VAD + feedback detection reset, sending ackMicStopped');
-  window.audioDriver.ackMicStopped();
+  micOperation = micOperation.catch((e) => {
+    log.error('Controller', 'Previous mic operation failed before stop', { error: e.message });
+  }).then(() => {
+    // This stop is serialized after an in-flight getUserMedia. The generation
+    // check passed into start makes that late stream close before it is used.
+    stopMicPipeline();
+    log.info('Controller', 'VAD + feedback detection reset, sending ackMicStopped', { generation, cancelStartRequestId: opts?.cancelStartRequestId });
+    window.audioDriver.ackMicStopped();
+  });
 });
 
 // ─── Call session ───────────────────────────────────────────
