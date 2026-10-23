@@ -522,7 +522,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       // Main calls with the approval service identity; Files/agents cannot invoke this route directly.
       const identity = serviceIdentity(request);
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
-    });
+    }, request => { localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token')); });
     // Passwords sync v3: the container builds/applies every body; main only signs hashes.
     registerCloudSyncRoutes(app, new CloudVaultSyncRunner(db, {
       withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),

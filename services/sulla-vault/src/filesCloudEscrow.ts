@@ -5,6 +5,7 @@ import type { Database } from './db.js';
 import type { CloudSyncAuthority } from './browserEnvelope/syncRunner.js';
 import { ensureSyncSchema } from './browserEnvelope/schema.js';
 import type { FilesAuditEmitter } from './filesAudit.js';
+import { createSyncEnvelope, loadSodium } from './browserEnvelope/envelope.js';
 
 const subtle=webcrypto.subtle, enc=new TextEncoder();
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,10 +40,14 @@ export async function transportWrap(key32:Uint8Array,recipientPublicKey:string,r
   } finally { recipientBytes.fill(0);shared.fill(0);wrapping?.fill(0) }
 }
 export class FilesCloudEscrowService {
+  private restoredCloudKey?:{userKey:Uint8Array;vaultId:string;vaultEpoch:number;expiresAt:number};
+  private readonly restoreKeyTtlMs=5*60_000;
   constructor(private readonly db:Database,private readonly authority:CloudSyncAuthority,private readonly audit?:FilesAuditEmitter){}
   async key(requestId:string,recipientPublicKey:string){
     if(!UUID.test(requestId)||typeof recipientPublicKey!=='string'||recipientPublicKey.length>256)throw new FilesCloudEscrowError('invalid_request',400);
     await ensureSyncSchema(this.db);
+    const configured=(await this.db.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM cloud_vault_sync_state) AS present')).rows[0]?.present;
+    if(!configured)throw new FilesCloudEscrowError('no_cloud_vault',409,'This desktop does not hold the Cloud vault.');
     return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{
       const state=(await this.db.query<{vault_id:string;epoch:number|string}>('SELECT vault_id,epoch FROM cloud_vault_sync_state WHERE owner_user_id=$1',[userId])).rows[0];
       if(!state)throw new FilesCloudEscrowError('no_cloud_vault',409,'Turn on Passwords sync first; it holds the Files backup keys.');
@@ -54,7 +59,38 @@ export class FilesCloudEscrowService {
       } finally { ek.fill(0) }
     }).catch(error=>{ if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423,'Unlock Passwords to back up Files.'); throw error });
   }
+  private clearRestoredCloudKey():void { this.restoredCloudKey?.userKey.fill(0); this.restoredCloudKey=undefined }
+  async unlockCloud(password:string):Promise<{unlocked:true;expiresAt:number}> {
+    if(typeof password!=='string'||password.length<1||password.length>4096)throw new FilesCloudEscrowError('invalid_request',400);
+    this.clearRestoredCloudKey();
+    const status=await this.authority.sullaCloudRequest({method:'GET',path:'/cloud-vault-sync/status',responseType:'json'});
+    const statusBody=typeof status.body==='string'?JSON.parse(status.body):status.body as any;
+    const vaultId=statusBody?.vaultId;
+    if(status.status!==200||typeof vaultId!=='string'||!UUID.test(vaultId))throw new FilesCloudEscrowError('no_cloud_vault',409,'No Passwords backup is available in Sulla Cloud.');
+    const fetched=await this.authority.sullaCloudRequest({method:'GET',path:`/cloud-vault-sync/vaults/${encodeURIComponent(vaultId)}/bundle`,responseType:'json'});
+    if(fetched.status!==200)throw new FilesCloudEscrowError('cloud_bundle_unavailable',fetched.status||502);
+    const body=typeof fetched.body==='string'?JSON.parse(fetched.body):fetched.body as any;
+    const bundle=body?.bundle??body;
+    const envelope=createSyncEnvelope(await loadSodium());
+    let userKey:Uint8Array;
+    try { userKey=envelope.unlockBundle(bundle,password) }
+    catch { throw new FilesCloudEscrowError('wrong_password',401,'That Cloud vault password was not accepted.'); }
+    const expiresAt=Date.now()+this.restoreKeyTtlMs;
+    this.restoredCloudKey={userKey,vaultId:bundle.vaultId,vaultEpoch:bundle.epoch,expiresAt};
+    this.audit?.emit({subjectKind:'vault-secret',subjectId:vaultId,action:'files_cloud_restore_unlocked',actor:'human',result:'allowed',meta:{vaultEpoch:String(bundle.epoch)}});
+    return {unlocked:true,expiresAt};
+  }
+  async restoreKey(requestId:string,recipientPublicKey:string){
+    if(!UUID.test(requestId)||typeof recipientPublicKey!=='string'||recipientPublicKey.length>256)throw new FilesCloudEscrowError('invalid_request',400);
+    const cached=this.restoredCloudKey;
+    if(!cached||cached.expiresAt<=Date.now()){this.clearRestoredCloudKey();throw new FilesCloudEscrowError('cloud_vault_locked',423,'Unlock the Cloud vault to restore this Files collection.');}
+    const ek=await deriveFilesEscrowKey(cached.userKey,cached.vaultId,cached.vaultEpoch);
+    try { return {vaultId:cached.vaultId,vaultEpoch:cached.vaultEpoch,transport:await transportWrap(ek,recipientPublicKey,requestId,cached.vaultId,cached.vaultEpoch)}; }
+    finally { ek.fill(0); this.clearRestoredCloudKey() }
+  }
 }
-export function registerFilesCloudEscrowRoute(app:express.Express,service:FilesCloudEscrowService,requireDesktopIdentity:(request:express.Request)=>void):void{
+export function registerFilesCloudEscrowRoute(app:express.Express,service:FilesCloudEscrowService,requireDesktopIdentity:(request:express.Request)=>void,requireHumanSession?:(request:express.Request)=>void):void{
   app.post('/v1/files/cloud-escrow/key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.key(request.body?.requestId,request.body?.recipientPublicKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_escrow_failed',message:e.message})}});
+  app.post('/v1/files/cloud-escrow/restore-key',async(request,response)=>{try{requireDesktopIdentity(request);response.setHeader('Cache-Control','no-store');response.json(await service.restoreKey(request.body?.requestId,request.body?.recipientPublicKey))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_restore_failed',message:e.message})}});
+  app.post('/v1/human/files/cloud-escrow/unlock',async(request,response)=>{try{requireHumanSession?.(request);response.setHeader('Cache-Control','no-store');response.json(await service.unlockCloud(request.body?.password))}catch(error){const e=error as {status?:number;code?:string;message?:string};response.status(e.status??500).json({error:e.code??'files_cloud_restore_failed',message:e.message})}});
 }
