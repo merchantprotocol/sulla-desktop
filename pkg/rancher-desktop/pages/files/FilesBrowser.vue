@@ -178,43 +178,6 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
-            v-if="!readOnlyArea && (dataSource.capabilities.upload || dataSource.capabilities.durableOperations)"
-            class="btn"
-            type="button"
-            :disabled="busy || loading || section !== 'files' || readOnlyArea"
-            @click="newFolder()"
-          >
-            <span
-              class="bi"
-              v-html="icons.plus"
-            /> New folder
-          </button>
-          <button
-            v-if="!readOnlyArea && dataSource.createFile"
-            class="btn"
-            type="button"
-            :disabled="busy || loading || section !== 'files' || readOnlyArea"
-            @click="newFile()"
-          >New file</button>
-          <button
-            v-if="!readOnlyArea && dataSource.nativeSourceReady && dataSource.chooseNativeSource"
-            class="btn"
-            type="button"
-            :disabled="busy"
-            @click="chooseNativeSource"
-          >Add native file</button>
-          <button
-            class="btn pri"
-            type="button"
-            :disabled="busy || readOnlyArea || !dataSource.capabilities.upload"
-            @click="upload"
-          >
-            <span
-              class="bi"
-              v-html="icons.upload"
-            /> Upload
-          </button>
-          <button
             v-if="dataSource.openPreferences"
             class="btn"
             type="button"
@@ -237,6 +200,16 @@
       <div v-else class="content" @contextmenu="onSurfaceContextMenu" @click.self="clearSelection">
         <div class="toolbar">
           <div v-if="section === 'files' && !readOnlyArea" class="history-controls">
+            <button
+              v-if="canCreateAnything"
+              ref="newMenuButton"
+              class="btn pri new-btn"
+              type="button"
+              aria-haspopup="menu"
+              :aria-expanded="Boolean(newMenu)"
+              :disabled="busy || loading"
+              @click="toggleNewMenu"
+            ><span class="bi" v-html="icons.plus" /> New</button>
             <div class="nav-pair" role="group" aria-label="History">
               <button
                 class="folder-up"
@@ -757,6 +730,18 @@
           </div>
         </Teleport>
         <Teleport to="body">
+          <div v-if="newMenu" ref="newActionMenu" class="action-menu new-menu" role="menu" aria-label="Create new" :style="{ left: `${newMenu.x}px`, top: `${newMenu.y}px` }" @keydown="onMenuKeydown" @click.stop @contextmenu.prevent>
+            <button v-if="dataSource.capabilities.upload || dataSource.capabilities.durableOperations" role="menuitem" type="button" @click="closeNewMenu(); newFolder()">New folder</button>
+            <template v-if="dataSource.createFile">
+              <div class="menu-sep" role="separator" />
+              <button v-for="kind in newFileKinds" :key="kind.label" role="menuitem" type="button" @click="closeNewMenu(); newFile(currentPath, kind.name)">{{ kind.label }}</button>
+            </template>
+            <div class="menu-sep" role="separator" />
+            <button v-if="dataSource.capabilities.upload" role="menuitem" type="button" @click="closeNewMenu(); upload()">Upload files</button>
+            <button v-if="dataSource.nativeSourceReady && dataSource.chooseNativeSource" role="menuitem" type="button" @click="closeNewMenu(); chooseNativeSource()">Link a file from your Mac</button>
+          </div>
+        </Teleport>
+        <Teleport to="body">
           <div v-if="backgroundMenu" ref="backgroundActionMenu" class="action-menu" role="menu" aria-label="Folder actions" :style="{ left: `${backgroundMenu.x}px`, top: `${backgroundMenu.y}px` }" @keydown="onMenuKeydown" @click.stop @contextmenu.prevent>
             <b>{{ pageTitle }}</b>
             <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
@@ -964,7 +949,14 @@ const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
 // Electron has no window.prompt (it returns null at once), so names are asked for in this dialog.
 const namePrompt = ref<{ title: string; label: string; confirm: string; value: string; allowEmpty: boolean; resolve: (value:string | null) => void } | null>(null);
-const nameDialog = ref<HTMLDialogElement | null>(null); const nameInput = ref<HTMLInputElement | null>(null);
+const nameDialog = ref<HTMLDialogElement | null>(null);
+const newMenu = ref<{ x:number; y:number } | null>(null); const newMenuButton = ref<HTMLButtonElement | null>(null); const newActionMenu = ref<HTMLElement | null>(null);
+const newFileKinds = [
+  { label: 'Document', name: 'Untitled.md' },
+  { label: 'Text file', name: 'Untitled.txt' },
+  { label: 'Spreadsheet (CSV)', name: 'Untitled.csv' },
+  { label: 'Other file…', name: 'untitled' },
+]; const nameInput = ref<HTMLInputElement | null>(null);
 const folderDescription=ref(''); const folderNamingHint=ref('');
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const operationNotice = ref('');
@@ -1297,12 +1289,25 @@ async function newFolder(folder = currentPath.value) {
   if (operations.supported()) await submitReceiptItems([{ itemId: crypto.randomUUID(), action: 'create-folder', targetPath: path }]);
   else await runMutation(() => props.dataSource.createFolder(path));
 }
-async function newFile(folder = currentPath.value) {
+const canCreateAnything = computed(() => Boolean(props.dataSource.capabilities.upload || props.dataSource.capabilities.durableOperations || props.dataSource.createFile || (props.dataSource.nativeSourceReady && props.dataSource.chooseNativeSource)));
+async function toggleNewMenu() {
+  if (newMenu.value) { closeNewMenu(); return }
+  closeActions(false); closeBackgroundActions();
+  const rect = newMenuButton.value?.getBoundingClientRect(); if (!rect) return;
+  newMenu.value = { x: rect.left, y: rect.bottom + 4 };
+  await nextTick(); newActionMenu.value?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+}
+function closeNewMenu() { newMenu.value = null }
+async function newFile(folder = currentPath.value, suggested = 'Untitled.txt') {
   if (readOnlyArea.value) return;
   if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.createFile) return;
-  const name = await askName('New file', `Inside ${ folder || 'My Files' }`, 'Create', 'untitled.txt'); if (!name) return;
+  const name = await askName('New file', `Inside ${ folder || 'My Files' }`, 'Create', suggested); if (!name) return;
   if(name.includes('/') || name==='.' || name==='..'){ operationError.value='Enter a file name without path separators.'; return }
-  await runMutation(()=>props.dataSource.createFile!(joinPath(folder,name)));
+  const path = joinPath(folder, name);
+  const created = await runMutation(()=>props.dataSource.createFile!(path));
+  // Like Google Drive: a new document opens straight into the editor.
+  const file = created && supportsDocumentEditor(path) ? activeFiles.value.find(item => item.path === path) : undefined;
+  if (file) emit('open-editor', file);
 }
 async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
 async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
@@ -1589,11 +1594,11 @@ async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent)
   menuPosition.value = { x: Math.max(4, Math.min(menuPosition.value.x, window.innerWidth - bounds.width - 4)), y: Math.max(4, Math.min(menuPosition.value.y, window.innerHeight - bounds.height - 4)) };
   menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
 }
-function dismissActions(event:PointerEvent) { if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false); if (backgroundMenu.value && !backgroundActionMenu.value?.contains(event.target as Node)) closeBackgroundActions() }
+function dismissActions(event:PointerEvent) { if (newMenu.value && !newActionMenu.value?.contains(event.target as Node) && !newMenuButton.value?.contains(event.target as Node)) closeNewMenu(); if (actionTarget.value && !actionMenu.value?.contains(event.target as Node)) closeActions(false); if (backgroundMenu.value && !backgroundActionMenu.value?.contains(event.target as Node)) closeBackgroundActions() }
 function onMenuKeydown(event:KeyboardEvent) {
   event.stopPropagation();
   const menu = event.currentTarget as HTMLElement;
-  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); if (menu === actionMenu.value) closeActions(); else { closeBackgroundActions(); mainSurface.value?.focus() } return }
+  if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); if (menu === actionMenu.value) closeActions(); else if (menu === newActionMenu.value) { closeNewMenu(); newMenuButton.value?.focus() } else { closeBackgroundActions(); mainSurface.value?.focus() } return }
   const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
   const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) && buttons.length) { event.preventDefault(); const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length; buttons[next].focus() }
@@ -1945,7 +1950,7 @@ async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'r
 }
 async function openWithApplication(application?:string) { const target=actionTarget.value; if (!target || target.folder || !props.dataSource.openFileWithApp) return; closeActions(); await runMutation(async() => { const result=await props.dataSource.openFileWithApp!(target.id,target.currentVersionId,application); recentApplications.value=result.recentApplications },false) }
 function trackUpload(progress:{ current: number; name: string; percent: number; done: boolean }) { const log = progress.current <= 1 && !uploadLog.value.some(item => item.name === progress.name) ? [] : uploadLog.value.map(item => item.name === progress.name ? item : { ...item, done: true, percent: 100 }); const rest = log.filter(item => item.name !== progress.name); uploadLog.value = [...rest, { name: progress.name, percent: progress.percent, done: progress.done || progress.percent >= 100 }] }
-function closeMenuOnResize() { closeActions(false); closeBackgroundActions(); stopPointerGesture?.() }
+function closeMenuOnResize() { closeNewMenu(); closeActions(false); closeBackgroundActions(); stopPointerGesture?.() }
 function onKeydown(event:KeyboardEvent) {
   if (!quickLookDialog.value?.contains(event.target as Node) && !browserSurface.value?.contains(event.target as Node) && !actionMenu.value?.contains(event.target as Node) && !backgroundActionMenu.value?.contains(event.target as Node)) return;
   const target = event.target as HTMLElement | null; const editable = target?.matches('input,textarea,select,[contenteditable="true"]'); const modifier = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
@@ -2148,6 +2153,8 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 .action-menu b + .menu-sep, .action-menu .menu-sep + .menu-sep, .action-menu .menu-sep:not(:has(~ button, ~ .menu-subsection)) { display:none; }
 .history-controls { min-width:0; display:flex; align-items:center; gap:6px; }
 .history-controls h1 { margin-left:2px; }
+.new-btn { padding:7px 16px 7px 12px; font-size:13.5px; font-weight:600; border-radius:999px; margin-right:6px; }
+.new-menu { width:220px; }
 .nav-pair { display:flex; flex:none; }
 .nav-pair .folder-up:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
 .nav-pair .folder-up:last-child { margin-left:-1px; border-top-left-radius:0; border-bottom-left-radius:0; }

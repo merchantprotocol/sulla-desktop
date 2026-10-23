@@ -804,7 +804,7 @@ export function initSullaFilesIpc():void {
     if (!mountManager.status().ready) throw new Error('Native Files runtime is not ready');
     const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
     const options:Electron.OpenDialogOptions = {
-      title:                   'Choose one synthetic file for the Files source experiment',
+      title:                   'Choose a file to link into Sulla Files',
       properties:              ['openFile'],
       securityScopedBookmarks: process.platform === 'darwin' && process.mas,
     };
