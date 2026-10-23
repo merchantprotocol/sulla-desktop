@@ -64,9 +64,15 @@ async function promptPairing(req: { label: string; surface: string; code: string
 
 function getChannel(): SecureDesktopChannel {
   if (!channel) {
+    const dispatch = (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => getDesktopRelayClient().handleRemoteCommand(body as any, reply, respond);
+    ConversationSyncService.setDispatcher(dispatch);
     channel = new SecureDesktopChannel({
       prompt:   promptPairing,
-      dispatch: (body, reply, respond) => getDesktopRelayClient().handleRemoteCommand(body as any, reply, respond),
+      serverDispatch: frame => ConversationSyncService.handleServerFrame(frame),
+      dispatch: async(body, reply, respond) => {
+        if(body.type==='conversation_key' && typeof body.conversationId==='string' && body.wrapKey && typeof body.wrapKey==='object'){reply({type:'conversation_key',conversationId:body.conversationId,wrappedKey:ConversationSyncService.wrapKey(body.conversationId,body.wrapKey as JsonWebKey),algorithm:'RSA-OAEP+A256GCM',keyVersion:1});return}
+        await dispatch(body, reply, respond);
+      },
       audit:    (event, detail) => console.log(`[SecureChannel] ${ event } ${ JSON.stringify(detail) }`),
     });
     channel.onStatus(() => broadcast());
@@ -93,7 +99,7 @@ function installPrefsListener() {
     if (!signedIn) return;
     DevicesCloudApi.heartbeat().catch(() => undefined);
     if (changed.includes('conversations')) {
-      (prefs.conversations ? startConversationSync() : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
+      (prefs.conversations ? startConversationSync().then(() => ConversationSyncService.linkAll()) : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
     }
     if (changed.includes('vault')) (prefs.vault ? VaultSyncV3.syncNow() : VaultSyncV3.pause()).catch(() => undefined);
     broadcast();
@@ -179,6 +185,9 @@ export function initCloudConnectionEvents(): void {
     await setCloudPreferences(patch ?? {});
     return getCloudConnectionStatus();
   });
+
+  ipc.handle('sulla-cloud-chat:link', async(_e: unknown, conversationId: string, title: string, privacyMode: 'encrypted_bodies'|'metadata_only') => ConversationSyncService.link(conversationId,title,privacyMode));
+  ipc.handle('sulla-cloud-chat:unlink', async(_e: unknown, linkId: string, deleteCloudCopy: boolean) => ConversationSyncService.unlink(linkId,deleteCloudCopy));
 
   ipc.handle('sulla-cloud-connection:revoke-client', async(_e: unknown, clientId: string) => {
     if (typeof clientId === 'string') getChannel().revokeClient(clientId);

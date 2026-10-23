@@ -57,6 +57,21 @@
         <div class="composer-backdrop" aria-hidden="true" />
         <StatusBadges />
         <SessionMark editable />
+        <div class="cloud-link-menu">
+          <button type="button" class="cloud-link-trigger" @click="cloudMenuOpen = !cloudMenuOpen">Cloud ▾</button>
+          <div v-if="cloudMenuOpen" class="cloud-link-popover">
+            <template v-if="!cloudLinkId">
+              <b>Link to Cloud</b><p>Only user and assistant text is included.</p>
+              <button @click="linkToCloud('encrypted_bodies')">Encrypted</button>
+              <button @click="linkToCloud('metadata_only')">Metadata only</button>
+            </template>
+            <template v-else>
+              <b>Linked to Cloud</b><p>{{ cloudPrivacy === 'encrypted_bodies' ? 'Message bodies are end-to-end encrypted.' : 'Message bodies stay on this Desktop.' }}</p>
+              <button @click="unlinkCloud(false)">Unlink</button>
+              <button class="danger" @click="unlinkCloud(true)">Unlink and delete cloud copy</button>
+            </template>
+          </div>
+        </div>
         <SearchBar />
 
         <EmptyState
@@ -239,6 +254,19 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
   if (props.tabId && controller.thread.value.messages.length > 0) {
     persister.setTabThread(props.tabId, controller.thread.value.id);
   }
+}
+
+const cloudMenuOpen = ref(false);
+const cloudLinkId = ref<string | null>(null);
+const cloudPrivacy = ref<'encrypted_bodies' | 'metadata_only'>('encrypted_bodies');
+async function linkToCloud(mode: 'encrypted_bodies' | 'metadata_only') {
+  const result = await ipcRenderer.invoke('sulla-cloud-chat:link', controller.thread.value.id, controller.thread.value.title || 'New conversation', mode) as any;
+  cloudLinkId.value = result?.data?.link?.id ?? result?.link?.id ?? null; cloudPrivacy.value = mode; cloudMenuOpen.value = false;
+}
+async function unlinkCloud(deleteCloudCopy: boolean) {
+  if (!cloudLinkId.value) return;
+  if (deleteCloudCopy && !window.confirm('Unlink and permanently delete the Cloud copy? The Desktop conversation stays here.')) return;
+  await ipcRenderer.invoke('sulla-cloud-chat:unlink', cloudLinkId.value, deleteCloudCopy); cloudLinkId.value = null; cloudMenuOpen.value = false;
 }
 
 const controller = initController();
@@ -676,6 +704,7 @@ onBeforeUnmount(() => {
 <style src="./styles/reading.css"></style>
 <style src="./styles/canvas.css"></style>
 <style scoped>
+.cloud-link-menu{position:absolute;z-index:42;top:14px;right:22px}.cloud-link-trigger,.cloud-link-popover button{border:1px solid var(--border-default);background:var(--bg-surface);color:var(--text-primary);border-radius:7px;padding:6px 10px}.cloud-link-popover{position:absolute;right:0;top:38px;width:270px;padding:12px;display:grid;gap:8px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:10px;box-shadow:0 14px 36px rgba(0,0,0,.35)}.cloud-link-popover p{font-size:11px;color:var(--text-muted);margin:0}.cloud-link-popover .danger{color:var(--color-error,#d9403a)}
 .chat-root {
   position: relative;
   width: 100%; height: 100%;

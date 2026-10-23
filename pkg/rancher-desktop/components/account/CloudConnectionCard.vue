@@ -142,7 +142,7 @@ const busy = ref(false);
 const error = ref('');
 
 const syncItems: { key: 'conversations' | 'vault'; title: string; detail: string }[] = [
-  { key: 'conversations', title: 'Conversations', detail: 'read and continue chats from the web and your phone.' },
+  { key: 'conversations', title: 'Link all conversations', detail: 'New and existing chats are linked to your Cloud account. Encrypted mode uploads only user/assistant text; reasoning, tool payloads, secrets and attachments stay here. You can unlink and delete each Cloud copy from its chat menu.' },
   { key: 'vault', title: 'Password vault', detail: 'Sulla Cloud stores an encrypted copy you can unlock in your browser. It can\'t read your passwords. Anyone who learns your master password and gets this copy can. If you forget the master password, Cloud can\'t recover it.' },
 ];
 
