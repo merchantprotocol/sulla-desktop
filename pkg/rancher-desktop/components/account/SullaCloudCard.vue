@@ -45,6 +45,12 @@
       >
         Sign out
       </button>
+      <p
+        v-if="cloudError"
+        class="account-error"
+      >
+        {{ cloudError }}
+      </p>
     </template>
 
     <!-- Signed-out view -->
@@ -389,9 +395,13 @@ async function signOut() {
   busy.value = true;
   try {
     cloudStatus.value = await ipcRenderer.invoke('sulla-cloud:logout');
+    const signOutError = cloudStatus.value?.lastError;
     resetPhoneFlow();
     emailPassword.value = '';
     await refreshCloudStatus();
+    if (signOutError) cloudError.value = signOutError;
+  } catch (err) {
+    cloudError.value = `Sign-out failed: ${ (err as Error)?.message || err }`;
   } finally {
     busy.value = false;
   }

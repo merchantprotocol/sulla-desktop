@@ -706,7 +706,18 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    await clearSession();
+    // Under the container vault the app cannot delete the account (the vault
+    // owns it), so clearSession throws. That used to abort the whole handler
+    // silently; finish the local sign-out and tell the owner where to finish.
+    let lastError: string | undefined;
+    try {
+      await clearSession();
+    } catch (err) {
+      console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
+      lastError = usesContainerVaultAuthority()
+        ? 'Cloud services stopped. To fully sign out, remove the Sulla Cloud account in the Vault.'
+        : `Sign-out failed: ${ (err as Error)?.message || err }`;
+    }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows
       // as connected. Deletes all Apple accounts for this user.
@@ -732,7 +743,7 @@ export function initSullaCloudAuthEvents(): void {
     }
     DevicesCloudApi.stopHeartbeat();
     console.log('[SullaCloudAuth] Signed out');
-    return buildStatus();
+    return buildStatus(lastError);
   });
 
   // Auto-pair relay on startup if we have a signed-in session.
