@@ -45,14 +45,18 @@ export function useDragDrop(controllerOverride?: ChatController) {
     e.preventDefault();
     depth = 0;
     active.value = false;
-    const paths = Array.from(e.dataTransfer.files, file => webUtils.getPathForFile(file));
-    if (paths.some(value => !value)) throw new Error('Sulla could not read one or more dropped files.');
-    const result = await ipcRenderer.invoke('files-ui:import-path-references', { paths }) as any[] | { references:any[]; error:string };
-    const references = Array.isArray(result) ? result : result.references;
-    for (const reference of references) {
-      controller?.stageAttachment(AttachmentService.fromFilesReference(reference));
+    try {
+      const paths = Array.from(e.dataTransfer.files, file => webUtils.getPathForFile(file));
+      if (paths.some(value => !value)) throw new Error('Sulla could not read one or more dropped files.');
+      const result = await ipcRenderer.invoke('files-ui:import-path-references', { paths }) as any[] | { references:any[]; error:string };
+      const references = Array.isArray(result) ? result : result.references;
+      for (const reference of references) {
+        controller?.stageAttachment(AttachmentService.fromFilesReference(reference));
+      }
+      if (!Array.isArray(result) && result.error) console.warn('[Chat] Some dropped files could not be imported:', result.error);
+    } catch (error) {
+      console.warn('[Chat] Dropped files could not be attached:', error instanceof Error ? error.message : String(error));
     }
-    if (!Array.isArray(result) && result.error) console.warn('[Chat] Some dropped files could not be imported:', result.error);
   }
 
   onMounted(() => {
