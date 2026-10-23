@@ -513,7 +513,8 @@ export interface IpcMainInvokeEvents {
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
   'files-ui:pick-upload':   (destination?: string) => number;
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
-  'files-ui:upload-paths': (input: { paths: string[]; destination?: string }) => number;
+  'files-ui:upload-paths': (input: { paths: string[]; destination?: string; collectionId?: string }) => number;
+  'files-ui:import-path-references': (input: { paths: string[] }) => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:create-folder': (relativePath: string) => void;
   'files-ui:update-folder-description': (input:{folderId:string;description:string;namingHint?:string}) => void;
   'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;

@@ -366,7 +366,7 @@
           </div>
         </div>
 
-        <div class="selection-slot" :aria-hidden="!selectedEntries.length"><div v-show="selectedEntries.length" class="selection-bar">
+        <div class="selection-slot" :class="{ active: selectedEntries.length }" :aria-hidden="!selectedEntries.length"><div v-show="selectedEntries.length" class="selection-bar">
           <b>{{ selectedEntries.length }} selected</b>
           <template v-if="section !== 'trash' && !readOnlyArea">
             <button class="btn sm" type="button" :disabled="busy || selectedEntries.length !== 1" @click="renameSelected">Rename</button>
@@ -409,13 +409,6 @@
         </div>
         <div v-if="busy && !operationReceipt" class="operation-panel" role="status">Working…</div>
 
-        <nav v-if="section === 'files'" class="path-breadcrumbs" aria-label="Current folder path">
-
-          <button type="button" :class="{ current: !currentPath }" data-drop-path="" @dragover.prevent="onNavigationDragOver('', $event)" @drop.prevent="onNavigationDrop('', $event)" @click="openRoot">{{ snapshot?.collection.systemArea ? snapshot.collection.name : rootLabel }}</button>
-          <template v-for="(crumb, index) in crumbs" :key="crumb.path">
-            <span aria-hidden="true">›</span><button type="button" :class="{ current: index === crumbs.length - 1 }" :data-drop-path="crumb.path" @dragover.prevent="onNavigationDragOver(crumb.path, $event)" @drop.prevent="onNavigationDrop(crumb.path, $event)" @click="openPath(crumb.path)">{{ crumb.label }}</button>
-          </template>
-        </nav>
 
         <div
           v-if="loading"
@@ -1365,8 +1358,8 @@ async function openLinked(fileId:string) { const file = snapshot.value?.files.fi
 function isExternalFileDrag(event:DragEvent) { return !internalDragActive && !event.dataTransfer?.types.includes('application/x-sulla-files') && Boolean(event.dataTransfer?.types.includes('Files')) }
 function acceptsExternalDrop(event:DragEvent) { return isExternalFileDrag(event) && props.dataSource.capabilities.upload && !readOnlyArea.value && section.value === 'files' }
 function onBrowserDragEnter(event:DragEvent) { if (acceptsExternalDrop(event)) { externalDragDepth++; dragging.value = true } }
-function onBrowserDragOver(event:DragEvent) { if (acceptsExternalDrop(event)) { dragging.value = true; if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy' } }
-function onDragLeave(_event:DragEvent) { if (!dragging.value) return; externalDragDepth = Math.max(0, externalDragDepth - 1); if (!externalDragDepth) dragging.value = false }
+function onBrowserDragOver(event:DragEvent) { if (acceptsExternalDrop(event)) { dragging.value = true; externalNavigationTarget.value = ''; if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy' } }
+function onDragLeave(_event:DragEvent) { if (!dragging.value && !externalNavigationTarget.value) return; externalDragDepth = Math.max(0, externalDragDepth - 1); if (!externalDragDepth) { dragging.value = false; externalNavigationTarget.value = '' } }
 async function onDrop(event:DragEvent) {
   if (readOnlyArea.value) { clearInternalDrag(); return }
   dragging.value = false; externalDragDepth = 0;
@@ -1538,7 +1531,7 @@ async function onNavigationDrop(path:string, event:DragEvent) {
   if (!dragTargets.value.length && event.dataTransfer?.files.length) { const files=[...event.dataTransfer.files]; await runMutation(() => props.dataSource.uploadDroppedFiles ? props.dataSource.uploadDroppedFiles(files,path) : Promise.reject(new Error('This Desktop build cannot read dropped files.'))); return }
   const targets = dragTargets.value.map(target => operationTarget(target, path)); const sourceCollectionId=dragSourceCollectionId; const sourceCapability=dragSourceCapability; clearInternalDrag(); await perform('move', targets, sourceCollectionId, sourceCapability)
 }
-function clearInternalDrag() { cancelHoverOpen(); internalDragActive=false; draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
+function clearInternalDrag() { externalNavigationTarget.value = ''; cancelHoverOpen(); internalDragActive=false; draggedKeys.value = new Set(); dragTargets.value = []; dragSourceCollectionId=''; dragSourceCapability='unavailable'; dropTargetKey.value = ''; favoriteDropActive.value = false }
 function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); const value = bytes / 1024 ** index; return `${ index < 2 || value >= 100 ? Math.round(value) : Number(value.toFixed(1)) } ${ units[index] }` }
 function formatDate(value:string, detailed = false) { if (!value) return '—'; const date = new Date(value); return new Intl.DateTimeFormat(undefined, detailed ? { dateStyle: 'medium', timeStyle: 'short' } : { month: 'short', day: 'numeric' }).format(date) }
 function dayLabel(date:Date) { const now = new Date(); if (date.toDateString() === now.toDateString()) return 'Today'; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'; return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(date) }
@@ -2101,7 +2094,8 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
-.selection-slot { height:52px; margin-bottom:12px; overflow-x:auto; }
+.selection-slot { height:52px; margin-bottom:12px; overflow:hidden; background:transparent; }
+.selection-slot.active { overflow-x:auto; }
 .selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--paper-2); }
 .selection-bar b { margin-right:auto; font-size:12px; }
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
@@ -2178,6 +2172,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 .nav a:hover { background: var(--ink-05); color: var(--text); }
 .nav a.on { background: var(--accent-soft); color: var(--accent-2); font-weight: 600; }
 .nav a.on .sv { opacity: 1; }
+.nav a.drop-target { background: var(--accent-soft); color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .nav a .cnt { margin-left: auto; font-size: 11px; font-weight: 600; background: var(--paper-2); color: var(--muted); padding: 1px 7px; border-radius: 999px; }
 .nav a .cnt.warn { background: var(--warn-soft); color: var(--warn); }
 .nav .sep { height: 1px; background: var(--line); margin: 10px 8px; }
@@ -2396,11 +2391,6 @@ tr.row.agent td { background: rgba(26, 35, 50, .025); }
 .error-state .state-icon { color: var(--bad); }
 .loader { display: inline-block; width: 22px; height: 22px; border: 2px solid var(--accent-soft); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 .virtual-surface.drop-background { outline: 2px dashed var(--accent-line); outline-offset: -3px; background: color-mix(in srgb, var(--paper) 94%, var(--accent)); }
-.path-breadcrumbs { display:flex; align-items:center; gap:6px; min-height:36px; margin:8px 0; padding:6px 10px; overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:var(--paper-2); }
-.path-breadcrumbs button { flex:none; padding:3px 5px; border:0; border-radius:5px; color:var(--muted); background:transparent; font:12px var(--mono); }
-.path-breadcrumbs button:hover { color:var(--text); background:var(--card); }
-.path-breadcrumbs button.current { color:var(--text); font-weight:700; }
-.path-breadcrumbs span { color:var(--dim); }
 .disclosure { width:20px; height:22px; padding:0; border:0; color:var(--muted); background:transparent; font-size:18px; line-height:1; flex:none; }
 .disclosure-spacer { display:inline-block; width:20px; flex:none; }
 .menu-subsection { padding:4px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
