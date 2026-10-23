@@ -1,13 +1,13 @@
-# The `.sulla.md` file format
+# The `.sulla` file format
 
-`.sulla.md` is the native document type of the Sulla document editor, the
-Obsidian-like editor inside the File Manager. A `.sulla.md` file is a plain
+`.sulla` is the native document type of the Sulla document editor, the
+Obsidian-like editor inside the File Manager. A `.sulla` file is a plain
 UTF-8 Markdown file with optional YAML-style front matter. There is no binary
 container, no JSON wrapper, and no hidden sidecar. Any Markdown tool can read it,
 and agents can write it with normal file tools on `/mnt/sulla-files`.
 
-The full extension is `.sulla.md`, not `.sulla`. A file named `notes.sulla`
-does **not** open in the editor; File Manager treats it as an unknown file.
+The native extension is bare `.sulla` (`Project Priorities.sulla`). Older
+`.sulla.md` files are still accepted and behave the same.
 
 ## Which files open in the editor
 
@@ -15,16 +15,17 @@ The editor picks a type from the end of the file name (case-insensitive):
 
 | Ends with | Editor type | Behaviour |
 | --- | --- | --- |
-| `.sulla.md` | Markdown | Live preview, property pills, slash menu |
-| `.md` | Markdown | Same as `.sulla.md` |
+| `.sulla` | Markdown | Live preview, property pills, slash menu |
+| `.sulla.md` | Markdown | Same as `.sulla` (older name) |
+| `.md` | Markdown | Same as `.sulla` |
 | `.txt` | Text | Plain monospace editor, no front matter, no preview |
 
-Everything else opens in the normal file preview. Today `.sulla.md` and `.md`
-behave the same. Use `.sulla.md` for documents meant to be worked on in Sulla,
-so they show up as Sulla documents if the two types split later.
+Everything else opens in the normal file preview. Today `.sulla` and `.md`
+behave the same. Use `.sulla` for documents meant to be worked on in Sulla.
+File Manager's **New → Sulla Document** creates `Untitled.sulla`.
 
-The Files service stores `.sulla.md` files with mime `text/markdown`. It works
-this out from the final `.md` extension.
+The Files service stores `.sulla` files with mime `text/markdown`, so search
+indexing and previews treat them as Markdown.
 
 ## File layout
 
@@ -61,9 +62,9 @@ Body in ordinary Markdown.
 ### Title
 
 The editor does not show a title from the front matter or the first `#`
-heading. It builds the title from the **file name**: it removes `.sulla.md`,
-`.md` or `.txt` and turns `-` and `_` into spaces. So
-`project-priorities.sulla.md` shows as "project priorities". Name files the way
+heading. It builds the title from the **file name**: it removes `.sulla`,
+`.sulla.md`, `.md` or `.txt` and turns `-` and `_` into spaces. So
+`project-priorities.sulla` shows as "project priorities". Name files the way
 you want the title to read.
 
 ### Body
@@ -126,7 +127,7 @@ each linked file with its direction (`outgoing` or `incoming`).
   elsewhere, the server merges with Automerge. If both edits touched the same
   span, a conflict banner offers "Reload latest" or "Keep mine".
 - **Agent writes on the FUSE mount** are merged into any open live session.
-  Writing a `.sulla.md` file while Jonathon has it open is safe: his edits
+  Writing a `.sulla` file while Jonathon has it open is safe: his edits
   aren't lost, and the agent appears briefly in presence.
 - Live editing is limited to UTF-8 text up to 8 MiB. While a live session is
   open, binary or larger content can't replace the file (HTTP 415).
@@ -134,9 +135,9 @@ each linked file with its direction (`outgoing` or `incoming`).
 - If the caller lacks edit rights, the document opens read-only and shows a
   "Read only" pill.
 
-## Rules for agents writing `.sulla.md`
+## Rules for agents writing `.sulla`
 
-1. Use the full `.sulla.md` extension. Name the file for the title you want.
+1. Use the `.sulla` extension. Name the file for the title you want.
 2. Keep front matter flat `key: value` if you want it shown as properties.
 3. Write normal Markdown. Use `- [ ]` and `- [x]` for checklists.
 4. Don't add `[[wikilinks]]` or invented block syntax and expect them to do anything.
@@ -152,4 +153,4 @@ each linked file with its direction (`outgoing` or `incoming`).
 - `pkg/rancher-desktop/pages/files/editor/DocumentEditorShell.vue`: title, properties, slash menu, save
 - `pkg/rancher-desktop/pages/files/editor/liveDocument.ts` and `automergeYjsBridge.ts`: live sync
 - `services/sulla-files/src/liveText.ts`, `automergeText.ts`, `app.ts` (`/live`, `/content`, `/file-edges`)
-- `services/sulla-files/src/mimeTypes.ts`: `.md` → `text/markdown`
+- `services/sulla-files/src/mimeTypes.ts`: `.sulla` and `.md` → `text/markdown`
