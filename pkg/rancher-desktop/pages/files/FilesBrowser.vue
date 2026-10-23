@@ -182,7 +182,7 @@
             class="btn"
             type="button"
             :disabled="busy || loading || section !== 'files' || readOnlyArea"
-            @click="newFolder"
+            @click="newFolder()"
           >
             <span
               class="bi"
@@ -194,7 +194,7 @@
             class="btn"
             type="button"
             :disabled="busy || loading || section !== 'files' || readOnlyArea"
-            @click="newFile"
+            @click="newFile()"
           >New file</button>
           <button
             v-if="!readOnlyArea && dataSource.nativeSourceReady && dataSource.chooseNativeSource"
@@ -718,7 +718,13 @@
         <Teleport to="body">
           <div v-if="actionTarget" ref="actionMenu" class="action-menu" role="menu" :aria-label="`Actions for ${actionTarget.name}`" :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }" @keydown="onMenuKeydown" @contextmenu.prevent @click.stop @dblclick.stop>
             <b>{{ actionTarget.name }}</b>
-            <button v-if="section !== 'trash' && actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
+            <template v-if="section !== 'trash' && actionTarget.folder">
+              <button role="menuitem" type="button" @click="runTargetAction('open')">Open folder</button>
+              <template v-if="!readOnlyArea && section === 'files'">
+                <button v-if="dataSource.capabilities.upload || dataSource.capabilities.durableOperations" role="menuitem" type="button" :disabled="busy" @click="runTargetAction('new-folder')">New folder inside</button>
+                <button v-if="dataSource.createFile" role="menuitem" type="button" :disabled="busy" @click="runTargetAction('new-file')">New file inside</button>
+              </template>
+            </template>
             <template v-else-if="section !== 'trash'">
               <button role="menuitem" type="button" @click="runTargetAction('open-sulla')">Open in Sulla</button>
               <button role="menuitem" type="button" @click="runTargetAction('native-open')">Open with default app</button>
@@ -755,8 +761,8 @@
             <b>{{ pageTitle }}</b>
             <button role="menuitem" type="button" :disabled="!canPaste || busy" @click="pasteClipboard(); closeBackgroundActions()">Paste</button>
             <div class="menu-sep" role="separator" />
-            <button role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFolder(); closeBackgroundActions()">New folder</button>
-            <button v-if="!readOnlyArea && dataSource.createFile" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="newFile(); closeBackgroundActions()">New file</button>
+            <button v-if="!readOnlyArea" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="closeBackgroundActions(); newFolder()">New folder</button>
+            <button v-if="!readOnlyArea && dataSource.createFile" role="menuitem" type="button" :disabled="busy || section !== 'files'" @click="closeBackgroundActions(); newFile()">New file</button>
             <div class="menu-sep" role="separator" />
             <button role="menuitem" type="button" @click="setSort('name'); closeBackgroundActions()">Sort by name</button>
             <button role="menuitem" type="button" @click="refresh(true); closeBackgroundActions()">Refresh</button>
@@ -844,6 +850,14 @@
       <button class="btn" type="button" @click="folderDialog?.close()">Close</button>
       <button v-if="dataSource.updateFolderDescription && folderDetails.folderState" class="btn" type="button" :disabled="busy || !folderDescription.trim()" @click="saveFolderGuidance">Save description</button>
       <button class="btn pri" type="button" @click="openPath(folderDetails.path); folderDialog?.close()">Open folder</button>
+    </dialog>
+    <dialog v-if="namePrompt" ref="nameDialog" class="folder-details name-prompt" aria-labelledby="name-prompt-title" @close="settleNamePrompt(null)" @click="onNameBackdrop">
+      <form method="dialog" @submit.prevent="(namePrompt.allowEmpty || namePrompt.value.trim()) && settleNamePrompt(namePrompt.value)">
+        <h2 id="name-prompt-title">{{ namePrompt.title }}</h2>
+        <label class="folder-guidance-field">{{ namePrompt.label }}<input ref="nameInput" v-model="namePrompt.value" maxlength="255" spellcheck="false" autocomplete="off"></label>
+        <button class="btn" type="button" @click="settleNamePrompt(null)">Cancel</button>
+        <button class="btn pri" type="submit" :disabled="!namePrompt.allowEmpty && !namePrompt.value.trim()">{{ namePrompt.confirm }}</button>
+      </form>
     </dialog>
     <ShareSheet v-if="shareTarget" :data-source="dataSource" :target="shareTarget" @close="shareTarget = null" @updated="refresh(true)" />
   </div>
@@ -948,6 +962,9 @@ const actionMenu = ref<HTMLElement | null>(null); const menuPosition = ref({ x: 
 const recentApplications = ref<string[]>([]);
 const backgroundActionMenu = ref<HTMLElement | null>(null); const backgroundMenu = ref<{ x:number; y:number } | null>(null);
 const folderDetails = ref<DisplayEntry | null>(null); const folderDialog = ref<HTMLDialogElement | null>(null);
+// Electron has no window.prompt (it returns null at once), so names are asked for in this dialog.
+const namePrompt = ref<{ title: string; label: string; confirm: string; value: string; allowEmpty: boolean; resolve: (value:string | null) => void } | null>(null);
+const nameDialog = ref<HTMLDialogElement | null>(null); const nameInput = ref<HTMLInputElement | null>(null);
 const folderDescription=ref(''); const folderNamingHint=ref('');
 const operationError = ref(''); const actionTarget = ref<DisplayEntry | null>(null);
 const operationNotice = ref('');
@@ -1262,21 +1279,30 @@ async function onCollectionDrop(collectionId:string,event:DragEvent) {
 }
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
-async function newFolder() {
+async function askName(title:string, label:string, confirm:string, value = '', allowEmpty = false) {
+  namePrompt.value?.resolve(null);
+  const answer = new Promise<string | null>(resolve => { namePrompt.value = { title, label, confirm, value, allowEmpty, resolve } });
+  await nextTick(); nameDialog.value?.showModal();
+  const input = nameInput.value; if (input) { input.focus(); const dot = input.value.lastIndexOf('.'); input.setSelectionRange(0, dot > 0 ? dot : input.value.length) }
+  return answer;
+}
+function settleNamePrompt(value:string | null) { const prompt = namePrompt.value; if (!prompt) return; namePrompt.value = null; nameDialog.value?.close(); prompt.resolve(value === null ? null : value.trim() || (prompt.allowEmpty ? '' : null)) }
+function onNameBackdrop(event:MouseEvent) { const dialog = nameDialog.value; if (!dialog || event.target !== dialog) return; const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) settleNamePrompt(null) }
+async function newFolder(folder = currentPath.value) {
   if (readOnlyArea.value) return;
   if (busy.value || loading.value || section.value !== 'files' || (!props.dataSource.capabilities.upload && !operations.supported())) return;
-  const name = window.prompt('Name this folder')?.trim(); if (!name) return;
+  const name = await askName('New folder', `Inside ${ folder || 'My Files' }`, 'Create', 'untitled folder'); if (!name) return;
   if (name.includes('/') || name === '.' || name === '..') { operationError.value = 'Enter a folder name without path separators.'; return }
-  const path = joinPath(currentPath.value, name);
+  const path = joinPath(folder, name);
   if (operations.supported()) await submitReceiptItems([{ itemId: crypto.randomUUID(), action: 'create-folder', targetPath: path }]);
   else await runMutation(() => props.dataSource.createFolder(path));
 }
-async function newFile() {
+async function newFile(folder = currentPath.value) {
   if (readOnlyArea.value) return;
   if (busy.value || loading.value || section.value !== 'files' || !props.dataSource.createFile) return;
-  const name=window.prompt('Name this file','untitled.txt')?.trim(); if(!name) return;
+  const name = await askName('New file', `Inside ${ folder || 'My Files' }`, 'Create', 'untitled.txt'); if (!name) return;
   if(name.includes('/') || name==='.' || name==='..'){ operationError.value='Enter a file name without path separators.'; return }
-  await runMutation(()=>props.dataSource.createFile!(joinPath(currentPath.value,name)));
+  await runMutation(()=>props.dataSource.createFile!(joinPath(folder,name)));
 }
 async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
 async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
@@ -1779,7 +1805,7 @@ async function commitRename(entry:DisplayEntry) {
   if (success) cancelRename(); else renameCommitting = false;
 }
 function renameSelected() { const entry = selectedEntries.value[0]; if (entry && selectedEntries.value.length === 1) beginRename(entry) }
-async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = window.prompt('Move to folder', currentPath.value)?.trim(); if (destination === undefined) return; await perform('move', operationItems(entries, destination)) }
+async function moveSelected() { const entries = selectedEntries.value; if (busy.value || loading.value || !entries.length) return; const destination = await askName('Move to folder', 'Folder path (leave empty for My Files)', 'Move', currentPath.value, true); if (destination === null) return; await perform('move', operationItems(entries, destination)) }
 async function copyToClipboard(mode:'copy' | 'cut') {
   if (readOnlyArea.value && mode === 'cut') return;
   if (busy.value || !snapshot.value || !selectedEntries.value.length || section.value === 'trash') return;
@@ -1889,9 +1915,10 @@ async function authoritativeTrashEntries(pending:(DisplayEntry & { trashItem:Fil
 }
 function purgeSelected() { return purgeEntries(selectedEntries.value) }
 function emptyTrash() { return purgeEntries(trashItems.value.map(toTrashDisplay), true) }
-async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
+async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge' | 'new-folder' | 'new-file') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
+  if (action === 'new-folder' || action === 'new-file') { if (target.folder) await (action === 'new-folder' ? newFolder(target.path) : newFile(target.path)); return }
   if (action === 'open-sulla') { if (!target.folder && supportsDocumentEditor(target.path)) emit('open-editor', target); else selectEntry(target); return }
   if (action === 'native-open') { await runMutation(() => (props.dataSource.openFileWithDefaultApp ?? props.dataSource.openFile).call(props.dataSource,target.id,target.currentVersionId), false); return }
   if (action === 'reveal') {
