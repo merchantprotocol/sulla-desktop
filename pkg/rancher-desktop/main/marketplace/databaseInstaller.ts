@@ -363,11 +363,11 @@ export async function installPackageManifest(
       }
       installed.push({ kind: content.kind, slug: content.slug });
       const disableStatements: Partial<Record<InstallableKind, string>> = {
-        agent: `UPDATE agent_definitions SET enabled=false WHERE slug=$1`,
-        skill: `UPDATE skill_definitions SET enabled=false WHERE slug=$1`,
-        routine: `UPDATE workflows SET enabled=false WHERE id=$1`,
-        function: `UPDATE function_definitions SET enabled=false WHERE slug=$1`,
-        recipe: `UPDATE recipe_definitions SET enabled=false WHERE slug=$1`,
+        agent: `UPDATE agent_definitions SET enabled=false WHERE slug=$1 AND source_kind='marketplace'`,
+        skill: `UPDATE skill_definitions SET enabled=false WHERE slug=$1 AND source_kind='marketplace'`,
+        routine: `UPDATE workflows SET enabled=false WHERE id=$1 AND source_kind='marketplace'`,
+        function: `UPDATE function_definitions SET enabled=false WHERE slug=$1 AND source_kind='marketplace'`,
+        recipe: `UPDATE recipe_definitions SET enabled=false WHERE slug=$1 AND source_kind='marketplace'`,
       };
       const disable = disableStatements[content.kind];
       if (disable) await client.query(disable, [content.slug]);

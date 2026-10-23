@@ -71,6 +71,11 @@ export class RecipeDefinitionModel {
     return postgresClient.queryOne('SELECT * FROM recipe_definitions WHERE slug = $1 AND enabled = TRUE', [slug]);
   }
 
+  /** Includes disabled rows: Use Cases keep inactive recipes disabled until made active. */
+  static findBySlugAnyState(slug: string): Promise<RecipeDefinition | null> {
+    return postgresClient.queryOne('SELECT * FROM recipe_definitions WHERE slug = $1', [slug]);
+  }
+
   static list(): Promise<RecipeDefinition[]> {
     return postgresClient.query('SELECT * FROM recipe_definitions WHERE enabled = TRUE ORDER BY slug', []);
   }
