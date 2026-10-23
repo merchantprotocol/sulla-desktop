@@ -1,781 +1,756 @@
 <template>
   <div class="account-page">
-    <div class="account-scroll">
-      <div
-        v-if="loading"
-        class="account-loading"
-      >
-        Loading...
+    <nav
+      class="nav"
+      aria-label="Account sections"
+    >
+      <div class="brand">
+        <div class="mark">
+          S
+        </div><div><b>Sulla</b><span>My Account</span></div>
+      </div>
+      <a
+        v-for="entry in sections"
+        :key="entry.id"
+        href="#"
+        :class="{ on: section === entry.id }"
+        :aria-current="section === entry.id ? 'page' : undefined"
+        :title="entry.label"
+        @click.prevent="selectSection(entry.id)"
+      ><span
+        class="sv"
+        v-html="entry.icon"
+      /><span>{{ entry.label }}</span><span
+        v-if="entry.count"
+        class="cnt"
+      >{{ entry.count }}</span></a>
+      <div class="foot">
+        <div class="avatar">
+          {{ initials }}
+        </div><div><b>{{ userName || 'Sulla User' }}</b><small>{{ footLine }}</small></div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="top">
+        <div class="crumbs">
+          <span class="c">My Account</span><span>›</span><b>{{ activeSection.label }}</b>
+        </div>
       </div>
 
-      <template v-else>
-        <!-- Sulla Cloud sign-in card -->
-        <div class="account-card account-cloud-card">
-          <div class="account-card-header">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="account-card-icon"
-            >
-              <path d="M17.5 19H9a7 7 0 110-14 7 7 0 016.71 5H17.5a4.5 4.5 0 010 9z" />
-            </svg>
-            <h2 class="account-card-title">
-              Sulla Cloud
-            </h2>
-            <span
-              class="account-status-dot"
-              :class="cloudStatus.signedIn ? 'account-status-on' : 'account-status-off'"
-            />
-          </div>
-
-          <!-- Signed-in view -->
-          <template v-if="cloudStatus.signedIn">
-            <p class="account-hint">
-              Signed in as <strong>{{ cloudStatus.name || cloudStatus.phone || cloudStatus.userId }}</strong>.
-              User ID =
-              <code class="account-mono">{{ cloudStatus.userId }}</code>
-              <span
-                v-if="cloudStatus.contractorCount > 1"
-                class="account-relay-state"
-              >
-                · {{ cloudStatus.contractorCount }} businesses linked
-              </span>
-            </p>
-            <p class="account-hint">
-              Phone relay <span class="account-relay-state">({{ relayStatus.connected ? 'connected' : 'waiting for mobile' }})</span>
-            </p>
-            <CloudConnectionCard />
-            <button
-              type="button"
-              class="account-action-btn"
-              @click="signOut"
-            >
-              Sign out
-            </button>
-            <p
-              v-if="cloudError"
-              class="account-error"
-            >
-              {{ cloudError }}
-            </p>
-          </template>
-
-          <!-- Signed-out view -->
-          <template v-else>
-            <p class="account-hint">
-              Sign in to Sulla Cloud to reach this computer from the web and your phone. Sulla stays connected while you're signed in; nothing syncs unless you turn it on.
-            </p>
-            <div class="account-tabs">
-              <button
-                type="button"
-                :class="['account-tab', { 'account-tab-active': cloudTab === 'phone' }]"
-                @click="cloudTab = 'phone'"
-              >
-                Phone
-              </button>
-              <button
-                type="button"
-                :class="['account-tab', { 'account-tab-active': cloudTab === 'email' }]"
-                @click="cloudTab = 'email'"
-              >
-                Email
-              </button>
-              <button
-                type="button"
-                :class="['account-tab', { 'account-tab-active': cloudTab === 'apple' }]"
-                @click="cloudTab = 'apple'"
-              >
-                Apple
-              </button>
-            </div>
-
-            <!-- Phone OTP flow -->
-            <template v-if="cloudTab === 'phone'">
-              <div class="account-field">
-                <label class="account-label">Phone (E.164)</label>
-                <input
-                  v-model="phoneInput"
-                  type="tel"
-                  placeholder="+15551234567"
-                  class="account-input"
-                  :disabled="otpSent"
-                >
-              </div>
-              <div
-                v-if="otpSent"
-                class="account-field"
-              >
-                <label class="account-label">Verification Code</label>
-                <input
-                  v-model="otpCode"
-                  type="text"
-                  inputmode="numeric"
-                  maxlength="8"
-                  placeholder="123456"
-                  class="account-input"
-                >
-              </div>
-              <p
-                v-if="cloudError"
-                class="account-error"
-              >
-                {{ cloudError }}
-              </p>
-              <div class="account-btn-row">
-                <button
-                  v-if="!otpSent"
-                  type="button"
-                  class="account-save-btn"
-                  :disabled="busy || !phoneInput"
-                  @click="sendOtp"
-                >
-                  {{ busy ? 'Sending...' : 'Send Code' }}
-                </button>
-                <template v-else>
-                  <button
-                    type="button"
-                    class="account-save-btn"
-                    :disabled="busy || !otpCode"
-                    @click="verifyOtp"
-                  >
-                    {{ busy ? 'Verifying...' : 'Verify' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="account-action-btn"
-                    :disabled="busy"
-                    @click="resetPhoneFlow"
-                  >
-                    Use a different number
-                  </button>
-                </template>
-              </div>
-            </template>
-
-            <!-- Email code flow (default): signs in or creates the account -->
-            <template v-else-if="cloudTab === 'email' && emailMode === 'code'">
-              <div class="account-field">
-                <label class="account-label">Email</label>
-                <input
-                  v-model="emailInput"
-                  type="email"
-                  placeholder="you@example.com"
-                  class="account-input"
-                  autocomplete="email"
-                  :disabled="emailCodeSent"
-                >
-              </div>
-              <div
-                v-if="emailCodeSent"
-                class="account-field"
-              >
-                <label class="account-label">Code from the email</label>
-                <input
-                  v-model="emailCode"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  maxlength="7"
-                  placeholder="123456"
-                  class="account-input"
-                >
-              </div>
-              <p
-                v-if="cloudError"
-                class="account-error"
-              >
-                {{ cloudError }}
-              </p>
-              <div class="account-btn-row">
-                <button
-                  v-if="!emailCodeSent"
-                  type="button"
-                  class="account-save-btn"
-                  :disabled="busy || !emailInput"
-                  @click="sendEmailCode"
-                >
-                  {{ busy ? 'Sending...' : 'Email me a code' }}
-                </button>
-                <template v-else>
-                  <button
-                    type="button"
-                    class="account-save-btn"
-                    :disabled="busy || !emailCode"
-                    @click="verifyEmailCode"
-                  >
-                    {{ busy ? 'Verifying...' : 'Verify' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="account-action-btn"
-                    :disabled="busy"
-                    @click="emailCodeSent = false; emailCode = ''"
-                  >
-                    Use a different email
-                  </button>
-                </template>
-                <button
-                  type="button"
-                  class="account-action-btn"
-                  :disabled="busy"
-                  @click="emailMode = 'login'"
-                >
-                  Use a password instead
-                </button>
-              </div>
-            </template>
-
-            <!-- Email + password flow -->
-            <template v-else-if="cloudTab === 'email'">
-              <div class="account-field">
-                <label class="account-label">Email</label>
-                <input
-                  v-model="emailInput"
-                  type="email"
-                  placeholder="you@example.com"
-                  class="account-input"
-                  autocomplete="email"
-                >
-              </div>
-              <div class="account-field">
-                <label class="account-label">Password</label>
-                <input
-                  v-model="emailPassword"
-                  type="password"
-                  placeholder="••••••••"
-                  class="account-input"
-                  autocomplete="current-password"
-                >
-              </div>
-              <div
-                v-if="emailMode === 'register'"
-                class="account-field"
-              >
-                <label class="account-label">Name (optional)</label>
-                <input
-                  v-model="emailName"
-                  type="text"
-                  placeholder="Your name"
-                  class="account-input"
-                >
-              </div>
-              <p
-                v-if="cloudError"
-                class="account-error"
-              >
-                {{ cloudError }}
-              </p>
-              <div class="account-btn-row">
-                <button
-                  type="button"
-                  class="account-save-btn"
-                  :disabled="busy || !emailInput || !emailPassword"
-                  @click="emailSubmit"
-                >
-                  {{ busy ? 'Working...' : (emailMode === 'login' ? 'Sign In' : 'Create Account') }}
-                </button>
-                <button
-                  type="button"
-                  class="account-action-btn"
-                  :disabled="busy"
-                  @click="emailMode = emailMode === 'login' ? 'register' : 'login'"
-                >
-                  {{ emailMode === 'login' ? 'Register' : 'Back to sign in' }}
-                </button>
-                <button
-                  type="button"
-                  class="account-action-btn"
-                  :disabled="busy"
-                  @click="emailMode = 'code'"
-                >
-                  Email me a code instead
-                </button>
-              </div>
-            </template>
-
-            <!-- Apple flow -->
-            <template v-else-if="cloudTab === 'apple'">
-              <p class="account-hint">
-                Sign in with Apple is managed as a vault integration. Clicking
-                below opens the Apple Sign In integration in your vault, where
-                you start the OAuth flow.
-              </p>
-              <p
-                v-if="cloudError"
-                class="account-error"
-              >
-                {{ cloudError }}
-              </p>
-              <button
-                type="button"
-                class="account-apple-btn"
-                :disabled="busy"
-                @click="openAppleInVault"
-              >
-                <svg
-                  viewBox="0 0 170 170"
-                  fill="currentColor"
-                  aria-hidden="true"
-                  class="account-apple-icon"
-                >
-                  <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929.21-9.842-1.96-14.746-6.52-3.131-2.73-7.047-7.41-11.729-14.04-5.039-7.08-9.18-15.29-12.423-24.64-3.492-10.1-5.224-19.88-5.224-29.35 0-10.85 2.345-20.21 7.043-28.05 3.693-6.3 8.609-11.27 14.76-14.92 6.149-3.66 12.794-5.52 19.94-5.64 3.915 0 9.051 1.21 15.434 3.59 6.36 2.39 10.44 3.6 12.229 3.6 1.338 0 5.871-1.42 13.566-4.24 7.278-2.62 13.421-3.71 18.445-3.28 13.607 1.1 23.828 6.46 30.635 16.08-12.171 7.37-18.192 17.7-18.073 30.96.11 10.33 3.86 18.93 11.24 25.75 3.34 3.17 7.07 5.62 11.22 7.36-.9 2.61-1.85 5.11-2.86 7.51zM119.11 7.24c0 8.1-2.96 15.66-8.86 22.67-7.12 8.33-15.73 13.14-25.07 12.38-.12-.97-.19-1.99-.19-3.06 0-7.77 3.39-16.1 9.41-22.91 3.01-3.45 6.84-6.32 11.49-8.61 4.64-2.25 9.03-3.5 13.16-3.71.12 1.08.17 2.16.17 3.23z" />
-                </svg>
-                <span>Sign in with Apple</span>
-              </button>
-            </template>
-          </template>
+      <div class="content">
+        <div
+          v-if="loading"
+          class="account-loading"
+        >
+          Loading...
         </div>
 
-        <!-- Local Accounts profile and remote authorities. This card remains
-             independent from the existing personal and Sulla Cloud paths. -->
-        <div class="account-card">
-          <div class="account-card-header">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="account-card-icon"
-            >
-              <circle
-                cx="12"
-                cy="12"
-                r="3"
-              />
-              <path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21h-4v-.08A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3v-4h.08A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3h4v.08A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0019.4 9c.14.4.35.75.6 1 .28.27.67.4 1.1.4h.08v4h-.08c-.43 0-.82.13-1.1.4-.25.25-.46.6-.6 1z" />
-            </svg>
-            <h2 class="account-card-title">
-              Accounts &amp; Servers
-            </h2>
-            <button
-              v-if="!accountsLoading"
-              type="button"
-              class="account-inline-btn"
-              :disabled="Boolean(accountsPending)"
-              @click="refreshAccounts"
-            >
-              Refresh
-            </button>
+        <template v-else>
+          <div class="toolbar">
+            <h1>{{ activeSection.label }}</h1>
+            <span class="meta">{{ activeSection.meta }}</span>
+            <div class="right">
+              <span
+                v-if="section === 'cloud'"
+                class="account-status"
+              ><span
+                class="account-status-dot"
+                :class="cloudStatus.signedIn ? 'account-status-on' : 'account-status-off'"
+              />{{ cloudStatus.signedIn ? 'Signed in' : 'Signed out' }}</span>
+              <button
+                v-if="section === 'accounts' && !accountsLoading"
+                type="button"
+                class="btn"
+                :disabled="Boolean(accountsPending)"
+                @click="refreshAccounts"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
 
-          <div
-            v-if="accountsLoading"
-            class="account-section-loading"
+          <!-- Sections stay mounted (v-show) so in-progress forms and child
+               cards keep their state while you move between them. -->
+          <section
+            v-show="section === 'profile'"
+            class="account-section"
           >
-            Loading local account…
-          </div>
-          <template v-else-if="accountsError">
-            <p class="account-error">
-              {{ accountsError }}
-            </p>
-            <button
-              type="button"
-              class="account-action-btn"
-              :disabled="Boolean(accountsPending)"
-              @click="refreshAccounts"
-            >
-              Retry Accounts service
-            </button>
-          </template>
-          <template v-else>
-            <div class="account-subsection">
-              <h3 class="account-subtitle">
-                Local profile
-              </h3>
-              <p class="account-hint">
-                This name belongs to this computer. Personal use stays available without connecting a server.
-              </p>
-              <div class="account-field">
-                <label class="account-label">Display name</label>
-                <input
-                  v-model="accountsDisplayName"
-                  type="text"
-                  maxlength="120"
-                  placeholder="Your name"
-                  class="account-input"
-                  :disabled="Boolean(accountsPending)"
-                >
+            <div class="account-hero">
+              <div class="account-avatar">
+                {{ initials }}
               </div>
-              <div class="account-btn-row">
-                <button
-                  type="button"
-                  class="account-save-btn"
-                  :disabled="Boolean(accountsPending) || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
-                  @click="saveAccountsProfile"
-                >
-                  {{ accountsPending === 'profile' ? 'Saving…' : 'Save local profile' }}
-                </button>
-                <span
-                  v-if="accountsNotice"
-                  class="account-success account-inline-status"
-                >
-                  {{ accountsNotice }}
-                </span>
+              <div class="account-hero-info">
+                <h2 class="account-name">
+                  {{ userName || 'Sulla User' }}
+                </h2>
+                <p class="account-email">
+                  {{ email }}
+                </p>
               </div>
             </div>
 
-            <div class="account-subsection">
-              <h3 class="account-subtitle">
-                Connect a server
-              </h3>
-              <p class="account-hint">
-                Enter a Sulla server address. Sulla verifies its published authority details before saving anything.
-              </p>
+            <div class="account-card">
               <div class="account-field">
-                <label class="account-label">Server address</label>
+                <label class="account-label">Name</label>
                 <input
-                  v-model="authorityUrl"
-                  type="url"
-                  placeholder="https://sulla.example.com"
+                  v-model="userName"
+                  type="text"
+                  placeholder="Your name"
                   class="account-input"
-                  :disabled="Boolean(accountsPending) || Boolean(discoveredAuthority)"
-                  @keydown.enter.prevent="discoverAuthority"
                 >
               </div>
-              <p
-                v-if="authorityError"
-                class="account-error"
+
+              <div class="account-field">
+                <label class="account-label">Email</label>
+                <input
+                  v-model="email"
+                  type="email"
+                  placeholder="your@email.com"
+                  class="account-input"
+                >
+              </div>
+
+              <div class="account-field">
+                <label class="account-label">
+                  <input
+                    v-model="subscribeToUpdates"
+                    type="checkbox"
+                    class="account-checkbox"
+                  >
+                  Subscribe to updates and newsletters
+                </label>
+              </div>
+
+              <button
+                type="button"
+                class="account-save-btn"
+                :disabled="saving"
+                @click="saveProfile"
               >
-                {{ authorityError }}
-              </p>
-              <template v-if="discoveredAuthority">
-                <div class="account-authority-preview">
-                  <strong>{{ authorityHost(discoveredAuthority.issuer) }}</strong>
-                  <span>{{ discoveredAuthority.resourceAudiences.length }} available service{{ discoveredAuthority.resourceAudiences.length === 1 ? '' : 's' }}</span>
-                </div>
-                <div class="account-btn-row">
+                {{ saving ? 'Saving...' : (saved ? 'Saved!' : 'Save Changes') }}
+              </button>
+            </div>
+          </section>
+
+          <section
+            v-show="section === 'cloud'"
+            class="account-section"
+          >
+            <div class="account-card">
+              <!-- Signed-in view -->
+              <template v-if="cloudStatus.signedIn">
+                <p class="account-hint">
+                  Signed in as <strong>{{ cloudStatus.name || cloudStatus.phone || cloudStatus.userId }}</strong>.
+                  User ID =
+                  <code class="account-mono">{{ cloudStatus.userId }}</code>
+                  <span
+                    v-if="cloudStatus.contractorCount > 1"
+                    class="account-relay-state"
+                  >
+                    · {{ cloudStatus.contractorCount }} businesses linked
+                  </span>
+                </p>
+                <p class="account-hint">
+                  Phone relay <span class="account-relay-state">({{ relayStatus.connected ? 'connected' : 'waiting for mobile' }})</span>
+                </p>
+                <CloudConnectionCard />
+                <button
+                  type="button"
+                  class="account-action-btn"
+                  @click="signOut"
+                >
+                  Sign out
+                </button>
+                <p
+                  v-if="cloudError"
+                  class="account-error"
+                >
+                  {{ cloudError }}
+                </p>
+              </template>
+
+              <!-- Signed-out view -->
+              <template v-else>
+                <p class="account-hint">
+                  Sign in to Sulla Cloud to reach this computer from the web and your phone. Sulla stays connected while you're signed in; nothing syncs unless you turn it on.
+                </p>
+                <div class="account-tabs">
                   <button
                     type="button"
-                    class="account-save-btn"
-                    :disabled="Boolean(accountsPending)"
-                    @click="enrollAuthority"
+                    :class="['account-tab', { 'account-tab-active': cloudTab === 'phone' }]"
+                    @click="cloudTab = 'phone'"
                   >
-                    {{ accountsPending === 'enroll' ? 'Connecting…' : 'Connect server' }}
+                    Phone
                   </button>
                   <button
+                    type="button"
+                    :class="['account-tab', { 'account-tab-active': cloudTab === 'email' }]"
+                    @click="cloudTab = 'email'"
+                  >
+                    Email
+                  </button>
+                  <button
+                    type="button"
+                    :class="['account-tab', { 'account-tab-active': cloudTab === 'apple' }]"
+                    @click="cloudTab = 'apple'"
+                  >
+                    Apple
+                  </button>
+                </div>
+
+                <!-- Phone OTP flow -->
+                <template v-if="cloudTab === 'phone'">
+                  <div class="account-field">
+                    <label class="account-label">Phone (E.164)</label>
+                    <input
+                      v-model="phoneInput"
+                      type="tel"
+                      placeholder="+15551234567"
+                      class="account-input"
+                      :disabled="otpSent"
+                    >
+                  </div>
+                  <div
+                    v-if="otpSent"
+                    class="account-field"
+                  >
+                    <label class="account-label">Verification Code</label>
+                    <input
+                      v-model="otpCode"
+                      type="text"
+                      inputmode="numeric"
+                      maxlength="8"
+                      placeholder="123456"
+                      class="account-input"
+                    >
+                  </div>
+                  <p
+                    v-if="cloudError"
+                    class="account-error"
+                  >
+                    {{ cloudError }}
+                  </p>
+                  <div class="account-btn-row">
+                    <button
+                      v-if="!otpSent"
+                      type="button"
+                      class="account-save-btn"
+                      :disabled="busy || !phoneInput"
+                      @click="sendOtp"
+                    >
+                      {{ busy ? 'Sending...' : 'Send Code' }}
+                    </button>
+                    <template v-else>
+                      <button
+                        type="button"
+                        class="account-save-btn"
+                        :disabled="busy || !otpCode"
+                        @click="verifyOtp"
+                      >
+                        {{ busy ? 'Verifying...' : 'Verify' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="account-action-btn"
+                        :disabled="busy"
+                        @click="resetPhoneFlow"
+                      >
+                        Use a different number
+                      </button>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- Email code flow (default): signs in or creates the account -->
+                <template v-else-if="cloudTab === 'email' && emailMode === 'code'">
+                  <div class="account-field">
+                    <label class="account-label">Email</label>
+                    <input
+                      v-model="emailInput"
+                      type="email"
+                      placeholder="you@example.com"
+                      class="account-input"
+                      autocomplete="email"
+                      :disabled="emailCodeSent"
+                    >
+                  </div>
+                  <div
+                    v-if="emailCodeSent"
+                    class="account-field"
+                  >
+                    <label class="account-label">Code from the email</label>
+                    <input
+                      v-model="emailCode"
+                      type="text"
+                      inputmode="numeric"
+                      autocomplete="one-time-code"
+                      maxlength="7"
+                      placeholder="123456"
+                      class="account-input"
+                    >
+                  </div>
+                  <p
+                    v-if="cloudError"
+                    class="account-error"
+                  >
+                    {{ cloudError }}
+                  </p>
+                  <div class="account-btn-row">
+                    <button
+                      v-if="!emailCodeSent"
+                      type="button"
+                      class="account-save-btn"
+                      :disabled="busy || !emailInput"
+                      @click="sendEmailCode"
+                    >
+                      {{ busy ? 'Sending...' : 'Email me a code' }}
+                    </button>
+                    <template v-else>
+                      <button
+                        type="button"
+                        class="account-save-btn"
+                        :disabled="busy || !emailCode"
+                        @click="verifyEmailCode"
+                      >
+                        {{ busy ? 'Verifying...' : 'Verify' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="account-action-btn"
+                        :disabled="busy"
+                        @click="emailCodeSent = false; emailCode = ''"
+                      >
+                        Use a different email
+                      </button>
+                    </template>
+                    <button
+                      type="button"
+                      class="account-action-btn"
+                      :disabled="busy"
+                      @click="emailMode = 'login'"
+                    >
+                      Use a password instead
+                    </button>
+                  </div>
+                </template>
+
+                <!-- Email + password flow -->
+                <template v-else-if="cloudTab === 'email'">
+                  <div class="account-field">
+                    <label class="account-label">Email</label>
+                    <input
+                      v-model="emailInput"
+                      type="email"
+                      placeholder="you@example.com"
+                      class="account-input"
+                      autocomplete="email"
+                    >
+                  </div>
+                  <div class="account-field">
+                    <label class="account-label">Password</label>
+                    <input
+                      v-model="emailPassword"
+                      type="password"
+                      placeholder="••••••••"
+                      class="account-input"
+                      autocomplete="current-password"
+                    >
+                  </div>
+                  <div
+                    v-if="emailMode === 'register'"
+                    class="account-field"
+                  >
+                    <label class="account-label">Name (optional)</label>
+                    <input
+                      v-model="emailName"
+                      type="text"
+                      placeholder="Your name"
+                      class="account-input"
+                    >
+                  </div>
+                  <p
+                    v-if="cloudError"
+                    class="account-error"
+                  >
+                    {{ cloudError }}
+                  </p>
+                  <div class="account-btn-row">
+                    <button
+                      type="button"
+                      class="account-save-btn"
+                      :disabled="busy || !emailInput || !emailPassword"
+                      @click="emailSubmit"
+                    >
+                      {{ busy ? 'Working...' : (emailMode === 'login' ? 'Sign In' : 'Create Account') }}
+                    </button>
+                    <button
+                      type="button"
+                      class="account-action-btn"
+                      :disabled="busy"
+                      @click="emailMode = emailMode === 'login' ? 'register' : 'login'"
+                    >
+                      {{ emailMode === 'login' ? 'Register' : 'Back to sign in' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="account-action-btn"
+                      :disabled="busy"
+                      @click="emailMode = 'code'"
+                    >
+                      Email me a code instead
+                    </button>
+                  </div>
+                </template>
+
+                <!-- Apple flow -->
+                <template v-else-if="cloudTab === 'apple'">
+                  <p class="account-hint">
+                    Sign in with Apple is managed as a vault integration. Clicking
+                    below opens the Apple Sign In integration in your vault, where
+                    you start the OAuth flow.
+                  </p>
+                  <p
+                    v-if="cloudError"
+                    class="account-error"
+                  >
+                    {{ cloudError }}
+                  </p>
+                  <button
+                    type="button"
+                    class="account-apple-btn"
+                    :disabled="busy"
+                    @click="openAppleInVault"
+                  >
+                    <svg
+                      viewBox="0 0 170 170"
+                      fill="currentColor"
+                      aria-hidden="true"
+                      class="account-apple-icon"
+                    >
+                      <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.197-2.12-9.973-3.17-14.34-3.17-4.58 0-9.492 1.05-14.746 3.17-5.262 2.13-9.501 3.24-12.742 3.35-4.929.21-9.842-1.96-14.746-6.52-3.131-2.73-7.047-7.41-11.729-14.04-5.039-7.08-9.18-15.29-12.423-24.64-3.492-10.1-5.224-19.88-5.224-29.35 0-10.85 2.345-20.21 7.043-28.05 3.693-6.3 8.609-11.27 14.76-14.92 6.149-3.66 12.794-5.52 19.94-5.64 3.915 0 9.051 1.21 15.434 3.59 6.36 2.39 10.44 3.6 12.229 3.6 1.338 0 5.871-1.42 13.566-4.24 7.278-2.62 13.421-3.71 18.445-3.28 13.607 1.1 23.828 6.46 30.635 16.08-12.171 7.37-18.192 17.7-18.073 30.96.11 10.33 3.86 18.93 11.24 25.75 3.34 3.17 7.07 5.62 11.22 7.36-.9 2.61-1.85 5.11-2.86 7.51zM119.11 7.24c0 8.1-2.96 15.66-8.86 22.67-7.12 8.33-15.73 13.14-25.07 12.38-.12-.97-.19-1.99-.19-3.06 0-7.77 3.39-16.1 9.41-22.91 3.01-3.45 6.84-6.32 11.49-8.61 4.64-2.25 9.03-3.5 13.16-3.71.12 1.08.17 2.16.17 3.23z" />
+                    </svg>
+                    <span>Sign in with Apple</span>
+                  </button>
+                </template>
+              </template>
+            </div>
+          </section>
+
+          <!-- Local Accounts profile and remote authorities. This section remains
+               independent from the existing personal and Sulla Cloud paths. -->
+          <section
+            v-show="section === 'accounts'"
+            class="account-section"
+          >
+            <div class="account-card">
+              <div
+                v-if="accountsLoading"
+                class="account-section-loading"
+              >
+                Loading local account…
+              </div>
+              <template v-else-if="accountsError">
+                <p class="account-error">
+                  {{ accountsError }}
+                </p>
+                <button
+                  type="button"
+                  class="account-action-btn"
+                  :disabled="Boolean(accountsPending)"
+                  @click="refreshAccounts"
+                >
+                  Retry Accounts service
+                </button>
+              </template>
+              <template v-else>
+                <div class="account-subsection">
+                  <h3 class="account-subtitle">
+                    Local profile
+                  </h3>
+                  <p class="account-hint">
+                    This name belongs to this computer. Personal use stays available without connecting a server.
+                  </p>
+                  <div class="account-field">
+                    <label class="account-label">Display name</label>
+                    <input
+                      v-model="accountsDisplayName"
+                      type="text"
+                      maxlength="120"
+                      placeholder="Your name"
+                      class="account-input"
+                      :disabled="Boolean(accountsPending)"
+                    >
+                  </div>
+                  <div class="account-btn-row">
+                    <button
+                      type="button"
+                      class="account-save-btn"
+                      :disabled="Boolean(accountsPending) || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
+                      @click="saveAccountsProfile"
+                    >
+                      {{ accountsPending === 'profile' ? 'Saving…' : 'Save local profile' }}
+                    </button>
+                    <span
+                      v-if="accountsNotice"
+                      class="account-success account-inline-status"
+                    >
+                      {{ accountsNotice }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="account-subsection">
+                  <h3 class="account-subtitle">
+                    Connect a server
+                  </h3>
+                  <p class="account-hint">
+                    Enter a Sulla server address. Sulla verifies its published authority details before saving anything.
+                  </p>
+                  <div class="account-field">
+                    <label class="account-label">Server address</label>
+                    <input
+                      v-model="authorityUrl"
+                      type="url"
+                      placeholder="https://sulla.example.com"
+                      class="account-input"
+                      :disabled="Boolean(accountsPending) || Boolean(discoveredAuthority)"
+                      @keydown.enter.prevent="discoverAuthority"
+                    >
+                  </div>
+                  <p
+                    v-if="authorityError"
+                    class="account-error"
+                  >
+                    {{ authorityError }}
+                  </p>
+                  <template v-if="discoveredAuthority">
+                    <div class="account-authority-preview">
+                      <strong>{{ authorityHost(discoveredAuthority.issuer) }}</strong>
+                      <span>{{ discoveredAuthority.resourceAudiences.length }} available service{{ discoveredAuthority.resourceAudiences.length === 1 ? '' : 's' }}</span>
+                    </div>
+                    <div class="account-btn-row">
+                      <button
+                        type="button"
+                        class="account-save-btn"
+                        :disabled="Boolean(accountsPending)"
+                        @click="enrollAuthority"
+                      >
+                        {{ accountsPending === 'enroll' ? 'Connecting…' : 'Connect server' }}
+                      </button>
+                      <button
+                        type="button"
+                        class="account-action-btn"
+                        :disabled="Boolean(accountsPending)"
+                        @click="cancelAuthority"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </template>
+                  <button
+                    v-else
                     type="button"
                     class="account-action-btn"
-                    :disabled="Boolean(accountsPending)"
-                    @click="cancelAuthority"
+                    :disabled="Boolean(accountsPending) || !authorityUrl.trim()"
+                    @click="discoverAuthority"
                   >
-                    Cancel
+                    {{ accountsPending === 'discover' ? 'Checking…' : 'Check server' }}
                   </button>
+                </div>
+
+                <div class="account-subsection">
+                  <h3 class="account-subtitle">
+                    Server connections
+                  </h3>
+                  <p
+                    v-if="!accountsConnections.length"
+                    class="account-hint"
+                  >
+                    No remote servers connected. Your local profile is still active.
+                  </p>
+                  <div
+                    v-for="connection in accountsConnections"
+                    :key="connection.id"
+                    class="account-connection"
+                  >
+                    <div class="account-connection-heading">
+                      <div>
+                        <strong>{{ authorityHost(connection.issuer) }}</strong>
+                        <p class="account-hint account-connection-state">
+                          {{ connection.subject ? 'Authorized' : 'Authorization needed' }}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        class="account-action-btn account-danger-btn"
+                        :disabled="Boolean(accountsPending)"
+                        @click="disconnectAccount(connection.id)"
+                      >
+                        {{ accountsPending === `disconnect:${connection.id}` ? 'Disconnecting…' : 'Disconnect' }}
+                      </button>
+                    </div>
+                    <div
+                      v-if="connection.resourceAudiences.length"
+                      class="account-field"
+                    >
+                      <label class="account-label">Service access</label>
+                      <select
+                        v-model="selectedAudience[connection.id]"
+                        class="account-input"
+                        :disabled="Boolean(accountsPending)"
+                      >
+                        <option
+                          v-for="audience in connection.resourceAudiences"
+                          :key="audience"
+                          :value="audience"
+                        >
+                          {{ audience }}
+                        </option>
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      class="account-save-btn"
+                      :disabled="Boolean(accountsPending) || !selectedAudience[connection.id]"
+                      @click="authorizeAccount(connection.id)"
+                    >
+                      {{ accountsPending === `authorize:${connection.id}` ? 'Opening sign-in…' : (connection.subject ? 'Authorize again' : 'Authorize') }}
+                    </button>
+                  </div>
+                  <p
+                    v-if="authorizationNotice"
+                    class="account-hint account-auth-notice"
+                  >
+                    {{ authorizationNotice }} Return here after signing in, then refresh if the status has not updated.
+                  </p>
+                </div>
+
+                <div class="account-subsection account-subsection-last">
+                  <h3 class="account-subtitle">
+                    Memberships
+                  </h3>
+                  <p class="account-hint">
+                    Remote memberships below are cached display hints only. Services always verify current authorization separately.
+                  </p>
+                  <p
+                    v-if="!accountsMemberships.local.length && !accountsMemberships.remoteDisplayHints.length"
+                    class="account-hint"
+                  >
+                    No organization memberships to display.
+                  </p>
+                  <div
+                    v-for="membership in accountsMemberships.local"
+                    :key="`local:${membership.authorityId}:${membership.organizationId}`"
+                    class="account-membership"
+                  >
+                    <strong>{{ membership.organizationId }}</strong>
+                    <span>Local · {{ membership.roles.join(', ') || 'member' }}</span>
+                  </div>
+                  <div
+                    v-for="membership in accountsMemberships.remoteDisplayHints"
+                    :key="`remote:${membership.authorityId}:${membership.organizationId}`"
+                    class="account-membership"
+                  >
+                    <strong>{{ membership.organizationId }}</strong>
+                    <span>{{ authorityHost(membership.issuer) }} · cached hint · {{ membership.roles.join(', ') || 'member' }}</span>
+                  </div>
                 </div>
               </template>
-              <button
-                v-else
-                type="button"
-                class="account-action-btn"
-                :disabled="Boolean(accountsPending) || !authorityUrl.trim()"
-                @click="discoverAuthority"
-              >
-                {{ accountsPending === 'discover' ? 'Checking…' : 'Check server' }}
-              </button>
             </div>
+          </section>
 
-            <div class="account-subsection">
-              <h3 class="account-subtitle">
-                Server connections
-              </h3>
-              <p
-                v-if="!accountsConnections.length"
-                class="account-hint"
-              >
-                No remote servers connected. Your local profile is still active.
-              </p>
-              <div
-                v-for="connection in accountsConnections"
-                :key="connection.id"
-                class="account-connection"
-              >
-                <div class="account-connection-heading">
-                  <div>
-                    <strong>{{ authorityHost(connection.issuer) }}</strong>
-                    <p class="account-hint account-connection-state">
-                      {{ connection.subject ? 'Authorized' : 'Authorization needed' }}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    class="account-action-btn account-danger-btn"
-                    :disabled="Boolean(accountsPending)"
-                    @click="disconnectAccount(connection.id)"
-                  >
-                    {{ accountsPending === `disconnect:${connection.id}` ? 'Disconnecting…' : 'Disconnect' }}
-                  </button>
-                </div>
-                <div
-                  v-if="connection.resourceAudiences.length"
-                  class="account-field"
+          <section
+            v-show="section === 'security'"
+            class="account-section"
+          >
+            <div class="account-card">
+              <div class="account-field">
+                <label class="account-label">Master Password</label>
+                <p class="account-hint">
+                  Your master password protects all saved credentials. It is never stored — only used to derive your encryption key.
+                </p>
+                <button
+                  type="button"
+                  class="account-action-btn"
+                  @click="showChangePassword = !showChangePassword"
                 >
-                  <label class="account-label">Service access</label>
-                  <select
-                    v-model="selectedAudience[connection.id]"
+                  {{ showChangePassword ? 'Cancel' : 'Change Master Password' }}
+                </button>
+              </div>
+
+              <template v-if="showChangePassword">
+                <div class="account-field">
+                  <label class="account-label">Current Password</label>
+                  <input
+                    v-model="currentPassword"
+                    type="password"
+                    placeholder="Enter current password"
                     class="account-input"
-                    :disabled="Boolean(accountsPending)"
                   >
-                    <option
-                      v-for="audience in connection.resourceAudiences"
-                      :key="audience"
-                      :value="audience"
-                    >
-                      {{ audience }}
-                    </option>
-                  </select>
                 </div>
+                <div class="account-field">
+                  <label class="account-label">New Password</label>
+                  <input
+                    v-model="newPassword"
+                    type="password"
+                    placeholder="Enter new password"
+                    class="account-input"
+                  >
+                </div>
+                <div class="account-field">
+                  <label class="account-label">Confirm New Password</label>
+                  <input
+                    v-model="confirmPassword"
+                    type="password"
+                    placeholder="Re-enter new password"
+                    class="account-input"
+                  >
+                </div>
+                <p
+                  v-if="passwordError"
+                  class="account-error"
+                >
+                  {{ passwordError }}
+                </p>
+                <p
+                  v-if="passwordSuccess"
+                  class="account-success"
+                >
+                  {{ passwordSuccess }}
+                </p>
                 <button
                   type="button"
                   class="account-save-btn"
-                  :disabled="Boolean(accountsPending) || !selectedAudience[connection.id]"
-                  @click="authorizeAccount(connection.id)"
+                  :disabled="changingPassword"
+                  @click="changePassword"
                 >
-                  {{ accountsPending === `authorize:${connection.id}` ? 'Opening sign-in…' : (connection.subject ? 'Authorize again' : 'Authorize') }}
+                  {{ changingPassword ? 'Updating...' : 'Update Password' }}
                 </button>
-              </div>
-              <p
-                v-if="authorizationNotice"
-                class="account-hint account-auth-notice"
-              >
-                {{ authorizationNotice }} Return here after signing in, then refresh if the status has not updated.
-              </p>
+              </template>
             </div>
+          </section>
 
-            <div class="account-subsection account-subsection-last">
-              <h3 class="account-subtitle">
-                Memberships
-              </h3>
-              <p class="account-hint">
-                Remote memberships below are cached display hints only. Services always verify current authorization separately.
-              </p>
-              <p
-                v-if="!accountsMemberships.local.length && !accountsMemberships.remoteDisplayHints.length"
-                class="account-hint"
-              >
-                No organization memberships to display.
-              </p>
-              <div
-                v-for="membership in accountsMemberships.local"
-                :key="`local:${membership.authorityId}:${membership.organizationId}`"
-                class="account-membership"
-              >
-                <strong>{{ membership.organizationId }}</strong>
-                <span>Local · {{ membership.roles.join(', ') || 'member' }}</span>
-              </div>
-              <div
-                v-for="membership in accountsMemberships.remoteDisplayHints"
-                :key="`remote:${membership.authorityId}:${membership.organizationId}`"
-                class="account-membership"
-              >
-                <strong>{{ membership.organizationId }}</strong>
-                <span>{{ authorityHost(membership.issuer) }} · cached hint · {{ membership.roles.join(', ') || 'member' }}</span>
-              </div>
-            </div>
-          </template>
-        </div>
-
-        <!-- Profile hero -->
-        <div class="account-hero">
-          <div class="account-avatar">
-            {{ initials }}
-          </div>
-          <div class="account-hero-info">
-            <p class="account-hero-eyebrow">
-              MY ACCOUNT
-            </p>
-            <h1 class="account-name">
-              {{ userName || 'Sulla User' }}
-            </h1>
-            <p class="account-email">
-              {{ email }}
-            </p>
-          </div>
-        </div>
-
-        <!-- Account details card -->
-        <div class="account-card">
-          <div class="account-card-header">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="account-card-icon"
-            >
-              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-              <circle
-                cx="12"
-                cy="7"
-                r="4"
-              />
-            </svg>
-            <h2 class="account-card-title">
-              Profile
-            </h2>
-          </div>
-
-          <div class="account-field">
-            <label class="account-label">Name</label>
-            <input
-              v-model="userName"
-              type="text"
-              placeholder="Your name"
-              class="account-input"
-            >
-          </div>
-
-          <div class="account-field">
-            <label class="account-label">Email</label>
-            <input
-              v-model="email"
-              type="email"
-              placeholder="your@email.com"
-              class="account-input"
-            >
-          </div>
-
-          <div class="account-field">
-            <label class="account-label">
-              <input
-                v-model="subscribeToUpdates"
-                type="checkbox"
-                class="account-checkbox"
-              >
-              Subscribe to updates and newsletters
-            </label>
-          </div>
-
-          <button
-            type="button"
-            class="account-save-btn"
-            :disabled="saving"
-            @click="saveProfile"
+          <section
+            v-show="section === 'vault'"
+            class="account-section"
           >
-            {{ saving ? 'Saving...' : (saved ? 'Saved!' : 'Save Changes') }}
-          </button>
-        </div>
-
-        <!-- Security card -->
-        <div class="account-card">
-          <div class="account-card-header">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="account-card-icon"
-            >
-              <rect
-                x="3"
-                y="11"
-                width="18"
-                height="11"
-                rx="2"
-              />
-              <path d="M7 11V7a5 5 0 0110 0v4" />
-            </svg>
-            <h2 class="account-card-title">
-              Security
-            </h2>
-          </div>
-
-          <div class="account-field">
-            <label class="account-label">Master Password</label>
-            <p class="account-hint">
-              Your master password protects all saved credentials. It is never stored — only used to derive your encryption key.
-            </p>
-            <button
-              type="button"
-              class="account-action-btn"
-              @click="showChangePassword = !showChangePassword"
-            >
-              {{ showChangePassword ? 'Cancel' : 'Change Master Password' }}
-            </button>
-          </div>
-
-          <template v-if="showChangePassword">
-            <div class="account-field">
-              <label class="account-label">Current Password</label>
-              <input
-                v-model="currentPassword"
-                type="password"
-                placeholder="Enter current password"
-                class="account-input"
-              >
+            <div class="account-card">
+              <div class="account-stats">
+                <div class="account-stat">
+                  <span class="account-stat-value">{{ vaultStats.totalAccounts }}</span>
+                  <span class="account-stat-label">Saved Accounts</span>
+                </div>
+                <div class="account-stat">
+                  <span class="account-stat-value">{{ vaultStats.integrationTypes }}</span>
+                  <span class="account-stat-label">Integration Types</span>
+                </div>
+              </div>
             </div>
-            <div class="account-field">
-              <label class="account-label">New Password</label>
-              <input
-                v-model="newPassword"
-                type="password"
-                placeholder="Enter new password"
-                class="account-input"
-              >
-            </div>
-            <div class="account-field">
-              <label class="account-label">Confirm New Password</label>
-              <input
-                v-model="confirmPassword"
-                type="password"
-                placeholder="Re-enter new password"
-                class="account-input"
-              >
-            </div>
-            <p
-              v-if="passwordError"
-              class="account-error"
-            >
-              {{ passwordError }}
-            </p>
-            <p
-              v-if="passwordSuccess"
-              class="account-success"
-            >
-              {{ passwordSuccess }}
-            </p>
-            <button
-              type="button"
-              class="account-save-btn"
-              :disabled="changingPassword"
-              @click="changePassword"
-            >
-              {{ changingPassword ? 'Updating...' : 'Update Password' }}
-            </button>
-          </template>
-        </div>
-
-        <!-- Vault stats card -->
-        <div class="account-card">
-          <div class="account-card-header">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              class="account-card-icon"
-            >
-              <path d="M12 20V10" />
-              <path d="M18 20V4" />
-              <path d="M6 20v-4" />
-            </svg>
-            <h2 class="account-card-title">
-              Vault
-            </h2>
-          </div>
-          <div class="account-stats">
-            <div class="account-stat">
-              <span class="account-stat-value">{{ vaultStats.totalAccounts }}</span>
-              <span class="account-stat-label">Saved Accounts</span>
-            </div>
-            <div class="account-stat">
-              <span class="account-stat-value">{{ vaultStats.integrationTypes }}</span>
-              <span class="account-stat-label">Integration Types</span>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
+          </section>
+        </template>
+      </div>
+    </main>
   </div>
 </template>
 
@@ -911,6 +886,58 @@ const initials = computed(() => {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return name.slice(0, 2).toUpperCase();
 });
+
+// Left-nav sections, styled after the File Manager. The icons follow the
+// File Manager's line-icon set (24px viewBox, 1.8 stroke, round joins).
+type AccountSection = 'profile' | 'cloud' | 'accounts' | 'security' | 'vault';
+
+const icons = {
+  user:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
+  cloud:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.5-7.96A5.5 5.5 0 0 1 17 9.5a3.5 3.5 0 0 1 .5 7H7z"/></svg>',
+  server:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="6.5" rx="2"/><rect x="4" y="13.5" width="16" height="6.5" rx="2"/><path d="M8 7.25h.01M8 16.75h.01"/></svg>',
+  lock:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>',
+  vault:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="12" cy="12" r="3.2"/><path d="M12 8.8v1M12 14.2v1M8.8 12h1M14.2 12h1M6.5 19.5v1.5M17.5 19.5v1.5"/></svg>',
+};
+
+const sectionMeta: Record<AccountSection, { label: string; meta: string; icon: string }> = {
+  profile:  { label: 'Profile', meta: 'Your name and contact details', icon: icons.user },
+  cloud:    { label: 'Sulla Cloud', meta: 'Reach this computer from the web and your phone', icon: icons.cloud },
+  accounts: { label: 'Accounts & Servers', meta: 'Local profile and connected servers', icon: icons.server },
+  security: { label: 'Security', meta: 'Master password for saved credentials', icon: icons.lock },
+  vault:    { label: 'Vault', meta: 'Saved credentials at a glance', icon: icons.vault },
+};
+const sectionOrder: AccountSection[] = ['profile', 'cloud', 'accounts', 'security', 'vault'];
+
+// The last section you opened sticks for the rest of the app session.
+const SECTION_STORAGE_KEY = 'sulla.myAccount.section';
+
+function storedSection(): AccountSection {
+  try {
+    const value = sessionStorage.getItem(SECTION_STORAGE_KEY);
+
+    return sectionOrder.includes(value as AccountSection) ? value as AccountSection : 'profile';
+  } catch {
+    return 'profile';
+  }
+}
+
+const section = ref<AccountSection>(storedSection());
+const activeSection = computed(() => sectionMeta[section.value]);
+const sections = computed(() => sectionOrder.map(id => ({
+  id,
+  ...sectionMeta[id],
+  count: id === 'accounts' ? accountsConnections.value.length : id === 'vault' ? vaultStats.value.totalAccounts : 0,
+})));
+const footLine = computed(() => email.value || (cloudStatus.value.signedIn ? cloudStatus.value.phone : '') || 'Local profile');
+
+function selectSection(id: AccountSection) {
+  section.value = id;
+  try {
+    sessionStorage.setItem(SECTION_STORAGE_KEY, id);
+  } catch {
+    // Storage can be unavailable; the in-memory selection still works.
+  }
+}
 
 async function loadProfile() {
   loading.value = true;
@@ -1337,602 +1364,186 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* Same local palette and shell as the File Manager (pages/files/FilesBrowser.vue),
+   so My Account looks identical to it under every app theme. */
 .account-page {
-  height: 100%;
-  color: var(--text-primary, #e6edf3);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
-
-.account-scroll {
-  max-width: 560px;
-  margin: 0 auto;
-  padding: 32px 20px 48px;
-}
-
-.account-scroll > * + * {
-  margin-top: 20px;
-}
-
-.account-loading {
-  text-align: center;
-  padding: 60px 0;
-  color: var(--text-muted, #484f58);
-}
-
-/* ── Hero ── */
-.account-hero {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px;
-  background: var(--bg-surface-alt, #161b22);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 12px;
-}
-
-.account-avatar {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: var(--accent-primary, #38bdf8);
-  color: var(--bg-surface, #0d1117);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  flex-shrink: 0;
-}
-
-.account-name {
-  font-size: 20px;
-  font-weight: 700;
-  margin: 0 0 2px;
-}
-
-.account-email {
-  font-size: 13px;
-  color: var(--text-secondary, #8b949e);
-  margin: 0;
-}
-
-/* ── Cards ── */
-.account-card {
-  padding: 20px;
-  background: var(--bg-surface-alt, #161b22);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 12px;
-}
-
-.account-card-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-default, #21262d);
-}
-
-.account-card-icon {
-  width: 18px;
-  height: 18px;
-  color: var(--accent-primary, #38bdf8);
-}
-
-.account-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.account-inline-btn {
-  margin-left: auto;
-  padding: 4px 8px;
-  color: var(--accent-primary, #38bdf8);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-}
-
-.account-inline-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.account-section-loading {
-  padding: 20px 0;
-  color: var(--text-muted, #484f58);
-  font-size: 13px;
-  text-align: center;
-}
-
-.account-subsection {
-  padding-bottom: 18px;
-  margin-bottom: 18px;
-  border-bottom: 1px solid var(--border-default, #21262d);
-}
-
-.account-subsection-last {
-  padding-bottom: 0;
-  margin-bottom: 0;
-  border-bottom: 0;
-}
-
-.account-subtitle {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.account-inline-status {
-  margin: 0;
-}
-
-.account-authority-preview,
-.account-membership {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 8px;
-}
-
-.account-authority-preview span,
-.account-membership span {
-  color: var(--text-muted, #484f58);
-}
-
-.account-connection {
-  padding: 12px;
-  margin-bottom: 10px;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 8px;
-}
-
-.account-connection-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-
-.account-connection-state {
-  margin: 3px 0 0;
-}
-
-.account-danger-btn {
-  color: #f85149;
-}
-
-.account-auth-notice {
-  margin-top: 10px;
-}
-
-/* ── Fields ── */
-.account-field {
-  margin-bottom: 14px;
-}
-
-.account-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary, #8b949e);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 6px;
-}
-
-.account-input {
-  width: 100%;
-  padding: 10px 14px;
-  font-size: 14px;
-  background: var(--bg-surface, #0d1117);
-  color: var(--text-primary, #e6edf3);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 8px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.account-input:focus {
-  border-color: var(--accent-primary, #38bdf8);
-  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-}
-
-.account-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-primary, #38bdf8);
-  cursor: pointer;
-}
-
-.account-hint {
-  font-size: 12px;
-  color: var(--text-muted, #484f58);
-  line-height: 1.5;
-  margin: 0 0 10px;
-}
-
-.account-error {
-  font-size: 12px;
-  color: #f85149;
-  margin: 0 0 10px;
-}
-
-.account-success {
-  font-size: 12px;
-  color: #3fb950;
-  margin: 0 0 10px;
-}
-
-/* ── Buttons ── */
-.account-save-btn {
-  padding: 10px 20px;
-  font-size: 13px;
-  font-weight: 600;
-  background: var(--accent-primary, #38bdf8);
-  color: var(--bg-surface, #0d1117);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.account-save-btn:hover:not(:disabled) {
-  background: #7dd3fc;
-}
-
-.account-save-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.account-action-btn {
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  background: transparent;
-  color: var(--accent-primary, #38bdf8);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.account-action-btn:hover {
-  background: rgba(56, 189, 248, 0.06);
-  border-color: var(--accent-primary, #38bdf8);
-}
-
-/* ── Sulla Cloud ── */
-.account-status-dot {
-  margin-left: auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.account-status-on {
-  background: #3fb950;
-  box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
-}
-
-.account-status-off {
-  background: var(--text-muted, #484f58);
-}
-
-.account-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  color: var(--text-primary, #e6edf3);
-  background: var(--bg-surface, #0d1117);
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-
-.account-relay-state {
-  color: var(--text-muted, #484f58);
-}
-
-.account-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 14px;
-  padding: 4px;
-  background: var(--bg-surface, #0d1117);
-  border: 1px solid var(--border-default, #21262d);
-  border-radius: 8px;
-}
-
-.account-tab {
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  background: transparent;
-  color: var(--text-secondary, #8b949e);
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.account-tab:hover {
-  color: var(--text-primary, #e6edf3);
-}
-
-.account-tab-active {
-  background: var(--bg-surface-alt, #161b22);
-  color: var(--accent-primary, #38bdf8);
-}
-
-.account-btn-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.account-textarea {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  resize: vertical;
-  min-height: 72px;
-}
-
-.account-apple-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  padding: 12px 20px;
-  font-size: 14px;
-  font-weight: 600;
-  background: #000;
-  color: #fff;
-  border: 1px solid #000;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.account-apple-btn:hover:not(:disabled) {
-  background: #1a1a1a;
-}
-
-.account-apple-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.account-apple-icon {
-  width: 16px;
-  height: 16px;
-  margin-top: -2px;
-}
-
-/* ── Stats ── */
-.account-stats {
-  display: flex;
-  gap: 24px;
-}
-
-.account-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.account-stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--accent-primary, #38bdf8);
-}
-
-.account-stat-label {
-  font-size: 11px;
-  color: var(--text-muted, #484f58);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.account-hero-eyebrow {
-  display: none;
-}
-
-.theme-noir .account-page {
-  overflow: auto;
-  background:
-    radial-gradient(circle at 70% -15%, color-mix(in srgb, var(--nx-accent) 10%, transparent), transparent 36%),
-    var(--nx-paper);
-  color: var(--nx-read-2);
-}
-
-.theme-noir .account-scroll {
-  display: flex;
-  width: min(100%, 920px);
-  max-width: none;
-  flex-direction: column;
-  padding: 42px 34px 64px;
-}
-
-.theme-noir .account-hero {
-  order: -2;
-  gap: 22px;
-  padding: 28px 30px;
-  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  border-radius: 22px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 16%, transparent), color-mix(in srgb, var(--nx-accent) 2.5%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 4.5%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow) 26.6667%, transparent);
-}
-
-.theme-noir .account-avatar {
-  width: 72px;
-  height: 72px;
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
-  border-radius: 20px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--nx-accent-2) 50%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 12%, transparent), 0 14px 40px color-mix(in srgb, var(--nx-accent) 15%, transparent);
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.55rem;
-}
-
-.theme-noir .account-hero-eyebrow {
-  display: block;
-  margin: 0 0 4px;
-  color: var(--nx-accent-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.64rem;
-  letter-spacing: 0.14em;
-}
-
-.theme-noir .account-name {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 2.15rem;
-  font-weight: 500;
-  letter-spacing: -0.035em;
-}
-
-.theme-noir .account-email {
-  color: var(--nx-read-4);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
-}
-
-.theme-noir .account-cloud-card {
-  order: -1;
-}
-
-.theme-noir .account-card {
-  padding: 24px;
-  border-color: var(--nx-hair);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--nx-hair-strong) 21.875%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 2.5%, transparent);
-}
-
-.theme-noir .account-card-header {
-  border-color: var(--nx-hair);
-}
-
-.theme-noir .account-card-icon {
-  color: var(--nx-accent-2);
-}
-
-.theme-noir .account-card-title {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.15rem;
-  font-weight: 500;
-}
-
-.theme-noir .account-label {
-  color: var(--text-info);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.12em;
-}
-
-.theme-noir .account-input,
-.theme-noir .account-textarea {
-  min-height: 40px;
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 66%, transparent);
-  color: var(--nx-read-2);
-}
-
-.theme-noir .account-input:focus,
-.theme-noir .account-textarea:focus {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-accent) 9%, transparent);
-}
-
-.theme-noir .account-hint,
-.theme-noir .account-relay-state {
-  color: var(--nx-read-4);
-}
-
-.theme-noir .account-tabs {
-  max-width: 360px;
-  border-color: var(--nx-hair);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 62%, transparent);
-}
-
-.theme-noir .account-tab {
-  border-radius: 999px;
-  color: var(--nx-read-4);
-}
-
-.theme-noir .account-tab-active {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent) 22%, transparent), color-mix(in srgb, var(--nx-accent) 8%, transparent));
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--nx-accent) 11%, transparent);
-  color: var(--nx-read-2);
-}
-
-.theme-noir .account-save-btn {
-  border: 1px solid color-mix(in srgb, var(--nx-accent-2) 32%, transparent);
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--nx-accent), var(--nx-accent-2));
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--nx-accent) 18%, transparent);
-  color: var(--nx-paper);
-}
-
-.theme-noir .account-action-btn {
-  border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
-  border-radius: 10px;
-  color: var(--text-info);
-}
-
-.theme-noir .account-action-btn:hover {
-  border-color: color-mix(in srgb, var(--nx-accent-2) 28%, transparent);
-  background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
-}
-
-.theme-noir .account-status-on {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nx-success) 9%, transparent), 0 0 12px color-mix(in srgb, var(--nx-success) 58%, transparent);
-}
-
-.theme-noir .account-stats {
+  --text: #1a2332;
+  --muted: #5b6778;
+  --dim: #8a94a3;
+  --paper: #f4f7fb;
+  --paper-2: #eaf0f6;
+  --card: rgba(255,255,255,.82);
+  --card-solid: #ffffff;
+  --line: rgba(26,35,50,.09);
+  --line-2: rgba(26,35,50,.14);
+  --accent: #3a7fa0;
+  --accent-2: #2f6a86;
+  --accent-soft: rgba(58,127,160,.10);
+  --accent-line: rgba(58,127,160,.32);
+  --ok: #1f9d55;
+  --ok-soft: rgba(31,157,85,.12);
+  --warn: #d98a0a;
+  --warn-soft: rgba(217,138,10,.13);
+  --bad: #d9403a;
+  --bad-soft: rgba(217,64,58,.11);
+  --idle: #8a94a3;
+  --idle-soft: rgba(138,148,163,.16);
+  --ink-05: rgba(26, 35, 50, .05);
+  --ink-08: rgba(26, 35, 50, .08);
+  --nav-bg: rgba(255, 255, 255, .55);
+  --top-bg: rgba(255, 255, 255, .4);
+  --glow-1: rgba(58, 127, 160, .10);
+  --glow-2: rgba(58, 127, 160, .06);
+  --shadow: 0 1px 2px rgba(26, 35, 50, .04), 0 10px 30px -12px rgba(26, 35, 50, .12);
+  --shadow-sm: 0 1px 1px rgba(26, 35, 50, .04), 0 2px 8px -2px rgba(26, 35, 50, .08);
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --r: 12px;
+
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--paper);
+  background-image: radial-gradient(900px 500px at 15% -10%, var(--glow-1), transparent 60%), radial-gradient(700px 400px at 100% 0%, var(--glow-2), transparent 55%);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1, "cv11" 1;
 }
+.account-page *, .account-page *::before, .account-page *::after { box-sizing: border-box; }
+/* :where() keeps these resets below the component classes that style each control. */
+.account-page :where(a) { color: inherit; text-decoration: none; }
+.account-page :where(button) { font: inherit; color: inherit; cursor: pointer; }
+.account-page :where(input) { font: inherit; color: inherit; }
 
-.theme-noir .account-stat {
-  padding: 18px;
-  border: 1px solid var(--nx-hair);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 38%, transparent);
+/* Sidebar (File Manager) */
+.nav { position: relative; width: 224px; height: 100%; min-height: 0; overflow-y: auto; padding: 18px 14px; border-right: 1px solid var(--line); background: var(--nav-bg); backdrop-filter: blur(14px); display: flex; flex-direction: column; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+.brand .mark { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #3a7fa0, #1a2332); display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .02em; flex: none; }
+.brand b { display: block; font-size: 13px; letter-spacing: .01em; }
+.brand span { display: block; font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.nav a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: var(--muted); font-weight: 500; }
+.nav a .sv { display: grid; width: 16px; height: 16px; flex: none; opacity: .8; }
+.nav a .sv :deep(svg) { width: 16px; height: 16px; }
+.nav a:hover { background: var(--ink-05); color: var(--text); }
+.nav a.on { background: var(--accent-soft); color: var(--accent-2); font-weight: 600; }
+.nav a > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav a.on .sv { opacity: 1; }
+.nav a .cnt { margin-left: auto; font-size: 11px; font-weight: 600; background: var(--paper-2); color: var(--muted); padding: 1px 7px; border-radius: 999px; }
+.nav .foot { margin-top: auto; padding: 10px 8px 0; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+.nav .foot > div:last-child { min-width: 0; }
+.nav .foot b { display: block; font-size: 12px; }
+.nav .foot small { display: block; color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #9ec1d3, #3a7fa0); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; flex: none; }
+
+/* Main pane (File Manager) */
+.main { min-width: 0; min-height: 0; overflow: auto; }
+.top { display: flex; align-items: center; gap: 14px; min-height: 55px; padding: 12px 28px; border-bottom: 1px solid var(--line); background: var(--top-bg); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 5; }
+.crumbs { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12.5px; white-space: nowrap; }
+.crumbs b { color: var(--text); font-weight: 600; }
+.crumbs .c { color: var(--muted); }
+.content { padding: 20px 28px 60px; }
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.toolbar h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0; font-family: var(--sans); color: var(--text); }
+.toolbar .meta { color: var(--dim); font-size: 12px; }
+.toolbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card-solid); font-size: 12.5px; font-weight: 500; color: var(--text); box-shadow: 0 1px 1px rgba(26, 35, 50, .03); white-space: nowrap; line-height: 1.45; }
+.btn:hover { border-color: var(--accent-line); color: var(--accent-2); }
+.btn:disabled { cursor: not-allowed; opacity: .55; }
+
+/* Sections */
+.account-section { max-width: 720px; }
+.account-section > * + * { margin-top: 16px; }
+.account-loading { padding: 60px 0; text-align: center; color: var(--dim); }
+.account-card { padding: 20px; background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+.account-hero { display: flex; align-items: center; gap: 14px; padding: 18px 20px; background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
+.account-avatar { width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, #9ec1d3, #3a7fa0); color: #fff; font-size: 17px; font-weight: 700; display: grid; place-items: center; flex: none; }
+.account-hero-info { min-width: 0; }
+.account-name { margin: 0 0 2px; font-size: 15px; font-weight: 650; color: var(--text); }
+.account-email { margin: 0; font-size: 12px; color: var(--muted); }
+
+.account-status { display: inline-flex; align-items: center; gap: 7px; padding: 2px 9px; border-radius: 999px; background: var(--idle-soft); color: var(--muted); font-size: 11px; font-weight: 600; }
+.account-status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.account-status-on { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.account-status-off { background: var(--idle); }
+
+.account-section-loading { padding: 20px 0; color: var(--dim); font-size: 12.5px; text-align: center; }
+.account-subsection { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.account-subsection-last { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.account-subtitle { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text); }
+.account-inline-status { margin: 0; }
+.account-authority-preview,
+.account-membership { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.account-authority-preview span,
+.account-membership span { color: var(--dim); }
+.account-connection { padding: 12px; margin-bottom: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.account-connection-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 13px; }
+.account-connection-state { margin: 3px 0 0; }
+.account-auth-notice { margin-top: 10px; }
+
+/* Fields */
+.account-field { margin-bottom: 14px; }
+.account-label { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+.account-input { width: 100%; padding: 7px 10px; font-size: 13px; background: var(--card-solid); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s; }
+.account-input::placeholder { color: var(--dim); }
+.account-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.account-input:disabled { background: var(--paper); color: var(--muted); }
+.account-checkbox { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.account-hint { margin: 0 0 10px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.account-error { margin: 0 0 10px; font-size: 12px; color: var(--bad); }
+.account-success { margin: 0 0 10px; font-size: 12px; color: var(--ok); }
+.account-mono { padding: 1px 6px; font-family: var(--mono); font-size: 11px; color: var(--text); background: var(--paper-2); border-radius: 4px; }
+.account-relay-state { color: var(--dim); }
+
+/* Buttons: File Manager .btn / .btn.pri */
+.account-save-btn,
+.account-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card-solid); font-size: 12.5px; font-weight: 500; color: var(--text); box-shadow: 0 1px 1px rgba(26, 35, 50, .03); white-space: nowrap; line-height: 1.45; }
+.account-action-btn:hover:not(:disabled) { border-color: var(--accent-line); color: var(--accent-2); }
+.account-save-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
+.account-save-btn:hover:not(:disabled) { background: var(--accent-2); color: #fff; }
+.account-save-btn:disabled,
+.account-action-btn:disabled { cursor: not-allowed; opacity: .55; }
+.account-danger-btn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.account-danger-btn:hover:not(:disabled) { background: var(--bad-soft); color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.account-btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Sign-in method tabs: File Manager segmented control */
+.account-tabs { display: flex; gap: 2px; margin-bottom: 14px; padding: 2px; max-width: 320px; background: var(--card-solid); border: 1px solid var(--line-2); border-radius: 8px; }
+.account-tab { flex: 1; padding: 4px 10px; font-size: 12px; font-weight: 500; line-height: 1.45; background: transparent; color: var(--muted); border: 0; border-radius: 6px; }
+.account-tab:hover:not(.account-tab-active) { color: var(--text); }
+.account-tab-active { background: var(--accent-soft); color: var(--accent-2); font-weight: 600; }
+
+.account-apple-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 9px 16px; font-size: 13px; font-weight: 600; background: #000; color: #fff; border: 1px solid #000; border-radius: 8px; transition: background .15s; }
+.account-apple-btn:hover:not(:disabled) { background: #1a1a1a; }
+.account-apple-btn:disabled { opacity: .55; cursor: not-allowed; }
+.account-apple-icon { width: 16px; height: 16px; margin-top: -2px; }
+
+/* Vault stats */
+.account-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-stat { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.account-stat-value { font-size: 22px; font-weight: 650; letter-spacing: -.01em; color: var(--text); }
+.account-stat-label { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--dim); }
+
+/* File Manager breakpoints, measured against this surface instead of the window */
+@container (max-width: 1180px) {
+  .nav { width: 64px; padding: 14px 10px; }
+  .nav a { justify-content: center; padding: 9px 0; position: relative; }
+  .nav a > span:not(.sv):not(.cnt), .brand b, .brand span, .nav .foot small, .nav .foot div:not(.avatar) { display: none; }
+  .nav a .cnt { position: absolute; margin: 0; transform: translate(14px, -10px); }
+  .brand { justify-content: center; padding-bottom: 12px; }
+  .content { padding: 16px 18px 50px; }
+  .top { padding: 10px 18px; }
 }
-
-.theme-noir .account-stat-value {
-  color: var(--nx-read-1);
-  font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.8rem;
-  font-weight: 500;
-}
-
-.theme-noir .account-stat-label {
-  color: var(--nx-read-4);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.6rem;
-  letter-spacing: 0.12em;
+@container (max-width: 700px) {
+  .crumbs > span, .crumbs .c { display: none; }
+  .top { padding: 10px 14px; }
+  .content { padding: 12px 12px 40px; }
+  .toolbar { flex-wrap: wrap; gap: 4px 10px; }
 }
 </style>
