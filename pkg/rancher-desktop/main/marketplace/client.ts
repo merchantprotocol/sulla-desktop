@@ -229,7 +229,13 @@ async function optionalAuthHeaders(): Promise<Record<string, string>> {
 }
 
 export async function publicFetch(pathAndQuery: string): Promise<Response> {
-  if (usesContainerVaultAuthority() && await isCloudSignedIn()) return cloudRequest('GET', pathAndQuery);
+  // Bundle downloads are public and not on the vault allowlist; anything the
+  // vault refuses (or a locked vault) falls back to an anonymous fetch.
+  if (usesContainerVaultAuthority() && !pathAndQuery.split('?')[0].endsWith('/download')) {
+    try {
+      if (await isCloudSignedIn()) return await cloudRequest('GET', pathAndQuery);
+    } catch { /* fall through to anonymous fetch */ }
+  }
   return fetch(`${ API_BASE }${ pathAndQuery }`, { headers: await optionalAuthHeaders() });
 }
 
