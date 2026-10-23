@@ -1,6 +1,6 @@
 // Kept free of editor components so the File Manager (also bundled into the Files web UI) can ask
 // "does this open in the document editor?" without pulling CodeMirror into that bundle.
-export const documentEditorExtensions = { markdown: ['.sulla.md', '.md'], text: ['.txt'] } as const;
+export const documentEditorExtensions = { markdown: ['.sulla', '.sulla.md', '.md'], text: ['.txt'] } as const;
 
 export type DocumentEditorTypeId = keyof typeof documentEditorExtensions;
 
