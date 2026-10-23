@@ -45,6 +45,10 @@ export interface PackageContentItem {
   slug:    string;
   name:    string;
   version: string;
+  description: string;
+  required: boolean;
+  containers: string[];
+  dataVolume: string;
 }
 
 export interface PackageDetail {
@@ -205,6 +209,12 @@ function toContents(manifest: Record<string, any>): PackageContentItem[] {
       slug:    str(item.slug, inner.slug),
       name:    str(inner.name, innerMeta.name, item.name, item.slug),
       version: str(item.version, inner.version),
+      description: str(inner.description, inner.summary, item.description),
+      required: item.required === true || inner.required === true,
+      containers: Array.isArray(inner.containers)
+        ? inner.containers.map((container: unknown) => typeof container === 'string' ? container : str(obj(container).name, obj(container).service)).filter(Boolean)
+        : [],
+      dataVolume: str(inner.data_volume, inner.dataVolume, obj(inner.storage).volume),
     };
   }).filter((item: PackageContentItem) => item.kind && item.slug);
 }
