@@ -50,6 +50,7 @@ import type { FileResidencyManager } from './residency.js';
 import type { IndexingQueue } from './indexing.js';
 import type { FileSearch } from './search.js';
 import type { CloudSyncService } from './cloudSync/service.js';
+import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
@@ -150,7 +151,6 @@ export function createApp(
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   app.locals.catalogSync = new CatalogSyncService(db, config);
   app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
-  app.locals.cloudSync = cloudSync;
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
@@ -227,18 +227,7 @@ export function createApp(
       requestId:request.header('x-request-id')?.slice(0,256) ?? randomUUID(),
       action:request.body?.action === 'copy' || (Array.isArray(request.body?.items) && request.body.items.some((item:any)=>item?.action==='copy')) ? 'copy' : /\/restore$/.test(request.path) ? 'restore' : undefined},next);
   });
-  const desktopControl = (request:RequestWithIdentity) => {
-    if (config.mode !== 'desktop' || request.filesIdentity?.kind !== 'capability') throw new HttpError(403, 'desktop control capability required');
-    if (!cloudSync) throw new HttpError(503, 'cloud sync is not configured');
-    return cloudSync;
-  };
-  app.get('/v1/desktop/cloud-sync/status', async(request:RequestWithIdentity,response,next)=>{try{response.json(await desktopControl(request).status())}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/collections/:collectionId/enable', async(request:RequestWithIdentity,response,next)=>{try{if(typeof request.body?.enabled!=='boolean')throw new HttpError(400,'enabled must be boolean');response.json(await desktopControl(request).enable(request.params.collectionId,request.body.enabled))}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/collections/:collectionId/delete-cloud-copy', async(request:RequestWithIdentity,response,next)=>{try{response.status(202).json(await desktopControl(request).deleteCloudCopy(request.params.collectionId))}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/escrow-key/request', async(request:RequestWithIdentity,response,next)=>{try{response.json(await desktopControl(request).requestEscrowKey())}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/escrow-key', async(request:RequestWithIdentity,response,next)=>{try{response.status(202).json(await desktopControl(request).acceptEscrowKey(request.body))}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/prepare', async(request:RequestWithIdentity,response,next)=>{try{const prepared=await desktopControl(request).prepare();prepared?response.json(prepared):response.status(204).end()}catch(error){next(error)}});
-  app.post('/v1/desktop/cloud-sync/send', async(request:RequestWithIdentity,response,next)=>{try{response.json(await desktopControl(request).send(request.body))}catch(error){next(error)}});
+  registerCloudSyncRoutes(app, config, cloudSync);
   const auditWriter=new FileAuditWriter(db, async(id,versionId) => {
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');

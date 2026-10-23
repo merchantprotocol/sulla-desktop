@@ -1,78 +1,646 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { deflateRawSync } from 'node:zlib';
+
 import type pg from 'pg';
-import type { Config } from '../config.js';
-import { chunkId as localChunkId, decryptAndVerifyChunk, encryptChunk } from '../crypto.js';
+
+import type { FilesIdentity } from '../auth.js';
 import type { FilesCloudBroker } from '../cloudBroker.js';
+import type { Config } from '../config.js';
 import type { FilesKeyring } from '../keyring.js';
 import type { Store } from '../store.js';
-import { chunkId, FLAG_DEFLATE_RAW, openManifest, sealChunk, sealEscrowWithKey, sealManifest, sha256Hex, signHead, stateHash, transportUnwrap, verifyHead } from './envelope.js';
-import { configureCryptoModule } from './cryptoModule.js';
+import { openCloudChunk } from './chunkSource.js';
+import { FilesSyncCloudApi } from './cloudApi.js';
+import { configureCryptoModule, type CryptoModuleStatus } from './cryptoModule.js';
+import { sealEscrowWithKey, signHead, stateHash, verifyHead, type SyncHead, type TransportEnvelope } from './envelope.js';
+import { EscrowTransportRequests } from './escrowTransport.js';
 import { CloudRootKeyStore } from './keyStore.js';
+import { CloudPuller } from './pull.js';
+import { buildCommit, CloudPusher, sha256Text } from './push.js';
+import { CloudRemoteContent } from './remoteContent.js';
+import { PgCloudSyncRepository, type QueuedOperation, type SyncRow, type UploadSession } from './repository.js';
+import { CloudRestore, RestoreError, type RestoreInput, type RestoreTarget } from './restore.js';
+import { CloudStagingStore } from './staging.js';
+import { isUuid } from './validation.js';
 
-type Op='create'|'escrow'|'upload-open'|'commit'|'delete';
-import { assertManifestChunkList, conflictPath, EscrowTransportRequests, validateHeadAdvance } from './validation.js';
-const MAX_MANIFEST_BYTES=192*1024;
-const canonical=(v:unknown)=>JSON.stringify(v);
-const safeError=(e:unknown)=>String((e as any)?.message??e).slice(0,1000);
-const conflictPath=(path:string,device:string,now=new Date())=>{const slash=path.lastIndexOf('/'),dot=path.lastIndexOf('.');const stem=dot>slash?path.slice(0,dot):path,ext=dot>slash?path.slice(dot):'';return `${stem} (conflicted copy ${device.replace(/[^A-Za-z0-9_-]/g,'-').slice(0,32)} ${now.toISOString().slice(0,16).replace('T',' ')})${ext}`};
-export async function validateHeadAdvance(root:Uint8Array,head:any,lastSeq:number,previousMac:string){if(!await verifyHead(root,head))throw new Error('cloud head MAC invalid');if(head.seq<lastSeq)throw new Error('cloud head rollback');if(lastSeq>0&&head.prevMac!==previousMac)throw new Error('cloud head fork');return true}
-export function assertManifestChunkList(manifest:any,serverChunkIds:unknown){if(!Array.isArray(manifest?.chunks)||!Array.isArray(serverChunkIds)||JSON.stringify(manifest.chunks.map((c:any)=>c[0]))!==JSON.stringify(serverChunkIds))throw new Error('manifest chunk-list mismatch')}
+const BASE = '/files-sync/v1';
+const LOOP_MS = 10_000;
+const PULL_INTERVAL_MS = 60_000;
+const PREPARE_WAIT_MS = 5_000;
+const MAX_ATTEMPTS = 5;
+const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 
-export class CloudSyncService {
-  readonly cryptoModule=configureCryptoModule();
-  readonly roots:CloudRootKeyStore;
-  private readonly transport=new EscrowTransportRequests();
-  constructor(private db:pg.Pool,private config:Config,private keyring:FilesKeyring,private store:Store,private broker:FilesCloudBroker){this.roots=new CloudRootKeyStore(keyring)}
+export type SendStatus = 'sent' | 'conflict' | 'retry' | 'failed';
 
-  async status(){const rows=(await this.db.query(`SELECT c.id collection_id,c.name,s.enabled,COALESCE(s.status,'off') status,s.last_sync_at,s.pending_bytes,s.conflicts,s.last_error FROM collections c LEFT JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.published=TRUE AND c.legacy_source=FALSE ORDER BY c.name`)).rows;return{cryptoModule:this.cryptoModule,collections:rows.map(r=>({collectionId:r.collection_id,name:r.name,enabled:Boolean(r.enabled),status:r.status,lastSyncAt:r.last_sync_at??null,pendingBytes:Number(r.pending_bytes??0),conflicts:Number(r.conflicts??0),lastError:r.last_error??null}))}}
-  async enable(collectionId:string,enabled:boolean){const collection=(await this.db.query('SELECT id FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE',[collectionId])).rows[0];if(!collection)throw Object.assign(new Error('collection not found'),{status:404});const client=await this.db.connect();try{await client.query('BEGIN');let row=(await client.query('SELECT * FROM files_cloud_sync WHERE collection_id=$1 FOR UPDATE',[collectionId])).rows[0];if(enabled&&!row?.wrapped_root){const made=await this.roots.create(collectionId,1);try{await client.query(`INSERT INTO files_cloud_sync(collection_id,enabled,key_version,wrapped_root,status) VALUES($1,TRUE,1,$2,'needs-vault') ON CONFLICT(collection_id) DO UPDATE SET enabled=TRUE,wrapped_root=EXCLUDED.wrapped_root,status='needs-vault',last_error=NULL,updated_at=NOW()`,[collectionId,made.wrapped])}finally{made.root.fill(0)}}else await client.query(`INSERT INTO files_cloud_sync(collection_id,enabled,status) VALUES($1,$2,$3) ON CONFLICT(collection_id) DO UPDATE SET enabled=$2,status=$3,last_error=NULL,updated_at=NOW()`,[collectionId,enabled,enabled?'needs-vault':'off']);await client.query(`INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,'cloud') ON CONFLICT DO NOTHING`,[collectionId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}return{enabled}}
-  async deleteCloudCopy(collectionId:string){await this.requireEnabled(collectionId);await this.queue(collectionId,'delete',`/files-sync/v1/collections/${collectionId}`,'DELETE',{});return{queued:true}}
-  async requestEscrowKey(){return this.transport.issue()}
-  async acceptEscrowKey(input:{requestId:string;transport:unknown;vaultId:string;vaultEpoch:number}){const privateKey=this.transport.consume(input.requestId);const ek=await transportUnwrap(input.transport,privateKey,input.requestId,input.vaultId,input.vaultEpoch);try{const rows=(await this.db.query(`SELECT collection_id,key_version,wrapped_root FROM files_cloud_sync WHERE enabled=TRUE AND status='needs-vault'`)).rows;if(!rows.length)throw Object.assign(new Error('no collection needs a vault key'),{status:409});for(const row of rows){const root=await this.roots.unwrap(row.collection_id,row.key_version,row.wrapped_root);try{const escrow=await sealEscrowWithKey(ek,input.vaultId,input.vaultEpoch,row.collection_id,row.key_version,root);const emptyHash=await stateHash([]);const head=await signHead(root,{collectionId:row.collection_id,keyVersion:row.key_version,seq:0,stateHash:emptyHash,prevMac:''});await this.queue(row.collection_id,'create',`/files-sync/v1/collections/${row.collection_id}`,'PUT',{keyVersion:row.key_version,escrow,head});await this.db.query(`UPDATE files_cloud_sync SET head=$2,status='idle',last_error=NULL,updated_at=NOW() WHERE collection_id=$1`,[row.collection_id,head])}finally{root.fill(0)}}return{queued:rows.length}}finally{ek.fill(0)}}
+class HttpStatusError extends Error {
+  constructor(readonly status:number, message:string) { super(message) }
+}
 
-  private async requireEnabled(collectionId:string){const row=(await this.db.query('SELECT * FROM files_cloud_sync WHERE collection_id=$1 AND enabled=TRUE',[collectionId])).rows[0];if(!row)throw Object.assign(new Error('cloud sync is not enabled'),{status:409});return row}
-  private async queue(collectionId:string,op:Op,path:string,method:string,body:unknown){const json=canonical(body),sha=createHash('sha256').update(json).digest('hex'),handle=randomUUID();await this.db.query(`INSERT INTO files_cloud_operations(handle,collection_id,op,path,method,body,sha256) VALUES($1,$2,$3,$4,$5,$6,$7)`,[handle,collectionId,op,path,method,body,sha]);return{handle,op,collectionId,sha256:sha}}
+/** Error text kept in status/last_error. Never carries paths, names, keys or bodies. */
+function safeError(error:unknown):string {
+  const code = (error as { code?:unknown })?.code;
+  if (code === 'FILE_OFFLINE') return 'Sulla Cloud is unreachable';
+  if (code === 'FILES_SYNC_INTEGRITY' || code === 'FILE_INTEGRITY') return `Integrity check failed: ${ String((error as Error).message).slice(0, 200) }`;
+  return 'Cloud backup step failed';
+}
 
-  async prepare(){let row=(await this.db.query('SELECT handle,op,collection_id,sha256 FROM files_cloud_operations ORDER BY created_at LIMIT 1')).rows[0];if(!row){const enabled=(await this.db.query(`SELECT collection_id FROM files_cloud_sync WHERE enabled=TRUE AND status='idle' ORDER BY updated_at LIMIT 1`)).rows[0];if(enabled)await this.stageJournal(enabled.collection_id);row=(await this.db.query('SELECT handle,op,collection_id,sha256 FROM files_cloud_operations ORDER BY created_at LIMIT 1')).rows[0]}return row?{handle:row.handle,op:row.op,collectionId:row.collection_id,sha256:row.sha256}:null}
+function delay(ms:number):Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms).unref());
+}
 
-  private async stageJournal(collectionId:string){const sync=await this.requireEnabled(collectionId);const cursor=(await this.db.query(`SELECT last_push_seq FROM file_sync_cursors WHERE collection_id=$1 AND device_id='cloud'`,[collectionId])).rows[0]??{last_push_seq:0};const item=(await this.db.query(`SELECT j.seq,j.op,f.id file_id,f.path,f.mime,f.size,f.current_version_id,v.id version_id,v.parent_version_id,v.deleted,v.manifest_hash,v.chunk_collection_id,v.created_at,m.chunk_ids FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND NOT EXISTS(SELECT 1 FROM files_cloud_versions cv WHERE cv.version_id=v.id) ORDER BY j.seq LIMIT 1`,[collectionId,cursor.last_push_seq])).rows[0];if(!item){await this.pull(collectionId);return}const root=await this.roots.unwrap(collectionId,sync.key_version,sync.wrapped_root);try{const chunks:Array<[string,number]>=[],declared:any[]=[],cloudIds:string[]=[];if(!item.deleted){const keys=await this.keyring.keys(item.chunk_collection_id);for(const localId of item.chunk_ids??[]){const meta=(await this.db.query('SELECT size,stored_size FROM chunks WHERE collection_id=$1 AND id=$2',[item.chunk_collection_id,localId])).rows[0];const encrypted=await this.store.getBounded(item.chunk_collection_id,localId,Number(meta.stored_size),Number(meta.stored_size));const plain=await decryptAndVerifyChunk(encrypted,keys.data,keys.dedup,localId,Number(meta.size));const id=await chunkId(root,collectionId,sync.key_version,plain);const compressed=deflateRawSync(plain),use=compressed.length<=Math.floor(plain.length*.95),wire=await sealChunk(root,collectionId,sync.key_version,id,use?compressed:plain,use?FLAG_DEFLATE_RAW:0);await this.store.put(`${collectionId}-cloud`,id,wire);const cipherSha256=await sha256Hex(wire);await this.db.query(`INSERT INTO files_cloud_chunk_map(collection_id,local_chunk_id,cloud_chunk_id,cipher_sha256,cipher_bytes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(collection_id,local_chunk_id) DO UPDATE SET cloud_chunk_id=$3,cipher_sha256=$4,cipher_bytes=$5,uploaded_at=NULL,verified_at=NULL`,[collectionId,localId,id,cipherSha256,wire.length]);chunks.push([id,plain.length]);cloudIds.push(id);declared.push({id,cipherBytes:wire.length,cipherSha256})}}
-      const manifestPlain={v:1,path:item.path,mime:item.mime,size:Number(item.size),mtime:new Date(item.created_at).toISOString(),sha256:item.manifest_hash??createHash('sha256').update('').digest('hex'),chunks,deleted:Boolean(item.deleted),parentVersionId:item.parent_version_id??null};const manifest=await sealManifest(root,collectionId,sync.key_version,item.file_id,item.version_id,manifestPlain);if(Buffer.byteLength(JSON.stringify(manifest))>MAX_MANIFEST_BYTES)throw new Error('manifest exceeds 192 KiB');const session={journalSeq:Number(item.seq),fileId:item.file_id,versionId:item.version_id,parentVersionId:item.parent_version_id??null,deleted:Boolean(item.deleted),manifest,chunkIds:cloudIds,declared};await this.db.query('UPDATE files_cloud_sync SET upload_session=$2,status=$3,pending_bytes=$4,updated_at=NOW() WHERE collection_id=$1',[collectionId,session,'syncing',declared.reduce((n,c)=>n+c.cipherBytes,0)]);if(declared.length)await this.queue(collectionId,'upload-open',`/files-sync/v1/collections/${collectionId}/uploads`,'POST',{chunks:declared});else await this.queueCommit(collectionId,session,root,sync)}finally{root.fill(0)}}
-  private async queueCommit(collectionId:string,session:any,root:Uint8Array,sync:any){const entries=(await this.db.query(`SELECT f.id file_id,cv.version_id current_version_id,v.deleted FROM files_cloud_versions cv JOIN file_versions v ON v.id=cv.version_id JOIN files f ON f.id=v.file_id WHERE cv.collection_id=$1 AND cv.pushed_seq IS NOT NULL`,[collectionId])).rows.map(r=>({fileId:r.file_id,versionId:r.current_version_id,deleted:r.deleted}));const at=entries.findIndex(e=>e.fileId===session.fileId);const projected={fileId:session.fileId,versionId:session.versionId,deleted:session.deleted};if(at>=0)entries[at]=projected;else entries.push(projected);const sh=await stateHash(entries),baseSeq=Number(sync.last_seq??0),head=await signHead(root,{collectionId,keyVersion:sync.key_version,seq:baseSeq+1,stateHash:sh,prevMac:sync.head?.mac??''});await this.queue(collectionId,'commit',`/files-sync/v1/collections/${collectionId}/commit`,'POST',{baseSeq,head,versions:[{fileId:session.fileId,versionId:session.versionId,parentVersionId:session.parentVersionId,baseVersionId:session.parentVersionId,deleted:session.deleted,manifest:session.manifest,chunkIds:session.chunkIds}]})}
+/** Restore's local writes: a new Files collection with its own local keys, then the wrapped sync root. */
+class PgRestoreTarget implements RestoreTarget {
+  constructor(
+    private readonly db:pg.Pool,
+    private readonly config:Config,
+    private readonly keyring:FilesKeyring,
+    private readonly roots:CloudRootKeyStore,
+  ) {}
 
-  async send(input:{handle:string;deviceId:string;ts:number;signature:string}){const op=(await this.db.query('SELECT * FROM files_cloud_operations WHERE handle=$1',[input.handle])).rows[0];if(!op)throw Object.assign(new Error('prepared operation not found'),{status:404});try{const suffix=`${op.path}${op.path.includes('?')?'&':'?'}deviceId=${encodeURIComponent(input.deviceId)}`;
-      // FilesCloudBroker currently has no custom-header argument. P2b must carry
-      // these three values into the broker request; retaining them here keeps the
-      // prepare/send contract and never exposes the device private key.
-      const response=await this.broker.execute(suffix,op.method,op.body,'application/json');
-      if(response.status===409){await this.handleConflict(op.collection_id,response.body);return{status:'conflict' as const,detail:response.body}}
-      if(response.status<200||response.status>=300)throw Object.assign(new Error(`Cloud returned ${response.status}`),{status:response.status});
-      if(op.op==='upload-open')await this.finishUpload(op.collection_id,response.body);
-      if(op.op==='commit')await this.finishCommit(op.collection_id,op.body,response.body);
-      if(op.op==='delete')await this.db.query(`UPDATE files_cloud_sync SET enabled=FALSE,status='off',wrapped_root=NULL,head=NULL,last_seq=0,upload_session=NULL,pending_bytes=0,last_error=NULL WHERE collection_id=$1`,[op.collection_id]);
-      await this.db.query('DELETE FROM files_cloud_operations WHERE handle=$1',[op.handle]);return{status:'sent' as const,detail:response.body};
-    }catch(error){const attempts=Number(op.attempts)+1,status=Number((error as any)?.status);await this.db.query(`UPDATE files_cloud_operations SET attempts=attempts+1,last_error=$2 WHERE handle=$1`,[op.handle,safeError(error)]);await this.db.query(`UPDATE files_cloud_sync SET status=$2,last_error=$3,updated_at=NOW() WHERE collection_id=$1`,[op.collection_id,attempts>=5?'error':'syncing',safeError(error)]);return{status:attempts>=5?'failed' as const:'retry' as const,detail:{status:status||503,error:'cloud_sync_failed'}}}}
-  private async finishUpload(collectionId:string,body:any){const sync=await this.requireEnabled(collectionId),session=sync.upload_session;if(!session)throw new Error('upload session missing');const uploadId=body?.uploadId;if(!uploadId)throw new Error('cloud upload id missing');await this.db.query('UPDATE files_cloud_sync SET upload_session=upload_session || $2::jsonb WHERE collection_id=$1',[collectionId,JSON.stringify({uploadId,expiresAt:body.expiresAt})]);let missing:Array<string>=Array.isArray(body.missing)?body.missing:[];if(session.uploadId===uploadId){const resumed=await this.broker.execute(`/files-sync/v1/uploads/${uploadId}`);missing=Array.isArray((resumed.body as any)?.missing)?(resumed.body as any).missing:missing}for(const id of missing){const wire=await this.store.get(`${collectionId}-cloud`,id);const put=await this.broker.execute(`/files-sync/v1/uploads/${uploadId}/chunks/${id}`,'PUT',wire,'application/octet-stream');if(put.status<200||put.status>=300)throw new Error(`chunk upload failed (${put.status})`);await this.db.query('UPDATE files_cloud_chunk_map SET uploaded_at=NOW(),verified_at=NOW() WHERE collection_id=$1 AND cloud_chunk_id=$2',[collectionId,id])}const root=await this.roots.unwrap(collectionId,sync.key_version,sync.wrapped_root);try{await this.queueCommit(collectionId,session,root,sync)}finally{root.fill(0)}}
-  private async finishCommit(collectionId:string,body:any,response:any){const version=body.versions[0],seq=Number(response?.head?.seq??body.head.seq);await this.db.query(`INSERT INTO files_cloud_versions(version_id,collection_id,pushed_seq) VALUES($1,$2,$3) ON CONFLICT(version_id) DO UPDATE SET pushed_seq=$3`,[version.versionId,collectionId,seq]);const session=(await this.db.query('SELECT upload_session FROM files_cloud_sync WHERE collection_id=$1',[collectionId])).rows[0]?.upload_session;await this.db.query(`UPDATE file_sync_cursors SET last_push_seq=GREATEST(last_push_seq,$2) WHERE collection_id=$1 AND device_id='cloud'`,[collectionId,Number(session?.journalSeq??0)]);await this.db.query(`UPDATE files_cloud_sync SET last_seq=$2,head=$3,status='idle',last_error=NULL,last_sync_at=NOW(),pending_bytes=0,upload_session=NULL,updated_at=NOW() WHERE collection_id=$1`,[collectionId,seq,response?.head??body.head]);for(const id of session?.chunkIds??[])await this.store.delete(`${collectionId}-cloud`,id)}
+  async localRoot(collectionId:string):Promise<{ keyVersion:number; root:Buffer | null } | null> {
+    const row = (await this.db.query(`SELECT c.id,s.key_version,s.wrapped_root FROM collections c
+      LEFT JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.id=$1`, [collectionId])).rows[0];
+    if (!row) return null;
+    if (!row.wrapped_root) return { keyVersion: Number(row.key_version ?? 1), root: null };
+    return { keyVersion: Number(row.key_version), root: await this.roots.unwrap(collectionId, Number(row.key_version), row.wrapped_root) };
+  }
 
-  private async pull(collectionId:string){const sync=await this.requireEnabled(collectionId);let response;try{response=await this.broker.execute(`/files-sync/v1/collections/${collectionId}/changes?since=${sync.last_seq}&limit=500`)}catch{return}if(response.status!==200)return;const body=response.body as any;if(!body?.head||!Array.isArray(body.versions))throw new Error('invalid cloud changes');const root=await this.roots.unwrap(collectionId,sync.key_version,sync.wrapped_root);try{await validateHeadAdvance(root,body.head,Number(sync.last_seq),sync.head?.mac??'');for(const remote of body.versions){const manifest=await openManifest(root,remote.manifest);assertManifestChunkList(manifest,remote.chunkIds);await this.applyRemote(collectionId,remote,manifest,root)}const entries=(await this.db.query(`SELECT f.id file_id,f.current_version_id,v.deleted FROM files f JOIN file_versions v ON v.id=f.current_version_id WHERE f.collection_id=$1`,[collectionId])).rows.map(r=>({fileId:r.file_id,versionId:r.current_version_id,deleted:r.deleted}));if(await stateHash(entries)!==body.head.stateHash)throw new Error('cloud head state hash mismatch');await this.db.query(`UPDATE files_cloud_sync SET last_seq=$2,head=$3,status='idle',last_sync_at=NOW(),last_error=NULL,updated_at=NOW() WHERE collection_id=$1`,[collectionId,body.head.seq,body.head])}finally{root.fill(0)}}
-  private async applyRemote(collectionId:string,remote:any,manifest:any,root:Uint8Array){
-    const current=(await this.db.query('SELECT current_version_id,path FROM files WHERE id=$1 AND collection_id=$2',[remote.fileId,collectionId])).rows[0];
-    if(current?.current_version_id&&remote.parentVersionId!==current.current_version_id){await this.keepBoth(collectionId,remote,manifest,current);return}
-    const localIds:string[]=[]; const localKeys=await this.keyring.keys(collectionId);
-    if(!manifest.deleted) for(const [cloudId,plainBytes] of manifest.chunks as Array<[string,number]>) {
-      let fetched; try { fetched=await this.broker.execute(`/files-sync/v1/collections/${collectionId}/chunks/${cloudId}`) } catch(error) { throw Object.assign(new Error('Cloud copy is unavailable',{cause:error}),{code:'FILE_OFFLINE'}) }
-      if(fetched.status!==200)throw Object.assign(new Error('Cloud copy is unavailable'),{code:'FILE_OFFLINE'});
-      const encoded=typeof fetched.body==='string'?fetched.body:(fetched.body as any)?.body; const wire=Buffer.from(encoded??'','base64');
-      const opened=await import('./envelope.js').then(m=>m.openChunk(root,collectionId,remote.manifest.keyVersion,cloudId,wire));
-      const plain=opened.flags&FLAG_DEFLATE_RAW?(await import('node:zlib')).inflateRawSync(opened.body,{maxOutputLength:4*1024*1024}):opened.body;
-      if(plain.length!==Number(plainBytes)||await chunkId(root,collectionId,remote.manifest.keyVersion,plain)!==cloudId)throw new Error('remote chunk verification failed');
-      const id=localChunkId(plain,localKeys.dedup); localIds.push(id); const encrypted=await encryptChunk(plain,localKeys.data,id); await this.store.put(collectionId,id,encrypted);
-      await this.db.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1`,[collectionId,id,plain.length,encrypted.length,this.store.path(collectionId,id)]);
-      await this.db.query(`INSERT INTO files_cloud_chunk_map(collection_id,local_chunk_id,cloud_chunk_id,cipher_sha256,cipher_bytes,verified_at) VALUES($1,$2,$3,$4,$5,NOW()) ON CONFLICT(collection_id,local_chunk_id) DO UPDATE SET cloud_chunk_id=$3,cipher_sha256=$4,cipher_bytes=$5,verified_at=NOW()`,[collectionId,id,cloudId,createHash('sha256').update(wire).digest('hex'),wire.length]);
+  async createCollection(collectionId:string, name:string):Promise<void> {
+    const explorerPath = `${ name.replace(/[\\/]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Restored files' }--${ collectionId.slice(0, 8) }`;
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,explorer_path)
+        VALUES($1,$2,$3,$4,'knowledge','synced',$5,$6,'{}',$7)`, [collectionId, this.config.orgId ?? null, this.config.userId, name, {}, {}, explorerPath]);
+      const wrapped = await this.keyring.create(collectionId, client);
+      await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [collectionId, wrapped.data, wrapped.dedup]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
-    const client=await this.db.connect();try{await client.query('BEGIN');await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,'user',$4,$5,$6) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=CASE WHEN $7 THEN NOW() ELSE NULL END`,[remote.fileId,collectionId,manifest.path,remote.deviceId??'cloud',manifest.mime,manifest.size,manifest.deleted]);const hash=createHash('sha256').update(JSON.stringify(localIds)).digest('hex');if(!manifest.deleted)await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[hash,JSON.stringify(localIds),manifest.size]);await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,$6,$7,'user',$8,'Cloud sync',$8,$1) ON CONFLICT DO NOTHING`,[remote.versionId,remote.fileId,collectionId,remote.parentVersionId,manifest.deleted?null:hash,manifest.size,manifest.deleted,remote.deviceId??'cloud']);await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1',[remote.fileId,remote.versionId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}
+  }
 
-  private async keepBoth(collectionId:string,remote:any,manifest:any,current:any){const fileId=randomUUID(),versionId=randomUUID(),path=conflictPath(manifest.path,remote.deviceId??'remote');const client=await this.db.connect();try{await client.query('BEGIN');await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,'user',$4,$5,$6)`,[fileId,collectionId,path,remote.deviceId??'cloud',manifest.mime,manifest.size]);await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,size,deleted,created_by_type,created_by_id,message,device_id) VALUES($1,$2,$3,NULL,$4,$5,'user',$6,'Cloud conflict copy',$6)`,[versionId,fileId,collectionId,manifest.size,manifest.deleted,remote.deviceId??'cloud']);await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1',[fileId,versionId]);await client.query(`INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'conflict')`,[collectionId,fileId,versionId]);await client.query('UPDATE files_cloud_sync SET conflicts=conflicts+1 WHERE collection_id=$1',[collectionId]);await client.query('COMMIT')}catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}}
-  private async handleConflict(collectionId:string,detail:any){await this.db.query(`UPDATE files_cloud_sync SET status='idle',conflicts=conflicts+1,last_error='cloud conflict',updated_at=NOW() WHERE collection_id=$1`,[collectionId]);if(detail?.head)await this.db.query('UPDATE files_cloud_sync SET head=$2,last_seq=$3 WHERE collection_id=$1',[collectionId,detail.head,detail.head.seq])}
+  async install(collectionId:string, keyVersion:number, root:Uint8Array, vaultId:string, vaultEpoch:number):Promise<void> {
+    const wrapped = await this.roots.wrap(collectionId, keyVersion, root);
+    await this.db.query(`INSERT INTO files_cloud_sync(collection_id,enabled,key_version,wrapped_root,status,cloud_created,escrow_vault_id,escrow_vault_epoch,last_seq,head)
+      VALUES($1,TRUE,$2,$3,'idle',TRUE,$4,$5,0,NULL)
+      ON CONFLICT(collection_id) DO UPDATE SET enabled=TRUE,key_version=EXCLUDED.key_version,wrapped_root=EXCLUDED.wrapped_root,status='idle',
+        cloud_created=TRUE,escrow_vault_id=EXCLUDED.escrow_vault_id,escrow_vault_epoch=EXCLUDED.escrow_vault_epoch,last_error=NULL,updated_at=NOW()`,
+    [collectionId, keyVersion, wrapped, vaultId, vaultEpoch]);
+    await this.db.query("INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,'cloud') ON CONFLICT DO NOTHING", [collectionId]);
+  }
+}
+
+/**
+ * Files-service half of Sulla Files cloud sync v1 (FILES-SYNC-DESIGN.md §5, §5.1, §6.1).
+ *
+ * Bearer work (pull, staging, chunk PUT/GET) runs in a background loop through
+ * the vault broker. Device-signed mutations are queued as exact JSON text and
+ * handed to main via prepare/send; Files never holds the device key.
+ */
+export class CloudSyncService {
+  readonly cryptoModule:CryptoModuleStatus;
+  readonly api:FilesSyncCloudApi;
+  readonly roots:CloudRootKeyStore;
+  private readonly repository:PgCloudSyncRepository;
+  private readonly staging:CloudStagingStore;
+  private readonly transport = new EscrowTransportRequests();
+  private readonly puller:CloudPuller;
+  private readonly pusher:CloudPusher;
+  private readonly restorer:CloudRestore;
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private readonly lastPullAt = new Map<string, number>();
+  private loop?:Promise<void>;
+  private rerun = false;
+  private timer?:NodeJS.Timeout;
+  private stopped = true;
+
+  constructor(
+    private readonly db:pg.Pool,
+    private readonly config:Config,
+    private readonly keyring:FilesKeyring,
+    private readonly store:Store,
+    broker:Pick<FilesCloudBroker, 'execute'>,
+  ) {
+    this.cryptoModule = configureCryptoModule();
+    this.api = new FilesSyncCloudApi(broker);
+    this.roots = new CloudRootKeyStore(keyring);
+    const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
+    this.repository = new PgCloudSyncRepository(db, actor);
+    this.staging = new CloudStagingStore(config.dataRoot);
+    this.puller = new CloudPuller(this.api, this.repository, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
+    this.pusher = new CloudPusher(this.repository, store, keyring, this.staging);
+    this.restorer = new CloudRestore(this.transport, this.api, new PgRestoreTarget(db, config, keyring, this.roots));
+  }
+
+  start():void {
+    this.stopped = false;
+    this.schedule(LOOP_MS);
+  }
+
+  stop():void {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  // ---- §5.1 desktop-control API ----
+
+  async status() {
+    const rows = await this.repository.statusRows();
+    return {
+      cryptoModule: this.cryptoModule,
+      collections: rows.map(row => ({
+        collectionId: row.collection_id,
+        name: row.name,
+        enabled: Boolean(row.enabled),
+        status: row.status,
+        lastSyncAt: row.last_sync_at ?? null,
+        pendingBytes: Number(row.pending_bytes),
+        conflicts: Number(row.conflicts),
+        lastError: row.last_error ?? null,
+      })),
+    };
+  }
+
+  /** Human-only (main enforces the guard). On: queue `create` once the vault escrow key arrives. Off: pause, delete nothing. */
+  async enable(collectionId:string, enabled:boolean):Promise<{ enabled:boolean }> {
+    if (!await this.repository.backupCandidate(collectionId)) throw new HttpStatusError(404, 'collection not found');
+    return this.exclusive(collectionId, async() => {
+      const existing = await this.repository.sync(collectionId);
+      let wrapped = existing?.wrappedRoot ?? null;
+      if (enabled && !wrapped) {
+        const created = await this.roots.create(collectionId, existing?.keyVersion ?? 1);
+        created.root.fill(0);
+        wrapped = created.wrapped;
+      }
+      await this.repository.setEnabled(collectionId, enabled, wrapped);
+      if (enabled) this.nudge();
+      return { enabled };
+    });
+  }
+
+  /** Human-only. Queues the device-signed crypto-shred of the cloud copy. Local files are untouched. */
+  async deleteCloudCopy(collectionId:string):Promise<{ queued:boolean }> {
+    if (!isUuid(collectionId)) throw new HttpStatusError(404, 'collection not found');
+    return this.exclusive(collectionId, async() => {
+      const sync = await this.repository.sync(collectionId);
+      if (!sync) throw new HttpStatusError(409, 'cloud backup is not set up for this collection');
+      await this.dropSession(collectionId);
+      await this.repository.dropCollectionOperations(collectionId, ['create', 'escrow', 'upload-open', 'commit', 'delete']);
+      if (!sync.cloudCreated) {
+        await this.repository.markCloudDeleted(collectionId);
+        return { queued: false };
+      }
+      // Crypto-shredding the cloud copy must never strand a chunk that only lives in Cloud.
+      await this.repository.stopEviction(collectionId);
+      await this.rehydrateEvicted(collectionId);
+      await this.repository.queue(collectionId, 'delete', `${ BASE }/collections/${ collectionId }`, 'DELETE', null, EMPTY_SHA256, randomUUID());
+      return { queued: true };
+    });
+  }
+
+  requestEscrowKey():Promise<{ requestId:string; recipientPublicKey:string }> {
+    return this.transport.issue();
+  }
+
+  /**
+   * Unwraps EK with the single-use pair it issued, seals each pending collection's
+   * escrow, queues `create` for collections new to Cloud and `escrow` for ones
+   * already there, then zeroes EK.
+   */
+  async acceptEscrowKey(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number }):Promise<{ queued:number }> {
+    if (!isUuid(input?.vaultId) || !Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) throw new HttpStatusError(400, 'escrow key request is invalid');
+    const ek = await this.transport.unwrap(input.requestId, input.transport, input.vaultId, input.vaultEpoch);
+    try {
+      let queued = 0;
+      for (const sync of await this.repository.needsEscrow(input.vaultId, input.vaultEpoch)) {
+        await this.exclusive(sync.collectionId, async() => {
+          const root = await this.roots.unwrap(sync.collectionId, sync.keyVersion, sync.wrappedRoot!);
+          try {
+            const escrow = await sealEscrowWithKey(ek, input.vaultId, input.vaultEpoch, sync.collectionId, sync.keyVersion, root);
+            await this.repository.dropCollectionOperations(sync.collectionId, ['create', 'escrow']);
+            const meta = { vaultId: input.vaultId, vaultEpoch: input.vaultEpoch };
+            if (sync.cloudCreated) {
+              const body = JSON.stringify(escrow);
+              await this.repository.queue(sync.collectionId, 'escrow', `${ BASE }/collections/${ sync.collectionId }/keys/${ sync.keyVersion }`, 'PUT', body, sha256Text(body), randomUUID(), meta);
+            } else {
+              const head = await signHead(root, { collectionId: sync.collectionId, keyVersion: sync.keyVersion, seq: 0, stateHash: await stateHash([]), prevMac: '' });
+              const body = JSON.stringify({ keyVersion: sync.keyVersion, escrow, head });
+              await this.repository.queue(sync.collectionId, 'create', `${ BASE }/collections/${ sync.collectionId }?op=create`, 'PUT', body, sha256Text(body), randomUUID(), { ...meta, head });
+            }
+            await this.repository.setStatus(sync.collectionId, 'syncing');
+            queued += 1;
+          } finally {
+            root.fill(0);
+          }
+        });
+      }
+      return { queued };
+    } finally {
+      ek.fill(0);
+    }
+  }
+
+  /** The oldest queued device-signed call, or null (204) when there is nothing to sign. */
+  async prepare():Promise<{ handle:string; op:string; collectionId:string; sha256:string } | null> {
+    let operation = await this.repository.nextOperation();
+    if (!operation) {
+      await Promise.race([this.kick(), delay(PREPARE_WAIT_MS)]);
+      operation = await this.repository.nextOperation();
+    }
+    return operation ? { handle: operation.handle, op: operation.op, collectionId: operation.collectionId, sha256: operation.sha256 } : null;
+  }
+
+  async send(input:{ handle:string; deviceId:string; ts:number; signature:string }):Promise<{ status:SendStatus; detail:unknown }> {
+    if (!isUuid(input?.handle) || typeof input.deviceId !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.deviceId) ||
+        !Number.isSafeInteger(input.ts) || typeof input.signature !== 'string' || !/^[A-Za-z0-9+/=_-]{16,256}$/.test(input.signature)) {
+      throw new HttpStatusError(400, 'send request is invalid');
+    }
+    const operation = await this.repository.operationByHandle(input.handle);
+    if (!operation) throw new HttpStatusError(404, 'prepared operation not found');
+    return this.exclusive(operation.collectionId, async() => {
+      const current = await this.repository.operationByHandle(input.handle);
+      if (!current) return { status: 'retry' as const, detail: { error: 'operation_superseded' } };
+      let response;
+      try {
+        response = await this.api.sendSigned({ path: current.path, method: current.method, body: current.body }, input.deviceId, input.ts, input.signature);
+      } catch (error) {
+        return this.failed(current, safeError(error), undefined);
+      }
+      return this.handleResponse(current, response.status, response.body);
+    });
+  }
+
+  // ---- §6.1 restore ----
+
+  async cloudCollections() {
+    const remote = await this.api.listCollections();
+    const local = await this.repository.localCollectionIds(remote.map(entry => String(entry?.id ?? '')));
+    return {
+      collections: remote.filter(entry => isUuid(entry?.id)).map(entry => ({
+        collectionId: entry.id,
+        status: entry.status,
+        keyVersion: entry.keyVersion,
+        headSeq: entry.headSeq,
+        bytes: entry.bytes,
+        updatedAt: entry.updatedAt,
+        sourceDeviceId: entry.sourceDeviceId,
+        local: local.has(entry.id),
+      })),
+    };
+  }
+
+  async restore(input:RestoreInput):Promise<{ restored:true; collectionId:string }> {
+    try {
+      const result = await this.exclusive(input?.collectionId ?? '', () => this.restorer.restore(input));
+      this.lastPullAt.delete(result.collectionId);
+      this.nudge();
+      return result;
+    } catch (error) {
+      if (error instanceof RestoreError) throw new HttpStatusError(error.status, error.code);
+      throw error;
+    }
+  }
+
+  // ---- signed responses ----
+
+  private async handleResponse(operation:QueuedOperation, status:number, body:any):Promise<{ status:SendStatus; detail:unknown }> {
+    const collectionId = operation.collectionId;
+    const ok = status >= 200 && status < 300;
+    if (status === 401 || status === 403) {
+      // Stale timestamp or signature problems are fixed by re-signing; main retries with backoff.
+      return this.failed(operation, 'Sulla Cloud rejected the device signature', { status, error: body?.error });
+    }
+    switch (operation.op) {
+      case 'create': {
+        const meta = operation.meta as { head:SyncHead; vaultId:string; vaultEpoch:number };
+        if (ok) {
+          await this.repository.markCreated(collectionId, meta.head, meta.vaultId, meta.vaultEpoch);
+          await this.repository.completeOperation(operation.handle);
+          this.nudge();
+          return { status: 'sent', detail: { collectionId } };
+        }
+        if (status === 409 && body?.error === 'collection_exists') return this.adoptExistingCollection(operation);
+        break;
+      }
+      case 'escrow': {
+        const meta = operation.meta as { vaultId:string; vaultEpoch:number };
+        if (ok) {
+          await this.repository.markEscrowed(collectionId, meta.vaultId, meta.vaultEpoch);
+          await this.repository.completeOperation(operation.handle);
+          return { status: 'sent', detail: { collectionId } };
+        }
+        break;
+      }
+      case 'upload-open': {
+        if (ok && typeof body?.uploadId === 'string' && isUuid(body.uploadId)) {
+          const sync = await this.repository.sync(collectionId);
+          const session = sync?.uploadSession;
+          if (session) {
+            const missing = new Set(Array.isArray(body.missing) ? body.missing : []);
+            session.uploadId = body.uploadId;
+            session.present = session.declared.map(chunk => chunk.id).filter(id => !missing.has(id));
+            await this.repository.saveSession(collectionId, session, this.pendingBytes(session, missing), 'syncing');
+          }
+          await this.repository.completeOperation(operation.handle);
+          this.nudge();
+          return { status: 'sent', detail: { collectionId } };
+        }
+        if (status === 507) {
+          await this.dropSession(collectionId);
+          await this.repository.completeOperation(operation.handle);
+          await this.repository.setStatus(collectionId, 'error', 'Sulla Cloud backup storage is full');
+          return { status: 'failed', detail: { error: 'quota_exceeded' } };
+        }
+        break;
+      }
+      case 'commit':
+        return this.handleCommitResponse(operation, status, body);
+      case 'delete': {
+        if (ok || status === 404) {
+          await this.staging.clear(collectionId);
+          await this.repository.markCloudDeleted(collectionId);
+          await this.repository.completeOperation(operation.handle);
+          return { status: 'sent', detail: { collectionId } };
+        }
+        break;
+      }
+    }
+    return this.failed(operation, `Sulla Cloud returned ${ status }`, { status, error: typeof body?.error === 'string' ? body.error : undefined });
+  }
+
+  private async handleCommitResponse(operation:QueuedOperation, status:number, body:any):Promise<{ status:SendStatus; detail:unknown }> {
+    const collectionId = operation.collectionId;
+    if (status >= 200 && status < 300 && body?.ok === true) {
+      const sync = await this.repository.sync(collectionId);
+      const session = sync?.uploadSession;
+      const head = operation.meta.head as SyncHead;
+      if (!session || Number(body.seq) !== head.seq) {
+        // The commit landed but local bookkeeping is gone; the next pull reconciles it.
+        await this.repository.completeOperation(operation.handle);
+        this.lastPullAt.delete(collectionId);
+        return { status: 'sent', detail: { collectionId } };
+      }
+      await this.repository.finishCommit(collectionId, session, head);
+      await this.repository.completeOperation(operation.handle);
+      await this.adoptPresentCopies(sync!, session);
+      await this.staging.clear(collectionId);
+      this.nudge();
+      return { status: 'sent', detail: { collectionId, seq: head.seq } };
+    }
+    if (status === 409 && (body?.error === 'head_moved' || body?.error === 'file_conflict')) {
+      // Drop the stale commit and its upload; the next pass pulls (forking unpushed edits) and re-stages.
+      await this.dropSession(collectionId);
+      await this.repository.completeOperation(operation.handle);
+      this.lastPullAt.delete(collectionId);
+      this.nudge();
+      return { status: 'conflict', detail: { error: body.error } };
+    }
+    if (status === 422 && body?.error === 'missing_chunks') {
+      const missing = Array.isArray(body.missing) ? body.missing.filter((id:unknown):id is string => typeof id === 'string') : [];
+      await this.repository.forgetUpload(collectionId, missing);
+      await this.dropSession(collectionId);
+      await this.repository.completeOperation(operation.handle);
+      this.nudge();
+      return { status: 'retry', detail: { error: 'missing_chunks' } };
+    }
+    return this.failed(operation, `Sulla Cloud returned ${ status }`, { status, error: typeof body?.error === 'string' ? body.error : undefined });
+  }
+
+  /** `create` hit an existing collection: adopt it only if its head was signed with our root. */
+  private async adoptExistingCollection(operation:QueuedOperation):Promise<{ status:SendStatus; detail:unknown }> {
+    const collectionId = operation.collectionId;
+    const sync = await this.repository.sync(collectionId);
+    const meta = operation.meta as { vaultId:string; vaultEpoch:number };
+    if (!sync?.wrappedRoot) return this.failed(operation, 'Cloud backup is not set up for this collection', undefined);
+    const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
+    try {
+      const page = await this.api.changes(collectionId, 0, 1);
+      if (page.head.collectionId !== collectionId || page.head.keyVersion !== sync.keyVersion || !await verifyHead(root, page.head)) {
+        await this.repository.completeOperation(operation.handle);
+        await this.repository.setStatus(collectionId, 'error', 'This collection already has a different cloud backup; restore it instead');
+        return { status: 'failed', detail: { error: 'collection_exists' } };
+      }
+      await this.repository.adoptExisting(collectionId, meta.vaultId, meta.vaultEpoch);
+      await this.repository.completeOperation(operation.handle);
+      this.nudge();
+      return { status: 'sent', detail: { collectionId, adopted: true } };
+    } catch (error) {
+      return this.failed(operation, safeError(error), undefined);
+    } finally {
+      root.fill(0);
+    }
+  }
+
+  private async failed(operation:QueuedOperation, message:string, detail:unknown):Promise<{ status:SendStatus; detail:unknown }> {
+    const attempts = await this.repository.failOperation(operation.handle, message);
+    if (attempts < MAX_ATTEMPTS) {
+      await this.repository.setStatus(operation.collectionId, 'syncing', message);
+      return { status: 'retry', detail: detail ?? { error: 'cloud_sync_retry' } };
+    }
+    if (operation.op === 'upload-open' || operation.op === 'commit') await this.dropSession(operation.collectionId);
+    await this.repository.completeOperation(operation.handle);
+    // A failed create/escrow goes back to needs-vault so the next escrow relay queues it again.
+    const next = operation.op === 'create' || operation.op === 'escrow' ? 'needs-vault' : 'error';
+    await this.repository.setStatus(operation.collectionId, next, message);
+    return { status: 'failed', detail: detail ?? { error: 'cloud_sync_failed' } };
+  }
+
+  // ---- background bearer work ----
+
+  private nudge():void {
+    this.schedule(0);
+  }
+
+  private schedule(ms:number):void {
+    if (this.stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.kick();
+    }, ms);
+    this.timer.unref();
+  }
+
+  /** Starts a pass now (or marks the running one to repeat) and returns it. */
+  private kick():Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.loop) {
+      this.rerun = true;
+      return this.loop;
+    }
+    this.loop = this.runLoop().finally(() => {
+      this.loop = undefined;
+      const again = this.rerun;
+      this.rerun = false;
+      this.schedule(again ? 0 : LOOP_MS);
+    });
+    return this.loop;
+  }
+
+  private async runLoop():Promise<void> {
+    if (!this.config.keyring?.unlocked) return;
+    for (const sync of await this.repository.enabledCollections().catch(() => [])) {
+      if (this.stopped) return;
+      if (this.locks.has(sync.collectionId)) continue;
+      await this.exclusive(sync.collectionId, () => this.advance(sync.collectionId)).catch(() => undefined);
+    }
+  }
+
+  /** One step of bearer-authenticated work for a collection. */
+  private async advance(collectionId:string):Promise<void> {
+    const sync = await this.repository.sync(collectionId);
+    if (!sync?.enabled || !sync.wrappedRoot || !sync.cloudCreated) return;
+    if (await this.repository.hasOperation(collectionId)) return;
+    const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
+    try {
+      if (sync.uploadSession) {
+        await this.continueUpload(sync, sync.uploadSession, root);
+        return;
+      }
+      const lastPull = this.lastPullAt.get(collectionId) ?? 0;
+      let current = sync;
+      if (Date.now() - lastPull >= PULL_INTERVAL_MS || !sync.head) {
+        await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
+        this.lastPullAt.set(collectionId, Date.now());
+        current = (await this.repository.sync(collectionId)) ?? sync;
+      }
+      const session = await this.pusher.stage(current, root);
+      if (!session) {
+        await this.repository.setStatus(collectionId, 'idle');
+        return;
+      }
+      if (session.declared.length) {
+        await this.repository.saveSession(collectionId, session, this.pendingBytes(session), 'syncing');
+        const body = JSON.stringify({ chunks: session.declared });
+        await this.repository.queue(collectionId, 'upload-open', `${ BASE }/collections/${ collectionId }/uploads`, 'POST', body, sha256Text(body), randomUUID());
+      } else {
+        session.uploadId = null;
+        await this.repository.saveSession(collectionId, session, 0, 'syncing');
+        await this.queueCommit(current, session, root);
+      }
+    } catch (error) {
+      await this.repository.setStatus(collectionId, 'error', safeError(error)).catch(() => undefined);
+    } finally {
+      root.fill(0);
+    }
+  }
+
+  /** Resumable chunk upload: ask the server what is still missing, PUT those wires, then queue the commit. */
+  private async continueUpload(sync:SyncRow, session:UploadSession, root:Uint8Array):Promise<void> {
+    const collectionId = sync.collectionId;
+    if (!session.uploadId) {
+      await this.dropSession(collectionId);
+      return;
+    }
+    const remote = await this.api.uploadStatus(session.uploadId);
+    if (!remote) {
+      await this.dropSession(collectionId);
+      return;
+    }
+    const staged = new Set(session.staged);
+    for (const id of remote.missing) {
+      if (!staged.has(id)) {
+        // A chunk we thought Cloud held is gone; forget it so the next staging re-seals it.
+        await this.repository.forgetUpload(collectionId, [id]);
+        await this.dropSession(collectionId);
+        return;
+      }
+      let wire:Buffer;
+      try {
+        wire = await this.staging.get(collectionId, id);
+      } catch {
+        await this.dropSession(collectionId);
+        return;
+      }
+      const status = await this.api.putChunk(session.uploadId, id, wire);
+      if (status === 200 || status === 201) {
+        await this.repository.markUploaded(collectionId, id);
+      } else if (status === 409) {
+        // Cloud already holds different bytes for this id; verify and adopt them after the commit.
+        if (!session.present.includes(id)) session.present.push(id);
+      } else if (status === 404 || status === 410) {
+        await this.dropSession(collectionId);
+        return;
+      } else {
+        throw Object.assign(new Error(`Chunk upload failed (${ status })`), { status });
+      }
+    }
+    await this.repository.saveSession(collectionId, session, 0, 'syncing');
+    await this.queueCommit(sync, session, root);
+  }
+
+  private async queueCommit(sync:SyncRow, session:UploadSession, root:Uint8Array):Promise<void> {
+    const commit = await buildCommit(sync, session, await this.repository.cloudHeads(sync.collectionId), root);
+    await this.repository.queue(sync.collectionId, 'commit', `${ BASE }/collections/${ sync.collectionId }/commit`, 'POST', commit.body, commit.sha256, randomUUID(), { head: commit.head });
+  }
+
+  /**
+   * Chunks we sealed but Cloud already held (another device wrote the same plaintext):
+   * our recorded sha256 is not the server's, so fetch, open and verify the server copy
+   * and record its real bytes. Until that succeeds the chunk is never evictable.
+   */
+  private async adoptPresentCopies(sync:SyncRow, session:UploadSession):Promise<void> {
+    const ours = new Set(session.staged);
+    const adopt = session.present.filter(id => ours.has(id));
+    if (!adopt.length) return;
+    const root = await this.roots.unwrap(sync.collectionId, sync.keyVersion, sync.wrappedRoot!);
+    try {
+      for (const id of adopt) {
+        try {
+          const wire = await this.api.getChunk(sync.collectionId, id);
+          const plain = await openCloudChunk(root, sync.collectionId, sync.keyVersion, id, wire);
+          plain.fill(0);
+          await this.repository.adoptServerCopy(sync.collectionId, id, createHash('sha256').update(wire).digest('hex'), wire.length);
+        } catch {
+          await this.repository.forgetUpload(sync.collectionId, [id]);
+        }
+      }
+    } finally {
+      root.fill(0);
+    }
+  }
+
+  /** Reads every evicted chunk back through the caching store, which hydrates it from Cloud. */
+  private async rehydrateEvicted(collectionId:string):Promise<void> {
+    for (const chunkId of await this.repository.evictedChunks(collectionId)) {
+      try {
+        const encrypted = await this.store.get(collectionId, chunkId);
+        encrypted.fill(0);
+      } catch (error:any) {
+        throw new HttpStatusError(409, error?.code === 'FILE_OFFLINE'
+          ? 'Some files are only in Sulla Cloud and could not be downloaded; try again when online'
+          : 'Some files are only in Sulla Cloud and could not be downloaded');
+      }
+    }
+  }
+
+  private async dropSession(collectionId:string):Promise<void> {
+    await this.staging.clear(collectionId);
+    await this.repository.dropCollectionOperations(collectionId, ['upload-open', 'commit']);
+    await this.repository.saveSession(collectionId, null, 0, 'idle');
+  }
+
+  private pendingBytes(session:UploadSession, missing?:Set<unknown>):number {
+    const staged = new Set(session.staged);
+    return session.declared
+      .filter(chunk => staged.has(chunk.id) && (!missing || missing.has(chunk.id)))
+      .reduce((total, chunk) => total + chunk.cipherBytes, 0);
+  }
+
+  /** Serializes all state changes for one collection (background steps, send, enable, restore). */
+  private exclusive<T>(collectionId:string, work:() => Promise<T>):Promise<T> {
+    const previous = this.locks.get(collectionId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(work);
+    const tail = next.catch(() => undefined);
+    this.locks.set(collectionId, tail);
+    void tail.then(() => {
+      if (this.locks.get(collectionId) === tail) this.locks.delete(collectionId);
+    });
+    return next;
+  }
 }

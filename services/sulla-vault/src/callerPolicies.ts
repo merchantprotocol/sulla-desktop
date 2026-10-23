@@ -6,6 +6,8 @@ export interface CallerOperationPolicy {
   methods:      string[];
   injections:   BrokerInjection[];
   pathPattern:  RegExp;
+  /** Allows a base64 request body (bodyEncoding) decoded only by the broker. */
+  binaryRequest?: boolean;
 }
 
 /**
@@ -27,6 +29,16 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT'],
     injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
     pathPattern: /^\/shares(?:\/[A-Za-z0-9._~-]{1,200}(?:\/content)?)?$/,
+  },
+  // Files cloud sync ciphertext API. Only the sulla-files service identity is
+  // trusted for it (localAuthority), and only it gets the larger byte limits.
+  'sulla-cloud.files-sync': {
+    integrations: ['sulla-cloud'],
+    hosts: ['sulla-workers.merchantprotocol.workers.dev'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/files-sync\/v1\/(collections(\/[0-9a-f-]{36}(\/(keys(\/[0-9]+)?|uploads|commit|changes|chunks\/[0-9a-f]{64}))?)?|uploads\/[0-9a-f-]{36}(\/chunks\/[0-9a-f]{64})?|usage)$/,
+    binaryRequest: true,
   },
   'provider.transcription': {
     integrations: ['grok'],

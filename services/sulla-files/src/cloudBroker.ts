@@ -3,7 +3,21 @@ import https from 'node:https';
 
 import type { Config } from './config.js';
 
-interface BrokerResponse { status:number; body:unknown }
+interface BrokerResponse { status:number; headers:Record<string, string>; body:unknown }
+
+export interface BrokerExecuteOptions {
+  /** Extra request headers, e.g. X-Sulla-Timestamp / X-Sulla-Device-Signature for device-signed calls. */
+  headers?:Record<string, string>;
+  /** 'base64' returns the raw upstream bytes base64-encoded in body (Files sync chunk reads only). */
+  responseType?:'json' | 'text' | 'base64';
+}
+
+/** Files sync has its own vault policy with larger limits; every other Cloud path keeps the general one. */
+function brokerOperation(path:string):string {
+  if (path === '/shares' || path.startsWith('/shares/')) return 'sulla-cloud.shares';
+  if (path.startsWith('/files-sync/')) return 'sulla-cloud.files-sync';
+  return 'sulla-cloud.api';
+}
 interface BrokerMetadata { activeAccountId?:string; accounts?:Array<{ accountId:string; active?:boolean; connected?:boolean }> }
 
 /** Cloud calls from Files stay inside the vault broker; credential material never enters this process. */
@@ -42,19 +56,26 @@ export class FilesCloudBroker {
     return { accountId, principal: this.principal };
   }
 
-  async execute(path:string, method = 'GET', body?:unknown, contentType?:string):Promise<BrokerResponse> {
+  async execute(path:string, method = 'GET', body?:unknown, contentType?:string, options:BrokerExecuteOptions = {}):Promise<BrokerResponse> {
     const { accountId, principal } = await this.account();
-    const operation = path === '/shares' || path.startsWith('/shares/') ? 'sulla-cloud.shares' : 'sulla-cloud.api';
     const binary = body instanceof Uint8Array;
     const requestBody = binary ? Buffer.from(body).toString('base64') : body;
-    const result = await this.request<{ status:number; body:unknown }>('/v1/broker/execute', {
+    const responseType = options.responseType ?? 'json';
+    const operation = brokerOperation(path);
+    if (responseType === 'base64' && operation !== 'sulla-cloud.files-sync') throw new Error('Binary responses are limited to Files sync');
+    const result = await this.request<{ status:number; headers?:Record<string, string>; body:unknown }>('/v1/broker/execute', {
       method: 'POST', body: JSON.stringify({
         claims: { v: 1, iss: 'sulla-files', aud: 'sulla-tools', sub: principal, agent_id: 'sulla-files', pod_id: 'sulla-files', credential_scope: { integration_id: 'sulla-cloud', account_id: accountId } },
-        operation, ref: { integrationId: 'sulla-cloud', accountId }, url: `${ this.config.cloudUrl }${ path }`, method, headers: { accept: 'application/json', ...(contentType ? { 'content-type': contentType } : {}) },
-        ...(requestBody === undefined ? {} : { body: binary ? requestBody : requestBody, ...(binary ? { bodyEncoding: 'base64' } : {}) }),
-        injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }], responseType: 'json',
+        operation,
+        ref: { integrationId: 'sulla-cloud', accountId },
+        url: `${ this.config.cloudUrl }${ path }`,
+        method,
+        headers: { accept: responseType === 'base64' ? 'application/octet-stream' : 'application/json', ...(contentType ? { 'content-type': contentType } : {}), ...(options.headers ?? {}) },
+        ...(requestBody === undefined ? {} : { body: requestBody, ...(binary ? { bodyEncoding: 'base64' } : {}) }),
+        injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+        responseType,
       }),
     });
-    return { status: result.status, body: result.body };
+    return { status: result.status, headers: result.headers ?? {}, body: result.body };
   }
 }
