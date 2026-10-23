@@ -1,0 +1,222 @@
+{
+  "note": "Synthetic Passwords sync v3 known-answer fixture. Regenerate with services/sulla-vault/src/browserEnvelope/kat-fixture.mjs in sulla-desktop.",
+  "password": "correct horse battery staple · sync v3",
+  "desktop": {
+    "bundle": {
+      "format": "sulla-vault-sync-bundle",
+      "v": 1,
+      "vaultId": "0d5e0000-0000-4000-8000-0000000000d1",
+      "vaultUserId": "9a1c3f00-0000-4000-8000-00000000c0de",
+      "epoch": 1,
+      "bundleGeneration": 1,
+      "kdf": {
+        "alg": "argon2id13",
+        "salt": "Xp5muFbbph74ANZBtYjLOQ",
+        "memoryBytes": 67108864,
+        "ops": 2
+      },
+      "encryptedUserKey": {
+        "version": 1,
+        "algorithm": "xchacha20-poly1305",
+        "nonce": "mF7kaCs_NYlTKU0zilT5hRDHSEn4nsR6",
+        "ciphertext": "jsSw23VskkqSW0wanyF-Jz_TXOzKc8u20Y3LwxLtzHyMD4YEf5Uo4scR-phSSjiu"
+      },
+      "publicKey": "nn8xFvmvksKDb9zmY_yhrxYFiVYKArt0iuzRcLA_yA0",
+      "encryptedPrivateKey": {
+        "version": 1,
+        "algorithm": "xchacha20-poly1305",
+        "nonce": "fU0NzE9Au0MzQ8O8UYbtvD0edOHqf6C7",
+        "ciphertext": "HEv8l6aWt7lKUD-ORjCW4LqbniHOCAKQrx_B54uUfUbSUTn2zjHM6qQImO5MOLEO"
+      },
+      "mac": "pgN7UmTMIXWnMRDn02q_qsZ_gv5xvOO789e3pXBGDro"
+    },
+    "records": [
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0d5e0000-0000-4000-8000-0000000000d1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "d0000000-0000-4000-8000-000000000001",
+        "generation": 1,
+        "deleted": false,
+        "item": {
+          "version": 1,
+          "encryptedItemKey": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "0SpVddD0P1u-h95hGyT87iCTP1fx3ivd",
+            "ciphertext": "E0MvQNqRyBHt3qbblljHULY9JRh6XubDZOM0FzLsfJf1NZiCIyFshWBjHhoW4Wp9"
+          },
+          "ciphertext": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "AZ_D56YrELKeJvl648xQADZR38M0C2nr",
+            "ciphertext": "TTHEz8G4lV4LuTpkvW2buRsxVtjpFvYiEj83VGvnJdHSFRHisxpL5T9lhndDJlEs1PF7KL4MZ-rk2uCePZk3BHvxLscaPsQMo9ixo9L8t78MS2jshhpLudMW2_GZEOqYiXpWgCs-Ct_4MSC3YbrrnYLu8sZMSYC6Z_lhuhZp--b8TdKLVNtwPJ3a1aSNIsvnmG60F_vMfSUW7v13t1Q8cMIxdfrQ_BdiUZB-G7Ui5mRusKUec4es5O-sl_yEw94ThBX9QuM45pDUgjVzi9dM7nlgakKoUerN656YjNgIOLNEOgEn-Vlz5cTfrehQAyIex3fDGBwZHsM5E9qdLqMk-1YByjOt-vZASVE-y-9ACLLqukx1WEytwbXZNFVhpASfwqu2juON"
+          }
+        },
+        "mac": "E6R-Tn9egPoLFC-hqKkeGipitJuPVk7Nn9I4d_CI7ac"
+      },
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0d5e0000-0000-4000-8000-0000000000d1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "d0000000-0000-4000-8000-000000000002",
+        "generation": 2,
+        "deleted": false,
+        "item": {
+          "version": 1,
+          "encryptedItemKey": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "Bu1HPEznTGbAaZot2lZp6Dr2Dn3ekX_q",
+            "ciphertext": "KzRmydzS2pzeAcukNJ8hBPihfJA5j7vOV1QZQVF42NK6QPn_M4JQNNUG67NQ3Ht9"
+          },
+          "ciphertext": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "QnOhRIFLD__rKESuzhYw9ZB7I7UNHQag",
+            "ciphertext": "C2WbdyfjXTEcbwvzOitU0ioLxYwAnYxCPNene0nKBvwcPNOFcD5NXxNWGn_Ho-J4Rx0ChPSCWa4908YvAabM2otz2pXQ87cyHIwsmbjQkQvSzjyVkzUjJIlPDdJ9ceZI_zZUA9UAgMC8LxgkuwYfVwz6hpTEEDW47QMG4wXkdwuWXdmg2oNW1B4O4uNg8JfXWDhTCRr_Qz9GQ_uzM3da6fbgs4uRi8msCYfk52MSU5524NcYUR1J-czqGj45s695ypSWrISpksv1t0H-XW47WwJz-uYZXWA4tuvUSdI9jxpTD2O82JSRChHhxsvh5uKqFVYStJunIFLW"
+          }
+        },
+        "mac": "ZJKgpn0suYs2BbHMBVllAk7LFJ5Gf7-n1-jKHV2DlfI"
+      },
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0d5e0000-0000-4000-8000-0000000000d1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "d0000000-0000-4000-8000-0000000000ff",
+        "generation": 3,
+        "deleted": true,
+        "mac": "jGpEto9ppTzHLpiYCVyNAF1CBDzDAFYO7LDoCPqFDxw"
+      }
+    ],
+    "head": {
+      "format": "sulla-vault-sync-head",
+      "v": 1,
+      "vaultId": "0d5e0000-0000-4000-8000-0000000000d1",
+      "scope": "personal",
+      "seq": 4,
+      "stateHash": "5i7bWQ4PRa9VSWNfna-1ZMmnx9TA7D_-u7Qpv3VFlQc",
+      "prevHeadMac": "",
+      "mac": "JrJScqG2J0kfWS1dnqnFOvCmPqPWHJwgGcx5LEGFj9k"
+    },
+    "plaintexts": {
+      "d0000000-0000-4000-8000-000000000001": "{\"type\":\"login\",\"name\":\"desktop bank\",\"username\":\"fixture@example.test\",\"password\":\"p@ss-desktop\",\"uris\":[{\"uri\":\"https://bank.example.test\"}],\"agentPolicy\":{\"mode\":\"only_me\",\"level\":\"metadata\",\"agents\":[],\"sites\":[],\"expiresAt\":null,\"askFirst\":false,\"allowServerAgents\":false}}",
+      "d0000000-0000-4000-8000-000000000002": "{\"type\":\"note\",\"name\":\"desktop note\",\"notes\":\"synthetic only\",\"favorite\":true,\"folder\":\"Fixtures\",\"agentPolicy\":{\"mode\":\"only_me\",\"level\":\"metadata\",\"agents\":[],\"sites\":[],\"expiresAt\":null,\"askFirst\":false,\"allowServerAgents\":false}}"
+    }
+  },
+  "browser": {
+    "bundle": {
+      "format": "sulla-vault-sync-bundle",
+      "v": 1,
+      "vaultId": "0b40000e-0000-4000-8000-0000000000b1",
+      "vaultUserId": "9a1c3f00-0000-4000-8000-00000000c0de",
+      "epoch": 1,
+      "bundleGeneration": 1,
+      "kdf": {
+        "alg": "argon2id13",
+        "salt": "Mhi6bKX5qMDAcWbPSIcYnQ",
+        "memoryBytes": 67108864,
+        "ops": 2
+      },
+      "encryptedUserKey": {
+        "version": 1,
+        "algorithm": "xchacha20-poly1305",
+        "nonce": "wF7eeFD2Mz_VDaIMIdRBdxSqx-9COuPr",
+        "ciphertext": "x_SWizvYDTEd_O9rR2HneXpeJP5qzKKMRet0jY8KbKnSvuEadDC0-k14Khzo2UmM"
+      },
+      "publicKey": "RqhV2xawCAcz0ZeaaTqvJ664WAdMKQaumvvDia80M0Y",
+      "encryptedPrivateKey": {
+        "version": 1,
+        "algorithm": "xchacha20-poly1305",
+        "nonce": "GpqqbEfCmkZ1Y8NrqYBSGNA8_yVRS18x",
+        "ciphertext": "-llgrmjd8wmgOgGs_yRSe33k0MH3uLCXRFT3yQPPPRlxm7h-aSgGQMgOs010N0gn"
+      },
+      "mac": "IIPP9J2LmpDAyxpRXD9j6ZsbMYS1mMWqmPveRz4WuPo"
+    },
+    "records": [
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0b40000e-0000-4000-8000-0000000000b1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "b0000000-0000-4000-8000-000000000001",
+        "generation": 1,
+        "deleted": false,
+        "item": {
+          "version": 1,
+          "encryptedItemKey": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "V0QAJhAUv0exbAk78bwyIUH5qzKErAEl",
+            "ciphertext": "F8YESZJYCEYeNBZifFrlS2yudFwpXl32k5N_PF5ni5VutCVSXUHBb4Ec13fQ-0ox"
+          },
+          "ciphertext": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "BgPgINN44-J6uCYgjH84h3E7WkoCpShJ",
+            "ciphertext": "MPMNG8p9-uZ__m_1FiiqRUTzXZP7pi3fmP6iq2tOF57Mf3pK6aAh1xaKoDwiSOiG0o_0rcBzUg2GmbW36Ew7Wa9F1LdyeiUxWMbMkzf7bnEVVP_2IntVw43BiSvEPyVElHhvDGv688Q0m1mxj8T_FBd8ETmWqj9-d_vtJt5xzxOhQW_o8KjcOmManJpscalhQS-FeBWQnymvTe_F2t6_POIhsUUKRYB7DewUyA3dWS4xzunF8EzUIhxU_2HphA8Q8XXGblyDqoqA8fCZ3m3QPEvwk_9TixHbQfq4vkCFp6p_xEws_ZR90q9Kiq25i_b0-ONuHo1_3ZBQ2wJUiFTVbIXx11sDQuZQz8J33V6K4YWcJGXes1Y97VLl_ZLHzHr3xDMoaLoP"
+          }
+        },
+        "mac": "eLey8XiOnjjJSGgDBH9NgM_njbR5CHaiy_0OibWvXAs"
+      },
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0b40000e-0000-4000-8000-0000000000b1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "b0000000-0000-4000-8000-000000000002",
+        "generation": 2,
+        "deleted": false,
+        "item": {
+          "version": 1,
+          "encryptedItemKey": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "5SyEEduof1roM_Qok7xfAsEsDBN0af_W",
+            "ciphertext": "4Vyac09sLyMTWf1Xx3tVFkYPSZOmkufRn1TSo2ndNBeqaLSqnOEQY6k8hDEelAIu"
+          },
+          "ciphertext": {
+            "version": 1,
+            "algorithm": "xchacha20-poly1305",
+            "nonce": "bA6fmR2dEJ_gzBsr1o6OIZAFgtRNgM0Q",
+            "ciphertext": "n0cFQ-ysCK6JGvxhgf_KHBZIhOXoHdmU-OBFVk3TdYjMCUvrsDyiwNVuGDU0xPC8B2CWWUrUlUqPVGJ_sQIm0BZV1ZiVRhBkKnFOD_HXgPUkTcHSddvFwIHc2mOkIZPLed96PBT0yI4eOFaA4TCND29DDTcsiLC_pnB8CDP_AoceJFmJzQED_5uFUzl5wy_5-HGnbC662q4FLfzEUAdll97Mx5yQKG2XgWnRjMB-o-w-CcdrzYefLkfwbiVdLi696O9yPPOVhscXfejrUGx13D8xkHdN4OQuZnIvbt1Io_DCIYFzeAMvktTBGoRhUz_K0OO0vw_qqwjn"
+          }
+        },
+        "mac": "W0PDU9WHx1dIvzl4cTArhjA97BeA7Xve4zf8c8WtlT4"
+      },
+      {
+        "format": "sulla-vault-sync-record",
+        "v": 1,
+        "vaultId": "0b40000e-0000-4000-8000-0000000000b1",
+        "scope": "personal",
+        "kind": "item",
+        "id": "b0000000-0000-4000-8000-0000000000ff",
+        "generation": 3,
+        "deleted": true,
+        "mac": "qwKscy5eth5meA2OyXDax0OVmbgH_eTNXEiOPiNsqVs"
+      }
+    ],
+    "head": {
+      "format": "sulla-vault-sync-head",
+      "v": 1,
+      "vaultId": "0b40000e-0000-4000-8000-0000000000b1",
+      "scope": "personal",
+      "seq": 4,
+      "stateHash": "vb9CpwtpPyQUQsbYXjR6wFcasKzV3aU9qXFXTJn19X4",
+      "prevHeadMac": "",
+      "mac": "6DZcf1VuNJd6NJ7HXzjJxWPc5hzNSvlKPNC-W70aQbM"
+    },
+    "plaintexts": {
+      "b0000000-0000-4000-8000-000000000001": "{\"type\":\"login\",\"name\":\"browser bank\",\"username\":\"fixture@example.test\",\"password\":\"p@ss-browser\",\"uris\":[{\"uri\":\"https://bank.example.test\"}],\"agentPolicy\":{\"mode\":\"only_me\",\"level\":\"metadata\",\"agents\":[],\"sites\":[],\"expiresAt\":null,\"askFirst\":false,\"allowServerAgents\":false}}",
+      "b0000000-0000-4000-8000-000000000002": "{\"type\":\"note\",\"name\":\"browser note\",\"notes\":\"synthetic only\",\"favorite\":true,\"folder\":\"Fixtures\",\"agentPolicy\":{\"mode\":\"only_me\",\"level\":\"metadata\",\"agents\":[],\"sites\":[],\"expiresAt\":null,\"askFirst\":false,\"allowServerAgents\":false}}"
+    }
+  }
+}
