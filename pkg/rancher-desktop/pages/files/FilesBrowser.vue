@@ -952,7 +952,8 @@ const namePrompt = ref<{ title: string; label: string; confirm: string; value: s
 const nameDialog = ref<HTMLDialogElement | null>(null);
 const newMenu = ref<{ x:number; y:number } | null>(null); const newMenuButton = ref<HTMLButtonElement | null>(null); const newActionMenu = ref<HTMLElement | null>(null);
 const newFileKinds = [
-  { label: 'Document', name: 'Untitled.md' },
+  { label: 'Sulla Document', name: 'Untitled.sulla.md' },
+  { label: 'Markdown file', name: 'Untitled.md' },
   { label: 'Text file', name: 'Untitled.txt' },
   { label: 'Spreadsheet (CSV)', name: 'Untitled.csv' },
   { label: 'Other file…', name: 'untitled' },
@@ -1275,7 +1276,7 @@ async function askName(title:string, label:string, confirm:string, value = '', a
   namePrompt.value?.resolve(null);
   const answer = new Promise<string | null>(resolve => { namePrompt.value = { title, label, confirm, value, allowEmpty, resolve } });
   await nextTick(); nameDialog.value?.showModal();
-  const input = nameInput.value; if (input) { input.focus(); const dot = input.value.lastIndexOf('.'); input.setSelectionRange(0, dot > 0 ? dot : input.value.length) }
+  const input = nameInput.value; if (input) { input.focus(); const dot = input.value.endsWith('.sulla.md') ? input.value.length - 9 : input.value.lastIndexOf('.'); input.setSelectionRange(0, dot > 0 ? dot : input.value.length) }
   return answer;
 }
 function settleNamePrompt(value:string | null) { const prompt = namePrompt.value; if (!prompt) return; namePrompt.value = null; nameDialog.value?.close(); prompt.resolve(value === null ? null : value.trim() || (prompt.allowEmpty ? '' : null)) }
