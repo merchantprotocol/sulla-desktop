@@ -182,11 +182,12 @@ const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWri
 auditTimer.unref();
 console.log(`[SullaFiles] ${ config.mode } service ready on ${ config.port }`);
 for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.on(signal, () => {
+  process.on(signal, async() => {
     clearInterval(auditTimer);
     app.locals.backupScheduler.stop();
     app.locals.backupRuntime.stop();
-    void app.locals.liveTextSessions.close().then(()=>server.closeAllConnections()).catch((error:unknown)=>console.error('[SullaFiles] live flush failed',error));
+    try{await app.locals.liveTextSessions.close();}catch(error){console.error('[SullaFiles] live flush failed; refusing shutdown before persistence',error);return;}
+    server.closeAllConnections();
     server.close(() => {
       lifecycle.lock().finally(() => {
         return Promise.all([db.end(), identityDb?.end()]).finally(() => process.exit(0));
