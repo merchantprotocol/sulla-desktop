@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 
-import { app, BrowserWindow, dialog, protocol, shell, webContents, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
+import { ipcMain as liveIpcMain, app, BrowserWindow, dialog, protocol, shell, webContents, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
 import { FilesChangeFeed } from './sullaFilesChangeFeed';
@@ -602,6 +602,26 @@ export function initSullaFilesIpc():void {
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
   // A 409 is returned as data: Electron IPC drops custom error fields, and the editor needs currentVersionId to resolve the conflict.
+  // A renderer owns its peer; guessing another renderer's id cannot proxy its session.
+  const livePeers=new Map<string,{fileId:string;owner:number;abort:AbortController}>();
+  const liveError=(error:unknown)=>({error:error instanceof Error?error.message:String(error)});
+  const ownedLive=(event:IpcMainInvokeEvent,peerId:string)=>{const peer=livePeers.get(peerId);if(!peer||peer.owner!==event.sender.id)throw new Error('Live peer not found');return peer;};
+  const livePath=(fileId:string,peerId:string)=>`/v1/files/${encodeURIComponent(fileId)}/live/${encodeURIComponent(peerId)}`;
+  const leaveLive=async(peerId:string)=>{const peer=livePeers.get(peerId);if(!peer)return;livePeers.delete(peerId);peer.abort.abort();await json(livePath(peer.fileId,peerId),{method:'DELETE'}).catch(()=>undefined);};
+  liveIpcMain.handle('sulla-files:live-join',async(event,input:{fileId:string})=>{try{
+    const joined=await json(`/v1/files/${encodeURIComponent(input.fileId)}/live`,{method:'POST',body:'{}'});
+    livePeers.set(joined.peerId,{fileId:input.fileId,owner:event.sender.id,abort:new AbortController()});
+    event.sender.once('destroyed',()=>void leaveLive(joined.peerId));return joined;
+  }catch(error){return liveError(error)}});
+  liveIpcMain.handle('sulla-files:live-start',async(event,input:{peerId:string})=>{try{
+    const peer=ownedLive(event,input.peerId);const response=await filesClient.stream(`${livePath(peer.fileId,input.peerId)}/events`,{},peer.abort.signal);
+    if(!response.ok||!response.body)throw new Error(`Live stream failed (${response.status})`);
+    const reader=response.body.getReader();
+    void(async()=>{let pending='';const decoder=new TextDecoder();try{while(true){const {value,done}=await reader.read();if(done)throw new Error('Live stream disconnected');pending+=decoder.decode(value,{stream:true}).replace(/\r/g,'');let boundary;while((boundary=pending.indexOf('\n\n'))>=0){const frame=pending.slice(0,boundary);pending=pending.slice(boundary+2);const data=frame.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');if(data&&!event.sender.isDestroyed())event.sender.send(`sulla-files:live:${input.peerId}`,JSON.parse(data));}}}catch(error){if(!peer.abort.signal.aborted&&!event.sender.isDestroyed())event.sender.send(`sulla-files:live:${input.peerId}`,{type:'error',...liveError(error)});}finally{reader.releaseLock();}})();
+    return {};
+  }catch(error){return liveError(error)}});
+  liveIpcMain.handle('sulla-files:live-sync',async(event,input:{peerId:string;message:string})=>{try{const peer=ownedLive(event,input.peerId);return await json(`${livePath(peer.fileId,input.peerId)}/sync`,{method:'POST',body:JSON.stringify({message:input.message})});}catch(error){return liveError(error)}});
+  liveIpcMain.handle('sulla-files:live-leave',async(event,input:{peerId:string})=>{try{ownedLive(event,input.peerId);await leaveLive(input.peerId);return {};}catch(error){return liveError(error)}});
   ipcMain.handle('sulla-files:save-content', async(_event, input:{ fileId:string; baseVersionId:string; content:string }) => {
     const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/content`, { method: 'PUT', body: JSON.stringify({ baseVersionId: input.baseVersionId, content: input.content }) });
     const body = await response.json().catch(() => ({})) as { error?:string; code?:string; currentVersionId?:string };

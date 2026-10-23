@@ -552,6 +552,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:set-star':        (input: { starred: boolean; collectionId: string; fileId?: string; folderPath?: string }) => void;
   'sulla-files:operate':         (input: { action: 'move' | 'copy'; collectionId: string; items: { fileId?: string; folderPath?: string; targetPath: string }[] }) => void;
   'sulla-files:metadata':        (input: { fileId: string }) => any;
+  'sulla-files:live-join': (input:{fileId:string}) => import('@pkg/pages/files/liveTypes').FilesLiveJoin | {error:string};
+  'sulla-files:live-start': (input:{peerId:string}) => {error?:string};
+  'sulla-files:live-sync': (input:{peerId:string;message:string}) => {message?:string|null;error?:string};
+  'sulla-files:live-leave': (input:{peerId:string}) => {error?:string};
   'sulla-files:preview':         (input: { fileId: string; versionId?: string; thumbnail?: boolean }) => { mime: string; data: Uint8Array };
   'sulla-files:history':         (input: { fileId: string }) => any[];
   'sulla-files:restore-version': (input: { fileId: string; versionId: string }) => { ok: boolean; versionId: string };
@@ -1183,6 +1187,8 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
+
   'recipe-rail-apps-changed': (apps: {
     slug: string; label: string; icon: string; url: string;
     level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;

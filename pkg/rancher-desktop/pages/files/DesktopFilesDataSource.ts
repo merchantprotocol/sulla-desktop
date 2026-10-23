@@ -268,6 +268,16 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
 
+  async openLive(fileId:string,onEvent:(event:import('./liveTypes').FilesLiveEvent)=>void):Promise<import('./liveTypes').FilesLiveConnection> {
+    const joined=await ipcRenderer.invoke('sulla-files:live-join',{fileId});if('error' in joined)throw new Error(joined.error);
+    const channel=`sulla-files:live:${joined.peerId}` as const;
+    const listener=(_event:IpcRendererEvent,event:import('./liveTypes').FilesLiveEvent)=>onEvent(event);
+    ipcRenderer.on(channel,listener);
+    const close=async()=>{ipcRenderer.removeListener(channel,listener);await ipcRenderer.invoke('sulla-files:live-leave',{peerId:joined.peerId});};
+    const started=await ipcRenderer.invoke('sulla-files:live-start',{peerId:joined.peerId});if(started.error){await close();throw new Error(started.error);}
+    return {join:joined,close,sync:async(message:string)=>{const result=await ipcRenderer.invoke('sulla-files:live-sync',{peerId:joined.peerId,message});if(result.error)throw new Error(result.error);return {message:result.message??null};}};
+  }
+
   async saveContent(request:FilesSaveRequest):Promise<FilesSaveSuccess> {
     const result = await ipcRenderer.invoke('sulla-files:save-content', request) as FilesSaveSuccess | { conflict:FilesSaveConflict };
 

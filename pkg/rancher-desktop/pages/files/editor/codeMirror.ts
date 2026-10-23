@@ -2,15 +2,20 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState, type Extension } from '@codemirror/state';
 import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemirror/view';
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
+import type * as Y from 'yjs';
 
-export function createEditor(parent:HTMLElement, content:string, readOnly:boolean, markdownMode:boolean, onChange:(content:string) => void, extra:Extension[] = []):EditorView {
+/** Live editing binds CodeMirror to the Automerge-backed Y.Text; undo then covers only this user's edits. */
+export interface EditorCollaboration { ytext:Y.Text; undoManager:Y.UndoManager }
+
+export function createEditor(parent:HTMLElement, content:string, readOnly:boolean, markdownMode:boolean, onChange:(content:string) => void, extra:Extension[] = [], collab?:EditorCollaboration|null):EditorView {
   return new EditorView({
     parent,
     state: EditorState.create({
-      doc: content,
+      doc: collab ? collab.ytext.toString() : content,
       extensions: [
-        history(), drawSelection(), highlightActiveLine(),
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        collab ? yCollab(collab.ytext, null, { undoManager: collab.undoManager }) : history(), drawSelection(), highlightActiveLine(),
+        keymap.of([...(collab ? yUndoManagerKeymap : []), ...defaultKeymap, ...(collab ? [] : historyKeymap), indentWithTab]),
         EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly),
         markdownMode ? markdown() : [], ...extra,
         EditorView.updateListener.of(update => { if (update.docChanged) onChange(update.state.doc.toString()) }),
@@ -26,3 +31,6 @@ export function createEditor(parent:HTMLElement, content:string, readOnly:boolea
     }),
   });
 }
+
+/** Minimal source patch lets CodeMirror map cursors through remote changes. */
+export function textPatch(before:string,after:string){let from=0;while(from<before.length&&from<after.length&&before[from]===after[from])from++;let end=0;while(end<before.length-from&&end<after.length-from&&before[before.length-end-1]===after[after.length-end-1])end++;return{from,to:before.length-end,insert:after.slice(from,after.length-end)};}
