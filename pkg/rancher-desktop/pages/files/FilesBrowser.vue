@@ -182,6 +182,19 @@
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
           <button
+            v-if="section === 'files' && !readOnlyArea && dataSource.setCollectionCloudSync"
+            class="btn sm ghost"
+            type="button"
+            :disabled="busy || loading"
+            :title="cloudCatalogSync ? 'Stop listing this collection in the Sulla Cloud web Files screen' : 'List this collection in the Sulla Cloud web Files screen'"
+            @click="toggleCloudCatalogSync"
+          >
+            <span
+              class="bi"
+              v-html="icons.syncOnline"
+            /> {{ cloudCatalogSync ? 'Shown in Sulla Cloud' : 'Show in Sulla Cloud' }}
+          </button>
+          <button
             v-if="dataSource.openPreferences"
             class="btn"
             type="button"
@@ -1015,6 +1028,7 @@ const moreExpanded = ref(false);
 const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
 const trackedCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea && collection.id !== (snapshot.value?.availableCollections ?? []).find(item=>!item.systemArea)?.id));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
+const cloudCatalogSync = computed(() => Boolean(snapshot.value?.collection.cloudCatalogSync));
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1279,6 +1293,11 @@ async function onCollectionDrop(collectionId:string,event:DragEvent) {
 }
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
+async function toggleCloudCatalogSync() {
+  const collectionId = snapshot.value?.collection.id;
+  if (!collectionId || !props.dataSource.setCollectionCloudSync) return;
+  await runMutation(() => props.dataSource.setCollectionCloudSync!(collectionId, !cloudCatalogSync.value));
+}
 async function askName(title:string, label:string, confirm:string, value = '', allowEmpty = false) {
   namePrompt.value?.resolve(null);
   const answer = new Promise<string | null>(resolve => { namePrompt.value = { title, label, confirm, value, allowEmpty, resolve } });

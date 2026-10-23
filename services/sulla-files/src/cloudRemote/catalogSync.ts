@@ -5,9 +5,10 @@
  * device; file bytes stay local until the owner explicitly shares one
  * (see shares.ts's FilesCloudBroker use, which this mirrors).
  *
- * `home='desktop-only'` collections (the default for anything not
- * explicitly synced) are never included — opt-in by collection, same as
- * the rest of Sulla Cloud's sync philosophy.
+ * Opt-in is per collection and OFF by default: `cloud_catalog_sync` is a
+ * column separate from `home` (which governs device-local sync, not what
+ * Sulla Cloud sees). The File Manager's "Show in Sulla Cloud" toggle is
+ * the only thing that flips it.
  *
  * Calls go through FilesCloudBroker, the same vault-broker-mediated path
  * shares.ts already uses: this service process has no access to the
@@ -142,7 +143,7 @@ export class CatalogSyncService {
     if (!this.broker) return this.status;
     try {
       const collections = (await this.db.query<CollectionRow>(
-        `SELECT id, name FROM collections WHERE owner_user_id = $1 AND home = 'synced' ORDER BY created_at`,
+        `SELECT id, name FROM collections WHERE owner_user_id = $1 AND cloud_catalog_sync = TRUE AND published = TRUE AND legacy_source = FALSE ORDER BY created_at`,
         [this.config.userId],
       )).rows;
 

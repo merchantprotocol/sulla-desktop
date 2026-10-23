@@ -67,7 +67,7 @@ interface SyntheticTrashState {
 }
 interface SyntheticFile extends FilesItem { syntheticTrash?:SyntheticTrashState }
 interface SyntheticFolder extends FilesFolderState { deletedAt?:string; syntheticTrash?:SyntheticTrashState }
-interface SyntheticCollection { id:string; name:string; home:string; systemArea:'logs' | 'training-data' | 'sulla' | null; files:SyntheticFile[]; folders:SyntheticFolder[] }
+interface SyntheticCollection { id:string; name:string; home:string; systemArea:'logs' | 'training-data' | 'sulla' | null; files:SyntheticFile[]; folders:SyntheticFolder[]; cloudCatalogSync?:boolean }
 interface SyntheticMutation {
   before:SyntheticCollection[];
   after:SyntheticCollection[];
@@ -308,7 +308,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     const collection = this.currentCollection(); const active = collection.files.filter(file => !file.deletedAt); const indexed = active.filter(file => file.indexStatus === 'indexed').length;
 
     return {
-      collection: { id: collection.id, name: collection.name, home: collection.home, systemArea: collection.systemArea, orgId: 'synthetic-org', retentionPolicy: {}, storageQuota: 10_000_000_000, keptBytes: active.reduce((sum, file) => sum + file.size, 0), desktopCount: 0, memberCount: 2, accountName: 'Preview user', accountRole: 'owner', ownerUserId: 'synthetic-user' },
+      collection: { id: collection.id, name: collection.name, home: collection.home, systemArea: collection.systemArea, orgId: 'synthetic-org', retentionPolicy: {}, storageQuota: 10_000_000_000, keptBytes: active.reduce((sum, file) => sum + file.size, 0), desktopCount: 0, memberCount: 2, accountName: 'Preview user', accountRole: 'owner', ownerUserId: 'synthetic-user', cloudCatalogSync: Boolean(collection.cloudCatalogSync) },
       availableCollections: this.state.collections.map(item => ({ id: item.id, name: item.name, systemArea: item.systemArea })),
       folders: collection.folders.filter(folder => !folder.deletedAt).map(folder => this.folderState(folder, collection.id)),
       files: collection.files.map(({ syntheticTrash: _syntheticTrash, ...file }) => ({ ...file })),
@@ -363,6 +363,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
   async uploadPaths(_paths:string[], _destination = '') { return 0 }
   async createFolder(path:string) { const collection = this.currentCollection(); const value = this.normalizePath(path); if (!this.activeFileAt(collection, value) && !this.activeFolderAt(collection, value)) collection.folders.push({ folderId: this.nextId('synthetic-folder'), path: value, revision: this.nextRevision() }); this.persist() }
   async updateFolderDescription(folderId:string,description:string,namingHint?:string) { const folder=this.currentCollection().folders.find(item=>item.folderId===folderId); if(folder){folder.description=description;folder.namingHint=namingHint;folder.needsDescription=false;folder.revision=this.nextRevision();this.persist()} }
+  async setCollectionCloudSync(collectionId:string,enabled:boolean) { const collection=this.state.collections.find(item=>item.id===collectionId); if(collection){collection.cloudCatalogSync=enabled;this.persist()} }
   async openFolder() {}
   async openFile() {}
   async downloadFile() { return false }

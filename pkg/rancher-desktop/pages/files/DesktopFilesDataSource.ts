@@ -246,6 +246,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         ownerUserId:     collection.owner_user_id,
         systemArea:      (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
         sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
+        cloudCatalogSync: Boolean((collection as FilesApiCollection & { cloud_catalog_sync?: boolean }).cloud_catalog_sync),
       },
       availableCollections,
       files: this.files,
@@ -319,6 +320,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
   createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
   updateFolderDescription(folderId:string, description:string, namingHint?:string):Promise<void> { return ipcRenderer.invoke('files-ui:update-folder-description', { folderId, description, namingHint }) }
+  setCollectionCloudSync(collectionId:string, enabled:boolean):Promise<void> { return ipcRenderer.invoke('files-ui:set-collection-cloud-sync', { collectionId, enabled }) }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {

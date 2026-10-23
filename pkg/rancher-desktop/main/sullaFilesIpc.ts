@@ -764,6 +764,10 @@ export function initSullaFilesIpc():void {
     if (!UUID.test(input.folderId)) throw new Error('Choose a valid Files folder');
     await json(`/v1/folders/${encodeURIComponent(input.folderId)}/description`,{method:'PATCH',body:JSON.stringify({description:input.description,namingHint:input.namingHint})});
   });
+  ipcMain.handle('files-ui:set-collection-cloud-sync', async(_event,input:{collectionId:string;enabled:boolean}) => {
+    if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');
+    await json(`/v1/collections/${encodeURIComponent(input.collectionId)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:input.enabled===true})});
+  });
   ipcMain.handle('files-ui:delete-folder', async(_event, input:{ collectionId:string; path:string }) => {
     if (!UUID.test(input.collectionId)) throw new Error('Choose a Files collection before removing a folder');
     await json(`/v1/folders?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'DELETE' });

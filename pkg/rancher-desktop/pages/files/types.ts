@@ -134,7 +134,7 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'training-data' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[] };
+  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'training-data' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean };
   availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'training-data' | 'sulla' | null }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
@@ -433,6 +433,7 @@ export interface FilesDataSource {
   uploadDroppedFiles?(files:File[], destination?:string): Promise<number>;
   createFolder(path:string): Promise<void>;
   updateFolderDescription?(folderId:string, description:string, namingHint?:string):Promise<void>;
+  setCollectionCloudSync?(collectionId:string, enabled:boolean):Promise<void>;
   createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
