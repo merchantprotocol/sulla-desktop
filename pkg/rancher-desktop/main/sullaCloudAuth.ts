@@ -24,7 +24,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
@@ -80,9 +80,35 @@ interface AuthResult {
   status:     AuthStatus;
 }
 
+function signedOutStatus(lastError?: string): AuthStatus {
+  return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
+}
+
+function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
+  if (error instanceof VaultBrokerError) {
+    if (error.code === 'vault_locked' || error.status === 423) return `Unlock the vault to ${ action }.`;
+    if (error.status === 404 || error.code === 'not_found') {
+      return `Update the Sulla Vault service to ${ action } from Desktop.`;
+    }
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return `Could not ${ action }: ${ message || 'the vault is unavailable' }`;
+}
+
 // ── Session storage (IntegrationService, vault-encrypted) ──────
 
 async function saveSession(session: CloudSession): Promise<void> {
+  if (usesContainerVaultAuthority()) {
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault session service is unavailable');
+    await client.adoptSullaCloudSession({
+      userId: session.userId, activeContractorId: session.activeContractorId,
+      contractors: session.contractors, accessToken: session.tokens.accessToken,
+      refreshToken: session.tokens.refreshToken,
+    });
+    await clearLegacySettings();
+    return;
+  }
   const svc = getIntegrationService();
   const accountId = session.userId;
 
@@ -185,6 +211,13 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
 }
 
 async function clearSession(): Promise<void> {
+  if (usesContainerVaultAuthority()) {
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault session service is unavailable');
+    await client.clearSullaCloudSession();
+    await clearLegacySettings();
+    return;
+  }
   const svc = getIntegrationService();
   const accounts = await svc.getAccounts(INTEGRATION_ID);
   for (const acc of accounts) {
@@ -386,6 +419,9 @@ function warnRefreshFailure(message: string): void {
  * caller should surface a re-auth prompt at that point.
  */
 async function refreshAccessToken(): Promise<string> {
+  // In container-vault mode refresh and token rotation happen within the
+  // vault broker. Secret token egress into Electron is intentionally blocked.
+  if (usesContainerVaultAuthority()) return '';
   const session = await loadSession();
   if (!session?.tokens.refreshToken) return '';
 
@@ -428,6 +464,7 @@ async function refreshAccessToken(): Promise<string> {
  * endpoints (e.g. the relay WebSocket) without going through IPC.
  */
 export async function getCurrentAccessToken(): Promise<string> {
+  if (usesContainerVaultAuthority()) return '';
   const session = await loadSession();
   const current = session?.tokens.accessToken ?? '';
   if (!current) return '';
@@ -489,7 +526,14 @@ export function initSullaCloudAuthEvents(): void {
   // Shared success path: persist session, auto-pair relay, return status.
   const completeSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
     const session = responseToSession(data);
-    await saveSession(session);
+    try {
+      await saveSession(session);
+    } catch (err) {
+      if (!usesContainerVaultAuthority()) throw err;
+      const error = vaultSessionError(err, 'sign in');
+      console.warn('[SullaCloudAuth] Could not save the Sulla Cloud session:', error);
+      return { ok: false, error, status: await buildStatus(error).catch(() => signedOutStatus(error)) };
+    }
     try {
       // Relay room is the stable userId, not the active contractor — so
       // switching businesses later doesn't drop the mobile connection.
@@ -662,19 +706,21 @@ export function initSullaCloudAuthEvents(): void {
 
       // Save Apple identity to the apple_signin integration vault record so
       // it appears as "connected" when the user opens the vault.
-      try {
-        const svc = getIntegrationService();
-        const appleAccountId = flow.claims.sub;
-        await svc.setMultipleValues([
-          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'apple_user_id', value: flow.claims.sub },
-          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'email',         value: flow.claims.email ?? '' },
-          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'full_name',     value: flow.claims.fullName ?? '' },
-          { integration_id: 'apple_signin', account_id: appleAccountId, property: 'id_token',      value: flow.tokens.idToken ?? '' },
-        ]);
-        await svc.setConnectionStatus('apple_signin', true, appleAccountId);
-        await svc.setActiveAccount('apple_signin', appleAccountId);
-      } catch (err) {
-        console.warn('[SullaCloudAuth] Failed to save apple_signin record:', err);
+      if (!usesContainerVaultAuthority()) {
+        try {
+          const svc = getIntegrationService();
+          const appleAccountId = flow.claims.sub;
+          await svc.setMultipleValues([
+            { integration_id: 'apple_signin', account_id: appleAccountId, property: 'apple_user_id', value: flow.claims.sub },
+            { integration_id: 'apple_signin', account_id: appleAccountId, property: 'email',         value: flow.claims.email ?? '' },
+            { integration_id: 'apple_signin', account_id: appleAccountId, property: 'full_name',     value: flow.claims.fullName ?? '' },
+            { integration_id: 'apple_signin', account_id: appleAccountId, property: 'id_token',      value: flow.tokens.idToken ?? '' },
+          ]);
+          await svc.setConnectionStatus('apple_signin', true, appleAccountId);
+          await svc.setActiveAccount('apple_signin', appleAccountId);
+        } catch (err) {
+          console.warn('[SullaCloudAuth] Failed to save apple_signin record:', err);
+        }
       }
 
       const sulla = flow.sullaSession;
@@ -706,25 +752,22 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    // Under the container vault the app cannot delete the account (the vault
-    // owns it), so clearSession throws. That used to abort the whole handler
-    // silently; finish the local sign-out and tell the owner where to finish.
     let lastError: string | undefined;
     try {
       await clearSession();
     } catch (err) {
       console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-      lastError = usesContainerVaultAuthority()
-        ? 'Cloud services stopped. To fully sign out, remove the Sulla Cloud account in the Vault.'
-        : `Sign-out failed: ${ (err as Error)?.message || err }`;
+      lastError = vaultSessionError(err, 'sign out');
     }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows
       // as connected. Deletes all Apple accounts for this user.
-      const svc = getIntegrationService();
-      const appleAccounts = await svc.getAccounts('apple_signin');
-      for (const acc of appleAccounts) {
-        await svc.deleteAccount('apple_signin', acc.account_id);
+      if (!usesContainerVaultAuthority()) {
+        const svc = getIntegrationService();
+        const appleAccounts = await svc.getAccounts('apple_signin');
+        for (const acc of appleAccounts) {
+          await svc.deleteAccount('apple_signin', acc.account_id);
+        }
       }
     } catch (err) {
       console.warn('[SullaCloudAuth] Failed to clear apple_signin accounts:', err);

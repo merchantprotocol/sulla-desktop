@@ -60,6 +60,8 @@ import type {
   HumanBackupEnvelope,
   LegacyMigrationResponse,
   LocalVaultState,
+  SullaCloudSessionAdoptRequest,
+  SullaCloudSessionResponse,
 } from './contracts.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
 import {
@@ -1394,6 +1396,121 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     );
     this.requireGeneration(generation);
     return this.integrationMetadata(callerId, token, integrationId);
+  }
+
+  /**
+   * Adopt tokens returned by Desktop's fixed-host Sulla Cloud authentication
+   * flow. This deliberately uses the Desktop approval identity rather than
+   * the general tools broker identity, and never returns secret material.
+   */
+  async adoptSullaCloudSession(
+    callerId: string, token: string | undefined, input: SullaCloudSessionAdoptRequest,
+  ): Promise<SullaCloudSessionResponse> {
+    this.requireDesktopIdentity(callerId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const identifier = /^[A-Za-z0-9._:@-]{1,200}$/;
+    if (!input || !identifier.test(input.userId) || !identifier.test(input.activeContractorId) ||
+        typeof input.accessToken !== 'string' || !input.accessToken || Buffer.byteLength(input.accessToken) > MAX_CREDENTIAL_BYTES ||
+        typeof input.refreshToken !== 'string' || !input.refreshToken || Buffer.byteLength(input.refreshToken) > MAX_CREDENTIAL_BYTES ||
+        !Array.isArray(input.contractors) || input.contractors.length > 100) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud session is invalid');
+    }
+    // The token is received only from the hard-coded Sulla Cloud HTTPS origin.
+    // Bind the handoff to that authenticated identity and reject opaque,
+    // expired, unsigned, or differently-subjected JWTs.
+    let claims: Record<string, unknown>;
+    try {
+      const parts = input.accessToken.split('.');
+      if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error('malformed');
+      const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as Record<string, unknown>;
+      claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+      if (header.alg === 'none' || typeof header.alg !== 'string') throw new Error('unsigned');
+    } catch {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is invalid');
+    }
+    const subjects = [claims.sub, claims.userId, claims.user_id, claims.contractorId, claims.contractor_id]
+      .filter((value): value is string => typeof value === 'string');
+    if (!subjects.includes(input.userId) && !subjects.includes(input.activeContractorId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud token subject does not match the session');
+    }
+    if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is expired');
+    }
+    const contractorIds = input.contractors.map(contractor => contractor?.id);
+    if (contractorIds.some(id => typeof id !== 'string' || !identifier.test(id)) ||
+        (contractorIds.length > 0 && !contractorIds.includes(input.activeContractorId))) {
+      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud contractor identity is invalid');
+    }
+    const policy = {
+      mode: 'only_me' as const, level: 'metadata' as const, agents: [], sites: [], expiresAt: null,
+      askFirst: false, allowServerAgents: false,
+    };
+    const itemId = randomUUID();
+    const plaintext: VaultItemPlaintext = {
+      type: 'apiKey', name: 'Sulla Cloud', agentPolicy: policy,
+      integration: {
+        integrationId: SULLA_CLOUD_INTEGRATION_ID,
+        accountId: input.userId,
+        properties: {
+          access_token: input.accessToken, refresh_token: input.refreshToken,
+          user_id: input.userId, active_contractor_id: input.activeContractorId,
+          contractors_json: JSON.stringify(input.contractors), connection_status: 'connected',
+        },
+      },
+    };
+    const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+    await this.runSecurityOperation(() => this.runTransaction(async client => {
+      this.requireGeneration(generation);
+      await client.query(
+        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
+          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+            AND split_part(integration_ref,'/',1)=$2`,
+        [keys.userId, SULLA_CLOUD_INTEGRATION_ID],
+      );
+      await client.query(
+        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
+         VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
+        [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
+          `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`],
+      );
+      await client.query(
+        `INSERT INTO local_integration_state(owner_user_id,integration_id,active_account_id)
+         VALUES ($1,$2,$3)
+         ON CONFLICT(owner_user_id,integration_id) DO UPDATE SET active_account_id=$3,updated_at=now()`,
+        [keys.userId, SULLA_CLOUD_INTEGRATION_ID, input.userId],
+      );
+      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_adopted', itemId);
+      this.requireGeneration(generation);
+    }));
+    return { userId: input.userId, activeContractorId: input.activeContractorId };
+  }
+
+  async clearSullaCloudSession(callerId: string, token: string | undefined): Promise<{ cleared: number }> {
+    this.requireDesktopIdentity(callerId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    return this.runSecurityOperation(() => this.runTransaction(async client => {
+      const result = await client.query(
+        `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now()
+          WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL
+            AND split_part(integration_ref,'/',1)=ANY($2::text[]) RETURNING id`,
+        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
+      );
+      await client.query(
+        `DELETE FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=ANY($2::text[])`,
+        [keys.userId, [SULLA_CLOUD_INTEGRATION_ID, 'apple_signin']],
+      );
+      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_cleared');
+      this.requireGeneration(generation);
+      return { cleared: result.rowCount ?? 0 };
+    }));
+  }
+
+  private requireDesktopIdentity(callerId: string, token: string | undefined): void {
+    if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
+      throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
+    }
   }
 
   private requireBrokerIdentity(callerId: string, token: string | undefined): void {
