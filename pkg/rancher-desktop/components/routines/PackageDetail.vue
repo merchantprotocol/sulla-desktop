@@ -152,7 +152,7 @@ const updatedLabel = computed(() => {
 });
 const downloadCount = computed(() => Number((props.detail.raw as any).download_count) || 0);
 const sizeLabel = computed(() => formatBytes(row.value.bundleSize));
-const includesSummary = computed(() => groups.value.map(group => `${group.items.length} ${group.label.toLowerCase()}`).join(' · '));
+const includesSummary = computed(() => groups.value.map(group => `${group.items.length} ${group.items.length === 1 ? group.label.toLowerCase().slice(0, -1) : group.label.toLowerCase()}`).join(' · '));
 const runsOn = computed(() => hasRecipe.value ? 'Desktop (recipe) · agents anywhere' : 'Desktop, Cloud, Mobile');
 const requiredIntegrations = computed(() => props.detail.contents.filter(item => item.kind === 'integration' && item.required).map(item => item.name || item.slug).join(', '));
 
