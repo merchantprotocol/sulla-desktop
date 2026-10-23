@@ -38,6 +38,7 @@ import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initUsageEvents } from './usageEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
+import { initRecipeRailApps } from './marketplace/recipeRailApps';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -365,6 +366,7 @@ export function initSullaEvents(): void {
   initSullaPatchEvents();
   initSullaReflexEvents();
   initSullaRecipeDockerEvents();
+  initRecipeRailApps();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

@@ -18,7 +18,9 @@
         :active-sub-tab="activeSubTab"
         :bookmarks-open="bookmarksOpen"
         :chat-files-open="chatFilesOpen"
+        :rail-apps="railApps"
         @set-mode="onModeRailSelect"
+        @open-rail-app="openRailApp"
         @toggle-bookmarks="toggleBookmarks()"
         @toggle-chat-files="toggleChatFiles()"
       />
@@ -152,7 +154,7 @@ import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab } = useBrowserTabs();
+const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
 const { loggedIn, vaultSetUp, statusResolved: vaultStatusResolved, tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
 // While booting, vault-gated services report 'waiting-on-unlock' as soon as the vault is known locked.
@@ -205,6 +207,29 @@ const activeTabMode = computed(() => {
 // Track active sub-tab for highlighting the correct ModeRail icon
 // (e.g., 'library' vs 'mywork' when mode is 'routines')
 const activeSubTab  = ref<string | undefined>(undefined);
+
+interface RecipeRailApp {
+  slug: string; label: string; icon: string; url: string;
+  level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;
+}
+const railApps = ref<RecipeRailApp[]>([]);
+
+function setRailApps(_event: unknown, next: RecipeRailApp[]) {
+  if (Array.isArray(next)) railApps.value = next;
+}
+
+function openRailApp(slug: string) {
+  const app = railApps.value.find(candidate => candidate.slug === slug);
+  if (!app) return;
+  const existing = browserTabs.find(tab => tab.recipeAppSlug === slug);
+  const tab = existing ?? createTab(app.url, { mode: 'browser', title: app.label, recipeAppSlug: slug });
+  if (existing && existing.url !== app.url) {
+    updateTab(existing.id, { url: app.url, title: app.label });
+    window.dispatchEvent(new CustomEvent('sulla:tab-navigate', { detail: { tabId: existing.id, url: app.url } }));
+  }
+
+  router.push(`/Browser/${ tab.id }`);
+}
 
 // Listen for sub-tab changes from BrowserTab
 function onRoutinesSubTabChange(event: Event) {
@@ -580,6 +605,8 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
+  ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
   ipcRenderer.on('startup-progress' as any, onBootSnapshot);
   ipcRenderer.invoke('startup-progress' as any).then(snapshot => onBootSnapshot(undefined, snapshot)).catch(() => undefined);
 
@@ -634,6 +661,7 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.removeListener('startup-progress' as any, onBootSnapshot);
   presenceTracker.stop();
   if (footerStatsTimer) {
