@@ -52,6 +52,7 @@ export type PairingPrompt = (req: { label: string; surface: string; code: string
 
 interface Deps {
   prompt:   PairingPrompt;
+  serverDispatch?: (frame: Record<string, any>) => Promise<void>;
   dispatch: (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => Promise<void>;
   audit?:   (event: string, detail: Record<string, unknown>) => void;
 }
@@ -209,6 +210,7 @@ export class SecureDesktopChannel {
   async onMessage(raw: string): Promise<void> {
     let env: ClientFrameEnvelope & { type: string };
     try { env = JSON.parse(raw) } catch { return }
+    if (env?.type === 'server_frame') { await this.deps.serverDispatch?.((env as any).frame ?? {}); return; }
     if (env?.type !== 'client_frame') return; // connected/pong/error from the relay itself
     const clientId = env.from?.clientId;
     if (!clientId) return;

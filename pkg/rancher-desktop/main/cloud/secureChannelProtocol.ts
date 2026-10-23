@@ -28,7 +28,7 @@
 import crypto from 'crypto';
 
 export const FRAME_WINDOW_MS = 2 * 60 * 1000;
-export const REMOTE_BODY_TYPES = new Set(['chat', 'inject', 'cancel', 'companion_request']);
+export const REMOTE_BODY_TYPES = new Set(['chat', 'inject', 'cancel', 'companion_request', 'conversation_key']);
 
 export interface ApprovedClient {
   clientId:    string;
