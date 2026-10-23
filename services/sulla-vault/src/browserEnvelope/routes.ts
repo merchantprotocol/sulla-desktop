@@ -8,7 +8,7 @@ import type express from 'express';
 import { EnvelopeError } from './envelope.js';
 import { CloudSyncError, type CloudVaultSyncRunner, type SyncOp } from './syncRunner.js';
 
-const OPS = new Set<SyncOp>(['enable', 'replace', 'commit', 'pause', 'resume', 'delete']);
+const OPS = new Set<SyncOp>(['enable', 'replace', 'commit', 'rewrap', 'pause', 'resume', 'delete']);
 const DEVICE_ID = /^[A-Za-z0-9_.-]{8,128}$/;
 
 type Handler = (request: express.Request) => Promise<unknown>;

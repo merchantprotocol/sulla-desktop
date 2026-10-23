@@ -22,8 +22,8 @@ import { ensureSyncSchema } from './schema.js';
 import type { Database } from '../db.js';
 import type pg from 'pg';
 
-export type SyncOp = 'enable' | 'replace' | 'commit' | 'pause' | 'resume' | 'delete';
-type ServerOp = 'create' | 'replace' | 'commit' | 'pause' | 'resume' | 'delete';
+export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
+type ServerOp = 'create' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
 
 export interface UnlockedUserKey {
   userId:        string;
@@ -48,6 +48,7 @@ export class CloudSyncError extends Error {
 interface StateRow {
   owner_user_id: string; vault_id: string; epoch: number; bundle_generation: number;
   head_seq: string | number; head_mac: string; last_push_at: string | null; last_pull_at: string | null; last_error: string | null;
+  bundle_sha: string;
 }
 
 interface KnownRow { record_id: string; generation: string | number; deleted: boolean; record_mac: string; local_revision: string | number | null; policy_review_pending: boolean }
@@ -74,6 +75,8 @@ const POLICY_RANK = { metadata: 0, autofill: 1, full: 2 } as const;
 const ITEM_TYPES = new Set(['login', 'note', 'card', 'identity', 'apiKey']);
 
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+/** Fingerprint of what the bundle wraps; changes on a password change, KDF change or key rotation. */
+const wrapFingerprint = (account: LocalAccountRow) => sha256Hex(Buffer.from(JSON.stringify([account.kdf, account.encrypted_user_key, account.public_key, account.encrypted_private_key])));
 const num = (v: string | number | null | undefined) => Number(v ?? 0);
 
 /** True when `next` grants agents anything `current` doesn't (§4: remote widening waits for the owner). */
@@ -133,6 +136,13 @@ export class CloudVaultSyncRunner {
     return { status: result.status, body: responseBody(result.body) };
   }
 
+  private async account(userId: string): Promise<LocalAccountRow | null> {
+    const result = await this.db.query<LocalAccountRow>(
+      'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1 AND disabled_at IS NULL', [userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   private async state(userId: string): Promise<StateRow | null> {
     const result = await this.db.query<StateRow>('SELECT * FROM cloud_vault_sync_state WHERE owner_user_id=$1', [userId]);
     return result.rows[0] ?? null;
@@ -178,10 +188,13 @@ export class CloudVaultSyncRunner {
             AND ((i.deleted_at IS NULL AND (r.record_id IS NULL OR r.deleted OR r.local_revision IS DISTINCT FROM i.revision))
               OR (i.deleted_at IS NOT NULL AND r.record_id IS NOT NULL AND NOT r.deleted))`, [userId],
       );
+      const account = await this.account(userId);
       return {
         configured: true, vaultId: state.vault_id, headSeq: num(state.head_seq), lastPushAt: state.last_push_at,
         lastPullAt: state.last_pull_at, lastError: state.last_error, policyReviewPending: num(review.rows[0]?.n),
         pendingChanges: num(pending.rows[0]?.n),
+        // The master password (or KDF) changed since the last upload: the Cloud bundle needs a rewrap.
+        bundleStale: Boolean(account && state.bundle_sha && wrapFingerprint(account) !== state.bundle_sha),
       };
     });
   }
@@ -346,6 +359,7 @@ export class CloudVaultSyncRunner {
         if (op === 'enable' || op === 'replace') return this.prepareCreate(envelope, userId, userKey, state, deviceId, op === 'replace');
         if (!state) throw new CloudSyncError('sync_not_configured', 409, 'Cloud sync is not turned on');
         if (op === 'commit') return this.prepareCommit(envelope, userId, userKey, state, deviceId);
+        if (op === 'rewrap') return this.prepareRewrap(envelope, userId, userKey, state, deviceId);
         const method = op === 'delete' ? 'DELETE' : 'POST';
         const path = op === 'delete' ? `/cloud-vault-sync/vaults/${ state.vault_id }?deviceId=${ encodeURIComponent(deviceId) }`
           : `/cloud-vault-sync/vaults/${ state.vault_id }/${ op }?deviceId=${ encodeURIComponent(deviceId) }`;
@@ -360,9 +374,7 @@ export class CloudVaultSyncRunner {
   }
 
   private async prepareCreate(envelope: SyncEnvelope, userId: string, userKey: Uint8Array, state: StateRow | null, deviceId: string, replace: boolean) {
-    const account = (await this.db.query<LocalAccountRow>(
-      'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1 AND disabled_at IS NULL', [userId],
-    )).rows[0];
+    const account = await this.account(userId);
     if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
     const vaultId = replace || !state ? randomUUID() : state.vault_id;
     let fields;
@@ -383,12 +395,33 @@ export class CloudVaultSyncRunner {
     return this.stash(userId, serverOp, 'PUT', `/cloud-vault-sync/vaults/${ vaultId }?op=${ serverOp }&deviceId=${ encodeURIComponent(deviceId) }`, body, vaultId, async(_res, client) => {
       await client.query('DELETE FROM cloud_vault_sync_records WHERE owner_user_id=$1', [userId]);
       await client.query(
-        `INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,last_push_at)
-         VALUES ($1,$2,1,1,1,$3,now())
-         ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,last_push_at=now(),last_error=NULL,updated_at=now()`,
-        [userId, vaultId, head.mac],
+        `INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_push_at)
+         VALUES ($1,$2,1,1,1,$3,$4,now())
+         ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,bundle_sha=$4,last_push_at=now(),last_error=NULL,updated_at=now()`,
+        [userId, vaultId, head.mac, wrapFingerprint(account)],
       );
       for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null, false);
+    });
+  }
+
+  /** Password or KDF changed on this Desktop: re-upload only the bundle, CAS on bundleGeneration. */
+  private async prepareRewrap(envelope: SyncEnvelope, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
+    const account = await this.account(userId);
+    if (!account) throw new CloudSyncError('vault_missing', 409, 'The local vault account is missing');
+    let fields;
+    try {
+      fields = bundleFields(account, { vaultId: state.vault_id, epoch: num(state.epoch), bundleGeneration: num(state.bundle_generation) + 1 });
+    } catch (error) {
+      throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
+    }
+    const bundle = envelope.buildBundle(fields, userKey);
+    const body = Buffer.from(JSON.stringify({ bundle, expectedBundleGeneration: num(state.bundle_generation) }));
+    const fingerprint = wrapFingerprint(account);
+    return this.stash(userId, 'rewrap', 'PUT', `/cloud-vault-sync/vaults/${ state.vault_id }?op=rewrap&deviceId=${ encodeURIComponent(deviceId) }`, body, state.vault_id, async(_res, client) => {
+      await client.query(
+        'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,last_error=NULL,updated_at=now() WHERE owner_user_id=$1',
+        [userId, bundle.bundleGeneration, fingerprint],
+      );
     });
   }
 

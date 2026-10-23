@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS cloud_vault_sync_records (
   policy_review_pending boolean NOT NULL DEFAULT false,
   PRIMARY KEY (owner_user_id, scope, record_id)
 );
+ALTER TABLE cloud_vault_sync_state ADD COLUMN IF NOT EXISTS bundle_sha text NOT NULL DEFAULT '';
 `;
 
 let ensured = false;

@@ -13,6 +13,7 @@
  *   - every 60 s: if the container reports local edits Cloud lacks, push (≥5 s debounce)
  *   - every 10 min, on unlock, and on "Sync now": pull first, then push
  *   - toggle off: pause (Cloud keeps a read-only copy); "Delete Cloud copy": signed delete
+ *   - master password changed on this Desktop: rewrap the Cloud bundle on the next sync
  * Signed out, revoked, locked or a vault with no master password stop with a
  * clear status rather than failing silently.
  */
@@ -173,6 +174,15 @@ class VaultSyncV3Impl {
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const pulled = await VaultSyncContainer.pull(who.deviceId);
         if (pulled.cloudMissing) return this.set({ lastError: 'The Cloud copy was deleted. Turn sync off and on again to upload a new one.' });
+        if (attempt === 1) {
+          // Master password changed here since the last upload: rewrap the Cloud bundle so the
+          // browser unlocks with the new password (open browser tabs see the new generation and lock).
+          const now = await VaultSyncContainer.status();
+          if (now.bundleStale) {
+            const rewrapped = await this.prepareSignSend('rewrap', who);
+            if (!('idle' in rewrapped) && !rewrapped.ok) throw new ContainerSyncError(rewrapped.error || 'cloud_error', rewrapped.status);
+          }
+        }
         if (pulled.syncPaused) {
           // The toggle is on again after a pause: reopen the Cloud copy for edits.
           const resumed = await this.prepareSignSend('resume', who);

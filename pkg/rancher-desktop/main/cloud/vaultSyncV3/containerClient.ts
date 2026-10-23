@@ -12,7 +12,7 @@ import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broke
 // Same endpoint as @pkg/vault-broker's DESKTOP_VAULT_ENDPOINT.
 const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
 
-export type SyncOp = 'enable' | 'replace' | 'commit' | 'pause' | 'resume' | 'delete';
+export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
 
 export interface PreparedSync { handle: string; sha256: string; vaultId: string; op: string }
 
@@ -25,6 +25,7 @@ export interface LocalSyncStatus {
   lastError?:           string | null;
   policyReviewPending?: number;
   pendingChanges?:      number;
+  bundleStale?:         boolean;
 }
 
 export class ContainerSyncError extends Error {
