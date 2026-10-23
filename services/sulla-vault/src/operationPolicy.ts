@@ -27,6 +27,20 @@ export interface BrokerOperationPolicy {
   }[];
 }
 
+const DEFAULT_TRANSFER_BYTES = 1_048_576;
+const TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
+const FILES_SYNC_TRANSFER_BYTES = 6 * 1024 * 1024;
+
+/** The only operation that may use responseType 'base64' and the 6 MiB Files sync limits. */
+export const FILES_SYNC_OPERATION = 'sulla-cloud.files-sync';
+
+/** Request and response byte caps for the generic (non-streaming) broker execute path. */
+export function brokerTransferLimits(operation: string): { request: number; response: number } {
+  if (operation === FILES_SYNC_OPERATION) return { request: FILES_SYNC_TRANSFER_BYTES, response: FILES_SYNC_TRANSFER_BYTES };
+  if (operation === 'provider.transcription') return { request: TRANSCRIPTION_REQUEST_BYTES, response: DEFAULT_TRANSFER_BYTES };
+  return { request: DEFAULT_TRANSFER_BYTES, response: DEFAULT_TRANSFER_BYTES };
+}
+
 const authHeaders = (fields: string[], names = ['authorization']): BrokerInjection[] => fields.flatMap(field =>
   names.flatMap(name => ['Bearer', 'raw'].map(scheme => ({ field, target: 'header' as const, name, scheme: scheme as 'Bearer' | 'raw' }))));
 
@@ -354,6 +368,7 @@ export function validateOperation(
   const streaming = input.responseType === 'stream' || input.responseType === 'binary-stream';
   if (streaming && !policy.allowStreaming) throw new Error('streaming_denied');
   if (input.responseType === 'binary-stream' && !policy.binaryResponse) throw new Error('binary_denied');
+  if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION) throw new Error('binary_denied');
   if (input.bodyEncoding !== undefined && (!policy.binaryRequest || input.bodyEncoding !== 'base64' || typeof input.body !== 'string')) {
     throw new Error('binary_denied');
   }
@@ -378,7 +393,7 @@ export function validateOperation(
 export function validateItemHttpOperation(input: BrokerExecuteRequest): void {
   const policy = BROKER_OPERATION_POLICIES['item.http'];
   if (!policy.methods.includes(input.method.toUpperCase())) throw new Error('method_denied');
-  if (input.responseType === 'stream' || input.responseType === 'binary-stream' || input.bodyEncoding !== undefined) {
+  if (input.responseType === 'stream' || input.responseType === 'binary-stream' || input.responseType === 'base64' || input.bodyEncoding !== undefined) {
     throw new Error('streaming_denied');
   }
   if (input.injections.length) throw new Error('injection_denied');

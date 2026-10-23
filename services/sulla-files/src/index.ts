@@ -32,6 +32,11 @@ import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCa
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { FilesCloudBroker } from './cloudBroker.js';
+import { FilesCloudChunkSource } from './cloudSync/chunkSource.js';
+import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
+import { CloudRootKeyStore } from './cloudSync/keyStore.js';
+import { CloudSyncService } from './cloudSync/service.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
@@ -64,8 +69,11 @@ if (config.mode === 'desktop' && config.filesRoot) {
   }
 }
 config.keyring = new FilesKeyring(db);
-// P2a supplies the authenticated cloud source here. Undefined deliberately preserves the pre-cache behavior.
-const cloudChunkSource:CloudChunkSource | undefined = undefined;
+// Cloud sync and its chunk source exist only when the vault broker identity is configured.
+const cloudBroker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
+const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
+  ? new FilesCloudChunkSource(db, new FilesSyncCloudApi(cloudBroker), new CloudRootKeyStore(config.keyring))
+  : undefined;
 const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
 const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
@@ -73,8 +81,8 @@ const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   : undefined;
 const identityDb = await connectOptional(config.vaultDatabaseUrl);
 const embedder = PotionEmbedder.load(config.modelDir);
-const indexer = new IndexingQueue(db, storedIndexSource(db, config), embedder);
-const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer) : undefined;
+const indexer = new IndexingQueue(db, storedIndexSource(db, config, chunkStore), embedder);
+const manager = config.mode === 'desktop' ? new LocalFilesManager(db, config, indexer, undefined, chunkStore) : undefined;
 const residency = manager && config.filesRoot && config.serverUrl && vaultAuthority && keyRecovery && config.keyring instanceof FilesKeyring
   ? new FileResidencyManager(
     db,
@@ -150,6 +158,9 @@ const bootstrapAuthority = config.mode === 'desktop'
     lifecycle,
   )
   : undefined;
+const cloudSync = cloudBroker && config.keyring instanceof FilesKeyring
+  ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker)
+  : undefined;
 if (config.mode === 'server') {
   if (!config.serverMasterKey || !/^[A-Za-z0-9_-]{43}$/.test(config.serverMasterKey)) {
     throw new Error('SULLA_FILES_MASTER_KEY must be a 32-byte base64url key in server mode');
@@ -178,19 +189,21 @@ if (config.mode === 'server') {
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
 if (chunkStore instanceof CachingStore) await chunkStore.start();
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore);
+const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
 requestHandler = app;
 startSearchCleanup(db);
 startVectorBackfill(db);
 if(config.mode==='desktop') app.locals.backupScheduler.start();
 if(config.mode==='desktop') app.locals.catalogSync.start();
 if(config.mode==='desktop') app.locals.desktopRequests.start();
+cloudSync?.start();
 const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWriter.drain().catch((error:unknown)=>console.error('[SullaFiles] audit delivery failed; retry pending',error)) },1000);
 auditTimer.unref();
 console.log(`[SullaFiles] ${ config.mode } service ready on ${ config.port }`);
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, async() => {
     clearInterval(auditTimer);
+    cloudSync?.stop();
     if (chunkStore instanceof CachingStore) await chunkStore.stop();
     app.locals.backupScheduler.stop();
     app.locals.catalogSync.stop();

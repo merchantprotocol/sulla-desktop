@@ -265,7 +265,8 @@ export interface BrokerExecuteRequest {
   bodyEncoding?: 'base64';
   injections:    BrokerInjection[];
   approvalId?:   string;
-  responseType?: 'json' | 'text' | 'stream' | 'binary-stream';
+  /** 'base64': raw upstream bytes returned base64-encoded in body (Files sync chunk reads only). */
+  responseType?: 'json' | 'text' | 'stream' | 'binary-stream' | 'base64';
 }
 
 export interface BrokerExecuteResponse {

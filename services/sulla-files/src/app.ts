@@ -49,6 +49,8 @@ import type { LocalFilesManager } from './localManager.js';
 import type { FileResidencyManager } from './residency.js';
 import type { IndexingQueue } from './indexing.js';
 import type { FileSearch } from './search.js';
+import type { CloudSyncService } from './cloudSync/service.js';
+import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
@@ -144,6 +146,7 @@ export function createApp(
   bootstrapAuthority?:FilesBootstrapAuthority,
   indexer?:IndexingQueue,
   chunkStore?:Store,
+  cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   app.locals.catalogSync = new CatalogSyncService(db, config);
@@ -224,6 +227,7 @@ export function createApp(
       requestId:request.header('x-request-id')?.slice(0,256) ?? randomUUID(),
       action:request.body?.action === 'copy' || (Array.isArray(request.body?.items) && request.body.items.some((item:any)=>item?.action==='copy')) ? 'copy' : /\/restore$/.test(request.path) ? 'restore' : undefined},next);
   });
+  registerCloudSyncRoutes(app, config, cloudSync);
   const auditWriter=new FileAuditWriter(db, async(id,versionId) => {
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');

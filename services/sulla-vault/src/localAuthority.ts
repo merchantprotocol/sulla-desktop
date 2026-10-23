@@ -31,7 +31,7 @@ import {
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
-import { trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
+import { brokerTransferLimits, FILES_SYNC_OPERATION, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
@@ -85,7 +85,6 @@ const CHALLENGE_RATE_LIMIT = 10;
 const APPROVAL_TTL_MS = 2 * 60_000;
 const HUMAN_SESSION_TTL_MS = 15 * 60_000;
 const MAX_RESPONSE_BYTES = 1_048_576;
-const MAX_TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const MAX_FILES_SYNC_UPLOAD_BYTES = 6 * 1024 * 1024;
 const MAX_STREAM_BYTES = 25 * 1024 * 1024;
 // Git pack transfers for a full fetch routinely exceed the API stream cap.
@@ -1820,6 +1819,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
         throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
       }
+      if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION) {
+        throw new LocalVaultError('invalid_operation', 400, 'Binary responses are limited to Files sync');
+      }
       if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
         return await this.executeOAuthMutation(input, serviceId, token);
       }
@@ -1827,6 +1829,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
+        brokerTransferLimits(input.operation).response,
       );
       if (prepared.item) await this.audit(input, prepared.item, false, null);
       return result;
@@ -2383,7 +2386,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       body,
       secrets,
       generation,
-      maxRequestBytes: input.operation === 'provider.transcription' ? MAX_TRANSCRIPTION_REQUEST_BYTES : MAX_RESPONSE_BYTES,
+      maxRequestBytes: brokerTransferLimits(input.operation).request,
       item,
       plaintext,
     };
@@ -2516,7 +2519,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
     const trustedFirstParty = bypassAgentPolicy ||
-      (input.operation === 'sulla-cloud.shares' && input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files');
+      ((input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION) &&
+        input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files');
     if (host && input.operation !== 'item.http' && !trustedFirstParty) {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {
@@ -2635,11 +2639,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     methodInput: string,
     headersInput: Record<string, string>,
     bodyInput: unknown,
-    responseType: 'json' | 'text',
+    responseType: 'json' | 'text' | 'base64',
     secrets: string[],
     generation: number,
     redactResponseBody = true,
     maxRequestBytes = MAX_RESPONSE_BYTES,
+    maxResponseBytes = MAX_RESPONSE_BYTES,
   ): Promise<BrokerExecuteResponse> {
     const method = methodInput.toUpperCase();
     if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -2691,11 +2696,27 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         let size = 0;
         response.on('data', (chunk: Buffer) => {
           size += chunk.byteLength;
-          if (size > MAX_RESPONSE_BYTES) request.destroy(new LocalVaultError('response_too_large', 502, 'Broker response exceeded the size limit'));
+          if (size > maxResponseBytes) request.destroy(new LocalVaultError('response_too_large', 502, 'Broker response exceeded the size limit'));
           else chunks.push(chunk);
         });
         response.on('end', () => {
           try { this.requireGeneration(generation); } catch (error) { reject(error); return; }
+          if (responseType === 'base64') {
+            // Binary bodies cannot be redacted in place, so one that echoes a credential is refused outright.
+            const bytes = Buffer.concat(chunks);
+            if (secrets.some(secret => secret && bytes.includes(Buffer.from(secret)))) {
+              reject(new LocalVaultError('invalid_upstream_response', 502, 'Upstream response echoed a credential'));
+              return;
+            }
+            const binaryHeaders: Record<string, string> = {};
+            for (const name of ['content-type', 'content-length', 'x-content-sha256']) {
+              const value = response.headers[name];
+              if (typeof value === 'string') binaryHeaders[name] = value;
+            }
+            this.inFlight.delete(request);
+            resolve({ status: response.statusCode ?? 502, headers: binaryHeaders, body: bytes.toString('base64') });
+            return;
+          }
           const upstream = Buffer.concat(chunks).toString('utf8');
           const raw = redactResponseBody ? redact(upstream, secrets) : upstream;
           const blockedResponseHeaders = /^(set-cookie|cookie|authorization|proxy-authenticate|www-authenticate|x-api-key)$/i;

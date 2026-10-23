@@ -59,8 +59,9 @@ export function desktopIndexSource(filesRoot:string, db?:pg.Pool) {
   };
 }
 
-export function storedIndexSource(db:pg.Pool, config:Config) {
-  const store = new Store(config.chunkRoot); const tempRoot = join(config.dataRoot, 'index-tmp');
+/** chunkStore: the process-wide chunk store, so evicted chunks hydrate instead of failing with ENOENT. */
+export function storedIndexSource(db:pg.Pool, config:Config, chunkStore?:Store) {
+  const store = chunkStore ?? new Store(config.chunkRoot); const tempRoot = join(config.dataRoot, 'index-tmp');
   return async(file:any) => {
     await assertUnprotectedFile(db, file);
     const row = (await db.query(`SELECT v.chunk_collection_id,m.chunk_ids,m.total_size FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1`, [file.current_version_id])).rows[0];
