@@ -13,6 +13,7 @@ export interface FilesSyncStatus {
   cryptoModule:{provider:string;version:string;fips:boolean};
   collections:FilesSyncCollectionStatus[];
 }
+export interface CloudFilesCollection { collectionId:string;status:string;keyVersion:number;headSeq:number;bytes:number;updatedAt:string;sourceDeviceId:string;local:boolean }
 export interface PreparedFilesSync { handle:string; op:'create'|'escrow'|'upload-open'|'commit'|'delete'; collectionId:string; sha256:string }
 export class FilesSyncClientError extends Error {
   constructor(readonly code:string, readonly status:number, message?:string) { super(message || code) }
@@ -39,4 +40,7 @@ export const FilesSyncContainer={
   escrowRequest:()=>filesJson<{requestId:string;recipientPublicKey:string}>('/v1/desktop/cloud-sync/escrow-key/request',{method:'POST'}),
   escrowKey:(body:{requestId:string;transport:unknown;vaultId:string;vaultEpoch:number})=>filesJson<void>('/v1/desktop/cloud-sync/escrow-key',{method:'POST',body:JSON.stringify(body)}),
   vaultEscrowKey:(body:{requestId:string;recipientPublicKey:string})=>vaultJson<{vaultId:string;vaultEpoch:number;transport:unknown}>('/v1/files/cloud-escrow/key',body),
+  vaultRestoreKey:(body:{requestId:string;recipientPublicKey:string})=>vaultJson<{vaultId:string;vaultEpoch:number;transport:unknown}>('/v1/files/cloud-escrow/restore-key',body),
+  cloudCollections:()=>filesJson<{collections:CloudFilesCollection[]}>('/v1/desktop/cloud-sync/cloud-collections'),
+  restore:(body:{collectionId:string;name:string;requestId:string;transport:unknown;vaultId:string;vaultEpoch:number})=>filesJson<{restored:true;collectionId:string}>('/v1/desktop/cloud-sync/restore',{method:'POST',body:JSON.stringify(body)}),
 };

@@ -17,6 +17,7 @@
   const initialUrl = new URL(location.href);
   const integrationHint = initialUrl.searchParams.get('integration');
   const accountHint = initialUrl.searchParams.get('account');
+  const filesRestore = initialUrl.searchParams.get('restoreFiles') === '1';
   const byId = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
   const defaultPolicy = () => ({ mode: 'only_me', level: 'metadata', agents: [], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false });
@@ -461,9 +462,16 @@
     const fragment = new URLSearchParams(location.hash.slice(1)); const grant = fragment.get('grant'); csrf = fragment.get('csrf') || ''; history.replaceState(null, '', '/vault/');
     if (!csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
     const session = grant ? await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf }) }) : await api('/v1/human/session');
-    csrf = session.csrf; setPhase(session.phase);
+    csrf = session.csrf;
+    if (filesRestore) {
+      byId('unlock').hidden = true; byId('vault').hidden = true; byId('cloud-restore').hidden = false;
+      return;
+    }
+    setPhase(session.phase);
     if (session.phase === 'unlocked') { await load(); await openIntegrationHint(); } else { byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault'; byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password'; }
   };
+
+  byId('cloud-restore-form').onsubmit = async event => { event.preventDefault(); const password = byId('cloud-restore-password'); byId('cloud-restore-error').textContent = ''; byId('cloud-restore-status').textContent = 'Checking encrypted Cloud vault…'; try { await api('/v1/human/files/cloud-escrow/unlock', { method: 'POST', body: JSON.stringify({ password: password.value }) }); password.value = ''; byId('cloud-restore-status').textContent = 'Cloud vault unlocked. Return to Files and continue the restore.'; } catch (error) { password.value = ''; byId('cloud-restore-status').textContent = ''; byId('cloud-restore-error').textContent = error.message; } };
 
   byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; try { const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password: byId('password').value }) }); csrf = result.csrf; byId('password').value = ''; setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message; } };
   byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message; } };

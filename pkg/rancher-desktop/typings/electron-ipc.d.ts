@@ -524,6 +524,8 @@ export interface IpcMainInvokeEvents {
   'files-ui:cloud-backup-status': () => import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus;
   'files-ui:set-cloud-backup': (input:{collectionId:string;enabled:boolean}) => import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus;
   'files-ui:delete-cloud-backup': (input:{collectionId:string}) => import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus;
+  'files-ui:cloud-collections': () => import('@pkg/main/cloud/filesSyncV1/containerClient').CloudFilesCollection[];
+  'files-ui:restore-cloud-collection': (input:{collectionId:string;name:string}) => {restored:true;collectionId:string};
   'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;

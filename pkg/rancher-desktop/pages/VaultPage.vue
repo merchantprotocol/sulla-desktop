@@ -33,6 +33,7 @@ const props = withDefaults(defineProps<{
   tabId?: string;
   active?: boolean;
   modal?: boolean;
+  restoreFiles?: boolean;
 }>(), { surface: 'page', siteUrl: '', active: true, modal: false });
 const loading = ref(true);
 const error = ref('');
@@ -68,6 +69,7 @@ async function open(): Promise<void> {
       siteUrl:       props.siteUrl,
       tabId:         props.tabId,
       ownerId,
+      restoreFiles: props.restoreFiles,
     });
     if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;

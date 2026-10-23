@@ -4,14 +4,13 @@ import { getCurrentUserId } from '../../sullaCloudAuth';
 import { DevicesCloudApi } from '../../devicesCloudApi';
 import { isCloudSignedIn } from '../cloudFetch';
 import { signDeviceMessage } from '../deviceKey';
-import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus } from './containerClient';
+import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection } from './containerClient';
 import Logging from '@pkg/utils/logging';
+export { requireHumanFilesSync } from './humanGuard';
+import { requireHumanFilesSync, type FilesSyncCaller } from './humanGuard';
 
 const console=Logging.background;
 const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
-export type FilesSyncCaller={kind:'human'}|{kind:'agent';agentId:string};
-export function requireHumanFilesSync(caller:FilesSyncCaller):void { if(caller.kind!=='human') throw new FilesSyncClientError('human_only',403,'Only the person using this desktop can change Files Cloud backup.'); }
-
 class FilesSyncV1Impl {
   private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
   start():void { this.stopped=false; this.schedule(0) }
@@ -20,6 +19,17 @@ class FilesSyncV1Impl {
   async status():Promise<FilesSyncStatus> { return FilesSyncContainer.status() }
   async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
   async deleteCloudCopy(collectionId:string,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.deleteCloudCopy(collectionId); this.wake(); return this.status() }
+  async cloudCollections(caller:FilesSyncCaller):Promise<CloudFilesCollection[]> { requireHumanFilesSync(caller); return (await FilesSyncContainer.cloudCollections()).collections.filter(collection=>collection.local===false) }
+  async restore(collectionId:string,name:string,caller:FilesSyncCaller):Promise<{restored:true;collectionId:string}> {
+    requireHumanFilesSync(caller);
+    if(!/^[0-9a-f-]{36}$/i.test(collectionId)||typeof name!=='string'||!name.trim()||name.length>128)throw new FilesSyncClientError('invalid_request',400);
+    const request=await FilesSyncContainer.escrowRequest();
+    let wrapped;
+    try { wrapped=await FilesSyncContainer.vaultEscrowKey(request) }
+    catch(error) { if(!(error instanceof FilesSyncClientError)||error.code!=='no_cloud_vault')throw error; wrapped=await FilesSyncContainer.vaultRestoreKey(request) }
+    const restored=await FilesSyncContainer.restore({collectionId,name:name.trim(),requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch});
+    this.wake(); return restored;
+  }
   private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
   private async identity():Promise<{userId:string;deviceId:string}|null> {
     if(!await isCloudSignedIn())return null;

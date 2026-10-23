@@ -941,7 +941,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean },
   ) => {
     requireTrustedVaultRenderer(event);
     const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
@@ -975,6 +975,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const accountId = safeMetadata(hint?.accountId);
     if (integrationId) target.searchParams.set('integration', integrationId);
     if (accountId) target.searchParams.set('account', accountId);
+    if (hint?.restoreFiles === true) target.searchParams.set('restoreFiles', '1');
     if (hint?.surface === 'popup') {
       target.pathname = '/vault/popup.html';
       if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
