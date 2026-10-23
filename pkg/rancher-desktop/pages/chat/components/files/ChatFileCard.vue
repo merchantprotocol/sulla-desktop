@@ -45,7 +45,7 @@ import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 
 import { useChatController } from '../../controller/useChatController';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
@@ -73,11 +73,7 @@ async function save() {
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
 async function open() {
   if (supportsDocumentEditor(props.reference.path)) {
-    const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, openEditor: true };
-    const existing = tabs.find(tab => tab.mode === 'files');
-    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
-    if (existing) updateTab(existing.id, { filesNavigation });
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    openDocumentTab({ fileId: props.reference.fileId, path: props.reference.path });
     return;
   }
   await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId });

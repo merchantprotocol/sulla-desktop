@@ -298,6 +298,17 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'paper'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <DocumentPage
+          v-if="getTab(props.tabId)?.documentFile"
+          :tab-id="props.tabId"
+          :document-file="getTab(props.tabId)!.documentFile!"
+        />
+        <div v-else class="flex h-full items-center justify-center text-sm text-slate-500">This file is no longer available</div>
+      </div>
+    </template>
+
     <template v-else-if="tabMode === 'usage'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <UsagePage />
@@ -368,6 +379,7 @@ import AgentRoutines from './AgentRoutines.vue';
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
 import FileEditorTab from './FileEditorTab.vue';
 import FilesPage from './FilesPage.vue';
+import DocumentPage from './DocumentPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
 import AgentsTab from './AgentsTab.vue';
 import HistoryTab from './HistoryTab.vue';

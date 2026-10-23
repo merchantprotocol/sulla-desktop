@@ -23,7 +23,7 @@ import { computed, ref } from 'vue';
 import type { Artifact } from '../../models/Artifact';
 import { useChatController } from '../../controller/useChatController';
 
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
@@ -39,11 +39,7 @@ async function openFile(): Promise<void> {
   if (!props.artifact.filesFileId) return;
   const path = props.artifact.filesPath || props.artifact.name;
   if (supportsDocumentEditor(path)) {
-    const filesNavigation = { fileId: props.artifact.filesFileId, path: props.artifact.filesPath ?? undefined, openEditor: true };
-    const existing = tabs.find(tab => tab.mode === 'files');
-    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
-    if (existing) updateTab(existing.id, { filesNavigation });
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    openDocumentTab({ fileId: props.artifact.filesFileId, path });
     return;
   }
   actionError.value = '';

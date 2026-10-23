@@ -21,13 +21,12 @@ import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab } from '@pkg/composables/useBrowserTabs';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 import type { AttachedFile } from '../../models/Message';
 
 const props = defineProps<{ attachment: AttachedFile }>();
-const { createTab, tabs, updateTab } = useBrowserTabs();
 const subtitle = computed(() => {
   const path = props.attachment.fileRef?.path;
   const location = path?.includes('/') ? path.split('/').slice(0, -1).join(' › ') : 'Sulla Files';
@@ -37,11 +36,7 @@ const subtitle = computed(() => {
 async function open():Promise<void> {
   if (!props.attachment.fileRef) return;
   if (supportsDocumentEditor(props.attachment.fileRef.path)) {
-    const filesNavigation = { fileId: props.attachment.fileRef.fileId, path: props.attachment.fileRef.path, openEditor: true };
-    const existing = tabs.find(tab => tab.mode === 'files');
-    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
-    if (existing) updateTab(existing.id, { filesNavigation });
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    openDocumentTab({ fileId: props.attachment.fileRef.fileId, path: props.attachment.fileRef.path });
     return;
   }
   await ipcRenderer.invoke('files-ui:open-file', { fileId: props.attachment.fileRef.fileId, versionId: props.attachment.fileRef.versionId });
