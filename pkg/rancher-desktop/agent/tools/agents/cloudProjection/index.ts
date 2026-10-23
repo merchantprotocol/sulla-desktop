@@ -21,7 +21,9 @@ export async function buildAgentProjection(): Promise<CloudAgentProjection[]> {
   const [deviceId, jobs] = await Promise.all([getDesktopDeviceId(), getAllJobs()]);
   const visible = jobs.filter(job => job.status === 'running');
   const telemetry = await Promise.all(visible.map(job => AgentJobMessagingModel.telemetryForJob(job.jobId)));
-  return visible.flatMap((job, ji) => job.tasks.filter(task => task.status === 'queued' || task.status === 'running').map((task, taskIndex) => {
+  // taskIndex must be the task's real index in the job: stop/message commands address it.
+  return visible.flatMap((job, ji) => job.tasks.map((task, taskIndex) => ({ task, taskIndex }))
+    .filter(({ task }) => task.status === 'queued' || task.status === 'running').map(({ task, taskIndex }) => {
     const checkin = telemetry[ji][taskIndex]?.latestCheckin;
     return {
       jobId: job.jobId, taskIndex, agentId: task.agentId, label: task.label,
@@ -34,7 +36,8 @@ export async function buildAgentProjection(): Promise<CloudAgentProjection[]> {
 }
 
 export async function pushAgentProjection(upload: (path: string, body: unknown) => Promise<void>): Promise<void> {
-  await upload('/cloud-runtime/v1/device/agents', { agents: await buildAgentProjection() });
+  const [deviceId, agents] = await Promise.all([getDesktopDeviceId(), buildAgentProjection()]);
+  await upload('/cloud-runtime/v1/device/agents', { deviceId, agents });
 }
 
 /** Dispatch only after SecureDesktopChannel verified the browser signature and device id. */

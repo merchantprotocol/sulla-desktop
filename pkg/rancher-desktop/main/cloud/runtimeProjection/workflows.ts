@@ -38,24 +38,26 @@ export async function buildWorkflowProjection(): Promise<CloudWorkflowProjection
 export async function buildWorkflowRunProjection(executionId: string): Promise<CloudWorkflowRunProjection | null> {
   const [deviceId, detail] = await Promise.all([getDesktopDeviceId(), loadWorkflowRunDetail(executionId)]);
   if (!detail) return null;
+  // A checkpoint row is written as each node completes; only display metadata
+  // is read here, never node_output or playbook_state.
   const steps = await postgresClient.queryAll(
-    `SELECT sequence, node_id, COALESCE(node_label, node_id) AS label, COALESCE(node_subtype, '') AS subtype,
-            status, started_at, completed_at, error
-       FROM workflow_execution_steps WHERE execution_id = $1 ORDER BY sequence`, [executionId],
+    `SELECT sequence, node_id, COALESCE(node_label, node_id) AS label, COALESCE(node_subtype, '') AS subtype, created_at
+       FROM workflow_checkpoints WHERE execution_id = $1 ORDER BY sequence`, [executionId],
   ).catch(() => [] as any[]);
   return {
     ...detail,
     deviceId,
     steps: (steps as any[]).map(row => ({
       sequence: Number(row.sequence), nodeId: row.node_id, label: row.label, subtype: row.subtype,
-      outcome: row.status === 'completed' ? 'ok' : row.status === 'running' ? 'running' : row.status === 'stopped' ? 'stopped' : 'failed',
-      startedAt: row.started_at ? new Date(row.started_at).toISOString() : null,
-      completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null,
-      error: row.error ? String(redactRuntimeValue(row.error, 'error')).slice(0, 2_000) : null,
+      outcome: 'ok' as const,
+      startedAt: null,
+      completedAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+      error: null,
     })),
   };
 }
 
 export async function pushWorkflowProjection(upload: (path: string, body: unknown) => Promise<void>): Promise<void> {
-  await upload('/cloud-runtime/v1/device/workflows', { workflows: await buildWorkflowProjection() });
+  const [deviceId, workflows] = await Promise.all([getDesktopDeviceId(), buildWorkflowProjection()]);
+  await upload('/cloud-runtime/v1/device/workflows', { deviceId, workflows });
 }
