@@ -19,7 +19,8 @@ import { DevicesCloudApi } from '../devicesCloudApi';
 import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync';
 import { ApprovedClients } from './approvedClients';
 import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, type CloudPreferences } from './cloudSettings';
-import { DesktopObjectSync, type ObjectKind } from './desktopObjectSync';
+import { type ObjectKind } from './desktopObjectSync';
+import { VaultSyncV3 } from './vaultSyncV3';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
@@ -94,7 +95,7 @@ function installPrefsListener() {
     if (changed.includes('conversations')) {
       (prefs.conversations ? startConversationSync() : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
     }
-    if (changed.includes('vault') && prefs.vault) DesktopObjectSync.syncNow('vault', true).catch(() => undefined);
+    if (changed.includes('vault')) (prefs.vault ? VaultSyncV3.syncNow() : VaultSyncV3.pause()).catch(() => undefined);
     broadcast();
   });
   DevicesCloudApi.onStateChange((state) => {
@@ -117,7 +118,7 @@ export async function startCloudServices(): Promise<void> {
   // retries on its own backoff.
   if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
   if (prefs.conversations) await startConversationSync().catch(err => console.warn('[CloudLifecycle] SullaSync start failed:', err));
-  DesktopObjectSync.start();
+  VaultSyncV3.start();
   DeviceInstallSync.start();
   broadcast();
 }
@@ -125,7 +126,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   channel?.stop();
-  DesktopObjectSync.stop();
+  VaultSyncV3.stop();
   DeviceInstallSync.stop();
   await stopConversationSync().catch(() => undefined);
   DevicesCloudApi.stopHeartbeat();
@@ -143,7 +144,7 @@ export interface CloudConnectionStatus {
   device:          ReturnType<typeof DevicesCloudApi.getState>;
   keyFingerprint:  string | null;
   approvedClients: { clientId: string; label: string; surface: string; approvedAt: string; lastUsedAt?: string }[];
-  objectSync:      ReturnType<typeof DesktopObjectSync.getStatus>;
+  objectSync:      ReturnType<typeof VaultSyncV3.getStatus>;
 }
 
 export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus> {
@@ -156,7 +157,7 @@ export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus>
     device:          DevicesCloudApi.getState(),
     keyFingerprint:  fingerprint,
     approvedClients: ApprovedClients.list().map(({ publicKey: _pk, ...rest }) => rest),
-    objectSync:      DesktopObjectSync.getStatus(),
+    objectSync:      VaultSyncV3.getStatus(),
   };
 }
 
@@ -185,12 +186,12 @@ export function initCloudConnectionEvents(): void {
   });
 
   ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: ObjectKind) => {
-    if (kind === 'vault') await DesktopObjectSync.syncNow(kind, true);
+    if (kind === 'vault') await VaultSyncV3.syncNow();
     return getCloudConnectionStatus();
   });
 
   ipc.handle('sulla-cloud-connection:delete-cloud-copy', async(_e: unknown, kind: ObjectKind) => {
-    if (kind === 'vault') await DesktopObjectSync.deleteCloudCopy(kind);
+    if (kind === 'vault') await VaultSyncV3.deleteCloudCopy();
     return getCloudConnectionStatus();
   });
 }

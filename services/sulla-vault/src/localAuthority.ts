@@ -543,6 +543,32 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
   }
 
+  /**
+   * Lend the unlocked user key to the Passwords sync v3 runner
+   * (browserEnvelope/syncRunner.ts) for one operation. Same generation guard
+   * as withUnlockedIdentity: a lock during the operation fails it, and the
+   * copy is erased afterwards.
+   */
+  async withUnlockedUserKey<T>(
+    operation: (keys: { userId: string; userKey: Uint8Array; assertCurrent: () => void }) => Promise<T>,
+  ): Promise<T> {
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const userKey = Uint8Array.from(keys.userKey);
+    try {
+      const result = await operation({ userId: keys.userId, userKey, assertCurrent: () => this.requireGeneration(generation) });
+      this.requireGeneration(generation);
+      return result;
+    } finally {
+      userKey.fill(0);
+    }
+  }
+
+  /** The Electron main approval identity (also used for Sulla Cloud relay). */
+  requireApprovalIdentity(callerId: string, token: string | undefined): void {
+    this.requireDesktopIdentity(callerId, token);
+  }
+
   /** Narrow backup-only egress: personal items, fixed field allowlist, and a bound destination. */
   async backupCredentials(itemId:string,kind:'s3'|'nas',target:string):Promise<Record<string,string>> {
     const keys=this.requireKeys(); const generation=this.generation;
@@ -1525,6 +1551,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
       [/^\/desktop-channel\/tickets$/, ['POST']],
       [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
+      [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
+      [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
+      [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
       [/^\/sync\/(?:push|pull)$/, ['GET', 'POST']],
       [/^\/marketplace\/(?:browse|topics|mine)$/, ['GET']],
       [/^\/marketplace\/submit-manifest$/, ['POST']],

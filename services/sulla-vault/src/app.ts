@@ -25,6 +25,8 @@ import { VaultFilesKeyBundleAuthority } from './filesKeyBundleAuthority.js';
 import { createFilesKeyBundleRouter } from './filesKeyBundleRoutes.js';
 import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } from './rbac.js';
 import { bootstrapFirstOwner } from './serverBootstrap.js';
+import { registerCloudSyncRoutes } from './browserEnvelope/routes.js';
+import { CloudVaultSyncRunner } from './browserEnvelope/syncRunner.js';
 
 import type { VaultConfig } from './config.js';
 import { isTransientDbError, warnDatabaseUnavailable } from './db.js';
@@ -509,6 +511,16 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.post('/v1/broker/sulla-cloud/request', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.executeDesktopSullaCloudRequest(identity.serviceId, identity.token, request.body));
+    });
+    // Passwords sync v3: the container builds/applies every body; main only signs hashes.
+    registerCloudSyncRoutes(app, new CloudVaultSyncRunner(db, {
+      withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
+      sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
+        config.approvalServiceId ?? '', config.approvalServiceToken, input,
+      ),
+    }), request => {
+      const identity = serviceIdentity(request);
+      localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     });
     app.post('/v1/broker/execute', async(request, response) => {
       const identity = serviceIdentity(request);
