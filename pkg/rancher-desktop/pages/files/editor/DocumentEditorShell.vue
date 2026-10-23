@@ -26,7 +26,7 @@
           <button v-for="(value,key) in properties" :key="key" type="button" class="property" :disabled="readOnly" @click="area?.revealProperties?.()">{{ key }} <b>{{ value }}</b></button>
           <span v-if="readOnly" class="property readonly">Read only</span>
         </div>
-        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" @update:model-value="queueSave" />
+        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" @update:model-value="queueSave" />
         <button v-if="editorType.id==='markdown' && !readOnly" class="slash-button" type="button" @click="slashOpen=!slashOpen"><span>/</span> Insert block</button>
         <div v-if="slashOpen" class="slash-menu" role="menu">
           <section><h2>Components</h2><button v-for="entry in componentEntries" :key="entry.label" type="button" disabled><span v-html="entry.icon" /><b>{{ entry.label }}</b></button></section>
@@ -45,12 +45,15 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import type { EditorCollaboration } from './codeMirror';
 import { LiveDocument } from './liveDocument';
 import { editorTypeForPath } from './registry';
 import type { FilesDataSource, FilesDetail, FilesItem, FilesVersion } from '../types';
 const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; files:FilesItem[] }>();
 const emit=defineEmits<{ back:[]; select:[item:FilesItem]; saved:[item:FilesItem] }>();
+// Yjs objects must never be wrapped in Vue proxies.
+const liveBinding=shallowRef<EditorCollaboration|null>(null);
 const liveState=ref<'live'|'syncing'|'offline'|null>(null),peers=ref<{id:string;name:string;kind:string}[]>([]);
 let live:LiveDocument|undefined;let loadGeneration=0;
 const area=ref<{revealProperties?:()=>void}|null>(null);
@@ -60,8 +63,8 @@ const saveLabel=computed(()=>liveState.value?(liveState.value==='live'?'Live':li
 const icons={arrowLeft:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',history:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',link:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></svg>',more:'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',heading:'<svg viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M5 12h14"/></svg>',list:'<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',check:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/></svg>',table:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',toggle:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>'};
 const componentEntries=[{label:'Chart',icon:icons.table},{label:'Sulla component',icon:icons.check}];
 function shortVersion(value:string){return value?`v${value.replace(/^version-/,'').slice(0,8)}`:'v—'} function formatDate(value:string){return new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value))}
-async function load(versionId?:string){const generation=++loadGeneration;const fileId=props.item.id;const previous=live;live=undefined;liveState.value=null;peers.value=[];await previous?.close();loading.value=true;loadError.value='';clearTimeout(timer);pendingSave=false;try{const metadata=await props.dataSource.detail(fileId);if(generation!==loadGeneration)return;const loadedVersion=versionId||metadata.version?.id||props.item.currentVersionId;const preview=await props.dataSource.preview(fileId,loadedVersion);if(generation!==loadGeneration)return;content.value=new TextDecoder().decode(preview.data);baseVersionId.value=loadedVersion;detail.value=metadata;saveState.value='saved';conflict.value=null;
-if(!versionId&&props.dataSource.openLive){const session=new LiveDocument(props.dataSource,fileId,value=>{if(generation===loadGeneration)content.value=value;},value=>{if(generation===loadGeneration)liveState.value=value;},value=>{if(generation===loadGeneration)peers.value=value;});live=session;try{await session.start();}catch{await session.close();if(live===session){live=undefined;liveState.value=null;}}}
+async function load(versionId?:string){const generation=++loadGeneration;const fileId=props.item.id;const previous=live;live=undefined;liveBinding.value=null;liveState.value=null;peers.value=[];await previous?.close();loading.value=true;loadError.value='';clearTimeout(timer);pendingSave=false;try{const metadata=await props.dataSource.detail(fileId);if(generation!==loadGeneration)return;const loadedVersion=versionId||metadata.version?.id||props.item.currentVersionId;const preview=await props.dataSource.preview(fileId,loadedVersion);if(generation!==loadGeneration)return;content.value=new TextDecoder().decode(preview.data);baseVersionId.value=loadedVersion;detail.value=metadata;saveState.value='saved';conflict.value=null;
+if(!versionId&&props.dataSource.openLive){const session=new LiveDocument(props.dataSource,fileId,value=>{if(generation===loadGeneration)content.value=value;},value=>{if(generation===loadGeneration)liveState.value=value;},value=>{if(generation===loadGeneration)peers.value=value;});live=session;try{await session.start();if(generation===loadGeneration&&live===session)liveBinding.value=markRaw({ytext:session.ytext,undoManager:session.undoManager});}catch{await session.close();if(live===session){live=undefined;liveBinding.value=null;liveState.value=null;}}}
 }catch(cause){loadError.value=cause instanceof Error?cause.message:String(cause)}finally{if(generation===loadGeneration)loading.value=false}}
 function queueSave(){if(readOnly.value)return;if(live){live.edit(content.value);return;}saveState.value='saving';conflict.value=null;saveError.value='';clearTimeout(timer);timer=setTimeout(saveNow,850)}
 // Single-range diff: enough to tell whether two edits touch the same span.
@@ -74,7 +77,7 @@ async function reloadLatest(){const versionId=conflict.value?.currentVersionId||
 async function keepMine(){if(conflict.value?.currentVersionId)baseVersionId.value=conflict.value.currentVersionId;conflict.value=null;await saveNow()}
 function insertMarkdown(value:string){content.value+=(content.value.endsWith('\n')||!content.value?'':'\n')+value;slashOpen.value=false;queueSave()}
 async function toggleDrawer(value:'history'|'links'){drawer.value=drawer.value===value?null:value;if(!drawer.value)return;drawerLoading.value=true;try{if(value==='history')versions.value=await props.dataSource.history(props.item.id,baseVersionId.value);else detail.value=await props.dataSource.detail(props.item.id)}finally{drawerLoading.value=false}}
-watch(()=>props.item.id,()=>load());onMounted(()=>load());onBeforeUnmount(()=>{++loadGeneration;void live?.close();clearTimeout(timer);if(saveState.value==='saving'&&!readOnly.value)void saveNow()});
+watch(()=>props.item.id,()=>load());onMounted(()=>load());onBeforeUnmount(()=>{++loadGeneration;liveBinding.value=null;void live?.close();clearTimeout(timer);if(saveState.value==='saving'&&!readOnly.value)void saveNow()});
 </script>
 <style scoped>
 .document-editor-shell{--editor-paper:var(--nx-bg-subtle,var(--nx-background,#f4f7fb));--editor-card:var(--nx-surface,var(--surface-1,#fff));--editor-text:var(--nx-text-primary,var(--text,#1a2332));--editor-muted:var(--nx-text-secondary,var(--text-muted,#5b6878));--editor-dim:var(--nx-text-tertiary,var(--text-dim,#8a96a6));--editor-line:var(--nx-border,var(--border,#dde4ee));--editor-accent:var(--nx-accent,var(--accent,#3a7fa0));position:relative;height:100%;overflow:auto;background:var(--editor-paper);color:var(--editor-text)}

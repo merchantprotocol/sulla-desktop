@@ -198,3 +198,7 @@ writes into the same live Automerge document and streams changes to connected
 editors. No special agent-side sync code is needed. Live sessions persist a new
 version after about two seconds without changes and flush when the last peer
 leaves. Older servers and the browser Files UI retain version-checked saving.
+
+The editor shows the document through Yjs (CodeMirror binding, per-user undo), but
+Yjs is only a view built from the Automerge text: it is never synced or saved, so
+Automerge is the only history. Undo in the editor reverts only that person's own edits.

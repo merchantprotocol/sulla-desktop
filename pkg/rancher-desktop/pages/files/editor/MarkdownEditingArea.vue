@@ -10,8 +10,8 @@ import { syntaxTree } from '@codemirror/language';
 import type { EditorState, Range } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import type { EditorView as Editor } from '@codemirror/view';
-import { textPatch, createEditor } from './codeMirror';
-const props=defineProps<{ modelValue:string; readOnly:boolean }>();
+import { textPatch, createEditor, type EditorCollaboration } from './codeMirror';
+const props=defineProps<{ modelValue:string; readOnly:boolean; live?:EditorCollaboration|null }>();
 const emit=defineEmits<{ 'update:modelValue':[value:string] }>();
 const host=ref<HTMLElement>(); let view:Editor|undefined; let applying=false;
 class ImageWidget extends WidgetType { constructor(private readonly src:string,private readonly alt:string){super()} toDOM(){const image=document.createElement('img');image.src=this.src;image.alt=this.alt;image.className='cm-md-image';image.loading='lazy';return image} eq(other:ImageWidget){return other.src===this.src&&other.alt===this.alt} }
@@ -33,7 +33,10 @@ function livePreview(state:EditorState):DecorationSet{
  return Decoration.set(decorations,true);
 }
 const preview=EditorView.decorations.compute(['doc','selection'],state=>livePreview(state));
-onMounted(()=>{if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'var(--font-display, Georgia, serif)',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'1.45rem',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'var(--nx-accent, #3a7fa0)',textDecoration:'underline'},'.cm-md-task':{color:'var(--nx-accent, #3a7fa0)'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})])});
+function build(){view?.destroy();view=undefined;if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'var(--font-display, Georgia, serif)',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'1.45rem',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'var(--nx-accent, #3a7fa0)',textDecoration:'underline'},'.cm-md-task':{color:'var(--nx-accent, #3a7fa0)'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})],props.live);}
+onMounted(build);
+// Live editing arrives after the file loads; rebind CodeMirror to the Automerge-backed Y.Text.
+watch(()=>props.live,()=>{build();startAfterFrontMatter();});
 watch(()=>props.modelValue,value=>{if(!view||view.state.doc.toString()===value)return;applying=true;view.dispatch({changes:textPatch(view.state.doc.toString(),value)});applying=false});
 function startAfterFrontMatter(){if(!view)return;const match=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(view.state.doc.toString());if(match)view.dispatch({selection:{anchor:Math.min(match[0].length+1,view.state.doc.length)}})}
 onMounted(startAfterFrontMatter);
