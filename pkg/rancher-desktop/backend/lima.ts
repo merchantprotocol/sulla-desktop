@@ -873,12 +873,97 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'apk add --no-cache bash',
     ].join('\n');
 
+    // SullaWorks needs rd0 to discover the physical LAN, but the extra bridge
+    // must never make the VM's own or Docker-published services LAN-accessible.
+    const bridgedFirewallScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      '[ -d /sys/class/net/rd0 ] || exit 0',
+      '# The authenticated main console is the only LAN entry point in server mode.',
+      'SERVER_TCP_PORTS="30121"',
+      'server_mode=false',
+      "if command -v docker >/dev/null 2>&1 && docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' sulla_accounts 2>/dev/null | grep -qx 'SULLA_ACCOUNTS_MODE=server'; then",
+      '  server_mode=true',
+      'fi',
+      'apply_rules() {',
+      '  table=$1',
+      '  icmp=$2',
+      '  icmp_type_flag=$3',
+      '  "$table" -C INPUT -i rd0 -m conntrack --ctstate NEW -j DROP 2>/dev/null || "$table" -I INPUT 1 -i rd0 -m conntrack --ctstate NEW -j DROP',
+      '  "$table" -C INPUT -i rd0 -p "$icmp" "$icmp_type_flag" echo-reply -j ACCEPT 2>/dev/null || "$table" -I INPUT 1 -i rd0 -p "$icmp" "$icmp_type_flag" echo-reply -j ACCEPT',
+      '  "$table" -C INPUT -i rd0 -p udp --dport 5353 -j ACCEPT 2>/dev/null || "$table" -I INPUT 1 -i rd0 -p udp --dport 5353 -j ACCEPT',
+      '  "$table" -C INPUT -i rd0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || "$table" -I INPUT 1 -i rd0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
+      '  for port in $SERVER_TCP_PORTS; do',
+      '    while "$table" -C INPUT -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT 2>/dev/null; do "$table" -D INPUT -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT; done',
+      '  done',
+      '  if [ "$server_mode" = true ]; then',
+      '    for port in $SERVER_TCP_PORTS; do',
+      '      "$table" -C INPUT -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT 2>/dev/null || "$table" -I INPUT 1 -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j ACCEPT',
+      '    done',
+      '  fi',
+      '  "$table" -nL DOCKER-USER >/dev/null 2>&1 || return 0',
+      '  "$table" -C DOCKER-USER -i rd0 -m conntrack --ctstate NEW -j DROP 2>/dev/null || "$table" -I DOCKER-USER 1 -i rd0 -m conntrack --ctstate NEW -j DROP',
+      '  "$table" -C DOCKER-USER -i rd0 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || "$table" -I DOCKER-USER 1 -i rd0 -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN',
+      '  for port in $SERVER_TCP_PORTS; do',
+      '    while "$table" -C DOCKER-USER -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j RETURN 2>/dev/null; do "$table" -D DOCKER-USER -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j RETURN; done',
+      '  done',
+      '  if [ "$server_mode" = true ]; then',
+      '    for port in $SERVER_TCP_PORTS; do',
+      '      "$table" -C DOCKER-USER -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j RETURN 2>/dev/null || "$table" -I DOCKER-USER 1 -i rd0 -p tcp --dport "$port" -m conntrack --ctstate NEW -j RETURN',
+      '    done',
+      '  fi',
+      '}',
+      'apply_rules iptables icmp --icmp-type',
+      'apply_rules ip6tables ipv6-icmp --icmpv6-type',
+    ].join('\n');
+
+    const bridgedFirewallProvisionScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      "cat > /usr/local/sbin/sulla-bridged-firewall <<'SULLA_BRIDGED_FIREWALL'",
+      bridgedFirewallScript,
+      'SULLA_BRIDGED_FIREWALL',
+      'chmod 755 /usr/local/sbin/sulla-bridged-firewall',
+      "cat > /usr/local/sbin/sulla-bridged-firewall-watch <<'SULLA_BRIDGED_FIREWALL_WATCH'",
+      '#!/bin/sh',
+      '/usr/local/sbin/sulla-bridged-firewall',
+      '# Recheck the server-mode allowlist whenever a container starts; reconnect',
+      '# to the event stream after dockerd restarts.',
+      'while true; do',
+      '  docker events --filter type=container --filter event=start --format "{{.ID}}" 2>/dev/null | while read -r _; do',
+      '    /usr/local/sbin/sulla-bridged-firewall',
+      '  done',
+      '  sleep 1',
+      'done',
+      'SULLA_BRIDGED_FIREWALL_WATCH',
+      'chmod 755 /usr/local/sbin/sulla-bridged-firewall-watch',
+      "cat > /etc/init.d/sulla-bridged-firewall <<'SULLA_BRIDGED_FIREWALL_SERVICE'",
+      '#!/sbin/openrc-run',
+      'description="Protect the Sulla bridged LAN interface"',
+      'command="/usr/local/sbin/sulla-bridged-firewall-watch"',
+      'command_background=true',
+      'pidfile="/run/sulla-bridged-firewall.pid"',
+      'depend() { need docker; after firewall; }',
+      'SULLA_BRIDGED_FIREWALL_SERVICE',
+      'chmod 755 /etc/init.d/sulla-bridged-firewall',
+      'rc-update add sulla-bridged-firewall default >/dev/null',
+      '# DOCKER-USER is recreated with dockerd; reapply after every docker start.',
+      "grep -q 'sulla-bridged-firewall' /etc/conf.d/docker 2>/dev/null || cat >> /etc/conf.d/docker <<'SULLA_DOCKER_FIREWALL_HOOK'",
+      '',
+      'start_post() {',
+      '  /usr/local/sbin/sulla-bridged-firewall',
+      '}',
+      'SULLA_DOCKER_FIREWALL_HOOK',
+      '/usr/local/sbin/sulla-bridged-firewall',
+    ].join('\n');
+
     // Remove any previously appended copies (including old unguarded format) to prevent duplication
     config.provision = config.provision.filter((p: { script?: string }) => {
       const s = p.script ?? '';
 
       return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash') &&
-        !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm');
+        !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm') &&
+        !s.includes('/usr/local/sbin/sulla-bridged-firewall');
     });
 
     // Enable swap before anything else provisions — the npm installs below are
@@ -911,6 +996,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision.push({
       mode:   'system',
       script: logRotateScript,
+    });
+
+    config.provision.push({
+      mode:   'system',
+      script: bridgedFirewallProvisionScript,
     });
 
     // Install Claude Code CLI.
@@ -1383,7 +1473,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    * @return Whether the user wants to allow the prompt.
    */
   protected async showSudoReason(this: Readonly<this> & this, explanations: Record<string, string[]>): Promise<boolean> {
-    if (this.noModalDialogs || !this.cfg?.application.adminAccess) {
+    if (this.noModalDialogs || !this.#adminAccess) {
       return false;
     }
     const neverAgain = await openSudoPrompt(explanations);
@@ -2758,7 +2848,10 @@ start_pre() {
       if (managedServicesGeneration === this.#managedServicesGeneration) this.currentAction = Action.NONE;
       throw error;
     }
-    this.#adminAccess = config_.application.adminAccess ?? false;
+    // Host access on macOS also opts into socket_vmnet so SullaWorks can see
+    // the physical LAN; the bridged interface remains an additional network.
+    this.#adminAccess = (config_.application.adminAccess ?? false) ||
+      (os.platform() === 'darwin' && (config_.application.hostAccess ?? false));
     this.#containerEngineClient = undefined;
 
     await this.progressTracker.action('Starting Backend', 10, async() => {
@@ -4404,6 +4497,8 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
       'virtualMachine.mount.type':                            undefined,
       'virtualMachine.type':                                  undefined,
       'virtualMachine.useRosetta':                            undefined,
+      // Changing host access changes the extra LAN bridge on macOS.
+      'application.hostAccess':                              os.platform() === 'darwin' ? undefined : () => false,
     }));
     if (limaConfig) {
       Object.assign(reasons, await this.kubeBackend.requiresRestartReasons(this.cfg, cfg, {
