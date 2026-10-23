@@ -1393,7 +1393,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
           }
           log.log(`[CodexService] steering: resuming thread ${ capturedSessionId } with ${ steered.length } steer message(s) (convId=${ convId })`);
-          const steerTurn: ChatMessage[] = [{ role: 'user', content: STEER_RESUME_NOTE } as ChatMessage, ...steered];
+          // Carry this run's system messages: runCodex stages them as the
+          // instructions file, and a resume without them throws before the
+          // steer is delivered (which killed steered sub-agents).
+          const systemMessages = messages.filter(m => m.role === 'system');
+          const steerTurn: ChatMessage[] = [...systemMessages, { role: 'user', content: STEER_RESUME_NOTE } as ChatMessage, ...steered];
           this.runCodex(steerTurn, callbacks, options).then(
             r => resolve({ text: `${ lead }${ r.text }`, usage: r.usage }),
             reject,

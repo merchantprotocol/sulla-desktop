@@ -1,3 +1,5 @@
+import { AGENT_ERROR_MESSAGE_PREFIX } from '../../workflow/agentNodeError';
+
 /**
  * Canonical reader for a finished sub-agent graph state.
  *
@@ -33,14 +35,22 @@ export function extractAgentTurnOutcome(finalState: any, brief?: string): AgentT
     };
   }
 
-  const out = finalState?.metadata?.finalSummary ||
-    finalState?.messages?.[finalState.messages.length - 1]?.content ||
-    '(no output)';
+  const finalSummary = finalState?.metadata?.finalSummary;
+  const last = finalState?.messages?.[finalState.messages.length - 1];
+  // A run that ends on an input it never answered (an orchestrator steer, or
+  // the brief) died mid-turn: never hand that input back as the worker's result.
+  if (!finalSummary && last && last.role !== 'assistant') {
+    return { status: 'error', text: 'Worker stopped before answering its latest message (provider failure or aborted run).' };
+  }
+  const out = finalSummary || last?.content || '(no output)';
 
   const text = typeof out === 'string' ? out : JSON.stringify(out);
   const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
   if (brief && normalize(text) === normalize(brief)) {
     return { status: 'error', text: 'Provider failed before producing a worker result.' };
+  }
+  if (text.trimStart().startsWith(AGENT_ERROR_MESSAGE_PREFIX)) {
+    return { status: 'error', text };
   }
   return { status: 'completed', text };
 }
