@@ -44,7 +44,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `files-harness.md` — How agents work with Files: normal tools on the FUSE mount, drafts, publish requests, locks and retention, Use Cases lifecycle, folder metadata, what not to do
 - `files.md` — Files architecture: FUSE mount, Automerge versioning, per-agent identity, `_folder-metadata.yaml`, agent access rules, authority and custody
 - `files-first.md` — Files layout, system areas, audit logs, and Use Cases source of truth
-- [`sulla-file-format.md`](environment/sulla-file-format.md) — the `.sulla.md` document format: front matter properties, Markdown body, editor behaviour, live sync, links
+- [`sulla-file-format.md`](environment/sulla-file-format.md) — the `.sulla` document format: front matter properties, Markdown body, editor behaviour, live sync, links
 - `paths.md` — ~/sulla/ tree, app resources path, Lima paths, DB ports
 - `communication.md` — WebSocket channels, IPC, exec tool, inter-agent messaging
 - `docker.md` — Lima vs host Docker, pre-installed containers, docker_* and lima_* tools

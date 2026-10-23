@@ -87,6 +87,7 @@ function mimeFor(name:string):string {
     '.jpg':  'image/jpeg',
     '.json': 'application/json',
     '.md':   'text/markdown',
+    '.sulla': 'text/markdown',
     '.mov':  'video/quicktime',
     '.mp3':  'audio/mpeg',
     '.mp4':  'video/mp4',
