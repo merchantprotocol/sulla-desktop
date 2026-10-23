@@ -6,7 +6,7 @@ import path from 'node:path';
 import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { callCaptureStudio } from '@pkg/main/captureStudioRpc';
+import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFilesWatcher';
@@ -14,7 +14,7 @@ import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFiles
 export type ScreenshotMode = 'area' | 'window' | 'full';
 export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
 
-interface RecorderResult { started?:boolean; stopped?:boolean; sessionDir?:string | null; reason?:string }
+interface RecorderResult { recording?:boolean; started?:boolean; stopped?:boolean; setup?:boolean; sessionDir?:string | null; reason?:string }
 
 const SCREENSHOTS = 'Screenshots';
 const RECORDINGS = 'Recordings';
@@ -75,7 +75,8 @@ async function electronScreenshot(target:string, sourceType:'screen'|'window'):P
 }
 
 export class SullaFilesCaptureService {
-  private recording = false;
+  private readonly recordingImports = new Map<string, Promise<CaptureResult>>();
+  recordingState():boolean { return getCaptureStudioRecordingState() }
 
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
     return withCaptureTemp('.png', async temporaryPath => {
@@ -91,21 +92,33 @@ export class SullaFilesCaptureService {
     });
   }
 
-  async toggleRecording(input:{ mic:boolean; camera:boolean }):Promise<{ recording:boolean; capture?:CaptureResult; error?:string }> {
-    if (!this.recording) {
-      const result = await callCaptureStudio<RecorderResult>('recorder.start', { screen: true, mic: input.mic, camera: input.camera }, { timeoutMs: 30_000 });
-      this.recording = Boolean(result.started);
+  async toggleRecording(input:{ mic:boolean; camera:boolean }, options:{ setup?:boolean } = {}):Promise<{ recording:boolean; setup?:boolean; capture?:CaptureResult; error?:string }> {
+    let status:RecorderResult = { recording: false };
+    if (isCaptureStudioReady()) {
+      try { status = await callCaptureStudio<RecorderResult>('recorder.status', {}, { timeoutMs: 5_000 }) } catch { status = { recording: false } }
+    }
+    if (!status.recording) {
+      const command = options.setup ? 'recorder.setup' : 'recorder.start';
+      const result = await callCaptureStudio<RecorderResult>(command, { screen: true, mic: input.mic, camera: input.camera }, { timeoutMs: 30_000 });
 
-      return { recording: this.recording, error: result.reason };
+      return { recording: Boolean(result.recording ?? result.started), setup: result.setup, error: result.reason };
     }
     const stopped = await callCaptureStudio<RecorderResult>('recorder.stop', {}, { timeoutMs: 30_000 });
-    this.recording = false;
     if (!stopped.stopped || !stopped.sessionDir) return { recording: false, error: stopped.reason ?? 'Recording did not stop cleanly' };
 
     return { recording: false, capture: await this.saveRecording(stopped.sessionDir) };
   }
 
-  private async saveRecording(sessionDir:string):Promise<CaptureResult> {
+  saveRecording(sessionDir:string):Promise<CaptureResult> {
+    const existing = this.recordingImports.get(sessionDir);
+    if (existing) return existing;
+    const importing = this.importRecording(sessionDir);
+    this.recordingImports.set(sessionDir, importing);
+    importing.catch(() => this.recordingImports.delete(sessionDir));
+    return importing;
+  }
+
+  private async importRecording(sessionDir:string):Promise<CaptureResult> {
     const raw = JSON.parse(await fs.promises.readFile(path.join(sessionDir, 'manifest.json'), 'utf8'));
     const streams:any[] = raw.streams ?? []; const primary = streams.find(stream => stream.type === 'screen') ?? streams.find(stream => stream.type === 'camera');
     if (!primary) throw new Error('Capture Studio recording contains no video track');

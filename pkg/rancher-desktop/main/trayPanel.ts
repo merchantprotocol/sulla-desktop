@@ -416,7 +416,7 @@ function registerPanelIpc(): void {
     const filesError = filesResult.status === 'rejected';
     const sharesError = sharesResult.status === 'rejected' && !sharingUnavailable;
 
-    return { status, files, preferences, shares, sharingUnavailable, filesError, sharesError };
+    return { status, files, preferences, shares, recording: getSullaFilesCaptureService().recordingState(), sharingUnavailable, filesError, sharesError };
   });
 
   ipcMain.handle('tray-panel:capture-screenshot', async(event, mode:ScreenshotMode) => {
@@ -436,10 +436,10 @@ function registerPanelIpc(): void {
   ipcMain.handle('tray-panel:capture-record', async(event, input:{ mic:boolean; camera:boolean }) => {
     requireTrayRenderer(event);
     panelWindow?.hide();
-    const result = await getSullaFilesCaptureService().toggleRecording(input);
+    const result = await getSullaFilesCaptureService().toggleRecording(input, { setup: true });
 
     if (result.capture) showCaptureResult(result.capture);
-    else if (!result.recording) panelWindow?.show();
+    else if (!result.recording && !result.setup) panelWindow?.show();
 
     return result;
   });

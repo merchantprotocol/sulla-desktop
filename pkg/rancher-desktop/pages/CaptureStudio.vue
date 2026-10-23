@@ -133,6 +133,45 @@
       />
     </div>
 
+    <div
+      v-if="setupOpen"
+      class="record-setup-backdrop"
+    >
+      <section class="record-setup">
+        <header><div><h2>Record screen</h2><p>Choose what to capture.</p></div><button @click="setupOpen = false">×</button></header>
+        <div class="setup-modes">
+          <button :class="{ active: setupMode === 'display' }" @click="selectSetupMode('display')">Display</button>
+          <button :class="{ active: setupMode === 'window' }" @click="selectSetupMode('window')">Window</button>
+          <button :class="{ active: setupMode === 'area' }" @click="selectSetupMode('area')">Selected area</button>
+        </div>
+        <div class="setup-sources">
+          <button
+            v-for="source in visibleSetupSources"
+            :key="source.id"
+            :class="{ active: setupSourceId === source.id }"
+            @click="setupSourceId = source.id"
+          ><img :src="source.thumbnailDataUrl"><span>{{ source.name }}</span></button>
+        </div>
+        <div
+          v-if="setupMode === 'area' && selectedSetupSource"
+          ref="areaPickerRef"
+          class="area-picker"
+          @pointerdown="beginAreaSelection"
+          @pointermove="moveAreaSelection"
+          @pointerup="endAreaSelection"
+        >
+          <img :src="selectedSetupSource.thumbnailDataUrl" draggable="false">
+          <div class="area-shade" />
+          <div class="area-selection" :style="areaSelectionStyle" />
+        </div>
+        <div class="setup-options">
+          <button :class="{ active: setupMic }" @click="setupMic = !setupMic">Mic {{ setupMic ? 'on' : 'off' }}</button>
+          <button :class="{ active: setupCamera }" @click="setupCamera = !setupCamera">Camera {{ setupCamera ? 'on' : 'off' }}</button>
+        </div>
+        <footer><button class="setup-cancel" @click="setupOpen = false">Cancel</button><button class="setup-record" :disabled="setupStarting || !setupSourceId" @click="startSetupRecording">{{ setupStarting ? 'Starting…' : 'Record' }}</button></footer>
+      </section>
+    </div>
+
     <TrackPanel
       :sources="sources"
       :tracks-open="tracksOpen"
@@ -426,7 +465,7 @@ import { useAgentBridge } from './capture-studio/composables/useAgentBridge';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
 import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
-import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
+import { useMediaSources, QUALITY_PRESETS, type CropRegion, type QualityPreset, type ScreenSource } from './capture-studio/composables/useMediaSources';
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { useRecorder } from './capture-studio/composables/useRecorder';
@@ -466,6 +505,16 @@ const flashActive = ref(false);
 const addPopupOpen = ref(false);
 const statusMessage = ref('');
 const lastSessionDir = ref('');
+const setupOpen = ref(false);
+const setupStarting = ref(false);
+const setupMode = ref<'display' | 'window' | 'area'>('display');
+const setupSources = ref<ScreenSource[]>([]);
+const setupSourceId = ref('');
+const setupMic = ref(true);
+const setupCamera = ref(false);
+const areaPickerRef = ref<HTMLElement | null>(null);
+const areaRegion = reactive<CropRegion>({ x: 0.15, y: 0.15, width: 0.7, height: 0.7 });
+let areaStart: { x:number; y:number } | null = null;
 interface PlaybackStream {
   id:          string;
   type:        string;
@@ -502,6 +551,9 @@ const sources = reactive<Source[]>([
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
 const customSources = computed(() => sources.filter(s => !s.builtin));
+const visibleSetupSources = computed(() => setupSources.value.filter(source => setupMode.value === 'window' ? source.id.startsWith('window:') : source.id.startsWith('screen:')));
+const selectedSetupSource = computed(() => setupSources.value.find(source => source.id === setupSourceId.value));
+const areaSelectionStyle = computed(() => ({ left: `${ areaRegion.x * 100 }%`, top: `${ areaRegion.y * 100 }%`, width: `${ areaRegion.width * 100 }%`, height: `${ areaRegion.height * 100 }%` }));
 
 const colorMap: Record<string, string> = { screen: 'screen', camera: 'cam', mic: 'mic', system: 'sys' };
 
@@ -798,6 +850,82 @@ function swapAssignments() {
 
 // ─── Record (wired to disk writer) ───
 let _stoppingFromCritical = false; // guard against infinite recursion from disk critical callback
+
+function selectSetupMode(mode:'display'|'window'|'area') {
+  setupMode.value = mode;
+  const first = visibleSetupSources.value[0];
+  if (!visibleSetupSources.value.some(source => source.id === setupSourceId.value)) setupSourceId.value = first?.id || '';
+}
+
+function areaPoint(event:PointerEvent):{ x:number; y:number } | null {
+  const element = areaPickerRef.value;
+  if (!element) return null;
+  const bounds = element.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)),
+  };
+}
+
+function beginAreaSelection(event:PointerEvent) {
+  const point = areaPoint(event);
+  if (!point) return;
+  areaStart = point;
+  areaPickerRef.value?.setPointerCapture(event.pointerId);
+  Object.assign(areaRegion, { x: point.x, y: point.y, width: 0, height: 0 });
+}
+
+function moveAreaSelection(event:PointerEvent) {
+  if (!areaStart) return;
+  const point = areaPoint(event);
+  if (!point) return;
+  Object.assign(areaRegion, {
+    x: Math.min(areaStart.x, point.x), y: Math.min(areaStart.y, point.y),
+    width: Math.abs(point.x - areaStart.x), height: Math.abs(point.y - areaStart.y),
+  });
+}
+
+function endAreaSelection(event:PointerEvent) {
+  moveAreaSelection(event);
+  areaStart = null;
+}
+
+async function openRecordSetup(params:Record<string, unknown>) {
+  while (loading.value) await new Promise(resolve => setTimeout(resolve, 50));
+  setupMic.value = params.mic !== false;
+  setupCamera.value = params.camera === true;
+  setupSources.value = await mediaSources.listScreenSources();
+  selectSetupMode('display');
+  setupOpen.value = true;
+}
+
+async function setSetupSource(type:'mic'|'camera', enabled:boolean) {
+  const source = sources.find(candidate => candidate.type === type);
+  if (source && source.on !== enabled) await toggleSrc(source);
+}
+
+async function startSetupRecording() {
+  if (!setupSourceId.value || setupStarting.value) return;
+  setupStarting.value = true;
+  try {
+    const crop = setupMode.value === 'area' ? { ...areaRegion } : undefined;
+    if (crop && (crop.width < 0.01 || crop.height < 0.01)) throw new Error('Drag to select an area first');
+    await mediaSources.acquireScreen(setupSourceId.value, crop);
+    const screenSource = sources.find(source => source.type === 'screen');
+    if (screenSource) screenSource.on = true;
+    await setSetupSource('mic', setupMic.value);
+    await setSetupSource('camera', setupCamera.value);
+    autoAssign();
+    updateStreamAssignments();
+    setupOpen.value = false;
+    await toggleRecord();
+  } catch (error:any) {
+    statusMessage.value = error?.message || 'Could not start recording';
+    setTimeout(() => { statusMessage.value = '' }, 5000);
+  } finally {
+    setupStarting.value = false;
+  }
+}
 
 async function toggleRecord() {
   if (!recording.value) {
@@ -1524,6 +1652,11 @@ useAgentBridge({
     sessionDir:      recording.value ? recorder.getSessionDir() : (lastSessionDir.value || null),
     error:           recorder.error.value || null,
   }),
+  'recorder.setup': async(params) => {
+    if (recording.value) return { recording: true, setup: false, reason: 'already recording' };
+    await openRecordSetup(params);
+    return { recording: false, setup: true };
+  },
   'recorder.start': async(params) => {
     if (recording.value) {
       return { started: false, reason: 'already recording' };
@@ -1564,7 +1697,8 @@ useAgentBridge({
   },
   'recorder.stop': async() => {
     if (!recording.value) {
-      return { stopped: false, reason: 'not recording' };
+      ipcRenderer.send('capture-studio:recording-state', { recording: false });
+      return { stopped: true, sessionDir: null, reason: 'idle' };
     }
     await toggleRecord();
     return {
@@ -1663,6 +1797,10 @@ useAgentBridge({
     return { ok: true, layout };
   },
 });
+
+watch(recording, value => {
+  ipcRenderer.send('capture-studio:recording-state', { recording: value, sessionDir: value ? recorder.getSessionDir() : (lastSessionDir.value || null) });
+}, { immediate: true });
 
 onMounted(async() => {
   document.addEventListener('keydown', onKeyDown);
@@ -1856,6 +1994,28 @@ html, body {
   line-height: 1.5;
   overflow: hidden;
 }
+
+.record-setup-backdrop { position: fixed; inset: 0; z-index: 700; display: grid; place-items: center; padding: 32px; background: rgba(5, 8, 12, .76); backdrop-filter: blur(12px); }
+.record-setup { width: min(820px, 92vw); max-height: 90vh; overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: 18px; background: var(--bg-surface); box-shadow: 0 30px 90px rgba(0, 0, 0, .65); }
+.record-setup header, .record-setup footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.record-setup header h2 { font: 600 24px var(--display); }
+.record-setup header p { margin-top: 5px; color: var(--text-muted); }
+.record-setup header button { border: 0; background: transparent; color: var(--text-secondary); font-size: 28px; cursor: pointer; }
+.setup-modes, .setup-options { display: flex; gap: 8px; margin: 20px 0 14px; }
+.setup-modes button, .setup-options button, .record-setup footer button { padding: 9px 14px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-secondary); background: var(--bg-surface-alt); cursor: pointer; }
+.setup-modes button.active, .setup-options button.active { color: var(--text-primary); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--bg-surface-alt)); }
+.setup-sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; max-height: 250px; overflow: auto; }
+.setup-sources button { overflow: hidden; padding: 0; border: 2px solid transparent; border-radius: 10px; color: var(--text-secondary); background: var(--bg-page); cursor: pointer; text-align: left; }
+.setup-sources button.active { border-color: var(--accent); color: var(--text-primary); }
+.setup-sources img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; }
+.setup-sources span { display: block; padding: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.area-picker { position: relative; margin-top: 14px; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; cursor: crosshair; user-select: none; }
+.area-picker img { display: block; width: 100%; pointer-events: none; }
+.area-shade { position: absolute; inset: 0; background: rgba(0, 0, 0, .42); pointer-events: none; }
+.area-selection { position: absolute; border: 2px solid var(--accent-hover); background: rgba(80, 150, 179, .1); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .18); pointer-events: none; }
+.record-setup footer { justify-content: flex-end; margin-top: 20px; }
+.record-setup footer .setup-record { min-width: 110px; color: white; border-color: var(--error); background: var(--error); }
+.record-setup footer .setup-record:disabled { opacity: .5; cursor: default; }
 
 /* ═══════════════════════════════════════════════
    CANVAS — full screen preview

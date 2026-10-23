@@ -23,16 +23,20 @@ interface BackupDestination { id:string; kind:'local'|'nas'|'s3'; label:string; 
 export default defineComponent({
   name: 'preferences-body-files',
   data() {
-    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupSubfolder:'', backupEndpoint:'', backupShare:'', backupProtocol:'smb' as 'smb'|'nfs', backupBucket:'', backupRegion:'', backupCredentialId:'', backupPoll:undefined as ReturnType<typeof setInterval>|undefined, loading: true, error: '', saving: new Set<string>() };
+    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupSubfolder:'', backupEndpoint:'', backupShare:'', backupProtocol:'smb' as 'smb'|'nfs', backupBucket:'', backupRegion:'', backupCredentialId:'', backupPoll:undefined as ReturnType<typeof setInterval>|undefined, rootPoll:undefined as ReturnType<typeof setInterval>|undefined, loading: true, error: '', saving: new Set<string>() };
   },
   async mounted() {
     await this.load();
+    this.rootPoll=setInterval(()=>{ if(this.roots.some(root=>root.state==='scanning'||root.state==='syncing')) void this.loadRoots() },1_000);
     this.backupPoll=setInterval(()=>{
       if(this.backups.some(destination=>destination.status?.state==='running')) void this.loadBackups();
     },3_000);
   },
-  beforeUnmount() { if(this.backupPoll) clearInterval(this.backupPoll) },
+  beforeUnmount() { if(this.backupPoll) clearInterval(this.backupPoll); if(this.rootPoll) clearInterval(this.rootPoll) },
   methods: {
+    async loadRoots() {
+      try { this.roots=await ipcRenderer.invoke('files-preferences:list-roots') } catch(error) { this.error=error instanceof Error?error.message:String(error) }
+    },
     async loadBackups() {
       try { this.backups=(await ipcRenderer.invoke('files-backups:list')).destinations as BackupDestination[] } catch(error) {this.error=error instanceof Error?error.message:String(error)}
     },

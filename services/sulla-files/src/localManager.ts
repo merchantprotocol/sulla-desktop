@@ -690,6 +690,30 @@ export class LocalFilesManager {
     }));
   }
 
+  /** Register a Desktop-brokered host root without exposing its host path to the container. */
+  async attachBrokeredRoot(input:{ id:string; name:string; syncMode:'local'|'server'; paused:boolean; exclusions:string[] }):Promise<FileRootStatus> {
+    if (!input || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.id) || typeof input.name!=='string' || !input.name || !['local','server'].includes(input.syncMode) || typeof input.paused!=='boolean' || !Array.isArray(input.exclusions) || input.exclusions.length>200 || input.exclusions.some(value=>typeof value!=='string'||value.length>500||value.includes('\0'))) throw Object.assign(new Error('Invalid Files root'), { status:400 });
+    const collectionId = await this.ensureCollection({ ...input, path:`/brokered/${input.id}`, primary:input.id === 'default' });
+    await this.db.query(`INSERT INTO file_roots(id,collection_id,display_name,mount_path,sync_mode,paused,exclusions,enabled,state)
+      VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8)
+      ON CONFLICT(id) DO UPDATE SET collection_id=EXCLUDED.collection_id,display_name=EXCLUDED.display_name,
+        mount_path=EXCLUDED.mount_path,sync_mode=EXCLUDED.sync_mode,paused=EXCLUDED.paused,exclusions=EXCLUDED.exclusions,
+        enabled=TRUE,state=EXCLUDED.state,last_error=NULL,updated_at=NOW()`,
+    [input.id,collectionId,input.name,`/brokered/${input.id}`,input.syncMode,input.paused,JSON.stringify(input.exclusions),input.paused?'paused':'scanning']);
+    this.rootCollections.set(input.id,collectionId);
+    if (input.id === 'default') this.collectionId=collectionId;
+    return (await this.listRoots()).find(root=>root.id===input.id)!;
+  }
+
+  async brokeredScanState(id:string, input:{ state:'scanning'|'idle'|'error'; pendingFiles?:number; lastError?:string }):Promise<FileRootStatus> {
+    if(!input||!['scanning','idle','error'].includes(input.state)||!Number.isSafeInteger(input.pendingFiles??0)||(input.pendingFiles??0)<0||typeof (input.lastError??'')!=='string'||(input.lastError??'').length>2000)throw Object.assign(new Error('Invalid scan state'),{status:400});
+    const result=await this.db.query(`UPDATE file_roots SET state=$2,pending_files=$3,last_error=$4,
+      last_scan_at=CASE WHEN $2 IN ('idle','error') THEN NOW() ELSE last_scan_at END,updated_at=NOW()
+      WHERE id=$1 AND enabled=TRUE RETURNING id`,[id,input.state,input.pendingFiles??0,input.lastError??null]);
+    if(!result.rowCount) throw Object.assign(new Error('File root was not found'),{status:404});
+    return (await this.listRoots()).find(root=>root.id===id)!;
+  }
+
   /** Experimental Files mount view over watched roots and indexed native sources. */
   async fuseSnapshot(collectionId:string):Promise<FuseTrackedFile[]> {
     const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
@@ -838,14 +862,16 @@ export class LocalFilesManager {
 
   async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<FileRootStatus> {
     const configured = this.roots.find(root => root.id === id);
-    if (!configured) throw Object.assign(new Error('File root is not mounted in this Files runtime'), { status: 409 });
+    const existing=(await this.db.query('SELECT paused,sync_mode,exclusions,mount_path FROM file_roots WHERE id=$1 AND enabled=TRUE',[id])).rows[0];
+    if (!existing) throw Object.assign(new Error('File root is not registered'), { status: 409 });
     if (input.syncMode === 'server' && !this.config.serverUrl) throw Object.assign(new Error('No Files server is configured'), { status: 409 });
-    if (input.paused !== undefined) configured.paused = input.paused;
-    if (input.syncMode) configured.syncMode = input.syncMode;
-    if (input.exclusions) configured.exclusions = input.exclusions;
+    const paused=input.paused ?? configured?.paused ?? existing.paused;
+    const syncMode=input.syncMode ?? configured?.syncMode ?? existing.sync_mode;
+    const exclusions=input.exclusions ?? configured?.exclusions ?? existing.exclusions ?? [];
+    if(configured){configured.paused=paused;configured.syncMode=syncMode;configured.exclusions=exclusions;}
     await this.db.query(`UPDATE file_roots SET paused=$2,sync_mode=$3,exclusions=$4,state=$5,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE`,
-      [id, configured.paused, configured.syncMode, JSON.stringify(configured.exclusions), configured.paused ? 'paused' : 'idle']);
-    if (!configured.paused) await this.rescan();
+      [id, paused, syncMode, JSON.stringify(exclusions), paused ? 'paused' : 'idle']);
+    if (configured && !paused) await this.rescan();
     const root = (await this.listRoots()).find(item => item.id === id);
     if (!root) throw Object.assign(new Error('File root is unavailable'), { status: 404 });
     return root;

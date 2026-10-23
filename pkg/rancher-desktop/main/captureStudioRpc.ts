@@ -22,7 +22,7 @@
  * no queueing. Agent tools can retry themselves.
  */
 
-import { BrowserWindow, WebContents, ipcMain } from 'electron';
+import { BrowserWindow, WebContents, desktopCapturer, ipcMain, screen } from 'electron';
 
 import { getWindow, openCaptureStudio } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
@@ -33,6 +33,7 @@ const RPC_REQUEST  = 'capture-studio:rpc';
 const RPC_REPLY    = 'capture-studio:rpc-reply';
 const RPC_REGISTER = 'capture-studio:rpc-register';
 const RPC_UNREGISTER = 'capture-studio:rpc-unregister';
+const RECORDING_STATE = 'capture-studio:recording-state';
 
 interface PendingRpc {
   resolve: (value: unknown) => void;
@@ -55,11 +56,23 @@ interface CallOptions {
 }
 
 let activeContents: WebContents | null = null;
+let recordingState = false;
 const pending = new Map<string, PendingRpc>();
 const registerWaiters: Array<() => void> = [];
 
 export function isCaptureStudioReady(): boolean {
   return !!activeContents && !activeContents.isDestroyed();
+}
+
+export function getCaptureStudioRecordingState(): boolean {
+  return isCaptureStudioReady() && recordingState;
+}
+
+function setRecordingState(value: boolean): void {
+  recordingState = value;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(RECORDING_STATE, { recording: value });
+  }
 }
 
 /**
@@ -128,6 +141,28 @@ function waitForRegister(timeoutMs: number): Promise<void> {
 
 /** Wire up the register/reply IPC endpoints. Call once at app startup. */
 export function registerCaptureStudioRpc(): void {
+  ipcMain.handle('capture-studio:get-sources', async() => {
+    const display = screen.getPrimaryDisplay();
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: Math.min(640, display.size.width), height: Math.min(360, display.size.height) },
+      fetchWindowIcons: true,
+    });
+
+    return sources.map(source => ({ id: source.id, name: source.name, thumbnailDataUrl: source.thumbnail.toDataURL() }));
+  });
+
+  ipcMain.on(RECORDING_STATE, (event: Electron.IpcMainEvent, state: { recording?: boolean; sessionDir?: string | null }) => {
+    if (activeContents !== event.sender) return;
+    const wasRecording = recordingState;
+    setRecordingState(state?.recording === true);
+    if (wasRecording && !recordingState && state?.sessionDir) {
+      import('@pkg/main/sullaFilesCapture')
+        .then(({ getSullaFilesCaptureService }) => getSullaFilesCaptureService().saveRecording(state.sessionDir!))
+        .catch(error => console.warn('[CaptureStudioRpc] could not save recording to Files:', error));
+    }
+  });
+
   ipcMain.on(RPC_REGISTER, (event: Electron.IpcMainEvent) => {
     activeContents = event.sender;
     console.log('[CaptureStudioRpc] registered wc id=', event.sender.id);
@@ -138,7 +173,10 @@ export function registerCaptureStudioRpc(): void {
     }
     // If the renderer goes away, clear our reference + reject pending.
     event.sender.once('destroyed', () => {
-      if (activeContents === event.sender) activeContents = null;
+      if (activeContents === event.sender) {
+        activeContents = null;
+        setRecordingState(false);
+      }
       for (const [id, p] of pending) {
         clearTimeout(p.timer);
         p.reject(new Error('CaptureStudio window closed before reply.'));
@@ -150,6 +188,7 @@ export function registerCaptureStudioRpc(): void {
   ipcMain.on(RPC_UNREGISTER, (event: Electron.IpcMainEvent) => {
     if (activeContents === event.sender) {
       activeContents = null;
+      setRecordingState(false);
       console.log('[CaptureStudioRpc] unregistered');
     }
   });

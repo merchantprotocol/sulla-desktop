@@ -22,7 +22,11 @@ jest.unstable_mockModule('electron', () => ({
   screen:          { getPrimaryDisplay: jest.fn() },
 }));
 jest.unstable_mockModule('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: jest.fn() } }));
-jest.unstable_mockModule('@pkg/main/captureStudioRpc', () => ({ callCaptureStudio }));
+jest.unstable_mockModule('@pkg/main/captureStudioRpc', () => ({
+  callCaptureStudio,
+  getCaptureStudioRecordingState: () => false,
+  isCaptureStudioReady:           () => true,
+}));
 jest.unstable_mockModule('@pkg/main/sullaFilesLinkService', () => ({
   SharingUnavailableError:   class SharingUnavailableError extends Error {},
   getSullaFilesLinkService: jest.fn(),
@@ -90,7 +94,9 @@ describe('SullaFilesCaptureService output containment', () => {
       ],
     }));
     callCaptureStudio
+      .mockResolvedValueOnce({ recording: false })
       .mockResolvedValueOnce({ started: true })
+      .mockResolvedValueOnce({ recording: true })
       .mockResolvedValueOnce({ stopped: true, sessionDir: session });
     const service = new SullaFilesCaptureService();
     await service.toggleRecording({ mic: false, camera: false });
