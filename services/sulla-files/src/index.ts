@@ -28,6 +28,7 @@ import { HttpResidencyTransport, loadResidencySyncBundle } from './residencyHttp
 import { FileSearch } from './search.js';
 import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
 import { Store } from './store.js';
+import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCache/index.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
@@ -63,6 +64,9 @@ if (config.mode === 'desktop' && config.filesRoot) {
   }
 }
 config.keyring = new FilesKeyring(db);
+// P2a supplies the authenticated cloud source here. Undefined deliberately preserves the pre-cache behavior.
+const cloudChunkSource:CloudChunkSource | undefined = undefined;
+const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
 const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
@@ -173,7 +177,8 @@ if (config.mode === 'server') {
   delete process.env.SULLA_FILES_MASTER_KEY;
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer);
+if (chunkStore instanceof CachingStore) await chunkStore.start();
+const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore);
 requestHandler = app;
 startSearchCleanup(db);
 startVectorBackfill(db);
@@ -186,6 +191,7 @@ console.log(`[SullaFiles] ${ config.mode } service ready on ${ config.port }`);
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, async() => {
     clearInterval(auditTimer);
+    if (chunkStore instanceof CachingStore) await chunkStore.stop();
     app.locals.backupScheduler.stop();
     app.locals.catalogSync.stop();
     app.locals.desktopRequests.stop();
