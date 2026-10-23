@@ -12,6 +12,8 @@
  * this does not start them.
  */
 
+import os from 'os';
+
 import { cloudRequest, isCloudSignedIn } from '../../cloud/cloudFetch';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { installTemplateWithDependencies } from '../install';
@@ -38,15 +40,21 @@ async function fetchPending(deviceId: string): Promise<PendingInstall[]> {
   const installs = body?.data?.installs;
   if (!Array.isArray(installs)) return [];
   return installs
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-    .map(item => ({ id: String(item.id), templateId: String(item.templateId) }));
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && typeof item.id === 'string' && typeof item.templateId === 'string')
+    .map(item => ({ id: item.id as string, templateId: item.templateId as string }));
+}
+
+/** The error goes to Cloud: keep local home paths out of it. */
+function cloudSafeError(message: string): string {
+  const home = os.homedir();
+  return (home ? message.split(home).join('~') : message).slice(0, 500);
 }
 
 async function report(id: string, status: 'active' | 'failed', error?: string): Promise<void> {
   try {
     await cloudRequest('POST', `/cloud-usecase-installs/v1/device-installs/${ encodeURIComponent(id) }/report`, {
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ status, error, appVersion: getProductionVersion() }),
+      body:    JSON.stringify({ status, error: error === undefined ? undefined : cloudSafeError(error), appVersion: getProductionVersion() }),
     });
   } catch (err) {
     console.log(`[DeviceInstallSync] failed to report ${ id }: ${ err }`);
