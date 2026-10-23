@@ -1994,8 +1994,9 @@ async function navigateTo(detail:FilesNavigationPayload) {
   if (detail.collectionId && detail.collectionId !== snapshot.value?.collection.id) { await selectCollection(detail.collectionId) }
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
-  if (!file && detail.path) {
-    openPath(detail.path);
+  // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
+  if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
+    openPath(detail.path ?? '');
     if (detail.section === 'share-review') shareCurrentFolder();
     return;
   }
