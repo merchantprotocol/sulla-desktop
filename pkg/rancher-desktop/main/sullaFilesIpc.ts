@@ -25,7 +25,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
-import type { FilesRevealResult, FilesOperationRequest, FilesOperationRetry, FilesTrashItem } from '@pkg/pages/files/types';
+import type { FilesRevealResult, FilesOperationRequest, FilesOperationRetry, FilesSaveSuccess, FilesTrashItem } from '@pkg/pages/files/types';
 
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
@@ -625,10 +625,10 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:save-content', async(_event, input:{ fileId:string; baseVersionId:string; content:string }) => {
     const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/content`, { method: 'PUT', body: JSON.stringify({ baseVersionId: input.baseVersionId, content: input.content }) });
     const body = await response.json().catch(() => ({})) as { error?:string; code?:string; currentVersionId?:string };
-    if (response.status === 409) return { conflict: { code: body.code ?? 'VERSION_CONFLICT', error: body.error ?? 'This file changed elsewhere.', currentVersionId: body.currentVersionId ?? '' } };
+    if (response.status === 409) return { conflict: { code: 'VERSION_CONFLICT' as const, error: body.error ?? 'This file changed elsewhere.', currentVersionId: body.currentVersionId ?? '' } };
     if (!response.ok) throw new Error(body.error ?? `Files save failed (${ response.status })`);
 
-    return body;
+    return body as FilesSaveSuccess;
   });
   ipcMain.handle('sulla-files:upload', (_event, input:{ collectionId:string; path:string; mime?:string; data:Uint8Array }) => json(`/v1/files/upload?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'PUT', headers: { 'content-type': input.mime ?? 'application/octet-stream' }, body: Buffer.from(input.data) }));
   ipcMain.handle('sulla-files:trash', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`, { method: 'DELETE' }));
