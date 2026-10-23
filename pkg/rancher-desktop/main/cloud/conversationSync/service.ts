@@ -74,6 +74,11 @@ class ConversationSyncServiceImpl {
     await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.replyId,messages:[{role:'user',content}]},f=>{void complete(f)},f=>{void complete(f)});
   }
   async link(conversationId:string,title:string,privacyMode:LinkPrivacyMode){if(privacyMode==='encrypted_bodies')this.ensureKey(conversationId);const deviceId=await getDesktopDeviceId();const r=await cloudRequest('POST','/cloud-chat-links',{headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId,remoteConversationId:conversationId,title,privacyMode})});if(!r.ok)throw new Error(`Link failed (${r.status})`);return r.json()}
+  async getLink(conversationId:string) {
+    const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)return null;
+    const payload=await r.json() as any;
+    return ((payload.data?.conversations??[]) as Link[]).find(link=>link.remote_conversation_id===conversationId)??null;
+  }
   async linkAll() {
     const conversations=await ConversationHistoryModel.getRecent(2000);
     for(const conversation of conversations) {

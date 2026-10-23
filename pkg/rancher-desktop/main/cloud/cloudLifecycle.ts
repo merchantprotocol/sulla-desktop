@@ -186,6 +186,7 @@ export function initCloudConnectionEvents(): void {
     return getCloudConnectionStatus();
   });
 
+  ipc.handle('sulla-cloud-chat:get-link', async(_e: unknown, conversationId: string) => ConversationSyncService.getLink(conversationId));
   ipc.handle('sulla-cloud-chat:link', async(_e: unknown, conversationId: string, title: string, privacyMode: 'encrypted_bodies'|'metadata_only') => ConversationSyncService.link(conversationId,title,privacyMode));
   ipc.handle('sulla-cloud-chat:unlink', async(_e: unknown, linkId: string, deleteCloudCopy: boolean) => ConversationSyncService.unlink(linkId,deleteCloudCopy));
 

@@ -259,6 +259,11 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
 const cloudMenuOpen = ref(false);
 const cloudLinkId = ref<string | null>(null);
 const cloudPrivacy = ref<'encrypted_bodies' | 'metadata_only'>('encrypted_bodies');
+async function refreshCloudLink() {
+  const link=await ipcRenderer.invoke('sulla-cloud-chat:get-link',controller.thread.value.id) as any;
+  cloudLinkId.value=link?.id??null;
+  if(link?.privacy_mode)cloudPrivacy.value=link.privacy_mode;
+}
 async function linkToCloud(mode: 'encrypted_bodies' | 'metadata_only') {
   const result = await ipcRenderer.invoke('sulla-cloud-chat:link', controller.thread.value.id, controller.thread.value.title || 'New conversation', mode) as any;
   cloudLinkId.value = result?.data?.link?.id ?? result?.link?.id ?? null; cloudPrivacy.value = mode; cloudMenuOpen.value = false;
@@ -622,6 +627,7 @@ watch(() => registry.activeId.value, () => { /* noop — registry is reactive */
 // rather than registry.activeId so a thread swap inside the controller
 // (hydrate, rename, etc.) is recorded.
 watch(() => controller.thread.value.id, (newId) => {
+  void refreshCloudLink();
   if (pendingRestoreId && controller.thread.value.messages.length === 0) return;
   if (props.tabId && newId) persister.setTabThread(props.tabId, newId);
 }, { immediate: true });
@@ -687,6 +693,7 @@ watch(() => props.isActive, (active) => {
 });
 
 onMounted(() => {
+  void refreshCloudLink();
   window.addEventListener('chat:new-chat',          onNewChatEvent);
   window.addEventListener('chat:fork',              onForkEvent);
   window.addEventListener('chat:artifact-expand',   onArtifactExpand);
