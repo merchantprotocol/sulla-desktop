@@ -1,0 +1,72 @@
+{
+ "description": "Sulla Files sync v1 KAT (FILES-SYNC-DESIGN.md). Inputs are synthetic.",
+ "root": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+ "userKey": "fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6e5e4e3e2e1e0",
+ "collectionId": "11111111-2222-4333-8444-555555555555",
+ "keyVersion": 1,
+ "fileId": "66666666-7777-4888-9999-aaaaaaaaaaaa",
+ "versionId": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+ "vaultId": "01234567-89ab-4cde-8f01-23456789abcd",
+ "vaultEpoch": 1,
+ "plaintextB64u": "aGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQpoZWxsbyBzdWxsYSBmaWxlcyBzeW5jIHYxCmhlbGxvIHN1bGxhIGZpbGVzIHN5bmMgdjEKaGVsbG8gc3VsbGEgZmlsZXMgc3luYyB2MQo",
+ "subkeys": {
+  "chunk-id": "48df1afe2cdaf2b589fc02197377c1f530d888afe17aaf66e9eb75e3021149c0",
+  "chunk": "5da42ab5d389e42a210b88eac2e1ad3559dfcf8fcf705f057bf22d770e458516",
+  "manifest": "7ae8b61972a4e8a2cb0dfc14a7304f9fb7d633cde2dd4c05e2e1f72dbd5c938f",
+  "head": "14cd913616d6e5aee7becc878e397ada97c7774d547c51f97d7c64aede968447"
+ },
+ "chunkId": "1bcd7e33f9dc428944e40c6d395a0c74ed743494e54edb97adb4faa364505a02",
+ "chunkWireNoCompressB64u": "U0ZDMQAAAAABAQEBAQEBAQEBAQEBPmgS-as5btALlh_Gcyvl3ibdh0f0ZTWjXRuj2J1OHwEdLK_4FpbA0gUPAJDmAPNM1mKOLMKLlmfXzHSbzb4tw_oNcDrCPth-8DOFEnpCNNiNC92DmW6ayasxyJTUF3wdZibsYLbK1wA6p4kVHNY27EKEG1c5_f5hauKH_vtsnEMX1neiso8JLUPlpR878NpmM4mv6NWTIdzOWcKfFTrLzFodqo2-lMoliw-sBCyMJ0380p4JCZv1ky8m7yxL_Yj5Ah7YBf1s6ISQjNPiDSgyZigAX04l0xqFT20OygScPFSH85VRrnNZoJqrVgZcb2Q30Xz-O3Q2Rg9lfqyiLNmNKzUcJ0W40D2RNddvUCJ8b1s8ikdWs3RIQ3pEBZJWqS3LFsrtWHbNoU_N0TjeVZxUIuXBno9LyqGbQCSf77fs-ueRjuGgfLtmKs30Gbs6OKtf88wTYfrWNP08bQZX597qGYsh3GRpvKxZDHEohw0zz0nQDWYxcGVUrkJ8H3n1rY4tBKxTzOg9-tEn47n8uUV1KJpKb8zvBeGHZPyo8elpWQM6Fe7KC4B_hDz8LhwhofRJMR_DV_mnyWrCMZ_KTpzCRzlpvv-rRScLdKL4mt0Wz1esqJrRx_Dgjrm6TW-Z0JyWQrYuxTy0FcQmi6zIucZmNCdFMrvE57x1wCeHYO4WZT3T5AsmSU_c3bDVchGsAEyWu8rnp0Gj8syZbaNCLifpRxhluP_SdfJRTFAN-ilnCwkJeAvEfcmAnHiYenFGhUawqlL48KGbreDHYLnSPI1ecByyV16xeAVpBpL5JDNuV3x6TEs3UZKuvYtAU23tSnzwwHWDlo0orR-77s3CAVuZVz7bc3tAdNQfH0_p_lnQlexz8h6xkMi5YYs1dMulbTJ6X_cZufCMdCv8gR7BwftMsLgTjyrlSEQwxw5Yfu8aIf0BHTgPqDePfIJ49zTEpSHVl4LDmqgUUN3xyawLqM0-wPV_pb_LISNlYx14OOw6hgSptOwRkElvbZhHQhJVD8_ywP1jWGjYrk4aZ7nUmG-Ew3jH1vPCLF2iMrM5_HvQ7cSZmCBG_jFi3OzSp9OMAKH4vPi-6FoHfv8Re7_H9Wr_Zuj18iIVvyG-S1Zf5p1GqX6g52oPPCnUYKErBMfKjfMbylj8FDbvWrzj0UbJyNGgRHyYfMBYCewP__YJzh1P8JvZjePo9A2hp12GJyVO-zxyUzGJU27kHeijzdkg3yl1ZTglDwFq0XSWn_OkKSAAN4nZdjPHXM1_UAz1uIAO9aZG1k2HlDb5egfWqVqiHMIpxj32wQMimUhZEJFdq4e3Wl4qO68OsVEByRYU9Q6jg6Xhi2aamqE1RqeItZgk7YIsLJZMkDLWDZD4MFrGgHi1w5l92CgyRNQidGj_GMuIpyJJ",
+ "chunkWireDeflateB64u": "U0ZDMQEAAAABAgICAgICAgICAgICzz2bt3-vukCIcGtvf8UifR7nwbF9RnvaMiWoF_VZwm3C7wI2vIvVVmiAkFS14_LI7j5LSdI",
+ "chunkWireSha256": "696e526f64c8dac67b44424866a9e9f488e17fdc609e5dcb1575de4ee3796f1a",
+ "manifestPlain": {
+  "v": 1,
+  "path": "Reports/q3.txt",
+  "mime": "text/plain",
+  "size": 1040,
+  "mtime": "2026-10-23T22:00:00.000Z",
+  "sha256": "1ab45cd01d106cb9d1cc7a423d2717dc6e92862079c4f994738a84b49f5ad347",
+  "chunks": [
+   [
+    "1bcd7e33f9dc428944e40c6d395a0c74ed743494e54edb97adb4faa364505a02",
+    1040
+   ]
+  ],
+  "deleted": false,
+  "parentVersionId": null
+ },
+ "manifestEnvelope": {
+  "format": "sulla-files-sync-manifest",
+  "v": 1,
+  "alg": "A256GCM",
+  "collectionId": "11111111-2222-4333-8444-555555555555",
+  "keyVersion": 1,
+  "fileId": "66666666-7777-4888-9999-aaaaaaaaaaaa",
+  "versionId": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+  "nonce": "AwMDAwMDAwMDAwMD",
+  "ct": "sPsZPcGwo99UcaP84USzryz1BZjpAPG4LFK_6LL4Xgyv6B69qWW3B9O_iW5CnTZMjKC7SrQgsq6eMGJcKl6NUhmMWYcN6JGHeFXQbbz4__sUrxZt62RRTze_SGuvrPY-F-O1ETPUgnZuI4Nezg1BIs_7xMMpfCxC5ug6ZUETii5oPkFKTQdCcJBa0Wd1m0A0hfBQeeQn94IqRkaXty92sZeax4tZ2dExUJ8Hu71FndemRCrFrGCqR9epgQSF3eeQwVnZcuf4VFchMJN2t4nos7IQ4Eu0vla9lkFSm0_nUSOjJmp8eSBZJ3AobXh0MqbqJMD8DppLrwuO_j1W1YsTQSODKx2PjZUrVPCgbUZpTeN7zQsmLrloHj1TAGOPcX-JzV8rvpM-uxrhx9up00fJBbvyw9d2LyLT8o4"
+ },
+ "stateHash": "d381fb3dba60be8d63e31f87d8e1401d1e32115412be2d70888798cf0bc4d0fd",
+ "head": {
+  "format": "sulla-files-sync-head",
+  "v": 1,
+  "collectionId": "11111111-2222-4333-8444-555555555555",
+  "keyVersion": 1,
+  "seq": 1,
+  "stateHash": "d381fb3dba60be8d63e31f87d8e1401d1e32115412be2d70888798cf0bc4d0fd",
+  "prevMac": "",
+  "mac": "318185acd8b5cfe66caf171476f29e92f82eedbbac915e33dd5ca5d4752c95e7"
+ },
+ "escrow": {
+  "format": "sulla-files-sync-escrow",
+  "v": 1,
+  "alg": "A256GCM",
+  "kdf": "HKDF-SHA256",
+  "vaultId": "01234567-89ab-4cde-8f01-23456789abcd",
+  "vaultEpoch": 1,
+  "collectionId": "11111111-2222-4333-8444-555555555555",
+  "keyVersion": 1,
+  "nonce": "BAQEBAQEBAQEBAQE",
+  "ct": "1_z4Kc_z1tlquZZMOsoQF6vydcdIg4GOVBwpS6IoHsampsEyHywTOkViotxmC8pX"
+ }
+}

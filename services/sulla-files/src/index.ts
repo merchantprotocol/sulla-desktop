@@ -32,6 +32,8 @@ import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCa
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { FilesCloudBroker } from './cloudBroker.js';
+import { CloudSyncService } from './cloudSync/service.js';
 
 const config = loadConfig(); const command = process.argv[2];
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
@@ -150,6 +152,9 @@ const bootstrapAuthority = config.mode === 'desktop'
     lifecycle,
   )
   : undefined;
+const cloudSync = config.mode === 'desktop' && config.vaultBrokerServiceToken && config.keyring instanceof FilesKeyring
+  ? new CloudSyncService(db, config, config.keyring, new Store(config.chunkRoot), new FilesCloudBroker(config))
+  : undefined;
 if (config.mode === 'server') {
   if (!config.serverMasterKey || !/^[A-Za-z0-9_-]{43}$/.test(config.serverMasterKey)) {
     throw new Error('SULLA_FILES_MASTER_KEY must be a 32-byte base64url key in server mode');
@@ -178,7 +183,7 @@ if (config.mode === 'server') {
   try { await lifecycle.initializeServer(master) } finally { master.fill(0) }
 }
 if (chunkStore instanceof CachingStore) await chunkStore.start();
-const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore);
+const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
 requestHandler = app;
 startSearchCleanup(db);
 startVectorBackfill(db);
