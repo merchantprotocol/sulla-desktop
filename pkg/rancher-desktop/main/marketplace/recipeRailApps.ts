@@ -7,6 +7,7 @@ import { RecipeDefinitionModel } from '@pkg/agent/database/models/MarketplaceArt
 import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { parseRecipeRail, rewriteRecipeCompose, type RecipeRailStatusLevel } from '@pkg/main/marketplace/recipeRuntime';
+import { dockerEnv } from '@pkg/main/sullaRecipeDockerEvents';
 import Logging from '@pkg/utils/logging';
 import { safeSend } from '@pkg/utils/safeSend';
 
@@ -37,7 +38,7 @@ const statusCache = new Map<string, CachedStatus>();
 async function runningProjects(): Promise<Set<string>> {
   const { stdout } = await execFileAsync('docker', [
     'ps', '--filter', 'label=com.docker.compose.project', '--format', '{{.Label "com.docker.compose.project"}}',
-  ]);
+  ], { env: dockerEnv() });
 
   return new Set(stdout.split('\n').map(value => value.trim()).filter(Boolean));
 }

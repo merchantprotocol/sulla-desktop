@@ -104,7 +104,7 @@ function withProject(args: string[], slug: string): string[] {
 }
 
 /** Augmented PATH that includes common Docker binary locations. */
-function dockerEnv(): Record<string, string> {
+export function dockerEnv(): Record<string, string> {
   const extra = ['/usr/local/bin', '/usr/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', '~/.rd/bin'].join(path.delimiter);
 
   return {
