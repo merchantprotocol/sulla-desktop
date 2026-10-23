@@ -5,9 +5,10 @@
  * device; file bytes stay local until the owner explicitly shares one
  * (see shares.ts's FilesCloudBroker use, which this mirrors).
  *
- * `home='desktop-only'` collections (the default for anything not
- * explicitly synced) are never included — opt-in by collection, same as
- * the rest of Sulla Cloud's sync philosophy.
+ * Opt-in is per collection and OFF by default: `cloud_catalog_sync` is a
+ * column separate from `home` (which governs device-local sync, not what
+ * Sulla Cloud sees). The File Manager's "Show in Sulla Cloud" toggle is
+ * the only thing that flips it.
  *
  * Calls go through FilesCloudBroker, the same vault-broker-mediated path
  * shares.ts already uses: this service process has no access to the
@@ -22,6 +23,7 @@ import { basename, dirname } from 'node:path';
 import type pg from 'pg';
 
 import { FilesCloudBroker } from '../cloudBroker.js';
+import { isProtectedPath } from '../protectedFiles.js';
 
 import type { Config } from '../config.js';
 
@@ -63,6 +65,9 @@ function folderId(collectionId: string, folderPath: string): string {
 }
 
 /** Builds file + synthesized-folder catalog items for one collection. Exported for tests. */
+/** Collections the owner explicitly showed in Sulla Cloud ($1 = owner user id). Never the audit logs area. */
+export const CLOUD_VISIBLE_COLLECTION = `owner_user_id = $1 AND cloud_catalog_sync = TRUE AND published = TRUE AND legacy_source = FALSE AND system_area IS DISTINCT FROM 'logs'`;
+
 export function buildCollectionItems(collection: CollectionRow, files: FileRow[]): CatalogItem[] {
   const items: CatalogItem[] = [];
   const folders = new Map<string, string>(); // folderPath -> parentPath
@@ -142,7 +147,7 @@ export class CatalogSyncService {
     if (!this.broker) return this.status;
     try {
       const collections = (await this.db.query<CollectionRow>(
-        `SELECT id, name FROM collections WHERE owner_user_id = $1 AND home = 'synced' ORDER BY created_at`,
+        `SELECT id, name FROM collections WHERE ${ CLOUD_VISIBLE_COLLECTION } ORDER BY created_at`,
         [this.config.userId],
       )).rows;
 
@@ -150,10 +155,14 @@ export class CatalogSyncService {
       for (const collection of collections) {
         if (items.length >= MAX_ITEMS) break;
         const files = (await this.db.query<FileRow>(
-          `SELECT id, path, mime, size, updated_at FROM files WHERE collection_id = $1 AND deleted_at IS NULL ORDER BY path LIMIT $2`,
+          `SELECT id, path, mime, size, updated_at FROM files
+            WHERE collection_id = $1 AND deleted_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM files_protected_files p WHERE p.file_id = files.id)
+            ORDER BY path LIMIT $2`,
           [collection.id, MAX_ITEMS - items.length],
         )).rows;
-        items.push(...buildCollectionItems(collection, files));
+        // Protected files (vaults, wallets, master keys) never reach Cloud, not even by name.
+        items.push(...buildCollectionItems(collection, files.filter(file => !isProtectedPath(file.path))));
       }
 
       await this.cloud(`/cloud-files/v1/catalog/${ encodeURIComponent(this.cloudDeviceId as string) }`, {

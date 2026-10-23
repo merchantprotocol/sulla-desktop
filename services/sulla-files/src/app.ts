@@ -28,6 +28,7 @@ import { registerResidencyRoutes } from './residencyHttp.js';
 import { serverUi } from './serverUi.js';
 import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
+import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
@@ -145,6 +146,7 @@ export function createApp(
 ) {
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   app.locals.catalogSync = new CatalogSyncService(db, config);
+  app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
@@ -1553,6 +1555,14 @@ export function createApp(
     await requireCollection(request,request.params.id,'manage'); const description=folderGuidance(request.body.description,'description'); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
     const updated=(await db.query('UPDATE collections SET description=$2,naming_hint=$3,updated_at=NOW() WHERE id=$1 RETURNING id,name,description,naming_hint AS "namingHint"',[request.params.id,description,namingHint])).rows[0];
     await audit(request,'change-collection-description',undefined,{collectionId:request.params.id,description,namingHint}); response.json(updated);
+  } catch(error){next(error)} });
+  app.patch('/v1/collections/:id/cloud-sync', async(request:RequestWithIdentity,response,next)=>{ try {
+    await requireCollection(request,request.params.id,'manage');
+    const enabled=request.body.enabled===true;
+    const updated=(await db.query('UPDATE collections SET cloud_catalog_sync=$2,updated_at=NOW() WHERE id=$1 RETURNING id,name,cloud_catalog_sync AS "cloudCatalogSync"',[request.params.id,enabled])).rows[0];
+    await audit(request,'change-collection-cloud-sync',undefined,{collectionId:request.params.id,enabled});
+    app.locals.catalogSync?.syncNow().catch(()=>undefined);
+    response.json(updated);
   } catch(error){next(error)} });
   app.post('/v1/folders', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
     const collectionId = String(request.body.collectionId ?? '');

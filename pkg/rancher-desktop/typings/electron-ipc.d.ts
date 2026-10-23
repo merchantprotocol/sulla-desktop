@@ -520,6 +520,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:import-path-references': (input: { paths: string[] }) => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:create-folder': (relativePath: string) => void;
   'files-ui:update-folder-description': (input:{folderId:string;description:string;namingHint?:string}) => void;
+  'files-ui:set-collection-cloud-sync': (input:{collectionId:string;enabled:boolean}) => void;
   'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;

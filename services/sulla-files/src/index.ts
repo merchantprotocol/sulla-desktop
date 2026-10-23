@@ -179,6 +179,7 @@ startSearchCleanup(db);
 startVectorBackfill(db);
 if(config.mode==='desktop') app.locals.backupScheduler.start();
 if(config.mode==='desktop') app.locals.catalogSync.start();
+if(config.mode==='desktop') app.locals.desktopRequests.start();
 const auditTimer=setInterval(()=>{ if (lifecycle.ready) void app.locals.auditWriter.drain().catch((error:unknown)=>console.error('[SullaFiles] audit delivery failed; retry pending',error)) },1000);
 auditTimer.unref();
 console.log(`[SullaFiles] ${ config.mode } service ready on ${ config.port }`);
@@ -187,6 +188,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     clearInterval(auditTimer);
     app.locals.backupScheduler.stop();
     app.locals.catalogSync.stop();
+    app.locals.desktopRequests.stop();
     app.locals.backupRuntime.stop();
     try{await app.locals.liveTextSessions.close();}catch(error){console.error('[SullaFiles] live flush failed; refusing shutdown before persistence',error);return;}
     server.closeAllConnections();
