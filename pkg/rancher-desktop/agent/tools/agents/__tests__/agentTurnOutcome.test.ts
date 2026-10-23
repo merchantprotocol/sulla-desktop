@@ -73,4 +73,27 @@ describe('extractAgentTurnOutcome', () => {
     expect(extractAgentTurnOutcome({}).text).toBe('(no output)');
     expect(extractAgentTurnOutcome(undefined).text).toBe('(no output)');
   });
+
+  it('reports error when the run ended on an unanswered orchestrator message', () => {
+    const out = extractAgentTurnOutcome({
+      metadata: {},
+      messages: [
+        { role: 'user',      content: 'the brief' },
+        { role: 'assistant', content: 'working on it' },
+        { role: 'user',      content: '[Message from orchestrator]\nscope update' },
+      ],
+    });
+
+    expect(out.status).toBe('error');
+    expect(out.text).not.toContain('scope update');
+  });
+
+  it('reports error when the last reply is the agent error message', () => {
+    const out = extractAgentTurnOutcome({
+      metadata: {},
+      messages: [{ role: 'assistant', content: '⚠️ I encountered an error and couldn\'t complete the request: provider failed' }],
+    });
+
+    expect(out.status).toBe('error');
+  });
 });
