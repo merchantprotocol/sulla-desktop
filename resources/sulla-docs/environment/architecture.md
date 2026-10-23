@@ -44,6 +44,19 @@ instantiateSullaStart() → bootstrapSullaHome()
 
 ## Lima VM
 
+### Disk vs memory in the VM
+
+The VM's / is tmpfs, a RAM disk. /tmp and the guest user's home directory
+are RAM-backed; work there eats memory and vanishes on restart. Never put
+agent work there. Persistent disk is /mnt/data, with bind mounts at
+/mnt/worktrees and /var/lib/docker. Agent container workspaces live under
+/mnt/data/sulla/runtime/agents.
+
+Use /mnt/worktrees/<repo>-<branch> for code and
+/mnt/worktrees/_scratch/<your job id>/ for scratch. Inside an agent
+container, use your working directory instead. Delete scratch when done.
+Move only finished work into /mnt/sulla-files.
+
 Lima runs Alpine Linux. `backend/lima.ts:getMounts()` mounts only app-owned
 transport/cache roots: `/tmp/rancher-desktop`, `paths.cache`, `paths.logs`, and
 `paths.resources` (read-only). The host home is not mounted. Selected host

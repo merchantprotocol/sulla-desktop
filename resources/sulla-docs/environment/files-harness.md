@@ -1,10 +1,26 @@
 # Files harness: how agents work with files
 
-Sulla Files is the one place for files. The File Manager tree is mounted at `/mnt/sulla-files` in the VM, in workflow runners, and in agent containers. Use normal file tools for reads and writes. Use the Files service tools only for search, history, restore, and links. Never write to Postgres directly, and never save to `~/sulla` folders expecting them to load.
+Sulla Files is your Human's own file system, not your workspace. The File Manager tree is mounted at `/mnt/sulla-files` in the VM, in workflow runners, and in agent containers. Use normal file tools for reads and writes. Use the Files service tools only for search, history, restore, and links. Never write to Postgres directly, and never save to `~/sulla` folders expecting them to load.
 
 ## Files
 
-Files: Sulla Files is mounted at /mnt/sulla-files. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Use /tmp/<your job id>/ for temporary work, then move anything worth keeping into /mnt/sulla-files. Every folder has a _folder-metadata.yaml: read it to understand the folder; edit it to change folder or file metadata; when you create a folder, fill in its description. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
+Files: /mnt/sulla-files is your Human's own file system, not your workspace. You work in it alongside them; leave it tidier than you found it. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Look before you create: search first (sulla files/search, sulla files/where, ls) and update in place. No -v2, -final, -new or -copy files: Files keeps every version. Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there. Don't make a folder for a single file. Read the folder's _folder-metadata.yaml first; use clear names and existing locations. Give any new folder a real description straight away. Clean up your own leftovers; never delete, move or rename your Human's own files unless they asked. In the VM, /, /tmp and your home directory are RAM-backed: never put work there. Use /mnt/worktrees/<repo>-<branch> for code and /mnt/worktrees/_scratch/<your job id>/ for scratch, or your working directory inside an agent container. Delete scratch when done; move only finished work into /mnt/sulla-files. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
+
+## Working in your Human's files
+
+- /mnt/sulla-files is your Human's own file system, not your workspace. They open it in the File Manager every day, and you work in it alongside them. Leave it the way a careful assistant leaves a shared desk: tidier than you found it.
+- Look before you create. Search first (sulla files/search, sulla files/where, ls) and update the file or folder that already exists instead of making a second one. No "-v2", "-final", "-new" or "-copy" files: Files keeps every version, so edit in place.
+- Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there.
+- Don't make a folder for a single file. When you do create a folder, write a real description in its _folder-metadata.yaml straight away. A folder left saying "needs description" is clutter.
+- Use clear names your Human would choose. Put things where they already keep that kind of thing; read the folder's _folder-metadata.yaml first.
+- Clean up what you made: remove your own leftovers when the task ends. Never delete, move or rename your Human's own files unless they asked; if something of theirs looks like clutter, tell them.
+
+## Where short-lived work goes
+
+- In the VM, / is a RAM disk. /tmp, your home directory and everything outside /mnt live in memory: files there eat RAM and vanish on restart. Never put work there.
+- Code: /mnt/worktrees/<repo>-<branch>.
+- Scratch (briefs, scripts, downloads, previews, exports): /mnt/worktrees/_scratch/<your job id>/. Inside an agent container, use your working directory instead. Delete your scratch folder when you finish.
+- Move only finished work into /mnt/sulla-files.
 
 ## 2. Drafts
 
