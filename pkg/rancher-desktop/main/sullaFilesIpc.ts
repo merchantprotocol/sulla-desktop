@@ -20,6 +20,7 @@ import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 import { getSullaFilesBackups } from './sullaFilesBackups';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
+import { FilesSyncV1 } from './cloud/filesSyncV1';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
@@ -763,6 +764,15 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:update-folder-description', async(_event,input:{folderId:string;description:string;namingHint?:string}) => {
     if (!UUID.test(input.folderId)) throw new Error('Choose a valid Files folder');
     await json(`/v1/folders/${encodeURIComponent(input.folderId)}/description`,{method:'PATCH',body:JSON.stringify({description:input.description,namingHint:input.namingHint})});
+  });
+  ipcMain.handle('files-ui:cloud-backup-status', () => FilesSyncV1.status());
+  ipcMain.handle('files-ui:set-cloud-backup', async(_event,input:{collectionId:string;enabled:boolean}) => {
+    if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');
+    return FilesSyncV1.setEnabled(input.collectionId,input.enabled===true,{kind:'human'});
+  });
+  ipcMain.handle('files-ui:delete-cloud-backup', async(_event,input:{collectionId:string}) => {
+    if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');
+    return FilesSyncV1.deleteCloudCopy(input.collectionId,{kind:'human'});
   });
   ipcMain.handle('files-ui:set-collection-cloud-sync', async(_event,input:{collectionId:string;enabled:boolean}) => {
     if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');

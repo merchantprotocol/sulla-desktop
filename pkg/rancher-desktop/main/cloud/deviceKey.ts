@@ -86,6 +86,7 @@ const PURPOSE_TAGS = {
   'sync-upload':   'sulla-sync-upload-v1',
   'key-rotate':    'sulla-key-rotate-v1',
   'vault-sync-v3': 'sulla-vault-sync-v3',
+  'files-sync-v1': 'sulla-files-sync-v1',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;

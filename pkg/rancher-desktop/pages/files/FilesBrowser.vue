@@ -195,6 +195,17 @@
             /> {{ cloudCatalogSync ? 'Shown in Sulla Cloud' : 'Show in Sulla Cloud' }}
           </button>
           <button
+            v-if="section === 'files' && !readOnlyArea && dataSource.setCloudBackup"
+            class="btn sm ghost"
+            type="button"
+            :disabled="busy || loading"
+            :title="cloudBackupTitle"
+            @click="toggleCloudBackup"
+          >
+            <span class="bi" v-html="icons.syncOnline" /> {{ cloudBackup?.enabled ? 'Backed up to Sulla Cloud' : 'Back up to Sulla Cloud' }}
+          </button>
+          <span v-if="cloudBackup?.enabled" class="cloud-backup-status" :title="cloudBackupTitle">{{ cloudBackupLine }}</span>
+          <button
             v-if="dataSource.openPreferences"
             class="btn"
             type="button"
@@ -1029,6 +1040,9 @@ const moreCollections = computed(() => (snapshot.value?.availableCollections ?? 
 const trackedCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea && collection.id !== (snapshot.value?.availableCollections ?? []).find(item=>!item.systemArea)?.id));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
 const cloudCatalogSync = computed(() => Boolean(snapshot.value?.collection.cloudCatalogSync));
+const cloudBackup = computed(() => snapshot.value?.collection.cloudBackup);
+const cloudBackupTitle = computed(() => { const backup=cloudBackup.value; if(!backup)return 'Encrypted Files backup is unavailable'; if(backup.status==='needs-vault')return 'Turn on Passwords sync first. Passwords holds the encryption keys for Files backup.'; return backup.lastError || `Encrypted with ${backup.cryptoModule.provider} ${backup.cryptoModule.version}${backup.cryptoModule.fips?' (FIPS mode)':''}` });
+const cloudBackupLine = computed(() => { const backup=cloudBackup.value; if(!backup)return ''; if(backup.status==='needs-vault')return 'Needs Passwords sync'; const pending=backup.pendingBytes?`${formatBytes(backup.pendingBytes)} pending`:'Nothing pending'; const conflicts=backup.conflicts?` · ${backup.conflicts} conflict${backup.conflicts===1?'':'s'}`:''; const last=backup.lastSyncAt?` · Last backup ${timeAgo(backup.lastSyncAt)}`:''; return `${pending}${conflicts}${last} · ${backup.cryptoModule.provider}` });
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
@@ -1297,6 +1311,11 @@ async function toggleCloudCatalogSync() {
   const collectionId = snapshot.value?.collection.id;
   if (!collectionId || !props.dataSource.setCollectionCloudSync) return;
   await runMutation(() => props.dataSource.setCollectionCloudSync!(collectionId, !cloudCatalogSync.value));
+}
+async function toggleCloudBackup() {
+  const collectionId=snapshot.value?.collection.id;
+  if(!collectionId||!props.dataSource.setCloudBackup)return;
+  await runMutation(()=>props.dataSource.setCloudBackup!(collectionId,!cloudBackup.value?.enabled));
 }
 async function askName(title:string, label:string, confirm:string, value = '', allowEmpty = false) {
   namePrompt.value?.resolve(null);
@@ -2303,6 +2322,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 .top .search input::placeholder { color: var(--dim); }
 .top .search kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-2); border-radius: 5px; padding: 1px 5px; color: var(--dim); background: var(--paper); }
 .top .acts { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.cloud-backup-status { max-width: 230px; color: var(--muted); font-size: 11px; line-height: 1.25; }
 
 /* Buttons and controls */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card-solid); font-size: 12.5px; font-weight: 500; color: var(--text); box-shadow: 0 1px 1px rgba(26, 35, 50, .03); white-space: nowrap; line-height: 1.45; }
