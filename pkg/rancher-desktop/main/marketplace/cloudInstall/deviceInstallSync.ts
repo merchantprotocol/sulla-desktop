@@ -13,6 +13,7 @@
  */
 
 import os from 'os';
+import { BrowserWindow, dialog } from 'electron';
 
 import { cloudRequest, isCloudSignedIn } from '../../cloud/cloudFetch';
 import { getDesktopDeviceId } from '../../deviceIdentity';
@@ -28,6 +29,16 @@ const POLL_INTERVAL_MS = 20_000;
 interface PendingInstall {
   id: string;
   templateId: string;
+}
+
+async function confirmInstall(install: PendingInstall): Promise<boolean> {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+  const options = { type: 'question' as const, buttons: ['Deny', 'Install'], defaultId: 0, cancelId: 0, noLink: true,
+    title: 'Install this Use Case?', message: 'Sulla Cloud requested a Use Case install on this Desktop.',
+    detail: `Use Case: ${install.templateId}\n\nInstall only if you made this request in Sulla Cloud.` };
+  const result = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return result.response === 1;
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -69,6 +80,10 @@ async function runPendingInstalls(): Promise<void> {
     const pending = await fetchPending(deviceId);
     for (const install of pending) {
       try {
+        if (!await confirmInstall(install)) {
+          await report(install.id, 'failed', 'Declined on the target Desktop');
+          continue;
+        }
         await installTemplateWithDependencies(install.templateId);
         await report(install.id, 'active');
         console.log(`[DeviceInstallSync] installed ${ install.templateId }`);

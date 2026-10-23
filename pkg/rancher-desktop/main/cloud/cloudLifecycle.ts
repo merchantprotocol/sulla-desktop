@@ -24,6 +24,8 @@ import { VaultSyncV3 } from './vaultSyncV3';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
+import { CloudRuntimeProjectionSync } from './runtimeProjection/sync';
+import { dispatchCloudAgentCommand } from '@pkg/agent/tools/agents/cloudProjection';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -62,6 +64,26 @@ async function promptPairing(req: { label: string; surface: string; code: string
   return res.response === 1;
 }
 
+const CLOUD_COMMANDS = new Set(['agent.stop', 'agent.message', 'workflow.run']);
+
+/** Signed Cloud browser commands. SecureDesktopChannel already verified the signature and approval. */
+async function runCloudCommand(body: Record<string, any>): Promise<Record<string, unknown>> {
+  try {
+    if (body.type !== 'workflow.run') return await dispatchCloudAgentCommand(body);
+    const workflowId = typeof body.workflowId === 'string' ? body.workflowId : '';
+    // Same boundary as agents: only a workflow this Desktop projects to Cloud.
+    const { buildWorkflowProjection } = await import('./runtimeProjection/workflows');
+    if (!workflowId || !(await buildWorkflowProjection()).some(w => w.id === workflowId)) return { ok: false, error: 'workflow_not_found' };
+    const { executeRoutine } = await import('../sullaRoutineTemplateEvents');
+    const result = await executeRoutine(workflowId, 'Requested from an approved Sulla Cloud browser');
+    CloudRuntimeProjectionSync.changed();
+    return { ok: true, executionId: result.executionId };
+  } catch (err) {
+    console.warn('[CloudLifecycle] Cloud command failed:', err);
+    return { ok: false, error: 'command_failed' };
+  }
+}
+
 function getChannel(): SecureDesktopChannel {
   if (!channel) {
     const dispatch = (body: Record<string, any>, reply: (frame: Record<string, unknown>) => void, respond: (frame: Record<string, unknown>) => void) => getDesktopRelayClient().handleRemoteCommand(body as any, reply, respond);
@@ -70,7 +92,18 @@ function getChannel(): SecureDesktopChannel {
       prompt:   promptPairing,
       serverDispatch: frame => ConversationSyncService.handleServerFrame(frame),
       dispatch: async(body, reply, respond) => {
-        if(body.type==='conversation_key' && typeof body.conversationId==='string' && body.wrapKey && typeof body.wrapKey==='object'){reply({type:'conversation_key',conversationId:body.conversationId,wrappedKey:ConversationSyncService.wrapKey(body.conversationId,body.wrapKey as JsonWebKey),algorithm:'RSA-OAEP+A256GCM',keyVersion:1});return}
+        if (body.type === 'conversation_key') {
+          // A paired browser asks for a linked conversation's key, wrapped to its RSA-OAEP public key.
+          if (typeof body.conversationId !== 'string' || !body.wrapKey || typeof body.wrapKey !== 'object') { respond({ type: 'error', reason: 'invalid_conversation_key_request' }); return }
+          reply({ type: 'conversation_key', conversationId: body.conversationId, wrappedKey: ConversationSyncService.wrapKey(body.conversationId, body.wrapKey as JsonWebKey), algorithm: 'RSA-OAEP+A256GCM', keyVersion: 1 });
+          return;
+        }
+        if (CLOUD_COMMANDS.has(body.type)) {
+          // requestId lets the browser match the result to its command.
+          const requestId = typeof body.requestId === 'string' ? body.requestId.slice(0, 64) : undefined;
+          respond({ type: 'command_result', requestId, ...await runCloudCommand(body) });
+          return;
+        }
         await dispatch(body, reply, respond);
       },
       audit:    (event, detail) => console.log(`[SecureChannel] ${ event } ${ JSON.stringify(detail) }`),
@@ -128,6 +161,7 @@ export async function startCloudServices(): Promise<void> {
   ConversationSyncService.start();
   VaultSyncV3.start();
   DeviceInstallSync.start();
+  CloudRuntimeProjectionSync.start();
   broadcast();
 }
 
@@ -136,6 +170,7 @@ export async function stopCloudServices(): Promise<void> {
   channel?.stop();
   VaultSyncV3.stop();
   DeviceInstallSync.stop();
+  CloudRuntimeProjectionSync.stop();
   await stopConversationSync().catch(() => undefined);
   ConversationSyncService.stop();
   DevicesCloudApi.stopHeartbeat();

@@ -42,16 +42,27 @@ export async function pushAgentProjection(upload: (path: string, body: unknown) 
 
 /** Dispatch only after SecureDesktopChannel verified the browser signature and device id. */
 export async function dispatchCloudAgentCommand(body: Record<string, any>): Promise<Record<string, unknown>> {
+  const jobId = typeof body.jobId === 'string' ? body.jobId : '';
+  const taskIndex = Number(body.taskIndex);
+  const job = (await getAllJobs()).find(candidate => candidate.jobId === jobId);
+  // Ownership boundary: only a job and task currently projected by this Desktop
+  // may be controlled. Never let a signed client address arbitrary local jobs.
+  const live = (status: string) => ['queued', 'running'].includes(status);
+  // A stop may target the whole job; a message always targets one task.
+  const targeted = body.taskIndex !== undefined || body.type === 'agent.message';
+  if (!job || (targeted
+    ? !Number.isInteger(taskIndex) || !job.tasks[taskIndex] || !live(job.tasks[taskIndex].status)
+    : !job.tasks.some(task => live(task.status)))) {
+    return { ok: false, error: 'agent_not_found' };
+  }
   if (body.type === 'agent.stop') {
-    const result = await stopAgentJob(String(body.jobId ?? ''));
+    const result = await stopAgentJob(jobId);
     return { ok: result.successBoolean, message: result.responseString };
   }
   if (body.type === 'agent.message') {
-    const result = await sendJobMessage({
-      jobId: String(body.jobId ?? ''),
-      taskIndex: body.taskIndex === undefined ? undefined : Number(body.taskIndex),
-      message: String(body.message ?? '').slice(0, 4_000),
-    });
+    const message = typeof body.message === 'string' ? body.message.trim().slice(0, 4_000) : '';
+    if (!message) return { ok: false, error: 'message_required' };
+    const result = await sendJobMessage({ jobId, taskIndex, message });
     return { ok: result.successBoolean, message: result.responseString };
   }
   return { ok: false, error: 'unsupported_cloud_agent_command' };
