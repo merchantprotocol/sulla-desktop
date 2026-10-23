@@ -952,7 +952,7 @@ const namePrompt = ref<{ title: string; label: string; confirm: string; value: s
 const nameDialog = ref<HTMLDialogElement | null>(null);
 const newMenu = ref<{ x:number; y:number } | null>(null); const newMenuButton = ref<HTMLButtonElement | null>(null); const newActionMenu = ref<HTMLElement | null>(null);
 const newFileKinds = [
-  { label: 'Sulla Document', name: 'Untitled.sulla.md' },
+  { label: 'Sulla Document', name: 'Untitled.sulla' },
   { label: 'Markdown file', name: 'Untitled.md' },
   { label: 'Text file', name: 'Untitled.txt' },
   { label: 'Spreadsheet (CSV)', name: 'Untitled.csv' },
