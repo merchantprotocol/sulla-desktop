@@ -105,11 +105,14 @@ export function buildCollectionItems(collection: CollectionRow, files: FileRow[]
 export class CatalogSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly broker?: FilesCloudBroker;
+  private readonly cloudDeviceId?: string;
   private status: CatalogSyncStatus = {};
   private inFlight: Promise<CatalogSyncStatus> | null = null;
 
   constructor(private readonly db: pg.Pool, private readonly config: Config) {
-    this.broker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
+    // The Cloud only accepts a push for a device id it registered; config.deviceId is the hostname.
+    this.cloudDeviceId = process.env.SULLA_FILES_CLOUD_DEVICE_ID?.trim() || undefined;
+    this.broker = config.mode === 'desktop' && config.vaultBrokerServiceToken && this.cloudDeviceId ? new FilesCloudBroker(config) : undefined;
   }
 
   start(): void {
@@ -153,7 +156,7 @@ export class CatalogSyncService {
         items.push(...buildCollectionItems(collection, files));
       }
 
-      await this.cloud(`/cloud-files/v1/catalog/${ encodeURIComponent(this.config.deviceId) }`, {
+      await this.cloud(`/cloud-files/v1/catalog/${ encodeURIComponent(this.cloudDeviceId as string) }`, {
         method: 'PUT',
         body: JSON.stringify({ items: items.slice(0, MAX_ITEMS), fullSnapshot: true }),
       });

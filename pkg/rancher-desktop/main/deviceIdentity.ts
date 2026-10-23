@@ -138,6 +138,11 @@ export async function getDesktopDeviceMetadata(): Promise<DesktopDeviceMetadata>
   };
 }
 
+/** The Cloud device id if this install already has one; never creates one or touches the database. */
+export function readExistingDesktopDeviceId(): string | null {
+  return readDeviceIdFromFile();
+}
+
 export async function getDesktopDeviceId(): Promise<string> {
   return getOrCreateDeviceId();
 }

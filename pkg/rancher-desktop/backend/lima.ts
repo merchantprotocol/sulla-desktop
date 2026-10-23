@@ -62,6 +62,7 @@ import { ContainerEngine, MountType, VMType } from '@pkg/config/settings';
 import * as settingsImpl from '@pkg/config/settingsImpl';
 import { getServerCredentialsPath, ServerState } from '@pkg/main/credentialServer/httpCredentialHelperServer';
 import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
+import { readExistingDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
@@ -3736,6 +3737,8 @@ start_pre() {
         SULLA_FILES_STORED_ONLY:           '1',
         SULLA_FILES_MODE:                  'desktop',
         SULLA_FILES_DEVICE_ID:             os.hostname(),
+        // Cloud device id (not the hostname) so the Files catalog push targets this device's Cloud row.
+        ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
