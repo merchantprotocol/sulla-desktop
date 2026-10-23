@@ -1,5 +1,5 @@
 <template>
-  <div class="routines-home">
+  <div class="routines-home" :class="{ 'use-cases-mode': activeTab === 'marketplace' }">
     <!-- Inline action feedback. Fixed to viewport so it's visible from
          any scroll position. Success/info auto-fade after 3.2s; errors
          stick until dismissed or replaced by the next action. -->
@@ -681,6 +681,17 @@ async function onImport() {
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
 }
+
+.routines-home.use-cases-mode {
+  background: var(--nx-paper, var(--bg-page, #f3f6fa));
+}
+.use-cases-mode :deep(.glow),
+.use-cases-mode :deep(.stars),
+.use-cases-mode :deep(.bracket),
+.use-cases-mode .topline,
+.use-cases-mode > .scroll-area > .canvas > .ribbon,
+.use-cases-mode .hero { display: none; }
+.use-cases-mode .shell { max-width: none; min-height: 100%; padding: 0; }
 
 .scroll-area {
   position: absolute;

@@ -1,326 +1,110 @@
 <template>
-  <div class="pk-page">
-    <button
-      type="button"
-      class="back"
-      @click="$emit('close')"
-    >
-      ← All use cases
+  <div class="detail-page">
+    <button class="button ghost back" @click="$emit('close')">
+      <UseCaseIcon name="back" /> All use cases
     </button>
 
-    <div class="crumbs">
-      Use Cases<template v-if="topicLabel">
-        › {{ topicLabel }}
-      </template> › {{ row.title }}
-    </div>
-
-    <header class="pk-hero">
-      <div class="pk-badge">
-        <div class="pkg-ic">
-          {{ row.icon }}
+    <section class="card hero">
+      <span class="feature-icon xl" :class="iconTone"><UseCaseIcon :name="packageIcon(row.icon, row.topic)" /></span>
+      <div class="hero-copy">
+        <h1>{{ row.title }}</h1>
+        <p class="tagline">{{ row.line }}</p>
+        <div class="byline">
+          <span>By <b>{{ row.publisher }}</b></span>
+          <span v-if="row.version">Version <b>{{ row.version }}</b></span>
+          <span v-if="row.updatedAt">Updated <b>{{ updatedLabel }}</b></span>
+          <span v-if="downloadCount"><b>{{ compact(downloadCount) }}</b> people use it</span>
         </div>
-        <span>{{ row.name }}<template v-if="appBadge"> · {{ appBadge }}</template></span>
+        <div v-if="row.dashboardPort" class="dashboard-badge">
+          <UseCaseIcon name="screen" />
+          <b>Includes a dashboard</b>
+          <code>opens at localhost:{{ row.dashboardPort }}</code>
+        </div>
       </div>
-      <h1>{{ row.title }}</h1>
-      <p
-        v-if="row.line"
-        class="lede"
-      >
-        {{ row.line }}
-      </p>
-      <div class="get-row">
-        <template v-if="installed">
-          <span class="state ok">✓ Installed</span>
-          <button
-            type="button"
-            class="btn ghost"
-            :disabled="busy"
-            @click="$emit('uninstall')"
-          >
-            {{ busy ? 'Removing…' : 'Remove' }}
-          </button>
-        </template>
-        <button
-          v-else
-          type="button"
-          class="btn"
-          :disabled="busy"
-          @click="$emit('get')"
-        >
-          {{ busy ? 'Getting…' : `Get ${row.name}` }}
+      <div class="hero-action">
+        <button v-if="installed" class="button" @click="$emit('open-library')">
+          <UseCaseIcon name="library" /> Open My Library
         </button>
+        <button v-else class="button primary large" :disabled="busy" @click="$emit('get')">
+          <span v-if="busy" class="spinner" />
+          <UseCaseIcon v-else name="download" />
+          {{ busy ? 'Getting…' : 'Get' }}
+        </button>
+        <small v-if="!installed">Free<template v-if="row.bundleSize"> · {{ sizeLabel }}</template></small>
       </div>
-      <p class="fine">
-        Free. One click installs everything it needs. Remove it any time and what it added comes off with it.
-      </p>
-    </header>
+    </section>
 
-    <!-- Structured sales page (manifest.page), in the approved order.
-         Missing pieces are skipped, never shown as placeholders. -->
-    <article
-      v-if="page"
-      class="copy"
-      @click="onCopyClick"
-    >
-      <div
-        v-if="page.results"
-        class="testi"
-      >
-        {{ page.results }}
-      </div>
-
-      <h2
-        v-if="page.headline"
-        class="hl"
-      >
-        {{ page.headline }}
-      </h2>
-      <p
-        v-if="page.subhead"
-        class="sub"
-      >
-        {{ page.subhead }}
-      </p>
-
-      <!-- eslint-disable vue/no-v-html -- sanitized via DOMPurify -->
-      <div
-        v-if="storyHtml"
-        class="md"
-        v-html="storyHtml"
-      />
-      <!-- eslint-enable vue/no-v-html -->
-
-      <ul
-        v-if="page.imagine.length"
-        class="imagine"
-      >
-        <li
-          v-for="(line, i) in page.imagine"
-          :key="i"
-        >
-          {{ line }}
-        </li>
-      </ul>
-
-      <blockquote
-        v-if="firstQuote"
-        class="testi quote"
-      >
-        <p>“{{ firstQuote.quote }}”</p>
-        <footer v-if="firstQuote.name">
-          {{ quoteBy(firstQuote) }}
-        </footer>
-      </blockquote>
-
-      <hr
-        v-if="page.offer || page.benefits.length"
-        class="sep"
-      >
-      <div
-        v-if="page.offer || page.benefits.length"
-        class="offer-card"
-      >
-        <template v-if="page.offer">
-          <h2
-            v-if="page.offer.title"
-            class="center"
-          >
-            {{ page.offer.title }}
-          </h2>
-          <p
-            v-if="page.offer.tagline"
-            class="center sub"
-          >
-            {{ page.offer.tagline }}
-          </p>
-          <p
-            v-if="page.offer.perfectFor"
-            class="center"
-          >
-            {{ perfectFor }}
-          </p>
-        </template>
-
-        <template v-if="page.benefits.length">
-          <h3 class="lead-in">
-            You'll be able to:
-          </h3>
-          <ul class="bens">
-            <li
-              v-for="(b, i) in page.benefits"
-              :key="i"
-            >
-              <b>{{ b.title }}</b>
-              <span v-if="b.note">{{ b.note }}</span>
-            </li>
-          </ul>
-        </template>
-      </div>
-
-      <PackageValueStack
-        v-if="page.valueStack"
-        :stack="page.valueStack"
-        :name="row.name"
-        :installed="installed"
-        :busy="busy"
-        @get="onGet"
-      />
-
-      <template v-if="page.inside.length">
-        <h3 class="lead-in">
-          What's inside
-        </h3>
-        <div class="inside">
-          <div
-            v-for="(t, i) in page.inside"
-            :key="i"
-          >
-            <b>{{ t.icon ? `${t.icon} ` : '' }}{{ t.title }}</b>
-            <span v-if="t.text">{{ t.text }}</span>
-          </div>
-        </div>
-      </template>
-      <p
-        v-if="page.needs"
-        class="fine"
-      >
-        {{ page.needs }}
-      </p>
-
-      <template v-if="page.steps.length">
-        <hr class="sep">
-        <h2>When you get {{ row.name }}</h2>
-        <ol class="steps">
-          <li
-            v-for="(s, i) in page.steps"
-            :key="i"
-          >
-            <div>
-              <b v-if="s.title">{{ s.title }}</b> {{ s.text }}
+    <div class="detail-grid">
+      <div>
+        <section v-if="hasDescription || outcomes.length || safetyNote" class="card section">
+          <h2>What it does</h2>
+          <!-- eslint-disable-next-line vue/no-v-html -- sanitized with DOMPurify -->
+          <div v-if="descriptionHtml" class="markdown" v-html="descriptionHtml" />
+          <p v-else-if="row.line">{{ row.line }}</p>
+          <div v-if="outcomes.length" class="outcomes">
+            <div v-for="item in outcomes" :key="item.title" class="outcome">
+              <b>{{ item.title }}</b><span>{{ item.note }}</span>
             </div>
-          </li>
-        </ol>
-      </template>
-
-      <PackageValueStack
-        v-if="page.valueStack"
-        :stack="page.valueStack"
-        :name="row.name"
-        :installed="installed"
-        :busy="busy"
-        @get="onGet"
-      />
-
-      <template v-if="page.guarantee">
-        <hr class="sep">
-        <h2>{{ page.guarantee.title || 'Your no-risk promise' }}</h2>
-        <p v-if="page.guarantee.text">
-          {{ page.guarantee.text }}
-        </p>
-      </template>
-
-      <blockquote
-        v-for="(t, i) in laterQuotes"
-        :key="`q${i}`"
-        class="testi quote"
-      >
-        <p>“{{ t.quote }}”</p>
-        <footer v-if="t.name">
-          {{ quoteBy(t) }}
-        </footer>
-      </blockquote>
-
-      <template v-if="page.faq.length">
-        <hr class="sep">
-        <h2>Frequently asked questions</h2>
-        <p
-          v-for="(f, i) in page.faq"
-          :key="i"
-        >
-          <b>{{ f.q }}</b><br>{{ f.a }}
-        </p>
-      </template>
-
-      <template v-if="page.desk">
-        <hr class="sep">
-        <div class="desk">
-          <p
-            v-if="page.desk.from"
-            class="from"
-          >
-            {{ deskFrom }}<template v-if="page.desk.place">
-              <br><span>{{ page.desk.place }}</span>
-            </template>
-          </p>
-          <h3 v-if="page.desk.headline">
-            {{ page.desk.headline }}
-          </h3>
-          <!-- eslint-disable vue/no-v-html -- sanitized via DOMPurify -->
-          <div
-            v-if="deskHtml"
-            class="md"
-            v-html="deskHtml"
-          />
-          <!-- eslint-enable vue/no-v-html -->
-          <p v-if="page.desk.signoff">
-            {{ page.desk.signoff }}
-          </p>
-          <p
-            v-if="page.desk.name"
-            class="sig"
-          >
-            {{ page.desk.name }}<template v-if="page.desk.title">
-              <br><span>{{ page.desk.title }}</span>
-            </template>
-          </p>
-        </div>
-      </template>
-
-      <PackageValueStack
-        v-if="page.valueStack"
-        :stack="page.valueStack"
-        :name="row.name"
-        :installed="installed"
-        :busy="busy"
-        @get="onGet"
-      />
-    </article>
-
-    <!-- No structured page: the sales page body from description_md.
-         Links to #get (and any "YES! …" link) act as the Get button. -->
-    <!-- eslint-disable vue/no-v-html -- sanitized via DOMPurify -->
-    <article
-      v-else-if="bodyHtml"
-      class="copy"
-      @click="onCopyClick"
-      v-html="bodyHtml"
-    />
-    <!-- eslint-enable vue/no-v-html -->
-
-    <details
-      v-if="contentGroups.length"
-      class="more"
-    >
-      <summary>For the curious: what's in the use case</summary>
-      <div class="rows">
-        <div
-          v-for="g in contentGroups"
-          :key="g.kind"
-          class="row"
-        >
-          <div>
-            <b>{{ g.label }}</b> · {{ g.names.join(', ') }}
-            <p
-              v-if="g.blurb"
-              class="blurb"
-            >
-              {{ g.blurb }}
-            </p>
           </div>
-          <span class="tag">{{ g.count }}</span>
-        </div>
+          <div v-if="safetyNote" class="note">
+            <UseCaseIcon name="info" /><span><b>What it doesn’t do.</b> {{ safetyNote }}</span>
+          </div>
+        </section>
+
+        <section v-if="steps.length" class="card section">
+          <h2>How it works</h2>
+          <ol class="steps">
+            <li v-for="step in steps" :key="`${step.title}-${step.text}`">
+              <b v-if="step.title">{{ step.title }}</b>{{ step.text }}
+            </li>
+          </ol>
+        </section>
+
+        <section v-if="groups.length" class="card section included">
+          <h2>What’s included</h2>
+          <div v-for="group in groups" :key="group.kind" class="content-group">
+            <h3>{{ group.label }} <span>{{ group.items.length }}</span></h3>
+            <div v-for="item in group.items" :key="item.slug" class="content-item">
+              <span class="feature-icon" :class="kindTone(group.kind)"><UseCaseIcon :name="kindIcon(group.kind)" /></span>
+              <div>
+                <b>{{ item.name || item.slug }}</b>
+                <small v-if="item.description">{{ item.description }}</small>
+                <small v-else-if="item.version">{{ item.slug }} · v{{ item.version }}</small>
+                <code v-if="item.containers.length">{{ item.containers.join(' · ') }}</code>
+              </div>
+              <span v-if="group.kind === 'integration' && !item.required" class="item-side">Optional</span>
+              <span v-if="group.kind === 'recipe' && item.containers.length" class="item-side">{{ item.containers.length }} containers</span>
+            </div>
+          </div>
+          <div v-if="hasRecipe" class="note">
+            <UseCaseIcon name="laptop" />
+            <span><b>The recipe runs on Sulla Desktop only.</b> Its containers start on this computer. On Sulla Cloud or Mobile, the agent and workflows remain available, but not the local recipe or dashboard.</span>
+          </div>
+        </section>
       </div>
-    </details>
+
+      <aside class="card summary">
+        <div class="summary-head">
+          <span class="feature-icon" :class="iconTone"><UseCaseIcon :name="packageIcon(row.icon, row.topic)" /></span>
+          <div><h3>{{ row.title }}</h3><small>{{ includesSummary }}</small></div>
+        </div>
+        <dl>
+          <div v-if="row.version"><dt>Version</dt><dd><code>{{ row.version }}</code></dd></div>
+          <div v-if="row.publisher"><dt>Publisher</dt><dd>{{ row.publisher }}</dd></div>
+          <div v-if="topic"><dt>Topic</dt><dd>{{ topic }}</dd></div>
+          <div v-if="row.bundleSize"><dt>Size</dt><dd>{{ sizeLabel }}</dd></div>
+          <div><dt>Runs on</dt><dd>{{ runsOn }}</dd></div>
+          <div v-if="requiredIntegrations"><dt>Needs</dt><dd>{{ requiredIntegrations }}</dd></div>
+          <div v-if="row.dashboardPort"><dt>Dashboard</dt><dd><code>localhost:{{ row.dashboardPort }}</code></dd></div>
+        </dl>
+        <div class="summary-action">
+          <button v-if="installed" class="button" @click="$emit('open-library')"><UseCaseIcon name="library" /> Open My Library</button>
+          <button v-else class="button primary" :disabled="busy" @click="$emit('get')">
+            <span v-if="busy" class="spinner" /><UseCaseIcon v-else name="download" /> {{ busy ? 'Getting…' : 'Get' }}
+          </button>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -329,354 +113,68 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { computed } from 'vue';
 
-import PackageValueStack from '@pkg/components/routines/PackageValueStack.vue';
-import { marketplaceKindLabel, normalizeMarketplaceKind } from '@pkg/composables/marketplaceKinds';
-import { toPackagePage } from '@pkg/composables/packagePage';
 import { packageTopicLabel } from '@pkg/composables/packageTopics';
 import type { PackageDetail } from '@pkg/composables/usePackages';
 
-const props = defineProps<{
-  detail:    PackageDetail;
-  installed: boolean;
-  busy:      boolean;
-}>();
+import UseCaseIcon from './UseCaseIcon.vue';
 
-const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'get'): void;
-  (e: 'uninstall'): void;
-}>();
+const props = defineProps<{ detail: PackageDetail; installed: boolean; busy: boolean }>();
 
-const row = computed(() => props.detail.row);
-const topicLabel = computed(() => packageTopicLabel(row.value.topic));
+defineEmits<{ (e: 'close'): void; (e: 'get'): void; (e: 'open-library'): void }>();
 
-const appBadge = computed(() => {
-  if (row.value.app === 'dashboard') return 'Includes a dashboard';
-  if (row.value.app === 'app') return 'Includes an app';
-
-  return '';
-});
-
-function isGetLink(a: HTMLAnchorElement): boolean {
-  const href = (a.getAttribute('href') ?? '').trim().toLowerCase();
-
-  return href === '#get' || /^yes!/i.test((a.textContent ?? '').trim());
-}
-
-function renderMd(md: string): string {
-  if (!md) return '';
-  const html = DOMPurify.sanitize(marked.parse(md, { async: false }));
-  // Mark the CTA links so they render as buttons.
-  const doc = new DOMParser().parseFromString(`<div>${ html }</div>`, 'text/html');
-  doc.querySelectorAll('a').forEach((a) => {
-    if (isGetLink(a)) a.classList.add('cta');
-  });
-
-  return doc.body.firstElementChild?.innerHTML ?? html;
-}
-
-const bodyHtml = computed(() => renderMd(props.detail.descriptionMd));
-
-// Structured sales page from manifest.page; null → description_md above.
-const page = computed(() => toPackagePage(props.detail.manifest ?? {}));
-const storyHtml = computed(() => renderMd(page.value?.storyMd ?? ''));
-const deskHtml = computed(() => renderMd(page.value?.desk?.bodyMd ?? ''));
-const firstQuote = computed(() => page.value?.testimonials[0] ?? null);
-const laterQuotes = computed(() => page.value?.testimonials.slice(1) ?? []);
-const perfectFor = computed(() => {
-  const text = page.value?.offer?.perfectFor ?? '';
-
-  return /^perfect for\b/i.test(text) ? text : `Perfect for ${ text }`;
-});
-const deskFrom = computed(() => {
-  const from = page.value?.desk?.from ?? '';
-
-  return /^from the desk of\b/i.test(from) ? from : `From the desk of ${ from }`;
-});
-
-function quoteBy(t: { name: string; role: string }): string {
-  return [t.name, t.role].filter(Boolean).join(', ');
-}
-
-function onGet() {
-  if (!props.installed && !props.busy) emit('get');
-}
-
-function onCopyClick(ev: MouseEvent) {
-  const a = (ev.target as HTMLElement | null)?.closest('a');
-  if (!a) return;
-  ev.preventDefault();
-  if (a.classList.contains('cta')) {
-    onGet();
-
-    return;
-  }
-  const href = a.getAttribute('href') ?? '';
-  if (/^https?:\/\//i.test(href)) window.open(href, '_blank');
-}
-
-// One line per kind in "For the curious", as in the approved page.
-const KIND_BLURBS: Record<string, string> = {
-  agent:       'The teammate you talk to.',
-  routine:     'The jobs that run on a schedule.',
-  skill:       'Know-how the agent uses.',
-  function:    'Small programs it can run for you.',
-  integration: 'The accounts and apps it connects to.',
-  recipe:      'Apps that run in a container on your machine.',
+const labels: Record<string, string> = {
+  agent: 'Agents', skill: 'Skills', routine: 'Workflows', function: 'Functions', integration: 'Integrations', recipe: 'Recipes',
 };
-
-const contentGroups = computed(() => {
-  const byKind = new Map<string, string[]>();
-  for (const item of props.detail.contents) {
-    const names = byKind.get(item.kind) ?? [];
-    names.push(item.name || item.slug);
-    byKind.set(item.kind, names);
-  }
-
-  return [...byKind.entries()].map(([kind, names]) => {
-    const label = marketplaceKindLabel(kind, names.length > 1);
-
-    const blurb = KIND_BLURBS[normalizeMarketplaceKind(kind) ?? ''] ?? '';
-
-    return { kind, label, names, blurb, count: `${ names.length } ${ label.toLowerCase() }` };
-  });
+const row = computed(() => props.detail.row);
+const manifest = computed<any>(() => props.detail.manifest ?? {});
+const page = computed<any>(() => manifest.value.page ?? {});
+const story = computed(() => props.detail.descriptionMd || page.value.story_md || page.value.storyMd || '');
+const descriptionHtml = computed(() => story.value ? DOMPurify.sanitize(marked.parse(story.value, { async: false })) : '');
+const hasDescription = computed(() => Boolean(story.value || row.value.line));
+const outcomes = computed(() => Array.isArray(page.value.benefits) ? page.value.benefits.slice(0, 3).map((item: any) => ({
+  title: String(item.title ?? ''), note: String(item.note ?? item.text ?? ''),
+})).filter((item: any) => item.title || item.note) : []);
+const steps = computed(() => Array.isArray(page.value.steps) ? page.value.steps.map((item: any) => typeof item === 'string' ? {
+  title: '', text: item,
+} : {
+  title: String(item.title ?? ''), text: String(item.text ?? ''),
+}).filter((item: any) => item.title || item.text) : []);
+const safetyNote = computed(() => String(page.value.safety_note ?? page.value.safetyNote ?? manifest.value.safety_note ?? ''));
+const groups = computed(() => Object.entries(labels).map(([kind, label]) => ({
+  kind, label, items: props.detail.contents.filter(item => item.kind === kind),
+})).filter(group => group.items.length));
+const hasRecipe = computed(() => props.detail.contents.some(item => item.kind === 'recipe'));
+const topic = computed(() => packageTopicLabel(row.value.topic) || row.value.topic || '');
+const iconTone = computed(() => topicTone(row.value.topic));
+const updatedLabel = computed(() => {
+  const date = new Date(row.value.updatedAt);
+  return Number.isNaN(date.getTime()) ? row.value.updatedAt : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 });
+const downloadCount = computed(() => Number((props.detail.raw as any).download_count) || 0);
+const sizeLabel = computed(() => formatBytes(row.value.bundleSize));
+const includesSummary = computed(() => groups.value.map(group => `${group.items.length} ${group.items.length === 1 ? group.label.toLowerCase().slice(0, -1) : group.label.toLowerCase()}`).join(' · '));
+const runsOn = computed(() => hasRecipe.value ? 'Desktop (recipe) · agents anywhere' : 'Desktop, Cloud, Mobile');
+const requiredIntegrations = computed(() => props.detail.contents.filter(item => item.kind === 'integration' && item.required).map(item => item.name || item.slug).join(', '));
+
+function compact(value: number) { return new Intl.NumberFormat(undefined, { notation: 'compact' }).format(value); }
+function formatBytes(value: number) {
+  if (!value) return '';
+  return value < 1_048_576 ? `${Math.round(value / 1024)} KB` : `${(value / 1_048_576).toFixed(value >= 10_485_760 ? 0 : 1)} MB`;
+}
+function kindIcon(kind: string) { return ({ agent: 'agent', skill: 'skill', routine: 'workflow', function: 'function', integration: 'integration', recipe: 'recipe' } as Record<string, string>)[kind] || 'box'; }
+function kindTone(kind: string) { return ({ agent: 'blue', skill: 'purple', routine: 'green', function: 'purple', integration: 'amber', recipe: 'red' } as Record<string, string>)[kind] || 'blue'; }
+function topicTone(value: string) { return /security|it/i.test(value) ? 'red' : /field/i.test(value) ? 'amber' : /sales|marketing|growth/i.test(value) ? 'purple' : 'blue'; }
+function packageIcon(icon: string, topicValue: string) {
+  if (/shield|guard|security/i.test(icon) || /security|it/i.test(topicValue)) return 'shield';
+  if (/mail|inbox/i.test(icon)) return 'mail';
+  if (/calendar|meeting/i.test(icon)) return 'calendar';
+  return 'box';
+}
 </script>
 
 <style scoped>
-.pk-page {
-  container: pk-page / inline-size;
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 8px 0 48px;
-  color: var(--nx-read-1, var(--text-primary));
-  font-family: var(--font-body, system-ui, sans-serif);
-}
-.back {
-  font: inherit;
-  font-size: 14px;
-  border: 0;
-  background: none;
-  padding: 0;
-  color: var(--nx-accent-2, var(--accent-primary));
-  cursor: pointer;
-}
-.crumbs { margin-top: 14px; font-size: 13px; color: var(--nx-read-3, var(--text-muted)); }
-
-.pk-hero { margin-top: 18px; }
-.pk-badge { display: inline-flex; gap: 10px; align-items: center; font-size: 14px; color: var(--nx-read-3, var(--text-muted)); }
-.pkg-ic {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--nx-surface, var(--bg-surface));
-  display: grid;
-  place-items: center;
-  font-size: 20px;
-}
-.pk-hero h1 {
-  margin: 14px 0 0;
-  font-family: var(--font-body, system-ui, sans-serif);
-  font-size: 38px;
-  line-height: 1.1;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--nx-read-1, var(--text-primary));
-}
-.lede { margin: 12px 0 0; font-size: 18px; line-height: 1.55; color: var(--nx-read-2, var(--text-secondary)); }
-.get-row { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; align-items: center; }
-.fine { margin: 10px 0 0; font-size: 13px; color: var(--nx-read-3, var(--text-muted)); }
-.state.ok { color: var(--nx-success, var(--text-success)); font-weight: 600; font-size: 15px; }
-
-.btn,
-.copy :deep(a.cta) {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  padding: 12px 22px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--nx-accent, var(--accent-primary));
-  color: var(--text-on-accent, #fff);
-  text-decoration: none;
-  cursor: pointer;
-}
-.btn:hover:not(:disabled),
-.copy :deep(a.cta:hover) { background: var(--nx-accent-2, var(--accent-primary-hover)); }
-.btn:disabled { opacity: 0.6; cursor: progress; }
-.btn.ghost {
-  background: transparent;
-  color: var(--nx-read-2, var(--text-secondary));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-}
-
-/* markdown body — approved long-form package page */
-.copy { margin-top: 36px; font-size: 16px; line-height: 1.7; color: var(--nx-read-2, var(--text-secondary)); }
-.copy :deep(p) { margin: 14px 0 0; }
-.copy :deep(h1),
-.copy :deep(h2) {
-  margin: 34px 0 0;
-  font-family: var(--font-body, system-ui, sans-serif);
-  font-size: 26px;
-  line-height: 1.25;
-  font-weight: 800;
-  color: var(--nx-read-1, var(--text-primary));
-}
-.copy :deep(h3) { margin: 26px 0 0; font-size: 19px; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
-.copy :deep(strong) { color: var(--nx-read-1, var(--text-primary)); }
-.copy :deep(a:not(.cta)) { color: var(--nx-accent-2, var(--accent-primary)); }
-.copy :deep(a.cta) { box-sizing: border-box; width: 100%; margin-top: 14px; }
-.copy :deep(ul),
-.copy :deep(ol) { margin: 14px 0 0; padding-left: 22px; }
-.copy :deep(li) { margin-top: 6px; }
-.copy :deep(hr) { margin: 36px 0; border: 0; border-top: 1px solid var(--nx-hair-strong, var(--border-default)); }
-.copy :deep(blockquote) {
-  margin: 26px 0;
-  padding: 18px 20px;
-  border: 1.5px dashed var(--nx-hair-strong, var(--border-default));
-  border-radius: 14px;
-  color: var(--nx-read-3, var(--text-muted));
-  font-style: italic;
-  text-align: center;
-}
-.copy :deep(blockquote p) { margin: 0; }
-/* value stack: a two-column markdown table */
-.copy :deep(table) {
-  width: 100%;
-  margin-top: 26px;
-  border-collapse: collapse;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  border-radius: 16px;
-  overflow: hidden;
-  font-size: 15px;
-}
-.copy :deep(th),
-.copy :deep(td) { padding: 10px 18px; text-align: left; border-bottom: 1px solid var(--nx-hair, var(--border-subtle)); }
-.copy :deep(td:last-child),
-.copy :deep(th:last-child) { text-align: right; white-space: nowrap; }
-.copy :deep(tr:last-child td) { border-bottom: 0; font-weight: 800; color: var(--nx-accent-2, var(--accent-primary)); }
-.copy :deep(del) { color: var(--nx-read-3, var(--text-muted)); }
-.copy :deep(code) { font-family: var(--font-mono, monospace); font-size: 0.9em; }
-
-/* structured sales page (manifest.page) — approved /v2/package components */
-.copy .testi {
-  margin: 26px 0;
-  padding: 18px 20px;
-  border: 1.5px dashed var(--nx-hair-strong, var(--border-default));
-  border-radius: 14px;
-  color: var(--nx-read-3, var(--text-muted));
-  font-style: italic;
-  text-align: center;
-}
-.copy .testi.quote p { margin: 0; }
-.copy .testi.quote footer { margin-top: 8px; font-style: normal; font-size: 14px; font-weight: 600; color: var(--nx-read-2, var(--text-secondary)); }
-.copy .hl { margin: 10px 0 0; font-size: 30px; line-height: 1.2; }
-.copy .sub { margin-top: 8px; font-size: 18px; color: var(--nx-read-3, var(--text-muted)); }
-.copy .center { text-align: center; }
-.copy .sep { margin: 28px 0; border: 0; border-top: 1px solid var(--nx-hair-strong, var(--border-default)); }
-.copy h2 {
-  margin: 34px 0 0;
-  font-size: 26px;
-  line-height: 1.25;
-  font-weight: 800;
-  color: var(--nx-read-1, var(--text-primary));
-}
-.copy .sep + h2 { margin-top: 0; }
-.copy .lead-in { margin: 26px 0 0; font-size: 17px; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
-.copy .imagine { margin: 14px 0 0; padding-left: 20px; line-height: 1.9; font-weight: 600; color: var(--nx-read-1, var(--text-primary)); }
-.copy .imagine li { margin-top: 0; }
-.copy .offer-card {
-  margin-top: 8px;
-  padding: 26px 28px 24px;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  border-top: 4px solid var(--nx-accent, var(--accent-primary));
-  border-radius: 16px;
-  box-shadow: 0 1px 2px var(--nx-hair, rgba(0, 0, 0, 0.06)), 0 12px 32px -12px var(--nx-hair-strong, rgba(0, 0, 0, 0.16));
-}
-.copy .offer-card > h2:first-child { margin-top: 0; }
-.copy .offer-card .lead-in { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--nx-hair-strong, var(--border-default)); }
-@media (max-width: 640px) { .copy .offer-card { padding: 20px 18px; } }
-.copy .bens { list-style: none; display: grid; gap: 12px; margin: 10px 0 0; padding: 0; }
-.copy .bens li { margin: 0; }
-.copy .bens b { display: block; font-size: 17px; line-height: 1.45; color: var(--nx-read-1, var(--text-primary)); }
-.copy .bens span { font-size: 14px; color: var(--nx-read-3, var(--text-muted)); }
-.copy .inside { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
-.copy .inside div {
-  padding: 14px 16px;
-  font-size: 14px;
-  line-height: 1.55;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  border-radius: 12px;
-}
-.copy .inside b { display: block; margin-bottom: 2px; color: var(--nx-read-1, var(--text-primary)); }
-.copy .inside span { color: var(--nx-read-3, var(--text-muted)); }
-.copy .steps { list-style: none; counter-reset: s; display: grid; gap: 12px; margin: 14px 0 0; padding: 0; }
-.copy .steps li { counter-increment: s; display: grid; grid-template-columns: 32px 1fr; gap: 12px; align-items: start; margin: 0; }
-.copy .steps li::before {
-  content: counter(s);
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 14px;
-  font-weight: 700;
-  background: color-mix(in srgb, var(--nx-accent, #5096b3) 15%, transparent);
-  color: var(--nx-accent-2, var(--accent-primary));
-}
-.copy .desk {
-  padding: 24px 26px;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  border-radius: 16px;
-}
-.copy .desk .from { margin-top: 0; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
-.copy .desk .from span,
-.copy .desk .sig span { font-weight: 400; font-family: var(--font-body, system-ui, sans-serif); font-size: 15px; color: var(--nx-read-3, var(--text-muted)); }
-.copy .desk h3 { margin-top: 10px; font-size: 22px; line-height: 1.3; }
-.copy .desk .sig { font-family: 'Brush Script MT', 'Segoe Script', 'Snell Roundhand', cursive; font-size: 22px; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
-.copy .fine { font-size: 13px; }
-@container pk-page (max-width: 640px) {
-  .copy .inside { grid-template-columns: 1fr; }
-  .copy .hl { font-size: 26px; }
-  .copy .desk { padding: 20px; }
-}
-
-.blurb { margin: 2px 0 0; font-size: 13px; color: var(--nx-read-3, var(--text-muted)); }
-
-details.more {
-  margin-top: 36px;
-  background: var(--nx-surface, var(--bg-surface));
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  border-radius: 14px;
-  padding: 16px 18px;
-}
-details.more summary { cursor: pointer; font-weight: 700; color: var(--nx-read-1, var(--text-primary)); }
-details.more[open] summary { margin-bottom: 10px; }
-.rows { display: grid; }
-.row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  font-size: 14px;
-  border-top: 1px solid var(--nx-hair, var(--border-subtle));
-  color: var(--nx-read-2, var(--text-secondary));
-}
-.row b { color: var(--nx-read-1, var(--text-primary)); }
-.tag {
-  font-size: 12px;
-  white-space: nowrap;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--nx-hair-strong, var(--border-default));
-  color: var(--nx-read-3, var(--text-muted));
-  align-self: start;
-}
+.detail-page { color: var(--uc-text); }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 32px; padding: 0 13px; border: 1px solid var(--uc-line-strong); border-radius: 8px; background: var(--uc-card); color: var(--uc-text); font: inherit; cursor: pointer; }
+.button:hover { background: var(--uc-paper); }.button:disabled { cursor: wait; opacity: .65; }.button.primary { border-color: var(--uc-accent); background: var(--uc-accent); color: #fff; }.button.large { min-height: 38px; min-width: 76px; }.button.ghost { border-color: transparent; background: transparent; color: var(--uc-muted); }.button :deep(svg) { width: 14px; height: 14px; }
+.back { margin: 0 0 14px; padding-left: 8px; }.card { border: 1px solid var(--uc-line); border-radius: 12px; background: var(--uc-card); box-shadow: var(--uc-shadow); }.hero { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 16px; padding: 22px 24px; }.feature-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 8px; font-size: 17px; }.feature-icon.xl { width: 56px; height: 56px; border-radius: 14px; font-size: 27px; }.feature-icon.blue { color: #277da1; background: #e5f0f5; }.feature-icon.red { color: #e13d36; background: #fbe9e9; }.feature-icon.green { color: #1e9558; background: #e3f4ea; }.feature-icon.amber { color: #c27a0b; background: #fbf0dd; }.feature-icon.purple { color: #7656d8; background: #eee9fa; }.hero-copy { min-width: 0; flex: 1; }.hero h1 { margin: 1px 0 5px; font-size: 24px; letter-spacing: -.015em; }.tagline { margin: 0 0 10px; color: var(--uc-muted); font-size: 14px; }.byline { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--uc-dim); font-size: 12px; }.byline b { color: var(--uc-text); font-weight: 500; }.dashboard-badge { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 7px 11px; border: 1px solid var(--uc-accent-line); border-radius: 9px; background: var(--uc-accent-soft); color: var(--uc-accent); font-size: 12px; }.dashboard-badge code { color: var(--uc-muted); font-size: 11px; }.hero-action { display: flex; flex: none; flex-direction: column; align-items: center; gap: 8px; }.hero-action small { color: var(--uc-dim); font-size: 11px; }.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; gap: 16px; }.section { margin-bottom: 16px; padding: 18px 22px; }.section h2 { margin: 0 0 10px; color: var(--uc-dim); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }.section p, .markdown { margin: 0 0 10px; font-size: 13px; line-height: 1.6; }.markdown :deep(p) { margin: 0 0 10px; }.outcomes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }.outcome { padding: 12px 14px; border: 1px solid var(--uc-line); border-radius: 10px; }.outcome b, .outcome span { display: block; }.outcome span { margin-top: 4px; color: var(--uc-muted); font-size: 12px; }.note { display: flex; gap: 9px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--uc-accent-line); border-radius: 10px; background: var(--uc-paper); color: var(--uc-muted); font-size: 12px; line-height: 1.45; }.note :deep(svg) { width: 16px; height: 16px; flex: none; color: var(--uc-accent); }.note b { color: var(--uc-text); }.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }.steps li { position: relative; min-height: 24px; padding: 8px 0 8px 34px; border-top: 1px solid var(--uc-line); font-size: 12.5px; counter-increment: step; }.steps li:first-child { border-top: 0; }.steps li::before { content: counter(step); position: absolute; top: 7px; left: 0; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--uc-accent-soft); color: var(--uc-accent); font-size: 11px; font-weight: 700; }.steps b { margin-right: 5px; }.content-group h3 { display: flex; gap: 7px; margin: 14px 0 4px; padding-bottom: 4px; border-bottom: 1px solid var(--uc-line); color: var(--uc-dim); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; }.content-group h3 span { font-weight: 400; }.content-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--uc-line); }.content-item > div { min-width: 0; flex: 1; }.content-item b, .content-item small, .content-item code { display: block; }.content-item b { font-size: 12.5px; font-weight: 500; }.content-item small, .content-item code, .item-side { color: var(--uc-dim); font-size: 11.5px; }.item-side { white-space: nowrap; }.summary { position: sticky; top: 0; }.summary-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--uc-line); }.summary-head h3 { margin: 0; font-size: 13px; }.summary-head small { display: block; color: var(--uc-dim); font-size: 11px; }.summary dl { margin: 0; padding: 6px 16px 10px; }.summary dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--uc-line); font-size: 12.5px; }.summary dl > div:first-child { border-top: 0; }.summary dt { color: var(--uc-dim); }.summary dd { margin: 0; text-align: right; }.summary-action { padding: 12px 16px 16px; border-top: 1px solid var(--uc-line); }.summary-action .button { width: 100%; }.spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; }.summary { position: static; }.outcomes { grid-template-columns: 1fr; } }
 </style>

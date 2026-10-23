@@ -56,15 +56,27 @@ export function initSullaMarketplaceEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('packages:uninstall', async(_event, input: { slug?: string } = {}) => {
+  ipcMainProxy.handle('packages:uninstall', async(_event, input: { slug?: string; removeData?: boolean } = {}) => {
     const slug = typeof input?.slug === 'string' ? input.slug.trim() : '';
     if (!slug) return { ok: false, removed: [], error: 'packages:uninstall requires slug' };
     try {
       const { uninstallPackage } = await import('@pkg/main/marketplace/databaseInstaller');
-      return await uninstallPackage(slug);
+      return await uninstallPackage(slug, input.removeData === true);
     } catch (err) {
       console.error('[Sulla] packages:uninstall failed:', err);
       return { ok: false, removed: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMainProxy.handle('packages:set-active', async(_event, input: { slug?: string; active?: boolean } = {}) => {
+    const slug = typeof input?.slug === 'string' ? input.slug.trim() : '';
+    if (!slug || typeof input.active !== 'boolean') return { ok: false, error: 'packages:set-active requires slug and active' };
+    try {
+      const { setPackageActive } = await import('@pkg/main/marketplace/databaseInstaller');
+      return await setPackageActive(slug, input.active);
+    } catch (err) {
+      console.error('[Sulla] packages:set-active failed:', err);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 

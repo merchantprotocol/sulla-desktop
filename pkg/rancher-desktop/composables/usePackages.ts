@@ -33,6 +33,11 @@ export interface PackageRow {
   where:    'both' | 'desktop';
   keywords: string[];
   version:  string;
+  publisher: string;
+  bundleSize: number;
+  updatedAt: string;
+  contents: PackageContentItem[];
+  dashboardPort?: number;
 }
 
 export interface PackageContentItem {
@@ -40,6 +45,10 @@ export interface PackageContentItem {
   slug:    string;
   name:    string;
   version: string;
+  description: string;
+  required: boolean;
+  containers: string[];
+  dataVolume: string;
 }
 
 export interface PackageDetail {
@@ -59,6 +68,8 @@ export interface InstalledPackage {
   title:       string;
   icon:        string;
   installedAt: string;
+  manifest:    Record<string, any>;
+  active:      boolean;
   items:       { kind: string; slug: string }[];
 }
 
@@ -99,12 +110,20 @@ export const packagesIpc = {
       throw err;
     }
   },
-  async uninstall(slug: string): Promise<PackageUninstallResult> {
+  async uninstall(slug: string, removeData = false): Promise<PackageUninstallResult> {
     try {
-      return await invoke('packages:uninstall', { slug });
+      return await invoke('packages:uninstall', { slug, removeData });
     } catch (err) {
       if (isMissingHandler(err)) return { ok: false, error: NOT_AVAILABLE }; // STUB BOUNDARY
 
+      throw err;
+    }
+  },
+  async setActive(slug: string, active: boolean): Promise<{ ok: boolean; active?: boolean; recipes?: string[]; error?: string }> {
+    try {
+      return await invoke('packages:set-active', { slug, active });
+    } catch (err) {
+      if (isMissingHandler(err)) return { ok: false, error: NOT_AVAILABLE };
       throw err;
     }
   },
@@ -135,11 +154,26 @@ function obj(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
+function recipeWebPort(manifest: Record<string, any>): number | undefined {
+  const contents = Array.isArray(manifest.contents) ? manifest.contents : [];
+  for (const entry of contents) {
+    if (entry?.kind !== 'recipe') continue;
+    const recipe = obj(entry.manifest);
+    const candidates = [recipe.web?.port, recipe.ui?.port, recipe.dashboard?.port, recipe.port, obj(recipe.spec).web?.port];
+    const port = candidates.map(Number).find(value => Number.isInteger(value) && value > 0 && value <= 65535);
+    if (port) return port;
+  }
+  return undefined;
+}
+
 export function toPackageRow(raw: Record<string, any>, manifestIn?: Record<string, unknown>): PackageRow {
   const summary = obj(raw.summary);
   const manifest = obj(manifestIn ?? raw.manifest);
   const pick = (key: string) => raw[key] ?? summary[key] ?? manifest[key];
   const app = str(pick('app'));
+  const contentSource = Object.keys(manifest).length ? manifest : summary;
+  const dashboardPort = recipeWebPort(contentSource);
+  const contents = toContents(contentSource);
   const keywords = pick('keywords') ?? raw.tags;
 
   return {
@@ -150,10 +184,15 @@ export function toPackageRow(raw: Record<string, any>, manifestIn?: Record<strin
     line:     str(pick('line'), raw.description, manifest.description),
     topic:    str(pick('topic'), raw.category),
     icon:     str(pick('icon')) || '📦',
-    app:      app === 'dashboard' || app === 'app' ? app : 'none',
-    where:    str(pick('where')) === 'desktop' ? 'desktop' : 'both',
+    app:      dashboardPort ? 'dashboard' : app === 'app' ? 'app' : 'none',
+    where:    contents.some(item => item.kind === 'recipe') || str(pick('where')) === 'desktop' ? 'desktop' : 'both',
     keywords: Array.isArray(keywords) ? keywords.filter((k): k is string => typeof k === 'string') : [],
     version:  str(raw.version, manifest.version),
+    publisher: str(raw.author_display, raw.publisher, manifest.publisher) || 'Sulla',
+    bundleSize: Number(raw.bundle_size) || 0,
+    updatedAt: str(raw.updated_at),
+    contents,
+    dashboardPort,
   };
 }
 
@@ -170,6 +209,12 @@ function toContents(manifest: Record<string, any>): PackageContentItem[] {
       slug:    str(item.slug, inner.slug),
       name:    str(inner.name, innerMeta.name, item.name, item.slug),
       version: str(item.version, inner.version),
+      description: str(inner.description, inner.summary, item.description),
+      required: item.required === true || inner.required === true,
+      containers: Array.isArray(inner.containers)
+        ? inner.containers.map((container: unknown) => typeof container === 'string' ? container : str(obj(container).name, obj(container).service)).filter(Boolean)
+        : [],
+      dataVolume: str(inner.data_volume, inner.dataVolume, obj(inner.storage).volume),
     };
   }).filter((item: PackageContentItem) => item.kind && item.slug);
 }
@@ -281,10 +326,23 @@ export function usePackages() {
     }
   }
 
-  async function uninstall(slug: string): Promise<PackageUninstallResult> {
+  async function setActive(slug: string, active: boolean): Promise<{ ok: boolean; error?: string }> {
     busySlug.value = slug;
     try {
-      const res = await packagesIpc.uninstall(slug);
+      const res = await packagesIpc.setActive(slug, active);
+      if (res?.ok) await loadInstalled();
+      return res ?? { ok: false, error: 'No response from Sulla Desktop.' };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      busySlug.value = null;
+    }
+  }
+
+  async function uninstall(slug: string, removeData = false): Promise<PackageUninstallResult> {
+    busySlug.value = slug;
+    try {
+      const res = await packagesIpc.uninstall(slug, removeData);
       if (res?.ok) await loadInstalled();
 
       return res ?? { ok: false, error: 'No response from the installer.' };
@@ -310,6 +368,7 @@ export function usePackages() {
     loadDetail,
     clearDetail,
     install,
+    setActive,
     uninstall,
   };
 }
