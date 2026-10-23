@@ -1,18 +1,18 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { callCaptureStudio } from '@pkg/main/captureStudioRpc';
-import { createDirectoryWithinRoot } from '@pkg/main/sullaFilesDirectory';
+import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFilesWatcher';
 
 export type ScreenshotMode = 'area' | 'window' | 'full';
-export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string }
+export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
 
 interface RecorderResult { started?:boolean; stopped?:boolean; sessionDir?:string | null; reason?:string }
 
@@ -24,53 +24,6 @@ function stamp():string {
   const pad = (number:number) => String(number).padStart(2, '0');
 
   return `${ value.getFullYear() }-${ pad(value.getMonth() + 1) }-${ pad(value.getDate()) } at ${ pad(value.getHours()) }.${ pad(value.getMinutes()) }.${ pad(value.getSeconds()) }`;
-}
-
-function inside(root:string, candidate:string):boolean {
-  const relative = path.relative(root, candidate);
-
-  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${ path.sep }`));
-}
-
-async function captureDirectory(relativePath:string):Promise<string> {
-  const root = getSullaFilesWatcher().folder;
-  const realRoot = await fs.promises.realpath(root);
-  const target = path.join(root, relativePath);
-  try {
-    await createDirectoryWithinRoot(root, relativePath);
-  } catch (error:any) {
-    if (error?.code !== 'EEXIST') throw error;
-  }
-  const [targetInfo, resolved] = await Promise.all([fs.promises.lstat(target), fs.promises.realpath(target)]);
-  if (targetInfo.isSymbolicLink() || !targetInfo.isDirectory() || !inside(realRoot, resolved)) {
-    throw new Error(`The ${ relativePath } capture folder must be a real directory inside Sulla Files.`);
-  }
-
-  return resolved;
-}
-
-async function commitUniqueFile(dir:string, filename:string, write:(temporaryPath:string) => Promise<void>):Promise<string> {
-  const extension = path.extname(filename);
-  const stem = extension ? filename.slice(0, -extension.length) : filename;
-  const temporaryPath = path.join(dir, `.sulla-capture-${ randomUUID() }.partial`);
-  try {
-    await write(temporaryPath);
-    const info = await fs.promises.lstat(temporaryPath);
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Capture output was not a regular file.');
-    await fs.promises.chmod(temporaryPath, 0o600);
-    for (let index = 0; ; index++) {
-      const candidate = path.join(dir, index ? `${ stem } (${ index })${ extension }` : filename);
-      try {
-        // link() is an atomic no-overwrite commit on the same filesystem.
-        await fs.promises.link(temporaryPath, candidate);
-        return candidate;
-      } catch (error:any) {
-        if (error?.code !== 'EEXIST') throw error;
-      }
-    }
-  } finally {
-    await fs.promises.rm(temporaryPath, { force: true });
-  }
 }
 
 function safeStreamLabel(value:unknown):string {
@@ -86,6 +39,22 @@ async function waitForFile(relativePath:string):Promise<RecentSullaFile | undefi
     if (file) return file;
     await new Promise(resolve => setTimeout(resolve, 250));
   }
+}
+
+function importedReference(result:ChatFilesReference[] | { references:ChatFilesReference[]; error:string }):ChatFilesReference {
+  const reference = Array.isArray(result) ? result[0] : result.references[0];
+  if (!reference) throw new Error(Array.isArray(result) ? 'Files did not return the imported capture.' : result.error);
+  return reference;
+}
+
+function captureResult(reference:ChatFilesReference, kind:CaptureResult['kind']):CaptureResult {
+  return { path: reference.path, relativePath: reference.path, name: reference.name, size: reference.size, kind, fileId: reference.fileId, reference };
+}
+
+async function withCaptureTemp<T>(extension:string, work:(temporaryPath:string) => Promise<T>):Promise<T> {
+  const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-capture-'));
+  const temporaryPath = path.join(directory, `capture${ extension }`);
+  try { return await work(temporaryPath) } finally { await fs.promises.rm(directory, { recursive: true, force: true }) }
 }
 
 function runMacScreenshot(args:string[]):Promise<void> {
@@ -109,19 +78,17 @@ export class SullaFilesCaptureService {
   private recording = false;
 
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
-    const root = await captureDirectory(SCREENSHOTS);
-    const target = await commitUniqueFile(root, `Screenshot ${ stamp() }.png`, async temporaryPath => {
+    return withCaptureTemp('.png', async temporaryPath => {
       if (process.platform === 'darwin') {
         const args = mode === 'full' ? ['-x', '-o', '-t', 'png', temporaryPath] : mode === 'window' ? ['-iW', '-o', '-t', 'png', temporaryPath] : ['-i', '-o', '-t', 'png', temporaryPath];
         await runMacScreenshot(args);
       } else {
         await electronScreenshot(temporaryPath, mode === 'window' ? 'window' : 'screen');
       }
+      const namedPath = path.join(path.dirname(temporaryPath), `Screenshot ${ stamp() }.png`);
+      await fs.promises.rename(temporaryPath, namedPath);
+      return captureResult(importedReference(await importChatFiles([namedPath], SCREENSHOTS)), 'screenshot');
     });
-    const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
-    const file = await waitForFile(relativePath);
-
-    return { path: target, relativePath, name: path.basename(target), size: info.size, kind: 'screenshot', fileId: file?.id };
   }
 
   async toggleRecording(input:{ mic:boolean; camera:boolean }):Promise<{ recording:boolean; capture?:CaptureResult; error?:string }> {
@@ -139,35 +106,29 @@ export class SullaFilesCaptureService {
   }
 
   private async saveRecording(sessionDir:string):Promise<CaptureResult> {
-    const destination = await captureDirectory(RECORDINGS);
     const raw = JSON.parse(await fs.promises.readFile(path.join(sessionDir, 'manifest.json'), 'utf8'));
     const streams:any[] = raw.streams ?? []; const primary = streams.find(stream => stream.type === 'screen') ?? streams.find(stream => stream.type === 'camera');
     if (!primary) throw new Error('Capture Studio recording contains no video track');
-    const stem = `Recording ${ stamp() }`; const primaryExtension = path.extname(primary.filename) || '.webm';
-    const target = await commitUniqueFile(destination, `${ stem }${ primaryExtension }`, temporaryPath => fs.promises.copyFile(path.join(sessionDir, path.basename(primary.filename)), temporaryPath, fs.constants.COPYFILE_EXCL));
-    const chosenStem = path.basename(target, path.extname(target));
-    const copied:any[] = [{ ...primary, filename: path.basename(target) }];
-    for (const stream of streams.filter(stream => stream !== primary && Number(stream.bytes) > 0)) {
-      const suffix = safeStreamLabel(stream.type);
-      const output = await commitUniqueFile(destination, `${ chosenStem }-${ suffix }${ path.extname(stream.filename) || '.webm' }`, temporaryPath => fs.promises.copyFile(path.join(sessionDir, path.basename(stream.filename)), temporaryPath, fs.constants.COPYFILE_EXCL));
-      copied.push({ ...stream, filename: path.basename(output) });
-    }
-    await commitUniqueFile(destination, `${ chosenStem }.capture.json`, temporaryPath => fs.promises.writeFile(temporaryPath, JSON.stringify({ ...raw, streams: copied }, null, 2), { flag: 'wx', mode: 0o600 }));
-    const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
-    const file = await waitForFile(relativePath);
-
-    return { path: target, relativePath, name: path.basename(target), size: info.size, kind: 'recording', fileId: file?.id };
+    const temporaryDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-recording-'));
+    try {
+      const stem = `Recording ${ stamp() }`; const outputs:string[] = []; const copied:any[] = [];
+      for (const [index, stream] of [primary, ...streams.filter(stream => stream !== primary && Number(stream.bytes) > 0)].entries()) {
+        const suffix = index ? `-${ safeStreamLabel(stream.type) }` : '';
+        const output = path.join(temporaryDirectory, `${ stem }${ suffix }${ path.extname(stream.filename) || '.webm' }`);
+        await fs.promises.copyFile(path.join(sessionDir, path.basename(stream.filename)), output, fs.constants.COPYFILE_EXCL);
+        outputs.push(output); copied.push({ ...stream, filename:path.basename(output) });
+      }
+      const manifest = path.join(temporaryDirectory, `${ stem }.capture.json`);
+      await fs.promises.writeFile(manifest, JSON.stringify({ ...raw, streams: copied }, null, 2), { flag:'wx', mode:0o600 });
+      const imported = await importChatFiles([...outputs, manifest], RECORDINGS);
+      return captureResult(importedReference(imported), 'recording');
+    } finally { await fs.promises.rm(temporaryDirectory, { recursive:true, force:true }) }
   }
 
   async upload():Promise<CaptureResult | undefined> {
     const picked = await dialog.showOpenDialog({ title: 'Upload & copy link', properties: ['openFile'] });
     if (picked.canceled || !picked.filePaths[0]) return undefined;
-    const source = picked.filePaths[0]; const uploads = await captureDirectory('Uploads');
-    const target = await commitUniqueFile(uploads, path.basename(source), temporaryPath => fs.promises.copyFile(source, temporaryPath, fs.constants.COPYFILE_EXCL));
-    const info = await fs.promises.stat(target); const relativePath = path.relative(getSullaFilesWatcher().folder, target).split(path.sep).join('/');
-    const file = await waitForFile(relativePath);
-
-    return { path: target, relativePath, name: path.basename(target), size: info.size, kind: 'upload', fileId: file?.id };
+    return captureResult(importedReference(await importChatFiles([picked.filePaths[0]], 'Uploads')), 'upload');
   }
 
   async share(capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }):Promise<{ url?:string; unavailable?:boolean; message:string }> {

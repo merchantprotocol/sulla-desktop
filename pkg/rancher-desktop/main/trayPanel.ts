@@ -49,6 +49,10 @@ async function resolveFilesItem(candidate:string, relative:boolean):Promise<{ ab
 }
 
 async function trustedCapture(input:CaptureResult):Promise<CaptureResult> {
+  if (input.reference?.fileId && /^[a-zA-Z0-9_-]+$/.test(input.reference.fileId) && input.reference.versionId) {
+    const kind = ['screenshot', 'recording', 'upload'].includes(input.kind) ? input.kind : 'upload';
+    return { ...input, kind, fileId:input.reference.fileId, path:input.reference.path, relativePath:input.reference.path, name:path.basename(input.reference.path), size:input.reference.size };
+  }
   const item = await resolveFilesItem(input.relativePath, true);
   const indexed = await getSullaFilesWatcher().findFile(item.relativePath);
   const kind = ['screenshot', 'recording', 'upload'].includes(input.kind) ? input.kind : 'upload';

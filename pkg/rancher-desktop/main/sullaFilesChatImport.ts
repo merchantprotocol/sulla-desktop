@@ -230,7 +230,7 @@ function durableReference(file:FilesRecord, collection:FilesCollection, expected
   };
 }
 
-export async function importChatFiles(filePaths:string[]):Promise<ChatFilesReference[] | PartialChatFilesImport> {
+export async function importChatFiles(filePaths:string[], destination = ''):Promise<ChatFilesReference[] | PartialChatFilesImport> {
   if (!Array.isArray(filePaths) || filePaths.some(source => typeof source !== 'string' || !source)) throw new Error('Files import requires selected file paths.');
   if (!filePaths.length) return [];
   if (filePaths.length > 100) throw new Error('Choose 100 files or fewer at a time.');
@@ -251,13 +251,22 @@ export async function importChatFiles(filePaths:string[]):Promise<ChatFilesRefer
       responseJson<FilesRecord[]>(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`),
       responseJson<FilesRecord[]>(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=true`),
     ]);
+    const normalizedDestination = destination.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+    if (normalizedDestination.split('/').some(part => part === '.' || part === '..')) throw new Error('The Files destination is invalid.');
     const reserved = new Set([...active, ...trash].flatMap(file => typeof file.path === 'string' ? [file.path] : []));
+    const destinationPrefix = normalizedDestination ? `${ normalizedDestination }/` : '';
+    const destinationReserved = new Set([...reserved].flatMap(item => {
+      if (destinationPrefix && !item.startsWith(destinationPrefix)) return [];
+      const relative = destinationPrefix ? item.slice(destinationPrefix.length) : item;
+      return relative.includes('/') ? [] : [relative];
+    }));
     const references:ChatFilesReference[] = [];
     for (const source of sources) {
       try {
         let uploaded = false;
         for (let attempt = 0; attempt < 100; attempt++) {
-          const targetPath = availablePath(source.name, reserved);
+          const targetPath = [normalizedDestination, availablePath(source.name, destinationReserved)].filter(Boolean).join('/');
+          reserved.add(targetPath);
           const mime = mimeFor(targetPath);
           const { response, sourceChanged } = await uploadPreparedSource(source, `/v1/files/import?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(targetPath) }`, mime);
           if (response.status === 409) {
