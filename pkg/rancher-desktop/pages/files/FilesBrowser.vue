@@ -866,7 +866,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch 
 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
-import { supportsDocumentEditor } from './editor/registry';
+import { supportsDocumentEditor } from './editor/editorTypes';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
 import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
