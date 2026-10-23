@@ -140,6 +140,7 @@ class SullaFilesWatcher {
   private brokeredFingerprints = new Map<string, string>();
   private brokeredFingerprintsLoaded = false;
   private brokeredScans = new Map<string, Promise<void>>();
+  private brokeredRescanQueued = new Set<string>();
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
@@ -433,8 +434,12 @@ class SullaFilesWatcher {
   }
 
   private scanBrokeredRoot(id:string,rootPath:string):Promise<void>{
-    const running=this.brokeredScans.get(id); if(running)return running;
-    const scan=this.scanBrokeredRootNow(id,rootPath).finally(()=>{if(this.brokeredScans.get(id)===scan)this.brokeredScans.delete(id)});
+    // A change that lands mid-scan queues exactly one follow-up pass instead of being dropped.
+    const running=this.brokeredScans.get(id); if(running){this.brokeredRescanQueued.add(id);return running}
+    const scan=this.scanBrokeredRootNow(id,rootPath).finally(()=>{
+      if(this.brokeredScans.get(id)===scan)this.brokeredScans.delete(id);
+      if(this.brokeredRescanQueued.delete(id))this.scanBrokeredRoot(id,rootPath).catch(error=>console.warn(`[SullaFiles] tracked root ${id} scan failed:`,error));
+    });
     this.brokeredScans.set(id,scan); return scan;
   }
 
@@ -454,8 +459,11 @@ class SullaFilesWatcher {
         if(++count>100_000)throw new Error('Tracked folder exceeds the 100,000-file safety limit');
         if(count%25===0)await state('scanning',count);
         const stat=await fs.promises.stat(absolute); if(stat.size>2*1024*1024*1024)throw new Error(`${relative} exceeds the 2 GB tracked-file limit`);
-        const bytes=await fs.promises.readFile(absolute); const fingerprint=crypto.createHash('sha256').update(bytes).digest('hex'); const key=`${id}:${relative}`;
-        if(this.brokeredFingerprints.get(key)===fingerprint&&current.get(relative)===stat.size)continue;
+        // Unchanged size + mtime means the stored version is current; skip reading the file at all.
+        const key=`${id}:${relative}`; const stamp=`${stat.size}:${stat.mtimeMs}`;
+        if(this.brokeredFingerprints.get(key)?.startsWith(`${stamp}:`)&&current.get(relative)===stat.size)continue;
+        const bytes=await fs.promises.readFile(absolute); const fingerprint=`${stamp}:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
+        if(this.brokeredFingerprints.get(key)?.split(':').pop()===fingerprint.split(':').pop()&&current.get(relative)===stat.size){this.brokeredFingerprints.set(key,fingerprint);continue}
         const response=await this.requestFiles(`/v1/files/upload?collectionId=${encodeURIComponent(root.collectionId)}&path=${encodeURIComponent(relative)}`,{method:'PUT',headers:{'content-type':trackedMime(relative)},body:bytes});
         if(!response.ok)throw new Error(`Could not index ${relative} (${response.status})`); this.brokeredFingerprints.set(key,fingerprint); current.set(relative,stat.size);
       }};
