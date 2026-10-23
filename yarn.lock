@@ -14191,7 +14191,7 @@ zod@3.25.76, "zod@^3.25 || ^4.0":
     "@lezer/common" "^1.0.2"
     "@lezer/css" "^1.1.7"
 
-"@codemirror/lang-html@^6.0.0":
+"@codemirror/lang-html@6.4.12", "@codemirror/lang-html@^6.0.0":
   version "6.4.12"
   resolved "https://registry.npmjs.org/@codemirror/lang-html/-/lang-html-6.4.12.tgz"
   integrity sha512-pw2ReWKUqSkbvh76RAT4NYxiogRu+PWkR2ukAwO9uOgrm8uipkzjtKKtNpyeAQwHOqxEeSvAXZ6vr3AfyB9y/w==

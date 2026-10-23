@@ -2,11 +2,6 @@
   <div class="document-editor-shell" @keydown.meta.s.prevent="saveNow" @keydown.ctrl.s.prevent="saveNow">
     <header class="editor-bar">
       <button class="back" type="button" @click="emit('back')"><span v-html="icons.arrowLeft" /> Files</button>
-      <div class="file-switcher" role="tablist" aria-label="Open files">
-        <button v-for="file in files" :key="file.id" type="button" role="tab" :aria-selected="file.id===item.id" :class="{active:file.id===item.id}" @click="emit('select',file)">
-          <span class="type-mark">{{ editorTypeForPath(file.path)?.id==='markdown'?'M':'T' }}</span>{{ file.path.split('/').at(-1) }}
-        </button>
-      </div>
       <div class="bar-spacer" />
       <span class="save-chip" :class="saveState"><i />{{ saveLabel }}</span>
       <div class="presence" aria-label="Present collaborators"><span v-for="peer in peers" :key="peer.id" :title="peer.name">{{ peer.kind==='user'?ownerInitial:peer.name.slice(0,1).toUpperCase() }}</span></div>
@@ -50,8 +45,8 @@ import type { EditorCollaboration } from './codeMirror';
 import { LiveDocument } from './liveDocument';
 import { editorTypeForPath } from './registry';
 import type { FilesDataSource, FilesDetail, FilesItem, FilesVersion } from '../types';
-const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; files:FilesItem[] }>();
-const emit=defineEmits<{ back:[]; select:[item:FilesItem]; saved:[item:FilesItem] }>();
+const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; files?:FilesItem[] }>();
+const emit=defineEmits<{ back:[]; saved:[item:FilesItem] }>();
 // Yjs objects must never be wrapped in Vue proxies.
 const liveBinding=shallowRef<EditorCollaboration|null>(null);
 const liveState=ref<'live'|'syncing'|'offline'|null>(null),peers=ref<{id:string;name:string;kind:string}[]>([]);

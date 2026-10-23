@@ -766,6 +766,7 @@
       :data-source="dataSource"
       :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
       @close="selected = null"
+      @open="openDetail"
       @share="shareEntry(selected)"
       @restored="selected = null; refresh(true)"
       @trash-outcome="onTrashDetailOutcome"
@@ -784,6 +785,7 @@
           <iframe v-else-if="quickLookUrl && quickLookEntry.mime === 'application/pdf'" :src="quickLookUrl" :title="quickLookEntry.name" sandbox="" />
           <div v-else class="quick-look-fallback"><span class="fi" :class="quickLookEntry.kindClass" v-html="quickLookEntry.icon" /><p>Preview isn’t available for this item.</p></div>
           <footer><b>{{ quickLookEntry.name }}</b><span>{{ formatBytes(quickLookEntry.size) }} · {{ formatDate(quickLookEntry.updatedAt, true) }}</span></footer>
+          <button v-if="supportsDocumentEditor(quickLookEntry.path)" class="btn sm quick-look-open" type="button" @click="openQuickLookSelection">Open</button>
         </div>
         <button class="quick-look-nav next" type="button" aria-label="Next item" :disabled="quickLookIndex >= quickLookEntries.length - 1" @click="stepQuickLook(1)">›</button>
       </div>
@@ -865,7 +867,7 @@ import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperati
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
-const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem] }>();
+const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem, collectionId?:string] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
@@ -1308,7 +1310,7 @@ async function newFile(folder = currentPath.value, suggested = 'Untitled.txt') {
   const created = await runMutation(()=>props.dataSource.createFile!(path));
   // Like Google Drive: a new document opens straight into the editor.
   const file = created && supportsDocumentEditor(path) ? activeFiles.value.find(item => item.path === path) : undefined;
-  if (file) emit('open-editor', file);
+  if (file) emit('open-editor', file, snapshot.value?.collection.id);
 }
 async function chooseNativeSource() { if (props.dataSource.chooseNativeSource) await runMutation(async() => { await props.dataSource.chooseNativeSource!() }) }
 async function recoverNativeSource(fileId:string) { if (props.dataSource.recoverNativeSource) await runMutation(async() => { await props.dataSource.recoverNativeSource!(fileId) }) }
@@ -1382,11 +1384,22 @@ async function saveFolderGuidance(){const details=folderDetails.value;const stat
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else if (supportsDocumentEditor(entry.path)) emit('open-editor', entry); else selectEntry(entry) }
+function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else if (supportsDocumentEditor(entry.path)) emit('open-editor', entry, snapshot.value?.collection.id); else selectEntry(entry) }
 function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
-async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
+function openDisplayEntry(entry:DisplayEntry) { if (supportsDocumentEditor(entry.path)) emit('open-editor', entry, snapshot.value?.collection.id); else selectEntry(entry) }
+function openDetail() { if (selected.value) openDisplayEntry(selected.value) }
+function openQuickLookSelection() { const entry=quickLookEntry.value;if(!entry)return;closeQuickLook();openDisplayEntry(entry) }
+async function openLinked(fileId:string, path:string) {
+  let file = snapshot.value?.files.find(item => item.id === fileId);
+  if (!file) {
+    try { const loaded=await props.dataSource.load();snapshot.value=loaded;file=loaded.files.find(item=>item.id===fileId) }
+    catch (cause) { operationError.value=cause instanceof Error?cause.message:String(cause);return }
+  }
+  if (file) openDisplayEntry(toDisplay(file));
+  else operationError.value = `The linked file ${ path.split('/').at(-1) || path } is no longer available.`;
+}
 function isExternalFileDrag(event:DragEvent) { return !internalDragActive && !event.dataTransfer?.types.includes('application/x-sulla-files') && Boolean(event.dataTransfer?.types.includes('Files')) }
 function acceptsExternalDrop(event:DragEvent) { return isExternalFileDrag(event) && props.dataSource.capabilities.upload && !readOnlyArea.value && section.value === 'files' }
 function onBrowserDragEnter(event:DragEvent) { if (acceptsExternalDrop(event)) { externalDragDepth++; dragging.value = true } }
@@ -1925,7 +1938,7 @@ async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'r
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
   if (action === 'new-folder' || action === 'new-file') { if (target.folder) await (action === 'new-folder' ? newFolder(target.path) : newFile(target.path)); return }
-  if (action === 'open-sulla') { if (!target.folder && supportsDocumentEditor(target.path)) emit('open-editor', target); else selectEntry(target); return }
+  if (action === 'open-sulla') { if (!target.folder && supportsDocumentEditor(target.path)) emit('open-editor', target, snapshot.value?.collection.id); else selectEntry(target); return }
   if (action === 'native-open') { await runMutation(() => (props.dataSource.openFileWithDefaultApp ?? props.dataSource.openFile).call(props.dataSource,target.id,target.currentVersionId), false); return }
   if (action === 'reveal') {
     if (!props.dataSource.capabilities.nativeReveal || !props.dataSource.revealFile) return;
@@ -1977,15 +1990,18 @@ function onKeydown(event:KeyboardEvent) {
   if ((event.key === 'Delete' || (event.metaKey && event.key === 'Backspace')) && selectedEntries.value.length && section.value !== 'trash') { event.preventDefault(); trashSelected(); return }
   if (event.key === ' ' && selectedEntries.value.some(entry => !entry.folder)) { event.preventDefault(); openQuickLook(); return }
 }
-function navigateTo(detail:FilesNavigationPayload) {
+async function navigateTo(detail:FilesNavigationPayload) {
+  if (detail.collectionId && detail.collectionId !== snapshot.value?.collection.id) { await selectCollection(detail.collectionId) }
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);
-  if (!file && detail.path) {
-    openPath(detail.path);
+  // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
+  if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
+    openPath(detail.path ?? '');
     if (detail.section === 'share-review') shareCurrentFolder();
     return;
   }
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
+  if (!detail.section && supportsDocumentEditor(file.path)) { emit('open-editor', toDisplay(file), snapshot.value?.collection.id); return }
   selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
   if (detail.section === 'share-review') shareEntry(toDisplay(file));

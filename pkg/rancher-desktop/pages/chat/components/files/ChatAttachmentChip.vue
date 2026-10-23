@@ -21,6 +21,8 @@ import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { openDocumentTab } from '@pkg/composables/useBrowserTabs';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 import type { AttachedFile } from '../../models/Message';
 
@@ -33,6 +35,10 @@ const subtitle = computed(() => {
 
 async function open():Promise<void> {
   if (!props.attachment.fileRef) return;
+  if (supportsDocumentEditor(props.attachment.fileRef.path)) {
+    openDocumentTab({ fileId: props.attachment.fileRef.fileId, path: props.attachment.fileRef.path });
+    return;
+  }
   await ipcRenderer.invoke('files-ui:open-file', { fileId: props.attachment.fileRef.fileId, versionId: props.attachment.fileRef.versionId });
 }
 </script>

@@ -130,6 +130,8 @@ import FileStatusIcon from './FileStatusIcon.vue';
 import { useChatController } from '../../controller/useChatController';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { openDocumentTab } from '@pkg/composables/useBrowserTabs';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 interface RefFile {
   fileId:          string;
@@ -239,6 +241,11 @@ function refreshWhenVisible():void {
 }
 
 async function openFile(file:RefFile):Promise<void> {
+  if (supportsDocumentEditor(file.path)) {
+    openDocumentTab({ fileId: file.fileId, path: file.path });
+    error.value = '';
+    return;
+  }
   try {
     await ipcRenderer.invoke('files-ui:open-file', { fileId: file.fileId, versionId: file.versionId });
     error.value = '';

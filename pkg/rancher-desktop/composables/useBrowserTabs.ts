@@ -2,12 +2,13 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'files' | 'decide' | 'usage';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'files' | 'paper' | 'decide' | 'usage';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
   path?:    string;
   section?: string;
+  collectionId?: string;
 }
 
 export interface BrowserTab {
@@ -22,6 +23,8 @@ export interface BrowserTab {
   content?: string;
   /** Consumed by a Files tab after it mounts, so navigation is never timer-dependent. */
   filesNavigation?: FilesNavigationPayload;
+  /** Files identity for a Paper tab. Content is always reloaded from Files. */
+  documentFile?: { fileId: string; path: string; collectionId?: string };
   /** Recipe rail identity used to refocus its single app tab. */
   recipeAppSlug?: string;
   /**
@@ -82,6 +85,8 @@ function loadPersistedTabs(): BrowserTab[] {
     for (const t of noFileEditor) {
       const key = t?.mode === 'chat'
         ? `chat|${ t?.agentChat?.threadId || t?.id || '' }`
+        : t?.mode === 'paper'
+          ? `paper|${ t?.documentFile?.fileId || t?.id || '' }`
         : `${ t?.mode || '' }|${ t?.url || '' }`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -446,11 +451,12 @@ export function useBrowserTabs() {
     terminal:     'Terminal',
     agents:       'Agents',
     files:        'File Manager',
+    paper:        'Paper',
     decide:       'Decide',
     usage:        'Usage',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; recipeAppSlug?: string }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -462,6 +468,7 @@ export function useBrowserTabs() {
       lastAccessedAt: Date.now(),
       ...(opts?.agentChat ? { agentChat: opts.agentChat } : {}),
       ...(opts?.filesNavigation ? { filesNavigation: opts.filesNavigation } : {}),
+      ...(opts?.documentFile ? { documentFile: opts.documentFile } : {}),
       ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
     };
 
@@ -688,6 +695,28 @@ export function useBrowserTabs() {
     clearClosedTabs,
     reorderTabs,
   };
+}
+
+/** Open one durable Paper tab per Files identity and focus it. */
+export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string }): BrowserTab {
+  const { createTab } = useBrowserTabs();
+  const existing = tabs.find(tab => tab.mode === 'paper' && tab.documentFile?.fileId === documentFile.fileId);
+  const tab = existing ?? createTab('about:blank', {
+    mode: 'paper',
+    title: documentFile.path.split('/').at(-1) || 'Paper',
+    documentFile,
+  });
+
+  if (existing && (existing.documentFile?.path !== documentFile.path || existing.documentFile?.collectionId !== documentFile.collectionId)) {
+    existing.documentFile = documentFile;
+    existing.title = documentFile.path.split('/').at(-1) || 'Paper';
+    existing.lastAccessedAt = Date.now();
+  }
+  try {
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  } catch { /* non-browser context */ }
+
+  return tab;
 }
 
 /**

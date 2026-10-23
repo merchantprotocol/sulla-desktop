@@ -146,7 +146,8 @@ import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
-import { useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -475,8 +476,12 @@ function onAgentCommand(_event: any, args: any) {
   case 'open-tab': {
     // `packages` is the user-facing name of the `marketplace` view.
     const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
+    if (mode === 'files' && args.fileId && args.path && supportsDocumentEditor(args.path)) {
+      openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId });
+      break;
+    }
     const filesNavigation = mode === 'files' && (args.fileId || args.path || args.section)
-      ? { fileId: args.fileId, path: args.path, section: args.section }
+      ? { fileId: args.fileId, path: args.path, section: args.section, collectionId: args.collectionId }
       : undefined;
     const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation });
 
