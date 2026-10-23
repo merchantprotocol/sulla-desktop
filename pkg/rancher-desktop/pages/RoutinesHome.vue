@@ -39,7 +39,10 @@
         <div class="bracket bl" />
         <div class="bracket br" />
 
-        <div class="shell">
+        <div
+          class="shell"
+          :class="{ wide: activeTab === 'mywork' }"
+        >
       <!-- top: brand + two tabs -->
       <div class="topline">
         <div class="brand">
@@ -103,7 +106,7 @@
           {{ heroDek }}
         </div>
         <div
-          v-if="activeTab === 'mywork' && myWorkView === 'active' && routinesController.routines.value.length > 0"
+          v-if="activeTab === 'mywork' && routinesController.routines.value.length > 0"
           class="rollup-row"
         >
           <div>
@@ -121,38 +124,13 @@
         </div>
       </div>
 
-      <!-- ═══════ MY WORK TAB ═══════ -->
+      <!-- ═══════ MY WORK: workflows list ═══════ -->
       <template v-if="activeTab === 'mywork'">
-        <!-- sub-view toggle: Active routines vs. Archive -->
-        <div class="subtabs">
-          <button
-            type="button"
-            class="subtab"
-            :class="{ on: myWorkView === 'active' }"
-            @click="myWorkView = 'active'"
-          >
-            Active
-            <span class="subtab-num">{{ routinesController.routines.value.length }}</span>
-          </button>
-          <button
-            type="button"
-            class="subtab"
-            :class="{ on: myWorkView === 'archive' }"
-            @click="myWorkView = 'archive'"
-          >
-            Archive
-            <span class="subtab-num">{{ routinesController.archived.value.length }}</span>
-          </button>
-        </div>
-      </template>
-
-      <!-- ═══════ MY WORK → ACTIVE ═══════ -->
-      <template v-if="activeTab === 'mywork' && myWorkView === 'active'">
         <!-- Booting state — the app shell repaints tabs from localStorage
              before the Electron backend is up. Show a benign "warming up"
              message instead of blowing up with a DB connection error. -->
         <EmptyState
-          v-if="routinesController.isEmpty.value"
+          v-if="routinesController.routines.value.length === 0 && !routinesController.isLoading.value"
           kicker="No workflows yet"
           title="Your stage is empty."
           message="You haven't built a workflow yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
@@ -173,74 +151,24 @@
           </button>
         </EmptyState>
 
-        <!-- populated: grouped acts -->
         <template v-else>
-          <ActSection
-            v-if="routinesController.running.value.length"
-            act-num="Act I"
-            title="Running now"
-            :count-label="runningCountLabel"
-          >
-            <RoutineStrip
-              v-for="r in routinesController.running.value"
-              :key="r.id"
-              :routine="r"
-              primary-label="Open"
-              secondary-label="Watch"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
-              @publish="onPublishRoutine(r)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @export="onExport(r.id)"
-              @delete="onDelete(r)"
-            />
-          </ActSection>
-
-          <ActSection
-            v-if="routinesController.scheduled.value.length"
-            act-num="Act II"
-            title="On the schedule"
-            :count-label="scheduledCountLabel"
-          >
-            <RoutineStrip
-              v-for="r in routinesController.scheduled.value"
-              :key="r.id"
-              :routine="r"
-              primary-label="Open"
-              secondary-label="Skip next"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
-              @publish="onPublishRoutine(r)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @export="onExport(r.id)"
-              @delete="onDelete(r)"
-            />
-          </ActSection>
-
-          <ActSection
-            v-if="routinesController.idle.value.length"
-            act-num="Act III"
-            title="In the wings"
-            count-label="Idle, drafts, archived"
-          >
-            <RoutineStrip
-              v-for="r in routinesController.idle.value"
-              :key="r.id"
-              :routine="r"
-              :primary-label="r.status === 'draft' ? 'Publish' : 'Run'"
-              secondary-label="Edit"
-              @primary="r.status === 'draft' ? onPublishAndRun(r.id) : onOpenRoutine(r.id)"
-              @secondary="onEditRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
-              @publish="onPublishRoutine(r)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @export="onExport(r.id)"
-              @delete="onDelete(r)"
-            />
-          </ActSection>
+          <WorkflowTable
+            :routines="routinesController.routines.value"
+            :summaries="runSummaries.workflows"
+            :device-name="runSummaries.deviceName"
+            :running="runRequests"
+            :now="now"
+            @open="onOpenRoutine"
+            @open-run="onOpenRun"
+            @run="onRunNow"
+            @edit="onEditRoutine"
+            @restore="onRestoreRoutine"
+            @duplicate="onDuplicate"
+            @archive="onToggleArchive"
+            @export="onExport"
+            @publish="onPublishById"
+            @delete="onDeleteById"
+          />
 
           <div class="closer">
             <button
@@ -252,54 +180,6 @@
             </button>
             <div class="closer-sub">
               Start blank · or borrow from {{ templatesController.templates.value.length }} template{{ templatesController.templates.value.length === 1 ? '' : 's' }}
-            </div>
-          </div>
-        </template>
-      </template>
-
-      <!-- ═══════ MY WORK → ARCHIVE ═══════ -->
-      <template v-else-if="activeTab === 'mywork' && myWorkView === 'archive'">
-        <EmptyState
-          v-if="routinesController.archived.value.length === 0"
-          kicker="The vault is empty"
-          title="Nothing archived."
-          message="No archived workflows. When you archive one from Active, it lands here."
-        >
-          <button
-            type="button"
-            class="btn primary"
-            @click="myWorkView = 'active'"
-          >
-            ← Back to Active
-          </button>
-        </EmptyState>
-
-        <template v-else>
-          <ActSection
-            act-num="Vault"
-            title="Archived workflows"
-            :count-label="archivedCountLabel"
-          >
-            <RoutineStrip
-              v-for="r in routinesController.archived.value"
-              :key="r.id"
-              :routine="r"
-              primary-label="Restore"
-              secondary-label="Open"
-              @primary="onRestoreRoutine(r.id)"
-              @secondary="onEditRoutine(r.id)"
-              @open="onEditRoutine(r.id)"
-              @publish="onPublishRoutine(r)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @export="onExport(r.id)"
-              @delete="onDelete(r)"
-            />
-          </ActSection>
-
-          <div class="closer">
-            <div class="closer-sub">
-              Archived workflows stay in the database — restore any of them and they return to Active.
             </div>
           </div>
         </template>
@@ -346,36 +226,34 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
 import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
 import PackagesTab from '@pkg/components/routines/PackagesTab.vue';
-import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
+import WorkflowTable from '@pkg/components/routines/WorkflowTable.vue';
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import type { WorkflowRunSummaries } from '@pkg/main/workflowRunSummaries';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
 type Tab = 'mywork' | 'library' | 'marketplace';
-type MyWorkView = 'active' | 'archive';
 
 const props = withDefaults(defineProps<{
   initialTab?: Tab;
 }>(), { initialTab: 'mywork' });
 
 const emit = defineEmits<{
-  (e: 'open-workflow', id: string, mode?: 'edit' | 'run'): void
+  (e: 'open-workflow', id: string, mode?: 'edit' | 'run', runId?: string): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
   (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>(props.initialTab);
-const myWorkView = ref<MyWorkView>('active');
 
 // Watch for external navigation (e.g., clicking Library in ModeRail)
 watch(() => props.initialTab, (newTab) => {
@@ -413,8 +291,37 @@ async function loadAll() {
     // the user to open the Library tab first. Singleton store — second
     // caller (LibraryTab) gets the same cached counts.
     libraryStore.loadAll(),
+    loadRunSummaries(),
   ]);
 }
+
+// ── Workflows list run data ─────────────────────────────────────────
+// Last 12 runs, trigger, next fire and location per workflow, read from
+// workflow_executions + definitions by the main process. Refreshed on a
+// slow poll so "Running now" / "Next run" stay honest while the list is
+// open; `now` ticks with it so relative labels ("In 18 min") move too.
+const runSummaries = ref<WorkflowRunSummaries>({ deviceName: '', workflows: {} });
+const runRequests = ref(new Set<string>());
+const now = ref(new Date());
+let summaryTimer: ReturnType<typeof setInterval> | null = null;
+
+async function loadRunSummaries() {
+  try {
+    runSummaries.value = await ipcRenderer.invoke('workflow-run-summaries');
+  } catch (err) {
+    console.warn('[RoutinesHome] run summaries failed:', err);
+  }
+  now.value = new Date();
+}
+
+onMounted(() => {
+  summaryTimer = setInterval(() => {
+    if (systemReady.value && activeTab.value === 'mywork') void loadRunSummaries();
+  }, 15_000);
+});
+onBeforeUnmount(() => {
+  if (summaryTimer) clearInterval(summaryTimer);
+});
 
 onMounted(() => {
   if (systemReady.value) {
@@ -437,7 +344,7 @@ watch(systemReady, (ready, prev) => {
 const heroKicker = computed(() => {
   switch (activeTab.value) {
   case 'mywork':
-    return myWorkView.value === 'archive' ? 'The Vault' : 'The Cast';
+    return 'The Cast';
   case 'library':     return 'The Library';
   case 'marketplace': return 'Use Cases';
   default:            return 'The Studio';
@@ -446,7 +353,7 @@ const heroKicker = computed(() => {
 
 const heroTitle = computed(() => {
   switch (activeTab.value) {
-  case 'mywork':      return myWorkView.value === 'archive' ? 'Archive.' : 'My Work.';
+  case 'mywork':      return 'My Work.';
   case 'library':     return 'Library.';
   case 'marketplace': return 'Use Cases.';
   default:            return 'Studio.';
@@ -456,9 +363,6 @@ const heroTitle = computed(() => {
 const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
   if (activeTab.value === 'mywork') {
-    if (myWorkView.value === 'archive') {
-      return 'Archived workflows preserved from the active set. Restore them any time.';
-    }
     if (count === 0) {
       return 'Nothing running, nothing scheduled, nothing idle. Start from a template in your Library, or compose something new from the canvas.';
     }
@@ -477,20 +381,6 @@ const heroDek = computed(() => {
   return 'Four kinds, one home.';
 });
 
-const runningCountLabel = computed(() => {
-  const n = routinesController.running.value.length;
-
-  return `${ n } workflow${ n === 1 ? '' : 's' } live`;
-});
-
-const scheduledCountLabel = computed(() => `${ routinesController.scheduled.value.length } upcoming`);
-
-const archivedCountLabel = computed(() => {
-  const n = routinesController.archived.value.length;
-
-  return `${ n } workflow${ n === 1 ? '' : 's' } archived`;
-});
-
 const ribbonStatusLabel = computed(() => {
   switch (activeTab.value) {
   case 'marketplace':
@@ -498,9 +388,7 @@ const ribbonStatusLabel = computed(() => {
   case 'library':
     return `${ templatesController.templates.value.length } templates on disk`;
   case 'mywork':
-    return myWorkView.value === 'archive'
-      ? `${ routinesController.archived.value.length } archived`
-      : `${ routinesController.routines.value.length } in database`;
+    return `${ routinesController.routines.value.length } in database`;
   default:
     return '';
   }
@@ -545,14 +433,31 @@ function onOpenRoutine(id: string) {
 function onEditRoutine(id: string) {
   emit('open-workflow', id, 'edit');
 }
-async function onPublishAndRun(id: string) {
-  try {
-    await ipcRenderer.invoke('workflow-move', id, 'production');
-    await routinesController.load();
-  } catch (err) {
-    console.error('[RoutinesHome] publish failed:', err);
-  }
-  emit('open-workflow', id, 'run');
+function onOpenRun(id: string, executionId: string) {
+  emit('open-workflow', id, 'run', executionId);
+}
+// Start a run straight from the list. The manager answers as soon as the
+// run is launched; the in-process fallback resolves when the run settles,
+// so the list refreshes once now and again when the call returns.
+async function onRunNow(id: string) {
+  const routine = routinesController.routines.value.find(r => r.id === id);
+  runRequests.value = new Set([...runRequests.value, id]);
+  const settled = ipcRenderer.invoke('routines-execute', id, 'Run from the Studio workflows list')
+    .then(() => true)
+    .catch((err: unknown) => {
+      showFeedback('error', `Couldn't start "${ routine?.name ?? id }": ${ err instanceof Error ? err.message : String(err) }`);
+
+      return false;
+    });
+  setTimeout(() => void loadRunSummaries(), 1_500);
+  const ok = await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve(true), 1_200))]);
+  if (ok) showFeedback('success', `Started "${ routine?.name ?? id }".`);
+  void settled.finally(() => {
+    const next = new Set(runRequests.value);
+    next.delete(id);
+    runRequests.value = next;
+    void loadRunSummaries();
+  });
 }
 function onUseTemplate(slug: string) {
   emit('use-template', slug);
@@ -566,6 +471,16 @@ async function onDuplicate(id: string) {
 
 async function onToggleArchive(id: string) {
   await routinesController.toggleArchive(id);
+}
+
+function onPublishById(id: string) {
+  const routine = routinesController.routines.value.find(r => r.id === id);
+  if (routine) void onPublishRoutine(routine);
+}
+
+function onDeleteById(id: string) {
+  const routine = routinesController.routines.value.find(r => r.id === id);
+  if (routine) void onDelete(routine);
 }
 
 async function onDelete(routine: { id: string; name: string }) {
@@ -758,6 +673,8 @@ async function onImport() {
   max-width: 1100px; margin: 0 auto;
   padding: 48px 64px 40px;
 }
+// The workflows table needs room for eight columns.
+.shell.wide { max-width: 1360px; padding-left: 40px; padding-right: 40px; }
 
 .topline {
   display: flex; justify-content: space-between; align-items: center;
@@ -800,44 +717,6 @@ async function onImport() {
   background: rgba(168,192,220,0.12); color: var(--steel-300); letter-spacing: 0.06em;
 }
 .tab.on .tab-num { background: rgba(196,212,230,0.2); color: white; }
-
-// Sub-tabs inside My Work — Active / Archive toggle.
-.subtabs {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 20px;
-}
-.subtab {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  padding: 7px 14px;
-  border-radius: 3px;
-  border: 1px solid rgba(168, 192, 220, 0.22);
-  background: transparent;
-  color: var(--steel-300);
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.subtab:hover { color: white; border-color: var(--steel-300); }
-.subtab.on {
-  color: white;
-  background: rgba(74, 111, 165, 0.22);
-  border-color: rgba(140, 172, 201, 0.5);
-}
-.subtab-num {
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 2px;
-  background: rgba(168, 192, 220, 0.12);
-  color: var(--steel-300);
-  letter-spacing: 0.06em;
-}
-.subtab.on .subtab-num { background: rgba(196, 212, 230, 0.2); color: white; }
 
 .hero {
   text-align: center;
@@ -1198,8 +1077,7 @@ async function onImport() {
   color: var(--nx-accent-2);
 }
 
-.theme-noir .tabs,
-.theme-noir .subtabs {
+.theme-noir .tabs {
   gap: 3px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 10%, transparent);
@@ -1207,13 +1085,7 @@ async function onImport() {
   background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.7);
 }
 
-.theme-noir .subtabs {
-  width: fit-content;
-  margin: -16px auto 28px;
-}
-
-.theme-noir .tab,
-.theme-noir .subtab {
+.theme-noir .tab {
   min-height: 32px;
   padding: 0 14px;
   border: 0;
@@ -1223,19 +1095,16 @@ async function onImport() {
   transition: color 0.2s, background 0.35s, box-shadow 0.35s, transform 0.58s var(--noir-spring);
 }
 
-.theme-noir .tab:hover,
-.theme-noir .subtab:hover {
+.theme-noir .tab:hover {
   color: var(--nx-read-2);
   background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
 }
 
-.theme-noir .tab:active,
-.theme-noir .subtab:active {
+.theme-noir .tab:active {
   transform: scale(0.96);
 }
 
-.theme-noir .tab.on,
-.theme-noir .subtab.on {
+.theme-noir .tab.on {
   color: var(--nx-read-1);
   border: 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 28%, transparent), color-mix(in srgb, var(--nx-accent) 12%, transparent));

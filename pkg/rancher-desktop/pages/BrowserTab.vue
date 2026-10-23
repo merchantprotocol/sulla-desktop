@@ -330,6 +330,7 @@
             :key="activeRoutineId"
             :workflow-id="activeRoutineId"
             :initial-mode="activeRoutineMode"
+            :initial-run-id="activeRoutineRunId"
             @back-to-home="onBackToRoutinesHome"
           />
           <button
@@ -481,6 +482,8 @@ function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'library' 
 // `null` means show the landing view.
 const activeRoutineId = ref<string | null>(null);
 const activeRoutineMode = ref<'edit' | 'run'>('edit');
+// Set when the workflows list opens a specific past run.
+const activeRoutineRunId = ref<string | null>(null);
 // After backing out of a routine we always want to land on My Work,
 // even if the user originally opened the routine from the Marketplace
 // or Library tab. Null means "defer to tabMode for initial tab".
@@ -495,13 +498,15 @@ watch(routinesLandingTab, (newTab) => {
   }
 }, { immediate: true });
 
-function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit') {
+function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit', runId?: string) {
   activeRoutineId.value = id;
   activeRoutineMode.value = mode;
+  activeRoutineRunId.value = runId ?? null;
 }
 
 function onBackToRoutinesHome() {
   activeRoutineId.value = null;
+  activeRoutineRunId.value = null;
   routinesLandingTab.value = 'mywork';
 }
 
