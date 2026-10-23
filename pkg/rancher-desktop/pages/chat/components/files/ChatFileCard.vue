@@ -47,6 +47,7 @@ import FileStatusIcon from './FileStatusIcon.vue';
 import { useChatController } from '../../controller/useChatController';
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 const props = defineProps<{ reference: { fileId: string; versionId?: string; path: string; name: string; mime?: string; createdByType?: string; createdById?: string } }>();
 const { createTab, tabs, updateTab } = useBrowserTabs();
@@ -70,7 +71,17 @@ async function save() {
   finally { saving.value = false; }
 }
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
-async function open() { await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId }) }
+async function open() {
+  if (supportsDocumentEditor(props.reference.path)) {
+    const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, openEditor: true };
+    const existing = tabs.find(tab => tab.mode === 'files');
+    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
+    if (existing) updateTab(existing.id, { filesNavigation });
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    return;
+  }
+  await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId });
+}
 function navigate(section:'versions' | 'share-review') {
   const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, section };
   const existing = tabs.find(tab => tab.mode === 'files');

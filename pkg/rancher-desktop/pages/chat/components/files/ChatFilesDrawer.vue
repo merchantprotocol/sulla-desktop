@@ -130,6 +130,8 @@ import FileStatusIcon from './FileStatusIcon.vue';
 import { useChatController } from '../../controller/useChatController';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 interface RefFile {
   fileId:          string;
@@ -164,6 +166,7 @@ const props = defineProps<{ open: boolean }>();
 defineEmits<{ (e:'close'):void; (e:'open-files'):void }>();
 
 const controller = useChatController();
+const { createTab, tabs, updateTab } = useBrowserTabs();
 const inventory = ref<RefFile[]>([]);
 const error = ref('');
 const inventoryError = ref('');
@@ -239,6 +242,15 @@ function refreshWhenVisible():void {
 }
 
 async function openFile(file:RefFile):Promise<void> {
+  if (supportsDocumentEditor(file.path)) {
+    const filesNavigation = { fileId: file.fileId, path: file.path, openEditor: true };
+    const existing = tabs.find(tab => tab.mode === 'files');
+    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
+    if (existing) updateTab(existing.id, { filesNavigation });
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    error.value = '';
+    return;
+  }
   try {
     await ipcRenderer.invoke('files-ui:open-file', { fileId: file.fileId, versionId: file.versionId });
     error.value = '';

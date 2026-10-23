@@ -8,6 +8,8 @@ export interface FilesNavigationPayload {
   fileId?:  string;
   path?:    string;
   section?: string;
+  /** Open editable documents in the Paper editor instead of their detail panel. */
+  openEditor?: boolean;
 }
 
 export interface BrowserTab {

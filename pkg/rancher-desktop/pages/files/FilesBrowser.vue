@@ -766,6 +766,7 @@
       :data-source="dataSource"
       :initial-tab="detailTab === 'versions' ? 'Versions' : 'Details'"
       @close="selected = null"
+      @open="openDetail"
       @share="shareEntry(selected)"
       @restored="selected = null; refresh(true)"
       @trash-outcome="onTrashDetailOutcome"
@@ -784,6 +785,7 @@
           <iframe v-else-if="quickLookUrl && quickLookEntry.mime === 'application/pdf'" :src="quickLookUrl" :title="quickLookEntry.name" sandbox="" />
           <div v-else class="quick-look-fallback"><span class="fi" :class="quickLookEntry.kindClass" v-html="quickLookEntry.icon" /><p>Preview isn’t available for this item.</p></div>
           <footer><b>{{ quickLookEntry.name }}</b><span>{{ formatBytes(quickLookEntry.size) }} · {{ formatDate(quickLookEntry.updatedAt, true) }}</span></footer>
+          <button v-if="supportsDocumentEditor(quickLookEntry.path)" class="btn sm quick-look-open" type="button" @click="openQuickLookSelection">Open</button>
         </div>
         <button class="quick-look-nav next" type="button" aria-label="Next item" :disabled="quickLookIndex >= quickLookEntries.length - 1" @click="stepQuickLook(1)">›</button>
       </div>
@@ -1386,7 +1388,18 @@ function activate(entry:DisplayEntry) { if (section.value === 'trash') { selecte
 function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
-async function openLinked(fileId:string) { const file = snapshot.value?.files.find(item => item.id === fileId); if (file) selectEntry(toDisplay(file)); else await runMutation(() => props.dataSource.openFile(fileId), false) }
+function openDisplayEntry(entry:DisplayEntry) { if (supportsDocumentEditor(entry.path)) emit('open-editor', entry); else selectEntry(entry) }
+function openDetail() { if (selected.value) openDisplayEntry(selected.value) }
+function openQuickLookSelection() { const entry=quickLookEntry.value;if(!entry)return;closeQuickLook();openDisplayEntry(entry) }
+async function openLinked(fileId:string, path:string) {
+  let file = snapshot.value?.files.find(item => item.id === fileId);
+  if (!file) {
+    try { const loaded=await props.dataSource.load();snapshot.value=loaded;file=loaded.files.find(item=>item.id===fileId) }
+    catch (cause) { operationError.value=cause instanceof Error?cause.message:String(cause);return }
+  }
+  if (file) openDisplayEntry(toDisplay(file));
+  else operationError.value = `The linked file ${ path.split('/').at(-1) || path } is no longer available.`;
+}
 function isExternalFileDrag(event:DragEvent) { return !internalDragActive && !event.dataTransfer?.types.includes('application/x-sulla-files') && Boolean(event.dataTransfer?.types.includes('Files')) }
 function acceptsExternalDrop(event:DragEvent) { return isExternalFileDrag(event) && props.dataSource.capabilities.upload && !readOnlyArea.value && section.value === 'files' }
 function onBrowserDragEnter(event:DragEvent) { if (acceptsExternalDrop(event)) { externalDragDepth++; dragging.value = true } }
@@ -1986,6 +1999,7 @@ function navigateTo(detail:FilesNavigationPayload) {
     return;
   }
   if (!file) { error.value = 'That file is no longer available in this collection.'; return }
+  if ((detail.openEditor || !detail.section) && supportsDocumentEditor(file.path)) { emit('open-editor', toDisplay(file)); return }
   selectEntry(toDisplay(file));
   if (detail.section === 'versions') detailTab.value = 'versions';
   if (detail.section === 'share-review') shareEntry(toDisplay(file));

@@ -25,6 +25,7 @@ import { useChatController } from '../../controller/useChatController';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 const props = defineProps<{ artifact: Artifact }>();
 defineEmits<{ (e: 'expand'): void }>();
@@ -36,6 +37,15 @@ const typeLabel = computed(() => ({ workflow: 'Workflow', html: 'HTML Artifact',
 
 async function openFile(): Promise<void> {
   if (!props.artifact.filesFileId) return;
+  const path = props.artifact.filesPath || props.artifact.name;
+  if (supportsDocumentEditor(path)) {
+    const filesNavigation = { fileId: props.artifact.filesFileId, path: props.artifact.filesPath ?? undefined, openEditor: true };
+    const existing = tabs.find(tab => tab.mode === 'files');
+    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
+    if (existing) updateTab(existing.id, { filesNavigation });
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    return;
+  }
   actionError.value = '';
   try {
     await ipcRenderer.invoke('files-ui:open-file', { fileId: props.artifact.filesFileId, versionId: props.artifact.filesVersionId ?? undefined });

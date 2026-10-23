@@ -3,6 +3,7 @@ import type { Component } from 'vue';
 import { documentEditorExtensions, documentEditorTypeIdForPath, type DocumentEditorTypeId } from './editorTypes';
 import MarkdownEditingArea from './MarkdownEditingArea.vue';
 import TextEditingArea from './TextEditingArea.vue';
+import HtmlEditingArea from './HtmlEditingArea.vue';
 
 export interface DocumentProperties { [key:string]: string }
 export interface ParsedDocument { content:string; properties:DocumentProperties }
@@ -32,6 +33,7 @@ function parseMarkdown(content:string):ParsedDocument {
 const types:DocumentEditorType[] = [
   { id: 'markdown', label: 'Markdown', extensions: [...documentEditorExtensions.markdown], component: MarkdownEditingArea, parse: parseMarkdown, serialize: document => document.content },
   { id: 'text', label: 'Text', extensions: [...documentEditorExtensions.text], component: TextEditingArea, parse: identity, serialize: document => document.content },
+  { id: 'html', label: 'HTML', extensions: [...documentEditorExtensions.html], component: HtmlEditingArea, parse: identity, serialize: document => document.content },
 ];
 
 export function editorTypeForPath(path:string):DocumentEditorType | undefined {
