@@ -2145,7 +2145,7 @@ onBeforeUnmount(() => { mounted = false; stopFilesChanged?.(); if (changeTimer) 
 }
 .selection-slot { height:52px; margin-bottom:12px; overflow:hidden; background:transparent; }
 .selection-slot.active { overflow-x:auto; }
-.selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--paper-2); }
+.selection-bar { height:40px; box-sizing:border-box; white-space:nowrap; width:max-content; min-width:100%; display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:8px 10px; border:1px solid var(--accent-line); border-radius:8px; background:var(--accent-soft); }
 .selection-bar b { margin-right:auto; font-size:12px; }
 .operation-error { display:flex; align-items:center; gap:8px; margin:0 0 12px; padding:9px 11px; border:1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius:8px; background:var(--bad-soft); color:var(--bad); }
 .operation-error.index-complete { border-color:color-mix(in srgb, var(--ok) 35%, transparent); background:var(--ok-soft); color:var(--ok); }
