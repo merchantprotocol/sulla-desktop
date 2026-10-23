@@ -80,16 +80,17 @@ function getChannel(): SecureDesktopChannel {
   return channel;
 }
 
+// Linked chats are opted in one by one (or all at once via the
+// `conversations` preference), so ConversationSyncService runs whenever the
+// Desktop is signed in; it only ever touches conversations that have a link.
 async function startConversationSync(): Promise<void> {
   const { SullaSync } = await import('../sync/SullaSyncService');
   SullaSync.start();
-  ConversationSyncService.start();
 }
 
 async function stopConversationSync(): Promise<void> {
   const { SullaSync } = await import('../sync/SullaSyncService');
   SullaSync.stop();
-  ConversationSyncService.stop();
 }
 
 function installPrefsListener() {
@@ -124,6 +125,7 @@ export async function startCloudServices(): Promise<void> {
   // retries on its own backoff.
   if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
   if (prefs.conversations) await startConversationSync().catch(err => console.warn('[CloudLifecycle] SullaSync start failed:', err));
+  ConversationSyncService.start();
   VaultSyncV3.start();
   DeviceInstallSync.start();
   broadcast();
@@ -135,6 +137,7 @@ export async function stopCloudServices(): Promise<void> {
   VaultSyncV3.stop();
   DeviceInstallSync.stop();
   await stopConversationSync().catch(() => undefined);
+  ConversationSyncService.stop();
   DevicesCloudApi.stopHeartbeat();
   broadcast();
 }
