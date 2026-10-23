@@ -189,7 +189,9 @@ async function uploadPreparedSource(source:PreparedSource, endpoint:string, mime
   } as unknown as BodyInit;
   const init = {
     method:  'PUT',
-    headers: { 'content-type': mime, 'content-length': String(source.size) },
+    // Chromium's fetch rejects a caller-set content-length (net::ERR_INVALID_ARGUMENT)
+    // and sends streamed bodies chunked, so the size travels in its own header.
+    headers: { 'content-type': mime, 'x-sulla-expected-bytes': String(source.size) },
     body,
     duplex:  'half',
   } as RequestInit & { duplex: 'half' };

@@ -1719,7 +1719,10 @@ export function createApp(
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);
     const keepBoth = request.query.conflict === 'keep-both';
     await requirePath(request, collectionId, requestedPath, 'edit');
-    const declaredBytes = Number(request.header('content-length'));
+    // Desktop streams through Chromium, which sends chunked bodies and forbids a
+    // caller-set content-length, so it declares the size in x-sulla-expected-bytes.
+    // The streaming writer rejects any body that does not match the declared size.
+    const declaredBytes = Number(request.header('content-length') ?? request.header('x-sulla-expected-bytes'));
     if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > 2 * 1024 * 1024 * 1024) throw new HttpError(400, 'valid content-length is required');
     const actor = identity(request);
     await beginUploadIntent(db, uploadId, collectionId);
