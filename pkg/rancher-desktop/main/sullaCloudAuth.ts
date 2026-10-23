@@ -170,7 +170,7 @@ class VaultNotReadyError extends Error {}
  */
 async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> {
   if (!usesContainerVaultAuthority()) return loadSessionIdentity();
-  let metadata;
+  let metadata: Awaited<ReturnType<ReturnType<typeof requireConfiguredCredentialBroker>['integrationMetadata']>>;
   try {
     const broker = requireConfiguredCredentialBroker();
     const status = await broker.status();
