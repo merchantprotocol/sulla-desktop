@@ -22,6 +22,7 @@ import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, ty
 import { DesktopObjectSync, type ObjectKind } from './desktopObjectSync';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
+import { ConversationSyncService } from './conversationSync';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -75,11 +76,13 @@ function getChannel(): SecureDesktopChannel {
 async function startConversationSync(): Promise<void> {
   const { SullaSync } = await import('../sync/SullaSyncService');
   SullaSync.start();
+  ConversationSyncService.start();
 }
 
 async function stopConversationSync(): Promise<void> {
   const { SullaSync } = await import('../sync/SullaSyncService');
   SullaSync.stop();
+  ConversationSyncService.stop();
 }
 
 function installPrefsListener() {
