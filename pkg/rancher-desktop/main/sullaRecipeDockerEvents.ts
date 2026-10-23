@@ -394,11 +394,22 @@ export function initSullaRecipeDockerEvents(): void {
   });
 }
 
+/** Start a DB-backed recipe project from its Postgres definition. */
+export async function startStoredRecipe(slug: string): Promise<void> {
+  const resolved = await resolveRecipeDir(slug, true);
+  try {
+    const result = await runCompose(resolved.dir, withProject(['up', '-d', '--remove-orphans'], slug));
+    if (result.exitCode !== 0) throw new Error(result.stderr || `Could not start recipe ${ slug }`);
+  } finally {
+    resolved.cleanup();
+  }
+}
+
 /** Stop/remove a DB-backed recipe project without deleting its named volumes. */
-export async function stopStoredRecipe(slug: string): Promise<void> {
+export async function stopStoredRecipe(slug: string, removeVolumes = false): Promise<void> {
   const resolved = await resolveRecipeDir(slug);
   try {
-    const result = await runCompose(resolved.dir, withProject(['down', '--remove-orphans'], slug));
+    const result = await runCompose(resolved.dir, withProject(['down', '--remove-orphans', ...(removeVolumes ? ['--volumes'] : [])], slug));
     if (result.exitCode !== 0) throw new Error(result.stderr || `docker compose down failed for ${ slug }`);
   } finally {
     resolved.cleanup();

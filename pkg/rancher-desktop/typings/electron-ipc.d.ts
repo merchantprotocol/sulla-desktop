@@ -17,7 +17,7 @@ import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
  */
 export interface MarketplaceBrowseRow {
   id:                   string;
-  kind:                 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
+  kind:                 'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
   slug:                 string;
   name:                 string;
   description?:         string | null;
@@ -855,11 +855,12 @@ export interface IpcMainInvokeEvents {
     skipped?: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string; reason: string }[];
     error?: string;
   };
-  'packages:uninstall': (input: { slug: string }) => {
+  'packages:uninstall': (input: { slug: string; removeData?: boolean }) => {
     ok: boolean;
     removed: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
     error?: string;
   };
+  'packages:set-active': (input: { slug: string; active: boolean }) => { ok: boolean; active?: boolean; recipes?: string[]; error?: string };
   'packages:list-installed': () => {
     slug: string;
     version: string;
@@ -867,6 +868,8 @@ export interface IpcMainInvokeEvents {
     title: string;
     icon: string;
     installedAt: string;
+    manifest: Record<string, unknown>;
+    active: boolean;
     items: { kind: 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe'; slug: string }[];
   }[];
 

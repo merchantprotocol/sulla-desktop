@@ -362,10 +362,20 @@ export async function installPackageManifest(
         continue;
       }
       installed.push({ kind: content.kind, slug: content.slug });
+      const disableStatements: Partial<Record<InstallableKind, string>> = {
+        agent: `UPDATE agent_definitions SET enabled=false WHERE slug=$1`,
+        skill: `UPDATE skill_definitions SET enabled=false WHERE slug=$1`,
+        routine: `UPDATE workflows SET enabled=false WHERE id=$1`,
+        function: `UPDATE function_definitions SET enabled=false WHERE slug=$1`,
+        recipe: `UPDATE recipe_definitions SET enabled=false WHERE slug=$1`,
+      };
+      const disable = disableStatements[content.kind];
+      if (disable) await client.query(disable, [content.slug]);
     }
 
+    const installedManifest = { ...manifest, active: false };
     await client.query(`INSERT INTO installed_packages (slug,template_id,version,name,title,icon,manifest)
-      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`, [manifest.slug, templateId, manifest.version, manifest.name, manifest.title, manifest.icon ?? '', JSON.stringify(manifest)]);
+      VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`, [manifest.slug, templateId, manifest.version, manifest.name, manifest.title, manifest.icon ?? '', JSON.stringify(installedManifest)]);
     for (const item of installed) {
       await client.query(`INSERT INTO installed_package_items (package_slug,kind,item_slug,installed_template_id)
         VALUES ($1,$2,$3,$4)`, [manifest.slug, item.kind, item.slug, templateId]);
@@ -378,7 +388,12 @@ export async function installPackageManifest(
   return { ok: true, package: { slug: manifest.slug, version: manifest.version }, ...result };
 }
 
-export async function listInstalledPackages(): Promise<{ slug: string; version: string; name: string; title: string; icon: string; installedAt: string; items: { kind: InstallableKind; slug: string }[] }[]> {
+export interface InstalledPackageSummary {
+  slug: string; version: string; name: string; title: string; icon: string; installedAt: string;
+  manifest: PackageManifest; active: boolean; items: { kind: InstallableKind; slug: string }[];
+}
+
+export async function listInstalledPackages(): Promise<InstalledPackageSummary[]> {
   const rows = await postgresClient.query(`SELECT p.*, COALESCE(jsonb_agg(jsonb_build_object('kind', i.kind, 'slug', i.item_slug) ORDER BY i.kind, i.item_slug) FILTER (WHERE i.item_slug IS NOT NULL), '[]'::jsonb) AS items
     FROM installed_packages p LEFT JOIN installed_package_items i ON i.package_slug = p.slug
     GROUP BY p.slug ORDER BY p.installed_at DESC`);
@@ -389,6 +404,8 @@ export async function listInstalledPackages(): Promise<{ slug: string; version: 
     title:       row.title,
     icon:        row.icon,
     installedAt: row.installed_at instanceof Date ? row.installed_at.toISOString() : String(row.installed_at),
+    manifest:    row.manifest,
+    active:      row.manifest?.active !== false,
     items:       (row.items ?? []).map((item: any) => ({ kind: item.kind, slug: item.slug })),
   }));
 }
@@ -406,7 +423,7 @@ async function removePackageItem(client: PoolClient, kind: InstallableKind, slug
   return (result.rowCount ?? 0) > 0;
 }
 
-export async function uninstallPackage(slug: string): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
+export async function uninstallPackage(slug: string, removeData = false): Promise<{ ok: true; removed: { kind: InstallableKind; slug: string }[] }> {
   const recipeItems = await postgresClient.query(`SELECT i.item_slug
     FROM installed_package_items i
     JOIN installed_packages p ON p.slug=i.package_slug
@@ -414,7 +431,7 @@ export async function uninstallPackage(slug: string): Promise<{ ok: true; remove
     WHERE i.package_slug=$1 AND i.kind='recipe'`, [slug]);
   if (recipeItems.length > 0) {
     const { stopStoredRecipe } = await import('@pkg/main/sullaRecipeDockerEvents');
-    for (const item of recipeItems) await stopStoredRecipe(String(item.item_slug));
+    for (const item of recipeItems) await stopStoredRecipe(String(item.item_slug), removeData);
   }
 
   const result = await postgresClient.transaction(async(client) => {
@@ -431,6 +448,45 @@ export async function uninstallPackage(slug: string): Promise<{ ok: true; remove
   });
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
   return result;
+}
+
+export async function setPackageActive(slug: string, active: boolean): Promise<{ ok: true; active: boolean; recipes: string[] }> {
+  const rows = await postgresClient.query(`SELECT i.kind,i.item_slug
+    FROM installed_package_items i JOIN installed_packages p ON p.slug=i.package_slug
+    WHERE i.package_slug=$1 ORDER BY i.kind,i.item_slug`, [slug]);
+  if (!rows.length) throw new Error(`Package "${ slug }" is not installed`);
+  const recipeSlugs = rows.filter((row: any) => row.kind === 'recipe').map((row: any) => String(row.item_slug));
+  const { startStoredRecipe, stopStoredRecipe } = await import('@pkg/main/sullaRecipeDockerEvents');
+  const started: string[] = [];
+  try {
+    for (const recipeSlug of recipeSlugs) {
+      if (active) {
+        await startStoredRecipe(recipeSlug);
+        started.push(recipeSlug);
+      } else {
+        await stopStoredRecipe(recipeSlug);
+      }
+    }
+    await postgresClient.transaction(async(client) => {
+      const statements: Partial<Record<InstallableKind, string>> = {
+        agent: `UPDATE agent_definitions SET enabled=$2,updated_at=now() WHERE slug=$1 AND source_kind='marketplace'`,
+        skill: `UPDATE skill_definitions SET enabled=$2,updated_at=now() WHERE slug=$1 AND source_kind='marketplace'`,
+        routine: `UPDATE workflows SET enabled=$2,updated_at=now() WHERE id=$1 AND source_kind='marketplace'`,
+        function: `UPDATE function_definitions SET enabled=$2,updated_at=now() WHERE slug=$1 AND source_kind='marketplace'`,
+        recipe: `UPDATE recipe_definitions SET enabled=$2,updated_at=now() WHERE slug=$1 AND source_kind='marketplace'`,
+      };
+      for (const row of rows) {
+        const statement = statements[row.kind as InstallableKind];
+        if (statement) await client.query(statement, [row.item_slug, active]);
+      }
+      await client.query(`UPDATE installed_packages SET manifest=jsonb_set(manifest,'{active}',$2::jsonb,true) WHERE slug=$1`, [slug, JSON.stringify(active)]);
+    });
+  } catch (error) {
+    if (active) await Promise.allSettled(started.map(recipeSlug => stopStoredRecipe(recipeSlug)));
+    throw error;
+  }
+  await refreshRuntimeCatalogs(rows.map((row: any) => row.kind as InstallableKind));
+  return { ok: true, active, recipes: recipeSlugs };
 }
 
 export async function listInstalledArtifacts(): Promise<InstalledArtifactRow[]> {
