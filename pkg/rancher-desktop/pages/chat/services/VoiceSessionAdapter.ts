@@ -75,10 +75,15 @@ export const PTT_MIN_HOLD_MS = 500;
 // capture/processing pipeline) makes it into the transcript.
 const PTT_RELEASE_TAIL_MS = 180;
 
+// Bluetooth inputs can take seconds to reopen. Keep the chat holder briefly
+// after a completed turn so the next Space press only has to start whisper.
+const VOICE_MIC_WARM_GRACE_MS = 20_000;
+
 type Mode = 'handsfree' | 'ptt';
 
 // The one adapter whose mic/whisper session is live (whisper + mic are singletons).
 let liveAdapter: VoiceSessionAdapter | null = null;
+let warmAdapter: VoiceSessionAdapter | null = null;
 
 export class VoiceSessionAdapter {
   private readonly controller: ChatController;
@@ -100,6 +105,7 @@ export class VoiceSessionAdapter {
   private startPromise: Promise<boolean> | null = null;
   /** Bumped on every teardown so a late async start can tell it was abandoned. */
   private generation = 0;
+  private warmReleaseTimer: ReturnType<typeof setTimeout> | null = null;
 
   private interimId: MessageId | null = null;
   private recordingStartedAt = 0;
@@ -210,8 +216,8 @@ export class VoiceSessionAdapter {
    */
   async stop(commit = true): Promise<void> {
     if (!this.capturing || this.finishing) return;
-    if (commit && this.active) await this.finishTurn();
-    else this.teardown();
+    if (commit && this.active) await this.finishTurn(false);
+    else this.teardown(false);
   }
 
   // ─── Hold-to-talk ─────────────────────────────────────────────────
@@ -239,7 +245,7 @@ export class VoiceSessionAdapter {
       this.teardown();
       return;
     }
-    await this.finishTurn();
+    await this.finishTurn(true);
   }
 
   private pttCancel(): void {
@@ -258,6 +264,7 @@ export class VoiceSessionAdapter {
 
   /** Start mic + whisper. `ptt` = raw mic, and the turn ends only on finish. */
   private beginCapture(ptt: boolean): Promise<boolean> {
+    warmAdapter?.cancelWarmRelease(false);
     if (liveAdapter && liveAdapter !== this) liveAdapter.teardown();
     liveAdapter = this;
 
@@ -276,8 +283,9 @@ export class VoiceSessionAdapter {
 
     this.startPromise = (async() => {
       try {
-        await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
+        const micResult = await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
         if (gen !== this.generation) return false;
+        if (!micResult?.ok) throw new Error(micResult?.error || 'mic-start-failed');
         const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
           mode:       'conversation',
           manualTurn: ptt,
@@ -307,7 +315,7 @@ export class VoiceSessionAdapter {
    * everything captured (final transcript_turn + utterance_end → commitTurn →
    * send), then release the mic.
    */
-  private async finishTurn(): Promise<void> {
+  private async finishTurn(keepMicWarm: boolean): Promise<void> {
     const gen = this.generation;
     const started = await this.startPromise;
 
@@ -331,11 +339,11 @@ export class VoiceSessionAdapter {
     if (gen !== this.generation) return;
     // utterance_end normally committed already; this sends anything left if it never came.
     this.turn.commitNow();
-    this.teardown();
+    this.teardown(keepMicWarm);
   }
 
   /** Stop everything and discard whatever wasn't committed. Safe to call repeatedly. */
-  private teardown(): void {
+  private teardown(keepMicWarm = false): void {
     const wasCapturing = this.capturing || this.finishing;
 
     this.generation++;
@@ -356,12 +364,35 @@ export class VoiceSessionAdapter {
     if (this.controller.voice.value.phase === 'recording') this.controller.stopVoice(false);
 
     if (wasCapturing) {
-      // Release the mic / whisper — fire-and-forget (both are no-ops when already stopped).
+      // Whisper is per turn. The hardware mic may stay warm briefly so the
+      // next Bluetooth PTT press starts immediately.
       ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => { /* noop */ });
-      ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+      if (keepMicWarm) this.scheduleWarmRelease();
+      else {
+        this.cancelWarmRelease(false);
+        ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+      }
     }
     if (liveAdapter === this) liveAdapter = null;
     this.mode = null;
+  }
+
+  private scheduleWarmRelease(): void {
+    warmAdapter?.cancelWarmRelease(false);
+    warmAdapter = this;
+    this.warmReleaseTimer = setTimeout(() => this.cancelWarmRelease(true), VOICE_MIC_WARM_GRACE_MS);
+  }
+
+  /** Cancel the grace timer and optionally release the shared chat mic holder now. */
+  private cancelWarmRelease(releaseMic: boolean): void {
+    const ownsWarmMic = warmAdapter === this;
+
+    if (this.warmReleaseTimer) clearTimeout(this.warmReleaseTimer);
+    this.warmReleaseTimer = null;
+    if (ownsWarmMic) warmAdapter = null;
+    if (releaseMic && ownsWarmMic) {
+      ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+    }
   }
 
   /** Create a fresh interim bubble and mark the voice UI as recording. */
@@ -386,7 +417,8 @@ export class VoiceSessionAdapter {
   }
 
   dispose(): void {
-    this.teardown();
+    this.teardown(false);
+    this.cancelWarmRelease(true);
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.tts.dispose();

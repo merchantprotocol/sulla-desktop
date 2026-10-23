@@ -45,6 +45,10 @@ import { log } from '../model/logger';
 
 let instance: MicrophoneDriverController | null = null;
 
+export type MicStartResult =
+  | { ok: true; deviceInfo: any }
+  | { ok: false; error: 'mic-start-cancelled' | 'mic-start-failed' | 'mic-start-timeout' };
+
 export class MicrophoneDriverController {
   private static readonly TAG = 'MicDriverController';
 
@@ -87,7 +91,10 @@ export class MicrophoneDriverController {
 
   // ── ACK promise tracking ──────────────────────────────────────
 
-  private _startedResolve: ((deviceInfo: any) => void) | null = null;
+  private _startPromise: Promise<MicStartResult> | null = null;
+  private _pendingStart: { requestId: number; resolve: (result: MicStartResult) => void; timeout: ReturnType<typeof setTimeout> } | null = null;
+  private _nextStartRequestId = 0;
+  private _stopPromise: Promise<void> | null = null;
   private _stoppedResolve: (() => void) | null = null;
   private _vadIgnoreLogged = false;
 
@@ -118,7 +125,7 @@ export class MicrophoneDriverController {
    * @param sender - The WebContents of the requesting window (for targeted VAD sends)
    * @param opts.formats - Audio formats this service needs: 'webm-opus' (gateway), 'pcm-s16le' (whisper)
    */
-  async start(serviceId: string, sender?: WebContents, opts?: { formats?: string[] }): Promise<void> {
+  async start(serviceId: string, sender?: WebContents, opts?: { formats?: string[] }): Promise<MicStartResult> {
     const formats = opts?.formats || [MicrophoneDriverController.FORMAT_WEBM_OPUS];
     log.info(MicrophoneDriverController.TAG, 'start()', { serviceId, formats, currentHolders: [...this._holders.keys()], running: this._running });
 
@@ -143,21 +150,31 @@ export class MicrophoneDriverController {
       this._destroyListeners.set(serviceId, onDestroyed);
     }
 
+    // A new holder may arrive while the renderer is still acknowledging the
+    // previous last-holder stop. Never report it running against a pipeline
+    // that is about to close.
+    if (this._stopPromise) await this._stopPromise;
+
     if (!this._running) {
-      const neededFormats = this._getNeededFormats();
-      log.info(MicrophoneDriverController.TAG, 'First holder — sending renderer-start-mic command', { neededFormats });
-      const deviceInfo = await this._sendRendererStart(undefined, neededFormats);
-      log.info(MicrophoneDriverController.TAG, 'Renderer ACK received', { deviceInfo });
-      if (deviceInfo) {
-        this._micName = deviceInfo.micName || '';
-        this._pcmSampleRate = deviceInfo.pcmSampleRate || 48000;
-        audio.setDeviceNames(this._micName, deviceInfo.speakerName || '');
-        log.info(MicrophoneDriverController.TAG, 'PCM sample rate', { rate: this._pcmSampleRate });
+      if (!this._startPromise) {
+        const neededFormats = this._getNeededFormats();
+        log.info(MicrophoneDriverController.TAG, 'First holder — sending renderer-start-mic command', { neededFormats });
+        const promise = this._startRenderer(neededFormats).catch((error: any): MicStartResult => {
+          log.error(MicrophoneDriverController.TAG, 'Renderer mic start failed', { error: error?.message || String(error) });
+          return { ok: false, error: 'mic-start-failed' };
+        });
+
+        this._startPromise = promise;
+        void promise.finally(() => {
+          if (this._startPromise === promise) this._startPromise = null;
+        });
       } else {
-        log.warn(MicrophoneDriverController.TAG, 'Renderer returned null deviceInfo — mic may not have started');
+        log.info(MicrophoneDriverController.TAG, 'Mic start already in flight — sharing it', { serviceId });
       }
-      this._running = true;
-      this._persist();
+
+      const result = await this._startPromise;
+
+      if (!result.ok) return result;
 
       // Every holder released while the renderer was opening the mic — those
       // stop() calls saw _running=false and did nothing, so close it now.
@@ -167,22 +184,20 @@ export class MicrophoneDriverController {
         this._running = false;
         this._resetVadState();
         this._persist();
+        this._noiseProcessor?.dispose();
+        this._noiseProcessor = null;
 
-        return;
+        return { ok: false, error: 'mic-start-cancelled' };
       }
 
-      // Init noise processor for gated audio paths
-      this._noiseProcessor = new AudioNoiseProcessor(this._pcmSampleRate);
-      this._noiseProcessor.init().catch((e: any) => {
-        log.warn(MicrophoneDriverController.TAG, 'Noise processor init failed (layers 2-3 may be degraded)', { error: e.message });
-      });
-
-      log.info(MicrophoneDriverController.TAG, 'Mic pipeline started', { holders: [...this._holders.keys()], formats: neededFormats, micName: this._micName });
+      log.info(MicrophoneDriverController.TAG, 'Mic pipeline started', { holders: [...this._holders.keys()], micName: this._micName });
     } else {
       // Check if the new holder needs a format that isn't currently running
       // TODO: could signal renderer to add a new format stream without restarting
       log.info(MicrophoneDriverController.TAG, 'Mic already running — added holder only', { serviceId, formats, totalHolders: this._holders.size });
     }
+
+    return { ok: true, deviceInfo: { micName: this._micName, pcmSampleRate: this._pcmSampleRate } };
   }
 
   /**
@@ -198,7 +213,13 @@ export class MicrophoneDriverController {
     this._removeDestroyListener(serviceId);
     log.info(MicrophoneDriverController.TAG, 'Holder removed', { serviceId, wasHolder, remainingHolders: [...this._holders.keys()] });
 
-    if (this._running && this._holders.size === 0) {
+    if (this._holders.size === 0 && this._pendingStart) {
+      const requestId = this._pendingStart.requestId;
+
+      log.info(MicrophoneDriverController.TAG, 'Last holder released during start — cancelling renderer start', { requestId });
+      this._resolvePendingStart(requestId, { ok: false, error: 'mic-start-cancelled' });
+      await this._sendRendererStop(requestId);
+    } else if (this._running && this._holders.size === 0) {
       log.info(MicrophoneDriverController.TAG, 'Last holder released — sending renderer-stop-mic command');
       await this._sendRendererStop();
       this._running = false;
@@ -267,6 +288,12 @@ export class MicrophoneDriverController {
 
   async shutdown(): Promise<void> {
     log.info(MicrophoneDriverController.TAG, 'Shutting down');
+    if (this._pendingStart) {
+      const requestId = this._pendingStart.requestId;
+
+      this._resolvePendingStart(requestId, { ok: false, error: 'mic-start-cancelled' });
+      await this._sendRendererStop(requestId);
+    }
     if (this._running) {
       await this._sendRendererStop();
     }
@@ -341,11 +368,16 @@ export class MicrophoneDriverController {
 
   // ── ACK handlers ──────────────────────────────────────────────
 
-  onStarted(deviceInfo: any): void {
-    log.info(MicrophoneDriverController.TAG, 'ACK mic-started', deviceInfo);
-    if (this._startedResolve) {
-      this._startedResolve(deviceInfo);
-      this._startedResolve = null;
+  onStarted(requestId: number | null, deviceInfo: any): void {
+    log.info(MicrophoneDriverController.TAG, 'ACK mic-started', { requestId, deviceInfo });
+    if (requestId !== null) {
+      if (!this._pendingStart || this._pendingStart.requestId !== requestId) {
+        log.info(MicrophoneDriverController.TAG, 'Ignoring stale mic-started ACK', { requestId, pendingRequestId: this._pendingStart?.requestId });
+        return;
+      }
+      this._resolvePendingStart(requestId, deviceInfo
+        ? { ok: true, deviceInfo }
+        : { ok: false, error: 'mic-start-failed' });
     } else if (this._running && deviceInfo) {
       // Unsolicited ACK: the renderer reopened the mic after a device change.
       this._micName = deviceInfo.micName || '';
@@ -384,35 +416,64 @@ export class MicrophoneDriverController {
     return [...formats];
   }
 
-  private _sendRendererStart(deviceId?: string, formats?: string[]): Promise<any> {
+  private async _startRenderer(formats: string[]): Promise<MicStartResult> {
+    const result = await this._sendRendererStart(undefined, formats);
+
+    log.info(MicrophoneDriverController.TAG, 'Renderer ACK received', result);
+    if (!result.ok) return result;
+
+    const deviceInfo = result.deviceInfo;
+
+    this._micName = deviceInfo.micName || '';
+    this._pcmSampleRate = deviceInfo.pcmSampleRate || 48000;
+    audio.setDeviceNames(this._micName, deviceInfo.speakerName || '');
+    log.info(MicrophoneDriverController.TAG, 'PCM sample rate', { rate: this._pcmSampleRate });
+    this._running = true;
+    this._persist();
+
+    this._noiseProcessor = new AudioNoiseProcessor(this._pcmSampleRate);
+    this._noiseProcessor.init().catch((e: any) => {
+      log.warn(MicrophoneDriverController.TAG, 'Noise processor init failed (layers 2-3 may be degraded)', { error: e.message });
+    });
+
+    return result;
+  }
+
+  private _sendRendererStart(deviceId?: string, formats?: string[]): Promise<MicStartResult> {
     return new Promise((resolve) => {
-      this._startedResolve = resolve;
+      const requestId = ++this._nextStartRequestId;
 
       log.info(MicrophoneDriverController.TAG, 'Broadcasting renderer-start-mic to all windows', { deviceId });
       const windowCount = this._countWindows();
       log.info(MicrophoneDriverController.TAG, `Sending to ${ windowCount } window(s), waiting for ACK...`);
 
       const timeout = setTimeout(() => {
-        if (this._startedResolve) {
+        if (this._pendingStart?.requestId === requestId) {
           log.warn(MicrophoneDriverController.TAG, 'Start ACK timed out after 10s — renderer may not be loaded');
-          this._startedResolve = null;
-          resolve(null);
+          this._resolvePendingStart(requestId, { ok: false, error: 'mic-start-timeout' });
+          void this._sendRendererStop(requestId);
         }
       }, 10_000);
 
-      const origResolve = this._startedResolve;
-      this._startedResolve = (info: any) => {
-        clearTimeout(timeout);
-        log.info(MicrophoneDriverController.TAG, 'Start ACK received within timeout');
-        origResolve(info);
-      };
+      this._pendingStart = { requestId, resolve, timeout };
 
-      this._broadcast('audio-driver:renderer-start-mic', { deviceId, formats: formats || ['webm-opus'] });
+      this._broadcast('audio-driver:renderer-start-mic', { requestId, deviceId, formats: formats || ['webm-opus'] });
     });
   }
 
-  private _sendRendererStop(): Promise<void> {
-    return new Promise((resolve) => {
+  private _resolvePendingStart(requestId: number, result: MicStartResult): void {
+    if (!this._pendingStart || this._pendingStart.requestId !== requestId) return;
+    const pending = this._pendingStart;
+
+    this._pendingStart = null;
+    clearTimeout(pending.timeout);
+    pending.resolve(result);
+  }
+
+  private _sendRendererStop(cancelStartRequestId?: number): Promise<void> {
+    if (this._stopPromise) return this._stopPromise;
+
+    const promise = new Promise<void>((resolve) => {
       this._stoppedResolve = resolve;
 
       log.info(MicrophoneDriverController.TAG, 'Broadcasting renderer-stop-mic to all windows');
@@ -432,8 +493,15 @@ export class MicrophoneDriverController {
         origResolve();
       };
 
-      this._broadcast('audio-driver:renderer-stop-mic', {});
+      this._broadcast('audio-driver:renderer-stop-mic', { cancelStartRequestId });
     });
+
+    this._stopPromise = promise;
+    void promise.finally(() => {
+      if (this._stopPromise === promise) this._stopPromise = null;
+    });
+
+    return promise;
   }
 
   /** Send to all windows (used for renderer commands like start/stop mic). */
@@ -642,8 +710,8 @@ export class MicrophoneDriverController {
   }
 
   private _registerAckListeners(): void {
-    ipcMain.on('audio-driver:mic-started', (_event: Electron.IpcMainEvent, deviceInfo: any) => {
-      this.onStarted(deviceInfo);
+    ipcMain.on('audio-driver:mic-started', (_event: Electron.IpcMainEvent, requestId: number | null, deviceInfo: any) => {
+      this.onStarted(requestId, deviceInfo);
     });
 
     ipcMain.on('audio-driver:mic-stopped', () => {

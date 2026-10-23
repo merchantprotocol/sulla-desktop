@@ -124,11 +124,8 @@ async function listDevices() {
  *                                 Pass `undefined` to use the system default.
  * @returns {{ micName: string, speakerName: string, micDeviceId: string }}
  */
-async function start(onLevel, micDeviceId) {
-  levelCallback = onLevel;
-  pinnedDeviceId = micDeviceId || null;
-
-  audioCtx = new AudioContext();
+async function start(onLevel, micDeviceId, isCurrent = () => true) {
+  const nextAudioCtx = new AudioContext();
 
   const constraints = {
     audio: micDeviceId
@@ -138,8 +135,21 @@ async function start(onLevel, micDeviceId) {
 
   log.info('AudioCapture', 'Opening mic...', { deviceId: micDeviceId || 'default' });
   try {
-    micStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const nextMicStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    if (!isCurrent()) {
+      nextMicStream.getTracks().forEach((track) => track.stop());
+      await nextAudioCtx.close();
+      log.info('AudioCapture', 'Discarded mic stream from cancelled start');
+      return null;
+    }
+
+    levelCallback = onLevel;
+    pinnedDeviceId = micDeviceId || null;
+    audioCtx = nextAudioCtx;
+    micStream = nextMicStream;
   } catch (err) {
+    await nextAudioCtx.close().catch(() => {});
     const name = err?.name || 'UnknownError';
     const msg = err?.message || String(err);
     log.error('AudioCapture', 'getUserMedia failed', { name, message: msg });
@@ -155,21 +165,28 @@ async function start(onLevel, micDeviceId) {
     throw err;
   }
 
-  const source = audioCtx.createMediaStreamSource(micStream);
-  micGainNode = audioCtx.createGain();
+  // Use the local references throughout setup. stop() may clear the module
+  // globals, but it can never turn these into null halfway through startup.
+  const source = nextAudioCtx.createMediaStreamSource(micStream);
+  micGainNode = nextAudioCtx.createGain();
   micGainNode.gain.value = micMuted ? 0 : micGain;
-  micAnalyser = audioCtx.createAnalyser();
+  micAnalyser = nextAudioCtx.createAnalyser();
   micAnalyser.fftSize = 512;
 
   source.connect(micGainNode);
   micGainNode.connect(micAnalyser);
 
   log.info('AudioCapture', 'Mic stream active', {
-    sampleRate: audioCtx.sampleRate,
+    sampleRate: nextAudioCtx.sampleRate,
     gain:       micGainNode.gain.value,
   });
 
   const deviceInfo = await detectDevices();
+  if (!isCurrent()) {
+    stop();
+    log.info('AudioCapture', 'Closed mic stream cancelled during device detection');
+    return null;
+  }
   window.audioDriver.setDeviceNames(deviceInfo.micName, deviceInfo.speakerName);
 
   const track = micStream.getAudioTracks()[0];
