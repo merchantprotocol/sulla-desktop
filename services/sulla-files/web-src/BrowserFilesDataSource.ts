@@ -62,7 +62,7 @@ export class BrowserFilesDataSource implements FilesDataSource {
     const response=await fetch(url,{...options,cache:'no-store',credentials:'omit',signal:this.controller.signal,headers:{Authorization:`Bearer ${this.token}`,...(options.headers??{})}});
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
     if(response.status===401){this.expired();throw new Error('Your Files session ended. Sign in again.')}
-    if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string};if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');throw new Error(body.error??`Files request failed (${response.status})`)}
+    if(!response.ok){const body=await response.json().catch(()=>({})) as {error?:string;code?:string;currentVersionId?:string};if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');throw Object.assign(new Error(body.error??`Files request failed (${response.status})`),{status:response.status,code:body.code,currentVersionId:body.currentVersionId})}
     if(response.status===204)return undefined as T;
     const body=await response.json() as T;
     if(generation!==this.generation)throw new DOMException('Stale Files request','AbortError');
