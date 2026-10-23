@@ -15,6 +15,8 @@
 
 import { FilesCloudBroker } from '../cloudBroker.js';
 import { streamFileContent } from '../fileStream.js';
+import { assertUnprotectedFile } from '../protectedFiles.js';
+import { CLOUD_VISIBLE_COLLECTION } from './catalogSync.js';
 
 import type { Config } from '../config.js';
 import type { SharesService } from '../shares.js';
@@ -27,9 +29,14 @@ export const CONTENT_REQUEST_MAX_BYTES = 5 * 1024 * 1024;
 
 interface PendingRequest { id: string; kind: 'content' | 'link'; catalogId: string; accessMode?: 'view' | 'download' | null }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function localFileId(catalogId: string): string | null {
-  return catalogId.startsWith('cf_') ? catalogId.slice(3) : null;
+  const id = typeof catalogId === 'string' && catalogId.startsWith('cf_') ? catalogId.slice(3) : '';
+  return UUID.test(id) ? id : null;
 }
+
+/** Only these messages reach Cloud; anything else (it may name local paths) is replaced. */
+class RequestRefused extends Error {}
 
 export class DesktopRequestSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -76,18 +83,26 @@ export class DesktopRequestSyncService {
     }
   }
 
-  private async fulfillContent(request: PendingRequest): Promise<void> {
-    const fileId = localFileId(request.catalogId);
-    if (!fileId) throw new Error('that catalog entry is not a file');
-    const owned = (await this.db.query(
-      `SELECT f.id FROM files f JOIN collections c ON c.id = f.collection_id
-        WHERE f.id = $1 AND f.deleted_at IS NULL AND c.owner_user_id = $2 AND c.cloud_catalog_sync = TRUE`,
-      [fileId, this.config.userId],
+  /** Same boundary as the catalog push: an unprotected file in a collection the owner showed in Cloud. */
+  private async eligibleFile(catalogId: string): Promise<string> {
+    const fileId = localFileId(catalogId);
+    if (!fileId) throw new RequestRefused('that catalog entry is not a file');
+    const file = (await this.db.query(
+      `SELECT f.id, f.path FROM files f
+        WHERE f.id = $2 AND f.deleted_at IS NULL
+          AND f.collection_id IN (SELECT id FROM collections WHERE ${ CLOUD_VISIBLE_COLLECTION })`,
+      [this.config.userId, fileId],
     )).rows[0];
-    if (!owned) throw new Error('file not found or no longer shown in Sulla Cloud');
+    if (!file) throw new RequestRefused('file not found or no longer shown in Sulla Cloud');
+    await assertUnprotectedFile(this.db, file).catch(() => { throw new RequestRefused('this file is protected and stays on the Desktop') });
+    return fileId;
+  }
+
+  private async fulfillContent(request: PendingRequest): Promise<void> {
+    const fileId = await this.eligibleFile(request.catalogId);
     const content = await streamFileContent(this.db, this.config, this.store, fileId, undefined, undefined, new AbortController().signal);
-    if (!content) throw new Error('this file has no readable version');
-    if (content.size > CONTENT_REQUEST_MAX_BYTES) throw new Error('this file exceeds the 5MB preview limit');
+    if (!content) throw new RequestRefused('this file has no readable version');
+    if (content.size > CONTENT_REQUEST_MAX_BYTES) throw new RequestRefused('this file exceeds the 5MB preview limit');
     const chunks: Buffer[] = [];
     for await (const part of content.body) chunks.push(part);
     await this.cloud(
@@ -97,14 +112,13 @@ export class DesktopRequestSyncService {
   }
 
   private async fulfillLink(request: PendingRequest): Promise<void> {
-    const fileId = localFileId(request.catalogId);
-    if (!fileId) throw new Error('that catalog entry is not a file');
+    const fileId = await this.eligibleFile(request.catalogId);
     const created = await this.shares.create(
       { user: this.config.userId, device: this.config.deviceId },
       { fileId, accessMode: request.accessMode === 'download' ? 'download' : 'view' },
     );
     const linkId = (created as { id?: string }).id;
-    if (!linkId) throw new Error('Sulla Cloud did not confirm the new link');
+    if (!linkId) throw new RequestRefused('Sulla Cloud did not confirm the new link');
     await this.cloud(
       `/cloud-files/v1/catalog/${ encodeURIComponent(this.cloudDeviceId as string) }/desktop-requests/${ encodeURIComponent(request.id) }/link`,
       'POST', JSON.stringify({ linkId }), 'application/json',
@@ -112,7 +126,7 @@ export class DesktopRequestSyncService {
   }
 
   private async fail(requestId: string, error: unknown): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = error instanceof RequestRefused ? error.message : 'Your Desktop could not fulfill this request.';
     try {
       await this.cloud(
         `/cloud-files/v1/catalog/${ encodeURIComponent(this.cloudDeviceId as string) }/desktop-requests/${ encodeURIComponent(requestId) }/fail`,
