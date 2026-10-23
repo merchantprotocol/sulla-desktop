@@ -26,3 +26,6 @@ export function createEditor(parent:HTMLElement, content:string, readOnly:boolea
     }),
   });
 }
+
+/** Minimal source patch lets CodeMirror map cursors through remote changes. */
+export function textPatch(before:string,after:string){let from=0;while(from<before.length&&from<after.length&&before[from]===after[from])from++;let end=0;while(end<before.length-from&&end<after.length-from&&before[before.length-end-1]===after[after.length-end-1])end++;return{from,to:before.length-end,insert:after.slice(from,after.length-end)};}

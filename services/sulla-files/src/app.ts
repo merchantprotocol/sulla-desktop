@@ -368,6 +368,7 @@ export function createApp(
   async function textSave(client:pg.PoolClient,file:any,baseVersionId:string,submitted:Buffer,currentBytes:Buffer,readVersion:(fileId:string,versionId:string)=>Promise<Buffer> = (fileId,versionId)=>requireFuseExperiment().readStoredVersion(fileId,versionId)):Promise<{bytes:Buffer;document?:Automerge.Doc<TextDocument>;merged:boolean}> {
     const baseBytes=baseVersionId===file.current_version_id?currentBytes:await readVersion(file.id,baseVersionId);
     const baseText=utf8Text(baseBytes),currentText=utf8Text(currentBytes),submittedText=utf8Text(submitted);
+    if(live.has(file.id)&&(submittedText===undefined||submitted.length>8*1024*1024))throw new HttpError(415,'Cannot replace an active live document with binary or oversized content');
     const stale=baseVersionId!==file.current_version_id;
     const planned=versionCheckedTextSave({baseVersionId,currentVersionId:file.current_version_id,base:baseBytes,current:currentBytes,submitted});
     if(planned.status===409)throw new HttpError(409,'Files mount version changed');
@@ -394,8 +395,8 @@ export function createApp(
     return {bytes:Buffer.from(document.text,'utf8'),document,merged:stale};
   }
 
-  const live = new LiveTextSessions();
   const liveWriters=new Map<string,RequestWithIdentity>();
+  const live = new LiveTextSessions(2_000,id=>liveWriters.delete(id));
   app.locals.liveTextSessions=live;
   const liveOwner=(request:RequestWithIdentity)=>{const a=identity(request);return JSON.stringify([a.userId,a.deviceId,a.agentId,a.jobId]);};
   const liveBase=(id:string)=>`/v1/files/${id}/live`;
@@ -421,7 +422,7 @@ export function createApp(
         if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
         const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,file.id,current.current_version_id);
         if(!existing?.buffer.equals(bytes)){const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,actor,message:'Live document edit',baseVersionId:current.current_version_id});await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);await tx.query('COMMIT');await audit(request,'live-edit',result,{versionId:result.current_version_id});}
-        else await tx.query('COMMIT');
+        else {await tx.query('UPDATE file_automerge_versions SET document=$2,heads=$3 WHERE version_id=$1 AND file_id=$4',[current.current_version_id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot)),current.id]);await tx.query('COMMIT');}
       }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}});
     }
     await client.query('COMMIT');const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
@@ -429,7 +430,8 @@ export function createApp(
   }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()}});
   app.post('/v1/files/:id/live/:peerId/sync',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);const p=live.peer(request.params.id,request.params.peerId);if(p.editable){await requireFile(request,request.params.id,'edit');liveWriters.set(request.params.id,request);}const message=request.body?.message;if(typeof message!=='string'||message.length>12*1024*1024)throw new HttpError(400,'Invalid sync message');response.json({message:live.receive(request.params.id,request.params.peerId,Buffer.from(message,'base64'),p.editable)});}catch(error){next(error)}});
   app.get('/v1/files/:id/live/:peerId/events',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);response.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});response.flushHeaders();
-    const unsubscribe=live.subscribe(request.params.id,request.params.peerId,event=>response.write(`data: ${JSON.stringify(event)}\n\n`));
+    let delivery=Promise.resolve();
+    const unsubscribe=live.subscribe(request.params.id,request.params.peerId,event=>{delivery=delivery.then(async()=>{await livePeer(request);response.write(`data: ${JSON.stringify(event)}\n\n`);}).catch(()=>{response.end();});});
     const heartbeat=setInterval(()=>{void livePeer(request).then(()=>response.write(': heartbeat\n\n')).catch(()=>response.end());},20_000);heartbeat.unref();
     request.on('close',()=>{clearInterval(heartbeat);unsubscribe();void live.leave(request.params.id,request.params.peerId).catch(()=>{});});
   }catch(error){next(error)}});
@@ -835,7 +837,9 @@ export function createApp(
     await client.query('COMMIT'); response.status(204).end();
   } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await requireFile(request, request.params.id, 'view');
+    let file = await requireFile(request, request.params.id, 'view');
+    // Agents reading the mount see acknowledged editor changes without waiting for the debounce.
+    if(live.has(file.id)){await live.flush(file.id);file=await requireFile(request,file.id,'view');}
     const manager = requireFuseExperiment();
     const bytes = await manager.readStoredVersion(file.id,file.current_version_id);
     const sourceHash=createHash('sha256').update(bytes).digest('hex');
@@ -864,7 +868,7 @@ export function createApp(
         bytes:saved.bytes,actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,
         message:'Updated through the Files mount',baseVersionId:file.current_version_id});
       if(saved.document) await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document);
-      await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document); const nextHash=createHash('sha256').update(saved.bytes).digest('hex');
+      await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document,{name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'}); const nextHash=createHash('sha256').update(saved.bytes).digest('hex');
       await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:'draft'});
       if(saved.merged) response.setHeader('X-Sulla-Merged','1');
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
@@ -890,7 +894,7 @@ export function createApp(
       actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
     if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
     await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
-    await client.query('COMMIT'); if(saved.document)live.adopt(target.id,saved.document);
+    await client.query('COMMIT'); if(saved.document)live.adopt(target.id,saved.document,{name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
     const nextHash=createHash('sha256').update(saved.bytes).digest('hex'); await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
     if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
     response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
@@ -1700,11 +1704,11 @@ export function createApp(
     }
     const actor=identity(request); const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,bytes:saved.bytes,actor,
       createdByType:actor.agentId?'agent':actor.jobId?'agent-run':undefined,createdById:actor.agentId??actor.jobId??actor.userId,message:'Saved with version check',baseVersionId:file.current_version_id});
-    if(saved.document)await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document);
+    if(saved.document)await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document,{name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
     await audit(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
     response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
   }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()} });
-  app.put('/v1/files/upload', express.raw({ type: '*/*', limit: '2gb' }), async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request); await client.query('BEGIN'); await lockStoredNamespace(client, collectionId); const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0]; if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } } else await requirePath(request, collectionId, path, 'edit'); const bytes=Buffer.from(request.body as Buffer); const saved=existing?await textSave(client,existing,existing.current_version_id,bytes,(await loadFileContent(db,config,store,existing.id,existing.current_version_id))!.buffer,async(id,version)=>(await loadFileContent(db,config,store,id,version))!.buffer):{bytes,document:undefined}; const file = await insertVersion(client, { collectionId, fileId: existing?.id, path, mime: request.header('content-type') ?? 'application/octet-stream', bytes: saved.bytes, actor, message: 'Uploaded' }); if(saved.document)await saveAutomergeVersion(client,file.id,file.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document); await audit(request, 'upload', file); response.status(201).json(file) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.put('/v1/files/upload', express.raw({ type: '*/*', limit: '2gb' }), async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request); await client.query('BEGIN'); await lockStoredNamespace(client, collectionId); const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0]; if (existing) { await assertUnprotectedFile(client, existing); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, existing.id, 'edit') } } else await requirePath(request, collectionId, path, 'edit'); const bytes=Buffer.from(request.body as Buffer); const saved=existing?await textSave(client,existing,existing.current_version_id,bytes,(await loadFileContent(db,config,store,existing.id,existing.current_version_id))!.buffer,async(id,version)=>(await loadFileContent(db,config,store,id,version))!.buffer):{bytes,document:undefined}; const file = await insertVersion(client, { collectionId, fileId: existing?.id, path, mime: request.header('content-type') ?? 'application/octet-stream', bytes: saved.bytes, actor, message: 'Uploaded' }); if(saved.document)await saveAutomergeVersion(client,file.id,file.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)live.adopt(file.id,saved.document,{name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'}); await audit(request, 'upload', file); response.status(201).json(file) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
   app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);

@@ -42,6 +42,8 @@ export default {
   chainWebpack: (config) => {
     config.target('electron-renderer');
     config.resolve.alias.set('@pkg', path.resolve(rootDir, 'pkg', 'rancher-desktop'));
+    // electron-renderer otherwise selects Automerge's Node/fs WASM entry. Embed WASM instead.
+    config.resolve.alias.set('@automerge/automerge$', path.resolve(rootDir, 'node_modules/@automerge/automerge/dist/mjs/entrypoints/fullfat_base64.js'));
     config.resolve.extensions.add('.ts');
 
     config.module.rule('ts')

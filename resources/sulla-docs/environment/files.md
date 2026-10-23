@@ -189,3 +189,12 @@ service for every caller, including agents and FUSE. New versions and deletes of
 a locked or retained file fail with HTTP 423 `FILE_LOCKED`. FUSE reports that as
 `EROFS`. Other HTTP 409 conflicts (for example, a checkout held by someone else)
 report as `EPERM`.
+
+## Editing alongside a human
+
+Agents can edit text files through the Files mount or content API while someone
+has them open in the Desktop document editor. The Files service merges these
+writes into the same live Automerge document and streams changes to connected
+editors. No special agent-side sync code is needed. Live sessions persist a new
+version after about two seconds without changes and flush when the last peer
+leaves. Older servers and the browser Files UI retain version-checked saving.

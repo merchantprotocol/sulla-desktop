@@ -186,6 +186,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     clearInterval(auditTimer);
     app.locals.backupScheduler.stop();
     app.locals.backupRuntime.stop();
+    void app.locals.liveTextSessions.close().then(()=>server.closeAllConnections()).catch((error:unknown)=>console.error('[SullaFiles] live flush failed',error));
     server.close(() => {
       lifecycle.lock().finally(() => {
         return Promise.all([db.end(), identityDb?.end()]).finally(() => process.exit(0));

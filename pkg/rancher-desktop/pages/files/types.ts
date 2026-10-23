@@ -402,6 +402,8 @@ export interface FilesSaveSuccess { status:'saved' | 'merged'; fileId:string; pa
 export interface FilesSaveConflict { code:'VERSION_CONFLICT'; error:string; currentVersionId:string }
 
 export interface FilesDataSource {
+  openLive?(fileId:string,onEvent:(event:import('./liveTypes').FilesLiveEvent)=>void):Promise<import('./liveTypes').FilesLiveConnection>;
+
   capabilities: FilesCapabilities;
   syntheticPreview?:boolean;
   nativeSourceReady?:boolean;
