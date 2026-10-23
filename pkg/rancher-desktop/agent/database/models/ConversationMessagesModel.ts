@@ -35,6 +35,7 @@ export interface ConversationMessageRecord {
   created_at:      string;
   updated_at:      string;
   deleted_at:      string | null;
+  kind?:           string | null;
 }
 
 export interface AppendConversationMessageInput {
@@ -64,7 +65,7 @@ export interface ListConversationMessagesOptions {
 
 const COLUMNS = `id, conversation_id, seq::text AS seq, role, content, tool_calls, tool_call_id, tool_name,
   tool_result, parts, model, status, routed_to, source, contractor_id, meta,
-  created_at, updated_at, deleted_at`;
+  created_at, updated_at, deleted_at, kind`;
 
 function json(value: unknown): string | null {
   return value === undefined || value === null ? null : JSON.stringify(value);
