@@ -2,7 +2,7 @@ import { extname } from 'node:path';
 
 const GENERIC = 'application/octet-stream';
 const BY_EXTENSION: Record<string, string> = {
-    '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.tsv': 'text/tab-separated-values',
+    '.txt': 'text/plain', '.md': 'text/markdown', '.sulla': 'text/markdown', '.csv': 'text/csv', '.tsv': 'text/tab-separated-values',
     '.js': 'text/javascript', '.jsx': 'text/javascript', '.mjs': 'text/javascript', '.cjs': 'text/javascript', '.ts': 'text/typescript', '.tsx': 'text/typescript',
     '.css': 'text/css', '.html': 'text/html', '.htm': 'text/html', '.vue': 'text/plain', '.svelte': 'text/plain', '.py': 'text/x-python', '.rb': 'text/x-ruby', '.go': 'text/x-go', '.rs': 'text/x-rust',
     '.java': 'text/x-java-source', '.c': 'text/x-c', '.h': 'text/x-c', '.cc': 'text/x-c++', '.cpp': 'text/x-c++', '.hpp': 'text/x-c++', '.swift': 'text/x-swift', '.kt': 'text/x-kotlin',
