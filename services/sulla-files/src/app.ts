@@ -27,6 +27,7 @@ import { assertUnprotectedFile, isProtectedPath, isAuditLogPath, protectedPathEr
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { serverUi } from './serverUi.js';
 import { SharesService } from './shares.js';
+import { CatalogSyncService } from './cloudRemote/catalogSync.js';
 import { Store } from './store.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
@@ -143,6 +144,7 @@ export function createApp(
   indexer?:IndexingQueue,
 ) {
   const app = express(); const store = new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  app.locals.catalogSync = new CatalogSyncService(db, config);
   const bootstrapJsonParser = express.json({ limit: '32kb' });
   const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
