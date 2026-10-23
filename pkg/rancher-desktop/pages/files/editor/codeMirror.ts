@@ -1,7 +1,7 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState, type Extension } from '@codemirror/state';
-import { drawSelection, EditorView, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
+import { drawSelection, EditorView, highlightActiveLine, keymap } from '@codemirror/view';
 
 export function createEditor(parent:HTMLElement, content:string, readOnly:boolean, markdownMode:boolean, onChange:(content:string) => void, extra:Extension[] = []):EditorView {
   return new EditorView({
@@ -9,7 +9,7 @@ export function createEditor(parent:HTMLElement, content:string, readOnly:boolea
     state: EditorState.create({
       doc: content,
       extensions: [
-        lineNumbers(), history(), drawSelection(), highlightActiveLine(),
+        history(), drawSelection(), highlightActiveLine(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly),
         markdownMode ? markdown() : [], ...extra,

@@ -601,7 +601,15 @@ export function initSullaFilesIpc():void {
 
     return { mime: response.headers.get('content-type') ?? 'application/octet-stream', data: new Uint8Array(await response.arrayBuffer()) };
   });
-  ipcMain.handle('sulla-files:save-content', (_event, input:{ fileId:string; baseVersionId:string; content:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/content`, { method:'PUT', body:JSON.stringify({ baseVersionId:input.baseVersionId, content:input.content }) }));
+  // A 409 is returned as data: Electron IPC drops custom error fields, and the editor needs currentVersionId to resolve the conflict.
+  ipcMain.handle('sulla-files:save-content', async(_event, input:{ fileId:string; baseVersionId:string; content:string }) => {
+    const response = await filesClient.request(`/v1/files/${ encodeURIComponent(input.fileId) }/content`, { method: 'PUT', body: JSON.stringify({ baseVersionId: input.baseVersionId, content: input.content }) });
+    const body = await response.json().catch(() => ({})) as { error?:string; code?:string; currentVersionId?:string };
+    if (response.status === 409) return { conflict: { code: body.code ?? 'VERSION_CONFLICT', error: body.error ?? 'This file changed elsewhere.', currentVersionId: body.currentVersionId ?? '' } };
+    if (!response.ok) throw new Error(body.error ?? `Files save failed (${ response.status })`);
+
+    return body;
+  });
   ipcMain.handle('sulla-files:upload', (_event, input:{ collectionId:string; path:string; mime?:string; data:Uint8Array }) => json(`/v1/files/upload?collectionId=${ encodeURIComponent(input.collectionId) }&path=${ encodeURIComponent(input.path) }`, { method: 'PUT', headers: { 'content-type': input.mime ?? 'application/octet-stream' }, body: Buffer.from(input.data) }));
   ipcMain.handle('sulla-files:trash', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }`, { method: 'DELETE' }));
   ipcMain.handle('sulla-files:trash-list', (_event, input:{ collectionId:string }) => json(`/v1/trash?collectionId=${ encodeURIComponent(input.collectionId) }`));

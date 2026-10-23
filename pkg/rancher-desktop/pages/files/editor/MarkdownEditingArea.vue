@@ -24,13 +24,21 @@ function livePreview(state:EditorState):DecorationSet{
   else if(node.name==='Link'&&!state.doc.sliceString(node.from,node.to).startsWith('!['))decorations.push(Decoration.mark({class:'cm-md-link'}).range(node.from,node.to));
   else if(node.name==='TaskMarker')decorations.push(Decoration.mark({class:'cm-md-task'}).range(node.from,node.to));
  }});
- const source=state.doc.toString();const imagePattern=/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\)/g;let match:RegExpExecArray|null;
+ const source=state.doc.toString();
+ // Front matter is shown as property pills; the raw YAML only appears while the cursor is inside it.
+ const frontMatter=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(source);
+ if(frontMatter){const cursor=state.selection.main.head;if(cursor>frontMatter[0].length)decorations.push(Decoration.replace({block:true}).range(0,frontMatter[0].length-(frontMatter[0].endsWith('\n')?1:0)))}
+ const imagePattern=/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)(?:\s+"[^"]*")?\)/g;let match:RegExpExecArray|null;
  while((match=imagePattern.exec(source))){const from=match.index,to=from+match[0].length;const line=state.doc.lineAt(from);const cursor=state.selection.main.head;if(cursor<line.from||cursor>line.to)decorations.push(Decoration.replace({widget:new ImageWidget(match[2],match[1]),block:true}).range(from,to))}
  return Decoration.set(decorations,true);
 }
 const preview=EditorView.decorations.compute(['doc','selection'],state=>livePreview(state));
 onMounted(()=>{if(host.value)view=createEditor(host.value,props.modelValue,props.readOnly,true,value=>{if(!applying)emit('update:modelValue',value)},[preview,EditorView.theme({'.cm-md-heading':{fontFamily:'var(--font-display, Georgia, serif)',fontWeight:'700'},'.cm-md-h1':{fontSize:'2.1rem',lineHeight:'1.3'},'.cm-md-h2':{fontSize:'1.45rem',lineHeight:'1.4'},'.cm-md-h3':{fontSize:'1.2rem'},'.cm-md-strong':{fontWeight:'700'},'.cm-md-em':{fontStyle:'italic'},'.cm-md-link':{color:'var(--nx-accent, #3a7fa0)',textDecoration:'underline'},'.cm-md-task':{color:'var(--nx-accent, #3a7fa0)'},'.cm-md-image':{display:'block',maxWidth:'100%',maxHeight:'520px',margin:'14px 0',borderRadius:'10px'}})])});
 watch(()=>props.modelValue,value=>{if(!view||view.state.doc.toString()===value)return;applying=true;const anchor=Math.min(view.state.selection.main.anchor,value.length);view.dispatch({changes:{from:0,to:view.state.doc.length,insert:value},selection:{anchor}});applying=false});
+function startAfterFrontMatter(){if(!view)return;const match=/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(view.state.doc.toString());if(match)view.dispatch({selection:{anchor:Math.min(match[0].length+1,view.state.doc.length)}})}
+onMounted(startAfterFrontMatter);
+function revealProperties(){if(!view)return;view.focus();view.dispatch({selection:{anchor:Math.min(4,view.state.doc.length)},scrollIntoView:true})}
+defineExpose({revealProperties});
 onBeforeUnmount(()=>view?.destroy());
 </script>
 <style scoped>
