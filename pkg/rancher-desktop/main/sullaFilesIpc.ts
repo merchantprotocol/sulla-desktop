@@ -135,7 +135,8 @@ async function importPaths(paths:string[], destination = '', progress?:(value:{ 
     const target = storedPath(destination, source);
     const response = await filesClient.request(`/v1/files/import?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(target) }&conflict=keep-both`, {
       method:  'PUT',
-      headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
+      // Chromium sets content-length for byte bodies and rejects a caller-set one.
+      headers: { 'content-type': 'application/octet-stream' },
       body:    bytes as unknown as BodyInit,
     });
     if (!response.ok) throw new FilesApiError((await response.json().catch(() => ({})) as { error?:string }).error ?? `Files upload failed (${ response.status })`, response.status);
