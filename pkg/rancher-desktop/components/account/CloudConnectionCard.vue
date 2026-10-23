@@ -143,7 +143,7 @@ const error = ref('');
 
 const syncItems: { key: 'conversations' | 'vault'; title: string; detail: string }[] = [
   { key: 'conversations', title: 'Conversations', detail: 'read and continue chats from the web and your phone.' },
-  { key: 'vault', title: 'Password vault', detail: 'encrypted backup, locked with your master password. Sulla Cloud can\'t read it.' },
+  { key: 'vault', title: 'Password vault', detail: 'Sulla Cloud stores an encrypted copy you can unlock in your browser. It can\'t read your passwords. Anyone who learns your master password and gets this copy can. If you forget the master password, Cloud can\'t recover it.' },
 ];
 
 const channelLabel = computed(() => ({

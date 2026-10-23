@@ -85,6 +85,7 @@ const PURPOSE_TAGS = {
   'relay-desktop': 'sulla-relay-desktop-v1',
   'sync-upload':   'sulla-sync-upload-v1',
   'key-rotate':    'sulla-key-rotate-v1',
+  'vault-sync-v3': 'sulla-vault-sync-v3',
 } as const;
 
 export type DevicePurpose = keyof typeof PURPOSE_TAGS;
