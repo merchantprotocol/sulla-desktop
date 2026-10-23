@@ -866,6 +866,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, triggerRef, watch 
 
 import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
+import { supportsDocumentEditor } from './editor/registry';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
 import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
@@ -877,7 +878,7 @@ import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperati
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
-const emit = defineEmits<{ 'navigation-consumed': [] }>();
+const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
 interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
@@ -1361,7 +1362,7 @@ async function saveFolderGuidance(){const details=folderDetails.value;const stat
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else selectEntry(entry) }
+function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else if (supportsDocumentEditor(entry.path)) emit('open-editor', entry); else selectEntry(entry) }
 function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
 function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
@@ -1896,7 +1897,7 @@ function emptyTrash() { return purgeEntries(trashItems.value.map(toTrashDisplay)
 async function runTargetAction(action:'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge') {
   const target = actionTarget.value; if (!target || busy.value || loading.value) return; closeActions();
   if (action === 'open') { activate(target); return }
-  if (action === 'open-sulla') { selectEntry(target); return }
+  if (action === 'open-sulla') { if (!target.folder && supportsDocumentEditor(target.path)) emit('open-editor', target); else selectEntry(target); return }
   if (action === 'native-open') { await runMutation(() => (props.dataSource.openFileWithDefaultApp ?? props.dataSource.openFile).call(props.dataSource,target.id,target.currentVersionId), false); return }
   if (action === 'reveal') {
     if (!props.dataSource.capabilities.nativeReveal || !props.dataSource.revealFile) return;
