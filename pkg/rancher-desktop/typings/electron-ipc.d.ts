@@ -494,7 +494,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:chat-inventory': (input: { runIds: string[]; threadId: string }) => { files: SullaFileReference[]; error?: string };
   'files-ui:reference-content': (input: { fileId: string; versionId?: string }) => { mime: string; data: Uint8Array };
   'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => { reference: SullaFileReference };
-  'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
+  'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; setup?: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
   'files-ui:create-link': (input: import('@pkg/main/sullaFilesLinkService').CreateShareInput) => import('@pkg/main/sullaFilesLinkService').ShareLink;
   'files-ui:list-links': () => import('@pkg/main/sullaFilesLinkService').ShareLink[];
   'files-ui:revoke-link': (id: string) => void;
@@ -1203,6 +1203,7 @@ export interface IpcRendererEvents {
   'files-ui:changed': (change:{ collectionId:string; seq:string; paths:string[] }) => void;
   'files-ui:upload-progress': (progress: { current: number; total: number; name: string; percent: number; done: boolean }) => void;
   'files-ui:native-runtime-changed': (status: import('@pkg/utils/sullaFilesNativeSource').SullaFilesNativeRuntimeStatus) => void;
+  'capture-studio:recording-state': (status: { recording: boolean }) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
   'claude-oauth:progress':          (text: string) => void;

@@ -16,6 +16,7 @@ import { BrowserWindow, dialog } from 'electron';
 
 import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
+import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync';
 import { ApprovedClients } from './approvedClients';
 import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, type CloudPreferences } from './cloudSettings';
 import { DesktopObjectSync, type ObjectKind } from './desktopObjectSync';
@@ -117,6 +118,7 @@ export async function startCloudServices(): Promise<void> {
   if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
   if (prefs.conversations) await startConversationSync().catch(err => console.warn('[CloudLifecycle] SullaSync start failed:', err));
   DesktopObjectSync.start();
+  DeviceInstallSync.start();
   broadcast();
 }
 
@@ -124,6 +126,7 @@ export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   channel?.stop();
   DesktopObjectSync.stop();
+  DeviceInstallSync.stop();
   await stopConversationSync().catch(() => undefined);
   DevicesCloudApi.stopHeartbeat();
   broadcast();

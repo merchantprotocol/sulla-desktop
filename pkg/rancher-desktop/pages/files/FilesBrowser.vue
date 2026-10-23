@@ -39,6 +39,10 @@
       <template v-if="moreExpanded">
         <a v-for="collection in moreCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.systemArea === 'training-data' ? 'Training Data' : 'Logs' }}</span></a>
       </template>
+      <template v-if="trackedCollections.length">
+        <div class="grp">Tracked folders</div>
+        <a v-for="collection in trackedCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
+      </template>
       <template v-if="sharedFolders.length">
         <div class="grp">
           Shared folders
@@ -1009,6 +1013,7 @@ const folderFavorites = computed(() => {
 });
 const moreExpanded = ref(false);
 const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
+const trackedCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea && collection.id !== (snapshot.value?.availableCollections ?? []).find(item=>!item.systemArea)?.id));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
 const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
