@@ -966,6 +966,8 @@ export function createApp(
     if(!folderExists) throw new HttpError(404,'Files path not found'); response.json({collectionId:collection.id,folderPath:inner,kind:'folder'});
   }catch(error){next(error)}});
   app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
+  app.post('/v1/local/roots', async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.status(201).json(await manager.attachBrokeredRoot(request.body))}catch(error){next(error)}});
+  app.post('/v1/local/roots/:id/scan-state',async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.json(await manager.brokeredScanState(String(request.params.id),request.body))}catch(error){next(error)}});
   app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
     if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
     const exclusions = request.body.exclusions;
@@ -1719,7 +1721,10 @@ export function createApp(
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);
     const keepBoth = request.query.conflict === 'keep-both';
     await requirePath(request, collectionId, requestedPath, 'edit');
-    const declaredBytes = Number(request.header('content-length'));
+    // Desktop streams through Chromium, which sends chunked bodies and forbids a
+    // caller-set content-length, so it declares the size in x-sulla-expected-bytes.
+    // The streaming writer rejects any body that does not match the declared size.
+    const declaredBytes = Number(request.header('content-length') ?? request.header('x-sulla-expected-bytes'));
     if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > 2 * 1024 * 1024 * 1024) throw new HttpError(400, 'valid content-length is required');
     const actor = identity(request);
     await beginUploadIntent(db, uploadId, collectionId);

@@ -180,6 +180,9 @@ const wrapEl       = ref<HTMLElement | null>(null);
 const filesMenuOpen = ref(false);
 const recentFiles = ref<FilesReference[]>([]);
 const screenRecording = ref(false);
+function onScreenRecordingState(_event:unknown, state:{ recording?:boolean }):void {
+  screenRecording.value = state?.recording === true;
+}
 const filesImporting = ref(false);
 const filesImportError = ref('');
 
@@ -521,6 +524,7 @@ onBeforeUnmount(() => {
   reflexIntent.dispose();
   window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
+  ipcRenderer.removeListener('capture-studio:recording-state', onScreenRecordingState);
 });
 
 function onAttachShortcut():void { browseFiles().catch(() => undefined) }
@@ -565,6 +569,7 @@ async function prefillFirstRunStarter(): Promise<void> {
 }
 
 onMounted(() => {
+  ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
   themeObserver = new MutationObserver(() => {
     isNoir.value = document.documentElement.classList.contains('theme-noir');
   });
