@@ -127,12 +127,11 @@ Or run `install-dev.sh` to build and install from source in one step.
 For developers and tinkerers, this is what makes the automations durable:
 
 - **Workflow engine.** Workflows are graphs of typed nodes: triggers (schedule, calendar, chat, heartbeat, desktop events, an OpenAI-compatible API), agent steps, tool and integration calls, routers and conditions, loops, parallel branches, waits, sub-workflows and user-input/approval steps. An orchestrating agent walks the graph in order and can't skip steps. The full run state is checkpointed to Postgres after every node, so runs survive restarts. Workflows are plain YAML files you can version-control.
-- **Heartbeat.** A background agent keeps Sulla alive between conversations. It fires scheduled work, picks up project tasks, and checks on long-running jobs.
+- **Heartbeat.** A background agent keeps Sulla alive between conversations. It fires scheduled work and checks on long-running jobs.
 - **Subconscious agents.** Alongside the main conversation, background agents prepare just-in-time context (the right tools, facts and skills for this turn), remind the agent of your rules before it acts, distill long threads so the context window never fills up, and record durable observations about you and your work.
 - **Memory.** Observational memory stores what matters (preferences, decisions, context) and prunes what's gone stale, so every new conversation starts informed.
 - **Agents and skills.** Create specialized agents with their own prompts, skills and tool access. Sulla can spawn sub-agents for parallel work.
 - **Sulla CLI.** Every tool (browser, GitHub, calendar, vault, Docker, Kubernetes, Slack, workflows, projects and more) is callable as `sulla <category>/<tool> '<json>'` from the sandbox.
-- **Workbench.** File explorer, Monaco editor with diffs, Git management, an integrated terminal into the sandbox, and an agent builder.
 - **Containers.** Docker runs inside the VM, so Sulla can start services for your projects and install one-click recipes (CRMs, media tools, local AI models) from the marketplace.
 - **Models.** Connect Anthropic, OpenAI, Grok or other providers by signing in or with an API key, and switch models at any time.
 

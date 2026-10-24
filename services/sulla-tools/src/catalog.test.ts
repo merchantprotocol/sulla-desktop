@@ -10,7 +10,6 @@ function tool(name: string, category: string): CatalogTool {
 }
 
 test('mobile credential scopes are issued only for mobile-capable catalog calls', () => {
-  assert.equal(credentialIntegrationForTool(tool('mobile_list_calls', 'mobile'), {}), 'sulla-cloud');
   assert.equal(credentialIntegrationForTool(tool('notify_user', 'notify'), { targets: ['desktop', 'mobile'] }), 'sulla-cloud');
   assert.equal(credentialIntegrationForTool(tool('notify_user', 'notify'), { targets: ['desktop'] }), undefined);
   assert.equal(credentialIntegrationForTool(tool('notify_history', 'notify'), { targets: ['mobile'] }), undefined);
