@@ -349,12 +349,15 @@
 
   function license() {
     const valid = licenseValid();
+    // The Console API's license status (services/sulla-console/src/license.ts), plus seatsUsed.
     return {
       valid,
-      reason: valid ? null : 'lapsed',
+      state: valid ? 'active' : 'lapsed',
+      message: valid ? 'License active.' : 'License has expired. Enter a renewed key.',
       edition: A.edition,
       masked: A.license.masked,
-      seats: seats(),
+      seats: A.seats.total,
+      seatsUsed: A.seats.used,
       registeredTo: A.license.registeredTo,
       serverId: A.serverId,
       nextCheckIn: A.license.nextCheckIn,
@@ -466,7 +469,7 @@
       } catch (_) {
         // nothing to clear
       }
-      return body?.key ? ok(D(license())) : { status: 400, body: { error: 'A license key is required.' } };
+      return body?.licenseKey ? ok(D(license())) : { status: 400, body: { error: 'A license key is required.' } };
     }
     if (p.startsWith('/server/v1/') && method !== 'GET') return ok(D({ ok: true }));
     return null;

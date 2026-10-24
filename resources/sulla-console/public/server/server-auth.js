@@ -159,7 +159,8 @@
       try {
         const res = await request('/server/v1/license');
         const license = res?.data ?? res;
-        if (license?.valid === false && license?.reason === 'not_activated') {
+        const notActivated = license?.state === 'missing' || license?.reason === 'not_activated';
+        if (license?.valid === false && notActivated) {
           location.replace('activate.html');
           return new Promise(() => {});
         }

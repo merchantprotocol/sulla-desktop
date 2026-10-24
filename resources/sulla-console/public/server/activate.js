@@ -169,8 +169,13 @@
       err.textContent = '';
       try {
         const key = form.key.value.replace(/\s+/g, '');
-        const res = await api('POST', '/server/v1/license', { key });
+        const res = await api('POST', '/server/v1/license', { licenseKey: key });
         state.license = res?.data ?? res;
+        if (state.license?.valid === false) {
+          err.textContent = state.license.message || 'The key could not be activated.';
+          submit.disabled = false;
+          return;
+        }
         if (replacing) location.replace('server-admin.html#st=license');
         else renderProviders();
       } catch (error) {
@@ -184,12 +189,13 @@
 
   function renderProviders() {
     const l = state.license || {};
-    const seats = l.seats?.total ?? l.seats?.limit ?? l.seatLimit;
+    const seats = typeof l.seats === 'number' || l.seats === null ? l.seats : l.seats?.total ?? l.seatLimit;
+    const edition = l.edition ? `${String(l.edition)[0].toUpperCase()}${String(l.edition).slice(1)}` : 'Community';
     const who = l.registeredTo ? `Licensed to ${esc(l.registeredTo)} · ` : '';
     const options = PROVIDERS.map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
     const limit = seats == null ? 'no seat limit' : `up to ${esc(seats)} people`;
     page(1, '<h1>Server activated</h1>'
-      + `<p>${who}${esc(l.edition || 'Community')} · ${limit}. Next, connect a model provider so agents can run. `
+      + `<p>${who}${esc(edition)} · ${limit}. Next, connect a model provider so agents can run. `
       + 'The key is stored in this server’s vault.</p>'
       + '<form data-form novalidate>'
       + `<label>Provider<select class="field" name="provider">${options}</select></label>`

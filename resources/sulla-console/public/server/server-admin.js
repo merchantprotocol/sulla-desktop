@@ -111,13 +111,17 @@
     return `<div class="empty-settings"><b>${esc(title)}</b><span>${esc(copy)}</span></div>`;
   }
 
+  // Seats arrive as { used, total } (overview, users) or as the license's seat limit number.
   function seatsOf(d) {
-    const seats = d?.seats || {};
+    const seats = d?.seats;
+    if (typeof seats === 'number' || seats === null) return { used: d?.seatsUsed ?? null, total: seats };
     return {
-      used: Number(seats.used ?? d?.seatsUsed ?? 0),
-      total: seats.total ?? seats.limit ?? d?.seatLimit ?? null,
+      used: Number(seats?.used ?? d?.seatsUsed ?? 0),
+      total: seats?.total ?? seats?.limit ?? d?.seatLimit ?? null,
     };
   }
+
+  const cap = (s) => (s ? `${String(s)[0].toUpperCase()}${String(s).slice(1)}` : '');
 
   // ── Sections ──────────────────────────────────────────────────────────
   function serviceHealthy(s) {
@@ -220,7 +224,9 @@
     const notice = valid ? '' : '<div class="banner info"><b>This server’s license key isn’t valid.</b>'
       + '<span>Use Cases can’t browse, install or update until a valid key is entered. '
       + 'Everything else keeps working.</span></div>';
-    const keyState = d.reason === 'not_activated'
+    const notActivated = d.state === 'missing' || d.reason === 'not_activated';
+    const edition = cap(d.edition);
+    const keyState = notActivated
       ? pill('Not activated', 'warn')
       : pill(valid ? 'Valid' : 'Not valid', valid ? 'ok' : 'bad');
     const catalog = valid && d.catalogAllowed !== false;
@@ -232,11 +238,9 @@
         `<a class="btn sm" href="${MANAGE_URL}" target="_blank" rel="noopener">Manage in Sulla Cloud</a>`)
       + row('Server ID', 'Created when this server was installed.',
         `<span class="mono">${esc(d.serverId || '—')}</span>`)
-      + row('Edition', `${esc(d.edition || '—')}${d.edition === 'Community' ? ' · free' : ''}`,
+      + row('Edition', `${esc(edition || '—')}${edition === 'Community' ? ' · free' : ''}`,
         pill(valid ? 'Active' : 'Inactive', valid ? 'ok' : 'warn'))
-      + row('Seats', seats.total == null
-        ? `${seats.used} used · no limit`
-        : `${seats.used} of ${seats.total} used`, '')
+      + row('Seats', seatsCopy(seats), '')
       + row('Use Cases catalog', 'Browsing, installing and updating use cases needs an active license key.',
         pill(catalog ? 'Included' : 'Locked', catalog ? 'ok' : 'warn'))
       + row('Next check-in',
@@ -246,8 +250,8 @@
       + '<div class="price">Unlimited <small>seats</small></div><ul>'
       + '<li>Priority updates</li><li>Support from Merchant Protocol</li></ul>'
       + `<a class="btn pri" href="${MANAGE_URL}" target="_blank" rel="noopener">Manage in Sulla Cloud</a></article>`;
-    const community = `<article class="plan ${d.edition === 'Community' ? 'current' : ''}">`
-      + `${d.edition === 'Community' ? '<span class="pill acc">Current</span>' : ''}<h3>Community</h3>`
+    const community = `<article class="plan ${edition === 'Community' ? 'current' : ''}">`
+      + `${edition === 'Community' ? '<span class="pill acc">Current</span>' : ''}<h3>Community</h3>`
       + '<div class="price">Free</div><ul><li>Up to <b>25 people</b></li><li>Invite-only sign-up</li></ul>'
       + '<button class="btn" disabled>Current edition</button></article>';
     const enterprise = '<article class="plan"><h3>Enterprise</h3><div class="price">Custom</div>'
@@ -260,6 +264,11 @@
       + card('Terms', row('License', 'Sulla Fair-Code License 1.0. Run it for your own team or company. '
         + 'You can’t resell it, charge people to use it, or bypass the license key.',
       '<a class="btn sm ghost" href="https://sulladesktop.com/terms.html">Read</a>'));
+  }
+
+  function seatsCopy(seats) {
+    if (seats.used == null) return seats.total == null ? 'No seat limit' : `Up to ${seats.total} people`;
+    return seats.total == null ? `${seats.used} used · no limit` : `${seats.used} of ${seats.total} used`;
   }
 
   function certPill(cert) {
