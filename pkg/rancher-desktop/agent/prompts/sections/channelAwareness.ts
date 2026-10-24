@@ -25,7 +25,7 @@ export function buildChannelAwarenessSection(ctx: PromptBuildContext): PromptSec
     `**To message another agent**, wrap your message in XML tags named after the target channel:`,
     `\`\`\``,
     `<channel:heartbeat>Are you online?</channel:heartbeat>`,
-    `<channel:workbook>Please update the status for task #42.</channel:workbook>`,
+    `<channel:mobile-relay>Your requested update is ready.</channel:mobile-relay>`,
     `\`\`\``,
     `The system automatically detects these tags and routes the message. No tool call needed.`,
     ``,

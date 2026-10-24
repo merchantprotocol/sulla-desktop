@@ -203,15 +203,10 @@ The docker category has nine tools: build, exec, images, logs, ps, pull, rm, run
 
 | Request | Status | Notes |
 |---------|--------|-------|
-| ✅ Show me my last call from mobile | `sulla mobile/list_calls '{}'` and `sulla mobile/get_call '{"id":"..."}'` | Uses the Sulla Cloud integration's API token |
-| ✅ Show me my leads | `sulla mobile/list_leads '{}'` | Filters for urgency and qualified |
-| ✅ Show me my messages | `sulla mobile/list_messages '{}'` | SMS and voicemail transcripts |
 | ✅ Is my phone paired / reachable right now? | `sulla mobile/list_devices '{"online_only":true,"device_type":"mobile"}'` | Online means the device hit the worker in the last 2 minutes. Check this before you route to the phone |
 | ✅ Send a notification to my phone | `sulla notify/user '{"targets":["mobile"]}'` | Needs the backend push route |
 | 🔴 Pair my phone via QR code | — | Manual sign-in on both devices today |
-| 🔴 Send a file from desktop to phone | — | No transfer mechanism |
 | 🔴 Sync calendar to mobile | — | Mobile keeps its own server-side data. No shared calendar |
-| 🟡 Take over a live call from desktop | — | Only the phone can |
 
 ---
 

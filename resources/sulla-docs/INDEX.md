@@ -116,7 +116,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `secretary-mode.md` — Live meeting transcription + auto action items (Cmd+Shift+S)
 
 ## mobile/
-- `overview.md` — Sulla Mobile (iOS): AI iPhone receptionist, push-to-talk to Desktop, lead inbox
+- `overview.md` — Sulla Mobile: Chat, Files, push-to-talk, Passwords, Settings, and Desktop relay
 
 ## design-system (project HTML docs)
 - [`design-system.md`](design-system.md) — ⭐ **ALL project docs must be HTML using this system** — sulla.css tokens, component classes, quick-start, CSS path

@@ -265,11 +265,7 @@ sulla meta/browse_tools '{"category":"<category>"}'
 
 → See [`tools/gdrive.md`](gdrive.md)
 
-## mobile (5 tools)
-- `sulla mobile/list_calls` — List recent calls handled by the AI receptionist (Sulla Mobile).
-- `sulla mobile/get_call` — Full details for one call — transcript, AI summary, extracted lead metadata, caller info.
-- `sulla mobile/list_leads` — List leads extracted from recent calls — the same rows that appear in the mobile Inbox tab.
-- `sulla mobile/list_messages` — List SMS and voicemail transcripts shown in the mobile Messages tab.
+## mobile (1 tool)
 - `sulla mobile/list_devices` — List every desktop and mobile device registered to the contractor, annotated with online/offline status.
 
 

@@ -84,7 +84,7 @@ export class ToolRegistry {
     agents:             'Sub-agent spawning and job management — run parallel background agents and check their results.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
     lima:               'Lima VM instance management.',
-    mobile:             'Sulla Mobile companion — read calls, leads, and messages captured by the AI receptionist without picking up the phone.',
+    mobile:             'Sulla Mobile companion — check whether signed-in desktop and mobile devices are reachable.',
     models:             'AI provider/model inventory — provider connection status, Sulla compatibility, CLI installation checks, model discovery, and locally tracked usage.',
     notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',

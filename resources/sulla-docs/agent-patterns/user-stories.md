@@ -775,34 +775,16 @@ Not yet. That's the Cloud-routed Phase 2.
 
 ## Sulla Mobile
 
-The Desktop agent can read what the AI receptionist captured. It can't manage the phone.
-
-### "What is Sulla Mobile?"
-An AI receptionist for the iPhone and a desktop companion. Customers call your Twilio number, the AI answers, and you see it on your phone. You can also push-to-talk to your Desktop AI from anywhere.
+Sulla Mobile is the signed-in companion for Chat, Files, push-to-talk, Passwords, and Settings. Studio pages are available inside Settings.
 
 ### "How do I pair my phone?"
-Sign in on both Desktop and Mobile with the same account. There's no QR pairing yet. To check whether the phone is reachable:
+Sign in on Desktop and Mobile with the same account. To check whether the phone is reachable:
 ```bash
 sulla mobile/list_devices '{"device_type":"mobile","online_only":true}'
 ```
 
-### "Show me my last call from the phone"
-```bash
-sulla mobile/list_calls '{}'
-sulla mobile/get_call '{"id":"..."}'
-```
-
-### "Show me my leads" / "Show me my messages"
-```bash
-sulla mobile/list_leads '{}'
-sulla mobile/list_messages '{}'
-```
-
 ### "Send something to my phone"
-There's no file or data transfer between Desktop and Mobile. To reach the phone with a notice, use `notify/user` with `targets:["mobile"]`. Check `mobile/list_devices` first.
-
-### "How much does the receptionist cost?"
-Quote only what `mobile/overview.md` says. (Unverified: the prices quoted there.) Don't confuse it with Sulla Cloud. They're separate products.
+Use `notify/user` with `targets:["mobile"]`. Check `mobile/list_devices` first when reachability matters.
 
 ---
 

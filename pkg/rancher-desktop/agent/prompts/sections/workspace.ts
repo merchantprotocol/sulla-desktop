@@ -127,7 +127,7 @@ ${ sullaDocs }/
 │   ├── context-passing.md              # Template resolution, merge output
 │   └── channels.md                     # Inter-agent messaging
 ├── cloud/overview.md                   # Sulla Cloud positioning + pricing
-├── mobile/overview.md                  # Sulla Mobile (iOS AI receptionist)
+├── mobile/overview.md                  # Sulla Mobile companion and Desktop relay
 ├── marketplace/overview.md             # Recipes + extension management
 ├── desktop/
 │   ├── capture-studio.md               # Multi-track recorder
