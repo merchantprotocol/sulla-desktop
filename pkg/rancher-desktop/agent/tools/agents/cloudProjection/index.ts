@@ -37,7 +37,7 @@ export async function buildAgentProjection(): Promise<CloudAgentProjection[]> {
 
 export async function pushAgentProjection(upload: (path: string, body: unknown) => Promise<void>): Promise<void> {
   const [deviceId, agents] = await Promise.all([getDesktopDeviceId(), buildAgentProjection()]);
-  await upload('/cloud-runtime/v1/device/agents', { deviceId, agents });
+  await upload('/cloud-runtime/v1/device/agents', { deviceId, generatedAt: new Date().toISOString(), agents });
 }
 
 /** Dispatch only after SecureDesktopChannel verified the browser signature and device id. */
