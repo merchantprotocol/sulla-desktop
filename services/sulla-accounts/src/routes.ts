@@ -16,7 +16,7 @@ import {
 import { base64url, digest } from './crypto.js';
 import { assertOrganizationUserMutation, organizationUsers } from './consoleAuthorization.js';
 import { fetchJson, object, string, stringArray } from './http.js';
-import { createHostedUser, getHostedUser, resetHostedPassword, updateHostedUser, updateHostedUserProfile } from './keycloakAdmin.js';
+import { assignHostedRealmRole, createHostedUser, deleteHostedUser, getHostedUser, resetHostedPassword, updateHostedUser, updateHostedUserProfile } from './keycloakAdmin.js';
 import {
   authorityAccessToken,
   beginAuthorization,
@@ -900,27 +900,35 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
     response.status(204).end();
   }));
 
+  router.get('/setup/first-owner', route(async(_request, response) => {
+    const existing = await db.query('SELECT 1 FROM accounts.organizations LIMIT 1');
+    response.json({ bootstrapped: Boolean(existing.rowCount) });
+  }));
+
   router.post('/setup/first-owner', route(async(request, response) => {
     const input = requestBody(request);
     const name = string(input.organizationName, 'organizationName', 120).trim();
     const slug = string(input.organizationSlug, 'organizationSlug', 63);
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug)) throw new HttpError(400, 'organizationSlug is invalid');
-    const password = string(input.temporaryPassword, 'temporaryPassword', 1024);
-    if (password.length < 12) throw new HttpError(400, 'temporaryPassword must contain at least 12 characters');
+    const email = string(input.email, 'email', 254).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'email is invalid');
+    const displayName = string(input.displayName, 'displayName', 120).trim();
+    if (!displayName) throw new HttpError(400, 'displayName is invalid');
+    const password = string(input.password, 'password', 1024);
+    if (password.length < 12) throw new HttpError(400, 'password must contain at least 12 characters');
     const client = await db.connect();
     let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
     try {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-first-owner'))");
       const existing = await client.query('SELECT 1 FROM accounts.organizations LIMIT 1');
-      if (existing.rowCount) throw new HttpError(409, 'first owner setup is already complete');
-      user = await createHostedUser(config, {
-        username: string(input.username, 'username', 254),
-        email: input.email === undefined ? undefined : string(input.email, 'email', 254),
-        firstName: input.firstName === undefined ? undefined : string(input.firstName, 'firstName', 120),
-        lastName: input.lastName === undefined ? undefined : string(input.lastName, 'lastName', 120),
-        password,
-      });
+      if (existing.rowCount) {
+        await client.query('COMMIT');
+        response.json({ status: 'already_bootstrapped' });
+        return;
+      }
+      user = await createHostedUser(config, { username: email, email, firstName: displayName, password, temporaryPassword: false });
+      await assignHostedRealmRole(config, user.id, 'server-admin');
       const organizationId = randomUUID();
       await client.query('INSERT INTO accounts.organizations(id,name,slug) VALUES ($1,$2,$3)', [organizationId, name, slug]);
       await client.query(
@@ -928,10 +936,10 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
         [randomUUID(), config.keycloakIssuer, user.id, organizationId, ['owner', 'admin'], []],
       );
       await client.query('COMMIT');
-      response.status(201).json({ organization: { id: organizationId, name, slug }, user: { ...user, temporaryPassword: undefined } });
+      response.status(201).json({ status: 'created', organization: { id: organizationId, name, slug }, user });
     } catch (error) {
       await client.query('ROLLBACK');
-      if (user) await updateHostedUser(config, user.id, false).catch(() => undefined);
+      if (user) await deleteHostedUser(config, user.id).catch(() => undefined);
       throw error;
     } finally { client.release(); }
   }));

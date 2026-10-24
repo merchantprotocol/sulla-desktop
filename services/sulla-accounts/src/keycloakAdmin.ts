@@ -11,7 +11,7 @@ export interface HostedUser {
   enabled: boolean;
 }
 
-function endpoints(config: AccountsConfig): { token: string; users: string } {
+function endpoints(config: AccountsConfig): { token: string; realm: string; users: string } {
   if (!config.keycloakIssuer) throw new Error('hosted authority is unavailable');
   const issuer = new URL(config.keycloakIssuer);
   const marker = '/auth/realms/';
@@ -21,6 +21,7 @@ function endpoints(config: AccountsConfig): { token: string; users: string } {
   if (!/^[A-Za-z0-9._-]+$/.test(realm)) throw new Error('hosted realm is invalid');
   return {
     token: 'http://127.0.0.1:8080/auth/realms/master/protocol/openid-connect/token',
+    realm: `http://127.0.0.1:8080/auth/admin/realms/${encodeURIComponent(realm)}`,
     users: `http://127.0.0.1:8080/auth/admin/realms/${encodeURIComponent(realm)}/users`,
   };
 }
@@ -66,7 +67,7 @@ export async function getHostedUser(config: AccountsConfig, id: string): Promise
 }
 
 export async function createHostedUser(config: AccountsConfig, input: {
-  username: string; email?: string; firstName?: string; lastName?: string; password: string;
+  username: string; email?: string; firstName?: string; lastName?: string; password: string; temporaryPassword?: boolean;
 }): Promise<HostedUser> {
   const users = endpoints(config).users;
   const response = await keycloakRequest(config, users, {
@@ -74,7 +75,7 @@ export async function createHostedUser(config: AccountsConfig, input: {
     body: JSON.stringify({
       username: input.username, email: input.email, firstName: input.firstName, lastName: input.lastName,
       enabled: true, emailVerified: false,
-      credentials: [{ type: 'password', value: input.password, temporary: true }],
+      credentials: [{ type: 'password', value: input.password, temporary: input.temporaryPassword ?? true }],
     }),
   });
   const location = response.headers.get('location');
@@ -112,5 +113,17 @@ export async function resetHostedPassword(config: AccountsConfig, id: string, pa
   await keycloakRequest(config, `${endpoints(config).users}/${encodeURIComponent(id)}/reset-password`, {
     method: 'PUT', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ type: 'password', value: password, temporary: true }),
+  });
+}
+
+export async function deleteHostedUser(config: AccountsConfig, id: string): Promise<void> {
+  await keycloakRequest(config, `${endpoints(config).users}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function assignHostedRealmRole(config: AccountsConfig, userId: string, roleName: string): Promise<void> {
+  const base = endpoints(config);
+  const role = await keycloakRequest(config, `${base.realm}/roles/${encodeURIComponent(roleName)}`);
+  await keycloakRequest(config, `${base.users}/${encodeURIComponent(userId)}/role-mappings/realm`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify([await role.json()]),
   });
 }
