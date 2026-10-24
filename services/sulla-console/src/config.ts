@@ -13,6 +13,10 @@ export interface ConsoleConfig {
   workflowsUrl: URL;
   trustedProxy: boolean;
   publicDirectory?: string;
+  accountsAdminSecret?: string;
+  licensePublicKey: string;
+  licenseStateFile: string;
+  cloudUrl: string;
 }
 
 async function secretText(name: string): Promise<string> {
@@ -43,6 +47,10 @@ export async function loadConfig(): Promise<ConsoleConfig> {
     agentsUrl: serviceUrl('SULLA_CONSOLE_AGENTS_URL'),
     workflowsUrl: serviceUrl('SULLA_CONSOLE_WORKFLOWS_URL'),
     trustedProxy: process.env.SULLA_CONSOLE_TRUSTED_PROXY === '1',
-    publicDirectory: process.env.SULLA_CONSOLE_PUBLIC_DIR,
+    publicDirectory: process.env.SULLA_CONSOLE_PUBLIC_DIR ?? '/opt/sulla-console/public',
+    accountsAdminSecret: process.env.SULLA_ACCOUNTS_ADMIN_SECRET_FILE ? await secretText('SULLA_ACCOUNTS_ADMIN_SECRET_FILE') : undefined,
+    licensePublicKey: process.env.SULLA_SERVER_LICENSE_PUBLIC_KEY ?? '',
+    licenseStateFile: process.env.SULLA_SERVER_LICENSE_STATE_FILE ?? '/var/lib/sulla-console/license.json',
+    cloudUrl: process.env.SULLA_CLOUD_API_URL ?? 'https://api.sulladesktop.com',
   };
 }

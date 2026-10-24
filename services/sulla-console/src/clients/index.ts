@@ -15,7 +15,7 @@ export interface UpstreamClients {
 
 export function createUpstreamClients(config: ConsoleConfig): UpstreamClients {
   return {
-    accounts: new AccountsClient(config.accountsUrl),
+    accounts: new AccountsClient(config.accountsUrl, config.accountsAdminSecret),
     files: new UpstreamClient(config.filesUrl),
     vault: new UpstreamClient(config.vaultUrl),
     agents: new UpstreamClient(config.agentsUrl),
