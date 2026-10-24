@@ -46,6 +46,7 @@ import {
   type NormalizedMobileTurn,
 } from '@pkg/main/mobileRelayContent';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { validateChatSelection } from '@pkg/main/chatSelection';
 import Logging from '@pkg/utils/logging';
 
 
@@ -93,6 +94,9 @@ interface IncomingMessage {
   // attached files — see mobileRelayContent.ts.
   messages?:       { role: 'user' | 'assistant' | 'system'; content: unknown }[];
   conversationId?: string;
+  providerId?:     string;
+  modelId?:        string;
+  agentId?:        string;
   /**
    * When the mobile picks a specific desktop to route to (AI Assistant →
    * Which Desktop), the chat payload carries that device's id. The relay
@@ -538,7 +542,7 @@ export class DesktopRelayClient {
 
     if (msg.type === 'companion_request') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      await this.runCompanionRequest(msg, frame => this.send(frame));
+      await this.runCompanionRequest(msg, frame => this.send(frame), false);
       return;
     }
 
@@ -713,7 +717,7 @@ export class DesktopRelayClient {
       if (!msg.requestId) return;
       const threadId = typeof msg.params?.conversationId === 'string' ? msg.params.conversationId : '';
       if (threadId) this.setSecureRoute(threadId, reply);
-      await this.runCompanionRequest(msg, respond);
+      await this.runCompanionRequest(msg, respond, true);
       return;
     }
     const conversationId = msg.conversationId;
@@ -734,8 +738,11 @@ export class DesktopRelayClient {
     while (this.secureRoutes.size > 500) this.secureRoutes.delete(this.secureRoutes.keys().next().value!);
   }
 
-  private async runCompanionRequest(msg: IncomingMessage, respond: (frame: Record<string, unknown>) => void) {
+  private async runCompanionRequest(msg: IncomingMessage, respond: (frame: Record<string, unknown>) => void, approvedDevice: boolean) {
     try {
+      if ((msg.method === 'chat.heartbeat.read' || msg.method === 'chat.heartbeat.update') && !approvedDevice) {
+        throw new Error('Per-chat heartbeat requires an approved device');
+      }
       const { mobileCompanionRequest } = await import('./mobileCompanion');
       const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
       if (msg.method === 'chat.answer' || (msg.method === 'decisions.resolve' && (result as any)?.settled)) {
@@ -794,6 +801,7 @@ export class DesktopRelayClient {
     }
     console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
+    const selection = await validateChatSelection(msg);
     // Injected mid-run turns are part of the conversation record too.
     await this.scribeTurn(conversationId, 'user', transcriptText(turn), { id: msg.userMessageId });
     const wsService = getWebSocketClientService();
@@ -806,6 +814,7 @@ export class DesktopRelayClient {
           source:      'mobile-relay',
           inputSource: 'keyboard',
           conversationId,
+          ...selection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },
@@ -871,6 +880,7 @@ export class DesktopRelayClient {
     this.ensureMobileChannelBridge();
 
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
+    const selection = await validateChatSelection(msg);
 
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
@@ -892,6 +902,7 @@ export class DesktopRelayClient {
           source:         'mobile-relay',
           inputSource:    'keyboard',
           conversationId,
+          ...selection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },

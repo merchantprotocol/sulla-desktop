@@ -12,6 +12,8 @@ export type ProjectionKind='skills'|'customAgents'|'recipes'|'usage'|'memory'|'m
 export interface ProjectionStatus{kind:ProjectionKind;lastSyncAt?:string;lastError?:string;skipped?:string;count?:number}
 const PATH:Record<ProjectionKind,string>={skills:'skills',customAgents:'custom-agents',recipes:'recipes',usage:'usage',memory:'memory',modelCatalog:'model-catalog'};
 const INTERVAL_MS=5*60_000, MAX_CONTENT=200*1024;
+const MODEL_CATALOG_TTL_MS=60*60_000;
+let modelCatalogCache:{expiresAt:number;value:any}|null=null;
 class CloudDataSyncImpl{
  private timer:ReturnType<typeof setInterval>|null=null; private inFlight=new Map<ProjectionKind,Promise<ProjectionStatus>>();
  private status={} as Record<ProjectionKind,ProjectionStatus>;
@@ -41,7 +43,10 @@ function countProjection(kind:ProjectionKind,b:any){if(kind==='customAgents')ret
 function capUtf8(value:string){if(Buffer.byteLength(value,'utf8')<=MAX_CONTENT)return value;let end=Math.min(value.length,MAX_CONTENT);while(end>0&&Buffer.byteLength(value.slice(0,end),'utf8')>MAX_CONTENT)end-=1024;return value.slice(0,Math.max(0,end))}
 async function buildProjection(kind:ProjectionKind,deviceId:string):Promise<any|null>{const generatedAt=new Date().toISOString();
  if(kind==='skills'){const {SkillDefinitionModel}=await import('@pkg/agent/database/models/SkillDefinitionModel');const skills=(await SkillDefinitionModel.list({includeDisabled:true})).map(s=>({slug:s.slug,name:s.title,description:s.description,category:typeof s.frontmatter.category==='string'?s.frontmatter.category:'',content:capUtf8(s.body),promptLength:s.body.length,source:s.source_kind,draft:!s.enabled,updatedAt:iso(s.updated_at,generatedAt)}));return{deviceId,generatedAt,skills}}
- if(kind==='modelCatalog'){const {getModelProviderService}=await import('@pkg/agent/services/ModelProviderService');const svc=getModelProviderService();const connected=(await svc.getAvailableProviders()).filter(p=>p.connected);const providers=await Promise.all(connected.map(async p=>({id:p.id,name:p.name,models:(await svc.getModelsForProvider(p.id)).map(m=>({id:m.id,name:m.name}))})));return{deviceId,generatedAt,providers}}
+ if(kind==='modelCatalog'){
+  if(modelCatalogCache&&modelCatalogCache.expiresAt>Date.now())return{deviceId,generatedAt,providers:modelCatalogCache.value};
+  const {getModelProviderService}=await import('@pkg/agent/services/ModelProviderService');const svc=getModelProviderService();const connected=(await svc.getAvailableProviders()).filter(p=>p.connected);const providers=await Promise.all(connected.map(async p=>({id:p.id,name:p.name,models:(await svc.getModelsForProvider(p.id)).map(m=>({id:m.id,name:m.name}))})));
+  modelCatalogCache={expiresAt:Date.now()+MODEL_CATALOG_TTL_MS,value:providers};return{deviceId,generatedAt,providers}}
  if(kind==='customAgents'){const {agentDefinitionService}=await import('@pkg/agent/services/AgentDefinitionService');const agents=(await agentDefinitionService.list()).filter(a=>a.status!=='archive').map(a=>({slug:a.slug,name:a.name,description:a.description,provider:a.provider,model:a.model,prompt:capUtf8(a.prompt_content),skills:Array.isArray(a.skill_refs)?a.skill_refs:[],source:a.source_kind,updatedAt:iso(a.updated_at,generatedAt)}));return{deviceId,generatedAt,agents}}
  if(kind==='recipes'){const {RecipeDefinitionModel}=await import('@pkg/agent/database/models/MarketplaceArtifactModel');const {getRecipeDockerStatus}=await import('../sullaRecipeDockerEvents');const rows=await RecipeDefinitionModel.list();const recipes=await Promise.all(rows.map(async r=>{const st=await getRecipeDockerStatus(r.slug);return{slug:r.slug,name:r.name,description:r.description,version:r.version??'1.0.0',running:st.running,containers:st.containers.map(({service,state,status,ports})=>({service,state,status,ports})),webPorts:st.webPorts??[],updatedAt:iso(r.updated_at,generatedAt)}}));return{deviceId,generatedAt,recipes}}
  if(kind==='usage'){const {getUsageSummary}=await import('@pkg/agent/usage/providerUsage');const {profileId:_profileId,generatedAt:_generatedAt,...summary}=await getUsageSummary(24*30);return{deviceId,generatedAt,...summary}}

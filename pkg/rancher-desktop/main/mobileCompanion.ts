@@ -94,7 +94,9 @@ async function companionJobMessage(target: Awaited<ReturnType<typeof companionJo
 async function companionConversationId(value: unknown): Promise<string> {
   const conversationId = companionString(value, 'Conversation', 200, true)!;
   const rows = await postgresClient.query(
-    `SELECT id FROM claude_conversations WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+    `SELECT id FROM conversation_history
+      WHERE type = 'chat' AND status <> 'deleted' AND (id = $1 OR thread_id = $1)
+      LIMIT 1`,
     [conversationId],
   );
   if (!rows.length) throw new Error('Conversation not found');
@@ -289,10 +291,11 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     }
     const service = getChatHeartbeatService();
     if (!service.has(conversationId)) companionHeartbeatState(conversationId);
-    service.configure(conversationId, normalizeChatHeartbeatConfig({
+    const updated = service.configure(conversationId, normalizeChatHeartbeatConfig({
       intervalMinutes: params.enabled ? intervalMinutes : null,
       message: params.message,
     }));
+    if (!updated) throw new Error('Chat heartbeat is not registered');
     return companionHeartbeatState(conversationId);
   }
   case 'heartbeat.read':

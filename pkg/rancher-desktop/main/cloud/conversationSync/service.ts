@@ -127,7 +127,12 @@ class ConversationSyncServiceImpl {
       await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(frame.linkId)}/replies/${encodeURIComponent(frame.replyId)}/complete`,{headers:{'Content-Type':'application/json'},body:JSON.stringify({messageId,...this.encrypt(frame.conversationId,'assistant',messageId,result.content)})});
     };
     const onFrame=(f:Record<string,unknown>)=>{ void complete(f).catch(err=>console.warn('[ConversationSync] completion failed:',err)); };
-    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content:dispatchContent}],...(frame.selection?.providerId?{providerId:frame.selection.providerId}:{}),...(frame.selection?.modelId?{modelId:frame.selection.modelId}:{}),...(frame.selection?.agentId?{agentId:frame.selection.agentId}:{})},onFrame,onFrame);
+    const selection=frame.selection&&typeof frame.selection==='object'?{
+      ...(typeof frame.selection.providerId==='string'?{providerId:frame.selection.providerId}:{}),
+      ...(typeof frame.selection.modelId==='string'?{modelId:frame.selection.modelId}:{}),
+      ...(typeof frame.selection.agentId==='string'?{agentId:frame.selection.agentId}:{}),
+    }:{};
+    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content:dispatchContent}],...selection},onFrame,onFrame);
   }
 
   // ── Links ────────────────────────────────────────────────────
@@ -189,13 +194,18 @@ class ConversationSyncServiceImpl {
     const r=await cloudRequest('GET',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results`);if(!r.ok)return;
     const results=((await r.json() as any).data?.results??[]) as CloudResult[];
     for(const x of results){
-      let user:string,assistant:string;
+      let user:string,assistant:string,userParts:unknown=undefined;
       try {
         user=this.decrypt(conv,'user',x.clientRequestId,x);
         assistant=this.decrypt(conv,'assistant',x.messageId,{ciphertext:x.responseCiphertext,nonce:x.responseNonce});
+        let envelope:any=null;try{envelope=JSON.parse(user)}catch{/* legacy text */}
+        if(envelope?.v===1&&Array.isArray(envelope.attachments)){
+          user=typeof envelope.text==='string'?envelope.text:'';
+          userParts=envelope.attachments.map((a:any,i:number)=>({id:typeof a?.id==='string'?a.id:`${x.clientRequestId}-${i}`,name:typeof a?.name==='string'?a.name:'attachment',size:typeof a?.size==='number'?a.size:0,kind:a?.kind==='image'?'image':'file'}));
+        }
       } catch { console.warn(`[ConversationSync] skipped a Cloud result that does not decrypt (${x.id})`); continue; }
       await ConversationMessagesModel.appendMany([
-        {id:x.clientRequestId,conversation_id:conv,role:'user',content:user,source:'cloud-linked',routed_to:'cloud',created_at:utc(x.createdAt)},
+        {id:x.clientRequestId,conversation_id:conv,role:'user',content:user,parts:userParts,source:'cloud-linked',routed_to:'cloud',created_at:utc(x.createdAt)},
         {id:x.messageId,conversation_id:conv,role:'assistant',content:assistant,source:'cloud-fallback',routed_to:'cloud',created_at:utc(x.completedAt||x.createdAt)},
       ]);
       await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results/${encodeURIComponent(x.id)}/ack`);
