@@ -18,6 +18,11 @@ const SCHEMES: { scheme: ThemeScheme, label: string, light: [string, string], da
   { scheme: 'default', label: 'Default', light: ['#2563eb', '#ffffff'], dark: ['#60a5fa', '#1f2937'] },
 ];
 
+/** CSS for one half of a theme preview: accent bar, surface block and page colour. */
+function swatch(scheme: ThemeScheme, colors: [string, string], noirPage: string, page: string) {
+  return { '--a': colors[0], '--s': colors[1], background: scheme === 'noir' ? noirPage : page };
+}
+
 const mode = computed(() => availableThemes.find(t => t.id === currentTheme.value)?.mode ?? 'dark');
 
 function hasMode(target: 'light' | 'dark') {
@@ -54,8 +59,8 @@ function setMode(target: 'light' | 'dark') {
           @click="setScheme(theme.scheme)"
         >
           <div class="pv">
-            <span :style="{ '--a': theme.light[0], '--s': theme.light[1], background: theme.scheme === 'noir' ? '#f4f7fb' : '#eef2f6' }" />
-            <span :style="{ '--a': theme.dark[0], '--s': theme.dark[1], background: theme.scheme === 'noir' ? '#01030a' : '#0d1117' }" />
+            <span :style="swatch(theme.scheme, theme.light, '#f4f7fb', '#eef2f6')" />
+            <span :style="swatch(theme.scheme, theme.dark, '#01030a', '#0d1117')" />
           </div>
           <b>{{ theme.label }}</b>
         </button>

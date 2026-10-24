@@ -83,7 +83,8 @@ export function useEngineSettings() {
         title:    'Sulla Desktop - Reset Kubernetes',
         type:     'warning',
         message:  'Apply these changes and reset Kubernetes?',
-        detail:   'Kubernetes starts over with a fresh cluster. Its workloads are deleted. Docker containers and images stay.',
+        detail:   'Kubernetes starts over with a fresh cluster. Its workloads are deleted. ' +
+          'Docker containers and images stay.',
         cancelId,
         buttons:  ['Apply and reset', 'Cancel'],
       });

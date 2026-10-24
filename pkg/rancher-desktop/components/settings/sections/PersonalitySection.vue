@@ -6,7 +6,9 @@ import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 import PromptEditorCard from '../PromptEditorCard.vue';
 
-import { diffLines, usePromptSections, type PromptEdit, type PromptSection } from '@pkg/composables/preferences/usePromptSections';
+import {
+  diffLines, usePromptSections, type PromptEdit, type PromptSection,
+} from '@pkg/composables/preferences/usePromptSections';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 
 // Sections with their own home: soul is "Core instructions" here, the heartbeat ones live under Heartbeat.
@@ -18,6 +20,14 @@ const prompts = usePromptSections();
 
 const soul = computed(() => prompts.find('soul'));
 const others = computed(() => prompts.sorted.value.filter(s => !OWN_SCREEN.includes(s.id)));
+
+const editsLine = computed(() => {
+  const count = prompts.edits.value.length;
+
+  const changes = `${ count } change${ count === 1 ? '' : 's' }`;
+
+  return `Sulla proposed ${ changes } to its instructions. Nothing changes until you approve.`;
+});
 
 const openId = ref('');
 const openDraft = ref('');
@@ -136,7 +146,7 @@ function saveName(setting: typeof botName, event: Event) {
     <PrefCard
       v-if="prompts.edits.value.length"
       title="Suggested changes"
-      :subtitle="`Sulla proposed ${ prompts.edits.value.length } change${ prompts.edits.value.length === 1 ? '' : 's' } to its instructions. Nothing changes until you approve.`"
+      :subtitle="editsLine"
     >
       <div class="set col">
         <div class="lst">
@@ -144,7 +154,10 @@ function saveName(setting: typeof botName, event: Event) {
             v-for="edit in prompts.edits.value"
             :key="edit.id"
           >
-            <span class="grow"><b>{{ titleOf(edit.section_id) }}</b><small>{{ edit.rationale || 'No reason given.' }}</small></span>
+            <span class="grow">
+              <b>{{ titleOf(edit.section_id) }}</b>
+              <small>{{ edit.rationale || 'No reason given.' }}</small>
+            </span>
             <span class="r">
               <button
                 type="button"

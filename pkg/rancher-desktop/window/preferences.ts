@@ -14,6 +14,11 @@ let isDirty = false;
 let isLoaded = false;
 let pendingSection: string | undefined;
 
+// On macOS the window draws its own title bar under the traffic lights, like the main window.
+const macTitleBar = process.platform === 'darwin'
+  ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 14 } }
+  : {};
+
 /**
  * Open the Preferences window, or focus it if it's already open.
  * @param section A section id (`models`, `voice`, `account`…) to show.
@@ -34,7 +39,7 @@ export function openPreferences(section?: string) {
 
   const window = createWindow('preferences', `${ webRoot }/index.html#preferences`, {
     title:           'Sulla Desktop - Preferences',
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 14 } } : {}),
+    ...macTitleBar,
     minWidth:        900,
     minHeight:       560,
     width:           1120,

@@ -23,7 +23,14 @@ interface FileRoot {
   activation:    'active' | 'pending-restart' | 'offline';
   removable:     boolean;
 }
-interface FileProvider { supported: boolean; enabled: boolean; running: boolean; helperPresent: boolean; registered?: boolean; error?: string }
+interface FileProvider {
+  supported:     boolean;
+  enabled:       boolean;
+  running:       boolean;
+  helperPresent: boolean;
+  registered?:   boolean;
+  error?:        string;
+}
 interface Backup {
   id:      string;
   kind:    'local' | 'nas' | 's3';
@@ -38,8 +45,19 @@ const finderSaving = ref(false);
 const busy = reactive(new Set<string>());
 const error = ref('');
 const adding = ref(false);
+const EMPTY_DRAFT = {
+  label:        '',
+  subfolder:    '',
+  share:        '',
+  endpoint:     '',
+  bucket:       '',
+  region:       '',
+  credentialId: '',
+};
 const draft = reactive({
-  kind: 'local' as 'local' | 'nas' | 's3', label: '', subfolder: '', share: '', protocol: 'smb' as 'smb' | 'nfs', endpoint: '', bucket: '', region: '', credentialId: '',
+  ...EMPTY_DRAFT,
+  kind:     'local' as 'local' | 'nas' | 's3',
+  protocol: 'smb' as 'smb' | 'nfs',
 });
 let rootPoll: ReturnType<typeof setInterval> | undefined;
 let backupPoll: ReturnType<typeof setInterval> | undefined;
@@ -241,15 +259,30 @@ async function removeBackup(backup: Backup) {
 }
 
 async function addBackup() {
-  const config = draft.kind === 'local'
-    ? { kind: 'local', root: `/var/lib/sulla-files-backups/${ draft.subfolder }` }
-    : draft.kind === 'nas'
-      ? { kind: 'nas', share: draft.share, protocol: draft.protocol, vaultCredentialId: draft.credentialId || undefined }
-      : { kind: 's3', endpoint: draft.endpoint, bucket: draft.bucket, region: draft.region || undefined, vaultCredentialId: draft.credentialId };
+  let config: Record<string, unknown>;
+
+  if (draft.kind === 'local') {
+    config = { kind: 'local', root: `/var/lib/sulla-files-backups/${ draft.subfolder }` };
+  } else if (draft.kind === 'nas') {
+    config = {
+      kind:              'nas',
+      share:             draft.share,
+      protocol:          draft.protocol,
+      vaultCredentialId: draft.credentialId || undefined,
+    };
+  } else {
+    config = {
+      kind:              's3',
+      endpoint:          draft.endpoint,
+      bucket:            draft.bucket,
+      region:            draft.region || undefined,
+      vaultCredentialId: draft.credentialId,
+    };
+  }
 
   await guarded('add-backup', async() => {
     await ipcRenderer.invoke('files-backups:add', { kind: draft.kind, label: draft.label, config });
-    Object.assign(draft, { label: '', subfolder: '', share: '', endpoint: '', bucket: '', region: '', credentialId: '' });
+    Object.assign(draft, EMPTY_DRAFT);
     adding.value = false;
     await loadBackups();
   });

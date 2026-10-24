@@ -27,7 +27,12 @@ export function useVoiceSettings() {
     { id: 'kokoro', name: 'On-device · Kokoro (free, private)', connected: true },
     // Native macOS voices via the OS speech engine — always available, no API key. Mirrors Sulla Mobile's default.
     { id: 'system', name: 'System Default (macOS)', connected: true },
-    { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
+    {
+      id:        'elevenlabs',
+      name:      'ElevenLabs',
+      connected: false,
+      vaultKey:  { integrationId: 'elevenlabs', property: 'api_key' },
+    },
     // xAI Grok Text-to-Speech. Uses the metered xAI API key (Grok integration → api_key).
     { id: 'grok', name: 'Grok Voice', connected: false, vaultKey: { integrationId: 'grok', property: 'api_key' } },
   ]);
@@ -245,7 +250,8 @@ export function useVoiceSettings() {
       } else {
         micPermission.value = result?.status || 'denied';
         if (result?.openSettings) {
-          micError.value = 'Microphone access was denied. Open System Settings > Privacy & Security > Microphone to grant access.';
+          micError.value = 'Microphone access was denied. ' +
+          'Open System Settings > Privacy & Security > Microphone to grant access.';
         }
       }
     } catch (e: any) {
@@ -322,11 +328,26 @@ export function useVoiceSettings() {
   });
 
   let vadFrameCount = 0;
-  function onMicVad(_event: any, data: { speaking: boolean; level: number; fanNoise: boolean; noiseFloor?: number; zcr?: number; variance?: number; pitch?: number | null; centroid?: number }) {
+  interface MicVadFrame {
+    speaking:    boolean;
+    level:       number;
+    fanNoise:    boolean;
+    noiseFloor?: number;
+    zcr?:        number;
+    variance?:   number;
+    pitch?:      number | null;
+    centroid?:   number;
+  }
+
+  function onMicVad(_event: any, data: MicVadFrame) {
     if (!data) return;
     vadFrameCount++;
     if (vadFrameCount <= 5 || vadFrameCount % 300 === 0) {
-      console.log('[AudioSettings] onMicVad frame', { frame: vadFrameCount, speaking: data.speaking, level: data.level?.toFixed(3) });
+      console.log('[AudioSettings] onMicVad frame', {
+        frame:    vadFrameCount,
+        speaking: data.speaking,
+        level:    data.level?.toFixed(3),
+      });
     }
     driverMicLevel.value = data.level;
     vadSpeaking.value = data.speaking;
@@ -416,7 +437,10 @@ export function useVoiceSettings() {
     driverSpeakerLevel.value = typeof data === 'number' ? data : data.rms;
   }
 
-  function onDriverState(_event: any, state: { running: boolean; micRunning?: boolean; speakerRunning?: boolean } | undefined) {
+  function onDriverState(
+    _event: any,
+    state: { running: boolean; micRunning?: boolean; speakerRunning?: boolean } | undefined,
+  ) {
     if (!state) return;
     // Support both old (single `running`) and new (split) state shapes
     micRunning.value = state.micRunning ?? state.running;
@@ -444,7 +468,8 @@ export function useVoiceSettings() {
       const result = await ipc.invoke('audio-driver:start-mic', 'audio-settings-test', ['pcm-s16le', 'pcm-s16le-raw']);
       if (result?.ok === false && result?.error === 'microphone-permission-denied') {
         micPermission.value = 'denied';
-        micError.value = 'Microphone permission denied. Open System Settings > Privacy & Security > Microphone to grant access.';
+        micError.value = 'Microphone permission denied. ' +
+          'Open System Settings > Privacy & Security > Microphone to grant access.';
         return;
       }
       micRunning.value = true;
@@ -474,18 +499,24 @@ export function useVoiceSettings() {
   /** Map UI mode to the controller recording mode */
   function getRecordingMode(mode: MicTestModeKey): string {
     switch (mode) {
-    case 'raw': return 'raw';
-    case 'noise-reduction': return 'noise-reduction';
-    case 'voice-compressed': return 'noise-reduction'; // same PCM path, compression applied later
-    case 'streaming': return 'raw';             // TODO: WebM/Opus path
-    case 'streaming-voice': return 'noise-reduction'; // TODO: WebM/Opus + noise reduction
-    default: return 'raw';
+    case 'noise-reduction':
+    // Same PCM path; compression is applied later.
+    case 'voice-compressed':
+    // TODO: WebM/Opus + noise reduction
+    case 'streaming-voice':
+      return 'noise-reduction';
+    // TODO: WebM/Opus path for 'streaming'
+    default:
+      return 'raw';
     }
   }
 
   async function startMicTestRecording() {
     // Clear previous
-    if (micTestAudioUrl.value) { URL.revokeObjectURL(micTestAudioUrl.value); micTestAudioUrl.value = null }
+    if (micTestAudioUrl.value) {
+      URL.revokeObjectURL(micTestAudioUrl.value);
+      micTestAudioUrl.value = null;
+    }
 
     const mode = getRecordingMode(micTestMode.value);
     micTestModeLabel.value = MIC_TEST_MODES[micTestMode.value];
@@ -503,12 +534,18 @@ export function useVoiceSettings() {
   }
 
   async function stopMicTestRecording() {
-    if (micTestTimer) { clearInterval(micTestTimer); micTestTimer = null }
+    if (micTestTimer) {
+      clearInterval(micTestTimer);
+      micTestTimer = null;
+    }
     micTestRecording.value = false;
 
     console.log('[AudioSettings] Stopping test recording');
     const result = await ipc.invoke('audio-driver:test-record-stop');
-    console.log('[AudioSettings] test-record-stop result', { hasRaw: !!result?.raw, hasReduced: !!result?.noiseReduced });
+    console.log('[AudioSettings] test-record-stop result', {
+      hasRaw:     !!result?.raw,
+      hasReduced: !!result?.noiseReduced,
+    });
 
     // Pick the right audio based on mode
     const audioData = result?.noiseReduced || result?.raw;
@@ -606,7 +643,13 @@ export function useVoiceSettings() {
   }
 
   // ── Transcribe pipeline stats (polled while transcribing) ──
-  const transcribeStats = ref<{ active: boolean; transcribing: boolean; micBytesReceived: number; micChunksReceived: number } | null>(null);
+  interface TranscribeStats {
+    active:            boolean;
+    transcribing:      boolean;
+    micBytesReceived:  number;
+    micChunksReceived: number;
+  }
+  const transcribeStats = ref<TranscribeStats | null>(null);
   let transcribeStatsPollTimer: ReturnType<typeof setInterval> | null = null;
 
   function startTranscribeStatsPoll() {
@@ -658,7 +701,9 @@ export function useVoiceSettings() {
       whisperBinaryPath.value = status?.binaryPath || '';
       whisperModels.value = status?.models || [];
       // Auto-select first model if none is active or active model was deleted
-      if (whisperModels.value.length > 0 && (!activeWhisperModel.value || !whisperModels.value.includes(activeWhisperModel.value))) {
+      const activeMissing = !activeWhisperModel.value || !whisperModels.value.includes(activeWhisperModel.value);
+
+      if (whisperModels.value.length > 0 && activeMissing) {
         setActiveWhisperModel(whisperModels.value[0]);
       }
     } catch (e: any) {
@@ -929,7 +974,8 @@ export function useVoiceSettings() {
   // Kokoro's English voices (bundled table — no network). Bella is the default.
   async function fetchKokoroVoices(): Promise<void> {
     try {
-      const list: { key: string; name: string; accent: string; gender: string }[] = await ipcRenderer.invoke('voice-kokoro-voices');
+      const list: { key: string; name: string; accent: string; gender: string }[] =
+        await ipcRenderer.invoke('voice-kokoro-voices');
 
       voices.value = list.map(v => ({
         value:       v.key,
@@ -969,7 +1015,8 @@ export function useVoiceSettings() {
       }
 
       // Response shape: either a bare array or { voices: [...] } of { voice_id, name }.
-      const body = await response.json() as { voices?: { voice_id: string; name?: string }[] } | { voice_id: string; name?: string }[];
+      type ElevenVoice = { voice_id: string; name?: string };
+      const body = await response.json() as { voices?: ElevenVoice[] } | ElevenVoice[];
       const list = Array.isArray(body) ? body : (body.voices ?? []);
 
       if (list.length > 0) {
@@ -1010,7 +1057,10 @@ export function useVoiceSettings() {
     if (list.length === 0) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 1000);
-        synth.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve() }, { once: true });
+        synth.addEventListener('voiceschanged', () => {
+          clearTimeout(timer);
+          resolve();
+        }, { once: true });
       });
       list = synth.getVoices();
     }
@@ -1136,8 +1186,13 @@ export function useVoiceSettings() {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         await new Promise<void>((resolve) => {
-          audio.onended = () => { URL.revokeObjectURL(url); resolve() };
-          audio.onerror = () => { URL.revokeObjectURL(url); resolve() };
+          const done = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+
+          audio.onended = done;
+          audio.onerror = done;
           audio.play().catch(() => resolve());
         });
       }

@@ -16,7 +16,12 @@ export interface SullaSetting<T> {
   reload: () => Promise<void>;
 }
 
-export function useSullaSetting<T>(key: string, fallback: T, cast?: SettingCast, options: { refreshOnFocus?: boolean } = {}): SullaSetting<T> {
+export function useSullaSetting<T>(
+  key: string,
+  fallback: T,
+  cast?: SettingCast,
+  options: { refreshOnFocus?: boolean } = {},
+): SullaSetting<T> {
   const value = ref(fallback) as Ref<T>;
   const error = ref('');
 

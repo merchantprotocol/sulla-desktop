@@ -62,7 +62,8 @@ export const PREFERENCES_NAV: PreferencesNavGroup[] = [
   },
 ];
 
-export const PREFERENCES_SECTION_IDS: PreferencesSectionId[] = PREFERENCES_NAV.flatMap(group => group.items.map(item => item.id));
+export const PREFERENCES_SECTION_IDS: PreferencesSectionId[] = PREFERENCES_NAV
+  .flatMap(group => group.items.map(item => item.id));
 
 /**
  * Names the old windows used. Shortcuts, menus and other windows may still
@@ -106,7 +107,10 @@ export function resolvePreferencesSection(name?: string | null): PreferencesSect
 }
 
 /** The section before or after `current`, wrapping around (Cmd+[ and Cmd+]). */
-export function stepPreferencesSection(current: PreferencesSectionId, direction: 'forward' | 'back'): PreferencesSectionId {
+export function stepPreferencesSection(
+  current: PreferencesSectionId,
+  direction: 'forward' | 'back',
+): PreferencesSectionId {
   const ids = PREFERENCES_SECTION_IDS;
   const index = Math.max(0, ids.indexOf(current));
   const offset = direction === 'forward' ? 1 : -1;
@@ -214,7 +218,11 @@ export function mountWorksWith(mount: MountKind, vm: VmType, platform: string): 
  * The settings to change when switching VM type, including the file-sharing
  * mode and Rosetta when the current ones won't work with the new VM.
  */
-export function changesForVmType(vm: VmType, current: { mount: MountKind, useRosetta: boolean }, platform: string): Record<string, unknown> {
+export function changesForVmType(
+  vm: VmType,
+  current: { mount: MountKind, useRosetta: boolean },
+  platform: string,
+): Record<string, unknown> {
   const changes: Record<string, unknown> = { 'virtualMachine.type': vm };
 
   if (!mountWorksWith(current.mount, vm, platform)) {

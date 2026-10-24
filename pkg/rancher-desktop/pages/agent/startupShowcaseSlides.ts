@@ -88,7 +88,10 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    `${ SHOWCASE_MODEL_NAMES.slice(0, -1).join(', ') } or ${ SHOWCASE_MODEL_NAMES[SHOWCASE_MODEL_NAMES.length - 1] }. Set a primary and a backup in settings.`,
     art:     'models',
     points:  [`${ SHOWCASE_MODEL_NAMES.slice(0, 3).join(', ') }`, `${ SHOWCASE_MODEL_NAMES.slice(3).join(', ') }`, 'Set a primary and a backup in settings'],
-    sources: ['pkg/rancher-desktop/agent/integrations/native/ai_infrastructure.ts', 'pkg/rancher-desktop/components/settings/sections/ModelsSection.vue'],
+    sources: [
+      'pkg/rancher-desktop/agent/integrations/native/ai_infrastructure.ts',
+      'pkg/rancher-desktop/components/settings/sections/ModelsSection.vue',
+    ],
   },
   {
     id:      'integrations',

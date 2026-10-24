@@ -12,7 +12,11 @@ import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 
 const SLOTS: ModelSlot[] = ['primary', 'secondary', 'subconscious'];
-const SLOT_LABELS: Record<ModelSlot, string> = { primary: 'Main model', secondary: 'Backup model', subconscious: 'Background model' };
+const SLOT_LABELS: Record<ModelSlot, string> = {
+  primary:      'Main model',
+  secondary:    'Backup model',
+  subconscious: 'Background model',
+};
 
 const m = useModelSettings();
 const fallbackEnabled = useSullaSetting('fallbackEnabled', true, 'boolean', { refreshOnFocus: true });
@@ -51,8 +55,6 @@ function modelOptions(slot: ModelSlot, current: string) {
 
   return list;
 }
-
-const multipleConnections = computed(() => SLOTS.some(slot => m.accounts[slot].length > 1));
 
 function activeAccount(slot: ModelSlot) {
   return m.accounts[slot].find(a => a.active)?.accountId ?? '';
@@ -274,7 +276,7 @@ function value(event: Event) {
         </PrefRow>
         <PrefRow
           title="Provider list"
-          :subtitle="multipleConnections ? 'Reload after adding a key in Passwords.' : 'Only connected providers are listed. Reload after adding a key in Passwords.'"
+          subtitle="Only connected providers are listed. Reload after adding a key in Passwords."
         >
           <button
             type="button"

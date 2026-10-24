@@ -36,13 +36,21 @@ const recommended = computed(() => props.versions.filter(v => !!v.channels?.leng
 const others = computed(() => props.versions.filter(v => !v.channels?.length));
 const stable = computed(() => highestStableVersion(recommended.value)?.version);
 
+function versionNote(isStable: boolean, isLatest: boolean) {
+  if (isStable) {
+    return 'Stable. Matches most managed clusters today.';
+  }
+
+  return isLatest ? 'Latest release.' : 'Older, still supported.';
+}
+
 const recommendedOptions = computed(() => recommended.value.slice(0, 3).map(v => {
   const channels = (v.channels ?? []).filter(ch => !/^v?\d+/.test(ch));
 
   return {
     value:    v.version,
     title:    `v${ v.version }`,
-    subtitle: v.version === stable.value ? 'Stable. Matches most managed clusters today.' : channels.includes('latest') ? 'Latest release.' : 'Older, still supported.',
+    subtitle: versionNote(v.version === stable.value, channels.includes('latest')),
     tag:      v.version === stable.value ? 'Recommended' : '',
   };
 }));
@@ -53,7 +61,17 @@ watch(() => props.versions, () => {
   }
 }, { immediate: true });
 
-const percent = computed(() => progress.value.max > 0 ? Math.round((progress.value.current / progress.value.max) * 100) : 0);
+const percent = computed(() => {
+  const { current, max } = progress.value;
+
+  return max > 0 ? Math.round((current / max) * 100) : 0;
+});
+const STEP_LEADS = [
+  '',
+  'Pick the Kubernetes version your project targets.',
+  'These can all be changed later in Kubernetes settings.',
+  'This takes about a minute.',
+];
 
 watch(() => props.state, (state) => {
   if (step.value === 3 && state === 'STARTED') {
@@ -115,7 +133,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('k8s-progress', onProgress));
           {{ step === 4 ? 'All set' : 'Turn on Kubernetes' }}
         </h2>
         <p v-if="step < 4">
-          {{ ['', 'Pick the Kubernetes version your project targets.', 'These can all be changed later in Kubernetes settings.', 'This takes about a minute.'][step] }}
+          {{ STEP_LEADS[step] }}
         </p>
       </div>
       <div
@@ -172,7 +190,10 @@ onBeforeUnmount(() => ipcRenderer.removeListener('k8s-progress', onProgress));
             class="lst"
             style="margin-top: 14px"
           >
-            <div><span class="dot" />Docker has {{ get('virtualMachine.memoryInGB') }} GB of memory. Kubernetes needs about 1 GB of it.</div>
+            <div>
+              <span class="dot" />
+              Docker has {{ get('virtualMachine.memoryInGB') }} GB of memory. Kubernetes needs about 1 GB of it.
+            </div>
             <div v-if="cachedOnly">
               <span class="dot warn" />Sulla is offline, so only versions already downloaded are listed.
             </div>
@@ -184,21 +205,30 @@ onBeforeUnmount(() => ipcRenderer.removeListener('k8s-progress', onProgress));
           class="lst"
         >
           <div>
-            <span style="flex: 1"><b>Traefik ingress</b><br><span class="dimc">Routes http://*.localhost to your services.</span></span>
+            <span class="grow">
+              <b>Traefik ingress</b>
+              <small>Routes http://*.localhost to your services.</small>
+            </span>
             <PrefToggle
               v-model="options.traefik"
               label="Traefik ingress"
             />
           </div>
           <div>
-            <span style="flex: 1"><b>Flannel networking</b><br><span class="dimc">Leave on unless you bring your own network plugin.</span></span>
+            <span class="grow">
+              <b>Flannel networking</b>
+              <small>Leave on unless you bring your own network plugin.</small>
+            </span>
             <PrefToggle
               v-model="options.flannel"
               label="Flannel networking"
             />
           </div>
           <div>
-            <span style="flex: 1"><b>Only reachable from this Mac</b><template v-if="!isWindows"><br><span class="dimc">Windows only today.</span></template></span>
+            <span class="grow">
+              <b>Only reachable from this Mac</b>
+              <small v-if="!isWindows">Windows only today.</small>
+            </span>
             <PrefToggle
               v-model="options.localhostOnly"
               :disabled="!isWindows"
@@ -206,14 +236,14 @@ onBeforeUnmount(() => ipcRenderer.removeListener('k8s-progress', onProgress));
             />
           </div>
           <div>
-            <span style="flex: 1"><b>Show services in Docker › Ports</b></span>
+            <span class="grow"><b>Show services in Docker › Ports</b></span>
             <PrefToggle
               v-model="options.showServices"
               label="Show services in Docker › Ports"
             />
           </div>
           <div>
-            <span style="flex: 1"><b>API port</b></span>
+            <span class="grow"><b>API port</b></span>
             <input
               v-model.number="options.port"
               class="inp sm"

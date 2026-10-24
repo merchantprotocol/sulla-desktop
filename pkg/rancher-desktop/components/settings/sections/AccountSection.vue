@@ -12,15 +12,16 @@ import { useAccountSettings } from '@pkg/composables/preferences/useAccountSetti
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const {
-  userName, email, subscribeToUpdates, saveProfile,
-  accountsLoading, accountsPending, accountsError, accountsNotice, accountsProfile, accountsDisplayName, accountsConnections,
-  accountsMemberships, authorityUrl, authorityError, discoveredAuthority, selectedAudience, authorizationNotice,
-  refreshAccounts, saveAccountsProfile, discoverAuthority, cancelAuthority, enrollAuthority, disconnectAccount, authorizeAccount, authorityHost,
-  showChangePassword, currentPassword, newPassword, confirmPassword, passwordError, passwordSuccess, changingPassword, changePassword,
-  vaultStats, vaultStatsKnown,
-  cloudStatus, relayStatus, cloudError, busy, cloudTab, phoneInput, otpSent, otpCode, sendOtp, verifyOtp, resetPhoneFlow,
-  emailInput, emailPassword, emailName, emailMode, emailCodeSent, emailCode, sendEmailCode, verifyEmailCode, emailSubmit,
-  openAppleInVault, signOut,
+  userName, email, subscribeToUpdates, saveProfile, accountsLoading, accountsPending,
+  accountsError, accountsNotice, accountsProfile, accountsDisplayName, accountsConnections,
+  accountsMemberships, authorityUrl, authorityError, discoveredAuthority, selectedAudience,
+  authorizationNotice, refreshAccounts, saveAccountsProfile, discoverAuthority, cancelAuthority,
+  enrollAuthority, disconnectAccount, authorizeAccount, authorityHost, showChangePassword,
+  currentPassword, newPassword, confirmPassword, passwordError, passwordSuccess, changingPassword,
+  changePassword, vaultStats, vaultStatsKnown, cloudStatus, relayStatus, cloudError, busy,
+  cloudTab, phoneInput, otpSent, otpCode, sendOtp, verifyOtp, resetPhoneFlow, emailInput,
+  emailPassword, emailName, emailMode, emailCodeSent, emailCode, sendEmailCode, verifyEmailCode,
+  emailSubmit, openAppleInVault, signOut,
 } = useAccountSettings();
 
 const connection = ref<Record<string, any> | null>(null);
@@ -31,6 +32,29 @@ const addingServer = ref(false);
 const remoteAccess = computed(() => !!connection.value?.preferences?.remoteAccess);
 const syncOn = computed(() => !!connection.value?.preferences?.enabled);
 const signedInAs = computed(() => cloudStatus.value.name || cloudStatus.value.phone || cloudStatus.value.userId);
+const cloudLine = computed(() => {
+  if (cloudStatus.value.signedIn) {
+    return `Signed in as ${ signedInAs.value }.`;
+  }
+
+  return 'Sign in to reach this Mac from the web and your phone. Nothing syncs unless you turn it on.';
+});
+const syncLine = computed(() => {
+  if (syncOn.value) {
+    return 'On. Choose what Sulla copies to your Cloud account.';
+  }
+
+  return 'Off. Signing in never uploads your data.';
+});
+const canSaveName = computed(() => {
+  const name = accountsDisplayName.value.trim();
+
+  return !accountsPending.value && !!name && name !== accountsProfile.value?.displayName;
+});
+
+function servicesLine(count: number) {
+  return `${ count } service${ count === 1 ? '' : 's' } available`;
+}
 
 function onConnectionStatus(_event: unknown, status: Record<string, any>) {
   connection.value = status;
@@ -113,7 +137,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
 
     <PrefCard
       title="Sulla Cloud"
-      :subtitle="cloudStatus.signedIn ? `Signed in as ${ signedInAs }.` : 'Sign in to reach this Mac from the web and your phone. Nothing syncs unless you turn it on.'"
+      :subtitle="cloudLine"
     >
       <template
         v-if="cloudStatus.signedIn"
@@ -143,7 +167,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
         </PrefRow>
         <PrefRow
           title="Copy Desktop data to Sulla Cloud"
-          :subtitle="syncOn ? 'On. Choose what Sulla copies to your Cloud account.' : 'Off. Signing in never uploads your data.'"
+          :subtitle="syncLine"
         >
           <button
             type="button"
@@ -417,7 +441,10 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
           class="lst"
         >
           <div>
-            <span class="dot" /><b>This Mac</b><span class="dimc">{{ accountsProfile?.displayName || 'Local profile' }}</span><span class="r">Active</span>
+            <span class="dot" />
+            <b>This Mac</b>
+            <span class="dimc">{{ accountsProfile?.displayName || 'Local profile' }}</span>
+            <span class="r">Active</span>
           </div>
           <div
             v-for="conn in accountsConnections"
@@ -427,7 +454,10 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
               class="dot"
               :class="{ warn: !conn.subject }"
             />
-            <span class="grow"><b>{{ authorityHost(conn.issuer) }}</b><small>{{ conn.subject ? 'Authorized' : 'Needs authorization' }}</small></span>
+            <span class="grow">
+              <b>{{ authorityHost(conn.issuer) }}</b>
+              <small>{{ conn.subject ? 'Authorized' : 'Needs authorization' }}</small>
+            </span>
             <span class="r">
               <select
                 v-if="conn.resourceAudiences.length > 1"
@@ -461,7 +491,10 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
             v-for="m in [...accountsMemberships.local, ...accountsMemberships.remoteDisplayHints]"
             :key="`${ m.authorityId }:${ m.organizationId }`"
           >
-            <span class="grow"><b>{{ m.organizationId }}</b><small>{{ authorityHost(m.issuer) }} · {{ m.roles.join(', ') || 'member' }}</small></span>
+            <span class="grow">
+              <b>{{ m.organizationId }}</b>
+              <small>{{ authorityHost(m.issuer) }} · {{ m.roles.join(', ') || 'member' }}</small>
+            </span>
           </div>
         </div>
       </div>
@@ -495,7 +528,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
         <PrefRow
           v-if="discoveredAuthority"
           :title="authorityHost(discoveredAuthority.issuer)"
-          :subtitle="`${ discoveredAuthority.resourceAudiences.length } service${ discoveredAuthority.resourceAudiences.length === 1 ? '' : 's' } available`"
+          :subtitle="servicesLine(discoveredAuthority.resourceAudiences.length)"
         >
           <button
             type="button"
@@ -528,7 +561,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
           <button
             type="button"
             class="btn sm"
-            :disabled="!!accountsPending || !accountsDisplayName.trim() || accountsDisplayName.trim() === accountsProfile?.displayName"
+            :disabled="!canSaveName"
             @click="saveAccountsProfile"
           >
             Save

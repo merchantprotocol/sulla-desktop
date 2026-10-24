@@ -16,19 +16,21 @@ const LANGUAGES = [
 ];
 
 const {
-  ttsProviders, ttsProvider, kokoroStatus, downloadKokoro, ttsVoice, voices, loadingVoices, previewPlaying, ttsPreviewError,
-  selectTtsProvider, onVoiceChange, previewVoice,
-  audioCaptureActive, gatewayConnected, transcriptionMode, saveSettings,
-  audioInputDeviceId, audioInputDevices, fetchAudioDevices, onMicDeviceChange, sttLanguage, sttProvider, onSttProviderChange, grokSttConnected,
-  speakerDeviceId, speakerOutputDevices, onSpeakerDeviceChange, speakerMuted, speakerVolume, speakerVolumeDisplay,
-  onSpeakerMuteToggle, onSpeakerVolumeUp, onSpeakerVolumeDown,
-  micPermission, micPermissionChecking, micError, requestMicPermission, checkMicPermission,
-  loopbackInstalled, loopbackName, loopbackInstalling, loopbackError, installLoopback,
-  micRunning, toggleMicDriver, driverMicLevel, driverMicDb, vadSpeaking, vadFanNoise, vadNoiseFloorDb, vadZcr, vadPitch, vadCentroid,
-  MIC_TEST_MODES, micTestMode, micTestRecording, micTestDuration, micTestAudioUrl, toggleMicTestRecording,
-  whisperInstalled, whisperVersion, whisperModels, whisperModelToDownload, availableWhisperModels, activeWhisperModel,
-  setActiveWhisperModel, getModelMeta, detectWhisper, downloadWhisperModel, deleteWhisperModel, whisperBusy,
-  whisperProgressPhase, whisperProgressPct, whisperTranscribing, whisperTestEntries, toggleWhisperTest,
+  ttsProviders, ttsProvider, kokoroStatus, downloadKokoro, ttsVoice, voices, loadingVoices,
+  previewPlaying, ttsPreviewError, selectTtsProvider, onVoiceChange, previewVoice,
+  audioCaptureActive, gatewayConnected, transcriptionMode, saveSettings, audioInputDeviceId,
+  audioInputDevices, fetchAudioDevices, onMicDeviceChange, sttLanguage, sttProvider,
+  onSttProviderChange, grokSttConnected, speakerDeviceId, speakerOutputDevices,
+  onSpeakerDeviceChange, speakerMuted, speakerVolume, speakerVolumeDisplay, onSpeakerMuteToggle,
+  onSpeakerVolumeUp, onSpeakerVolumeDown, micPermission, micPermissionChecking, micError,
+  requestMicPermission, checkMicPermission, loopbackInstalled, loopbackName, loopbackInstalling,
+  loopbackError, installLoopback, micRunning, toggleMicDriver, driverMicLevel, driverMicDb,
+  vadSpeaking, vadFanNoise, vadNoiseFloorDb, vadZcr, vadPitch, vadCentroid, MIC_TEST_MODES,
+  micTestMode, micTestRecording, micTestDuration, micTestAudioUrl, toggleMicTestRecording,
+  whisperInstalled, whisperVersion, whisperModels, whisperModelToDownload, availableWhisperModels,
+  activeWhisperModel, setActiveWhisperModel, getModelMeta, detectWhisper, downloadWhisperModel,
+  deleteWhisperModel, whisperBusy, whisperProgressPhase, whisperProgressPct, whisperTranscribing,
+  whisperTestEntries, toggleWhisperTest,
 } = useVoiceSettings();
 
 // Twelve bars, lit in proportion to the live mic level.
@@ -71,8 +73,56 @@ const whisperLine = computed(() => {
     return 'whisper.cpp isn’t installed yet. Download a model to set it up.';
   }
 
-  return getModelMeta(activeWhisperModel.value) || (whisperVersion.value ? `whisper.cpp ${ whisperVersion.value }` : '');
+  const meta = getModelMeta(activeWhisperModel.value);
+
+  if (meta) {
+    return meta;
+  }
+
+  return whisperVersion.value ? `whisper.cpp ${ whisperVersion.value }` : '';
 });
+
+const vadLine = computed(() => {
+  const state = `${ vadSpeaking.value ? 'speaking' : 'quiet' }${ vadFanNoise.value ? ' · fan noise' : '' }`;
+
+  return `${ state } · pitch ${ vadPitch.value } · centroid ${ vadCentroid.value } · ZCR ${ vadZcr.value }`;
+});
+
+const engineLine = computed(() => {
+  if (sttProvider.value !== 'grok') {
+    return 'Private and offline. No key needed.';
+  }
+
+  return grokSttConnected.value
+    ? 'Audio is sent to xAI to transcribe.'
+    : 'Needs your xAI key in Passwords. Until then Whisper is used.';
+});
+
+const downloadLine = computed(() => {
+  if (!whisperBusy.value) {
+    return 'Bigger models are more accurate and slower.';
+  }
+  const pct = whisperProgressPct.value > 0 ? ` · ${ Math.round(whisperProgressPct.value) }%` : '';
+
+  return `${ whisperProgressPhase.value }${ pct }`;
+});
+
+const loopbackLine = computed(() => {
+  if (loopbackInstalled.value === false) {
+    return 'Needed to capture system audio. Installing asks for your password.';
+  }
+
+  return 'Starts with a Secretary Mode session.';
+});
+
+const ENGINE_NAMES: Record<string, string> = {
+  kokoro: 'On this Mac · Kokoro (free, private)',
+  system: 'macOS system voice',
+};
+
+function engineName(p: { id: string, name: string, connected: boolean }) {
+  return `${ ENGINE_NAMES[p.id] ?? p.name }${ p.connected ? '' : ' (add a key in Passwords)' }`;
+}
 
 function pickVoiceEngine(event: Event) {
   selectTtsProvider((event.target as HTMLSelectElement).value);
@@ -192,7 +242,7 @@ function pickVoiceEngine(event: Event) {
           title="Speech detection"
           subtitle="VAD, pitch, centroid and zero-crossing rate"
         >
-          <span class="mono muted">{{ vadSpeaking ? 'speaking' : 'quiet' }}{{ vadFanNoise ? ' · fan noise' : '' }} · pitch {{ vadPitch }} · centroid {{ vadCentroid }} · ZCR {{ vadZcr }}</span>
+          <span class="mono muted">{{ vadLine }}</span>
         </PrefRow>
         <PrefRow
           title="Test recording"
@@ -246,7 +296,7 @@ function pickVoiceEngine(event: Event) {
     >
       <PrefRow
         title="Engine"
-        :subtitle="sttProvider === 'grok' ? (grokSttConnected ? 'Audio is sent to xAI to transcribe.' : 'Needs your xAI key in Passwords. Until then Whisper is used.') : 'Private and offline. No key needed.'"
+        :subtitle="engineLine"
       >
         <select
           v-model="sttProvider"
@@ -319,7 +369,7 @@ function pickVoiceEngine(event: Event) {
         <PrefRow
           v-if="availableWhisperModels.length"
           title="Download a model"
-          :subtitle="whisperBusy ? `${ whisperProgressPhase }${ whisperProgressPct > 0 ? ` · ${ Math.round(whisperProgressPct) }%` : '' }` : 'Bigger models are more accurate and slower.'"
+          :subtitle="downloadLine"
         >
           <select
             v-model="whisperModelToDownload"
@@ -409,7 +459,7 @@ function pickVoiceEngine(event: Event) {
             :value="p.id"
             :disabled="!p.connected"
           >
-            {{ p.id === 'kokoro' ? 'On this Mac · Kokoro (free, private)' : p.id === 'system' ? 'macOS system voice' : p.name }}{{ p.connected ? '' : ' (add a key in Passwords)' }}
+            {{ engineName(p) }}
           </option>
         </select>
       </PrefRow>
@@ -505,7 +555,7 @@ function pickVoiceEngine(event: Event) {
       </PrefRow>
       <PrefRow
         title="Loopback driver"
-        :subtitle="loopbackInstalled === false ? 'Needed to capture system audio. Installing asks for your password.' : 'Starts with a Secretary Mode session.'"
+        :subtitle="loopbackLine"
       >
         <button
           v-if="loopbackInstalled === false"

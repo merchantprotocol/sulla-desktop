@@ -178,7 +178,8 @@ export function useAccountSettings() {
       return 'That server could not be reached. Check its address and availability, then retry.';
     }
     if (message.includes('invalid_authority_metadata')) {
-      return 'That server did not publish valid Sulla authority details. Check the address or contact its administrator.';
+      return 'That server did not publish valid Sulla authority details. ' +
+        'Check the address or contact its administrator.';
     }
     if (message.includes('connection_not_found')) {
       return 'That connection no longer exists. Refresh the list and try again.';
@@ -315,10 +316,13 @@ export function useAccountSettings() {
         { id, resourceAudience },
       );
       if (!result.opened) {
-        accountsError.value = 'Sulla could not open the sign-in page. Retry, or open it after checking your default browser.';
+        accountsError.value = 'Sulla could not open the sign-in page. ' +
+          'Retry, or open it after checking your default browser.';
         return;
       }
-      authorizationNotice.value = `Sign-in opened and is available until ${ new Date(result.expiresAt).toLocaleTimeString() }.`;
+      const until = new Date(result.expiresAt).toLocaleTimeString();
+
+      authorizationNotice.value = `Sign-in opened and is available until ${ until }.`;
       authorizationRefreshArmed = true;
       window.removeEventListener('focus', refreshAccountsAfterAuthorization);
       window.addEventListener('focus', refreshAccountsAfterAuthorization, { once: true });
@@ -417,7 +421,11 @@ export function useAccountSettings() {
     cloudError.value = '';
     busy.value = true;
     try {
-      const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', emailInput.value.trim(), emailCode.value.trim());
+      const res = await ipcRenderer.invoke(
+        'sulla-cloud:email-code-verify',
+        emailInput.value.trim(),
+        emailCode.value.trim(),
+      );
       cloudStatus.value = res.status;
       if (!res.ok) {
         cloudError.value = res.error || 'That code did not work.';

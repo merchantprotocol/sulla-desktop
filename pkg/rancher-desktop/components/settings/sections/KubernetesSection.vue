@@ -43,6 +43,22 @@ const statusLine = computed(() => {
   }
 });
 
+const versionLine = computed(() => {
+  if (!enabled.value) {
+    return 'Picked during setup.';
+  }
+
+  return cachedOnly.value ? 'Only versions already downloaded are listed.' : '';
+});
+
+// Spin needs WebAssembly; it can still be turned off if it was left on without it.
+const spinLocked = computed(() => {
+  const spin = !!get('experimental.kubernetes.options.spinkube');
+  const wasm = !!get('experimental.containerEngine.webAssembly.enabled');
+
+  return !enabled.value || isLocked('experimental.kubernetes.options.spinkube') || (!wasm && !spin);
+});
+
 function versionLabel(entry: VersionEntry) {
   const names = (entry.channels ?? []).filter(ch => !/^v?\d+/.test(ch));
 
@@ -127,7 +143,7 @@ onBeforeUnmount(() => {
     >
       <PrefRow
         title="Version"
-        :subtitle="enabled ? (cachedOnly ? 'Only versions already downloaded are listed.' : '') : 'Picked during setup.'"
+        :subtitle="versionLine"
       >
         <select
           class="sel"
@@ -217,7 +233,7 @@ onBeforeUnmount(() => {
       >
         <PrefToggle
           :model-value="get('experimental.kubernetes.options.spinkube')"
-          :disabled="!enabled || isLocked('experimental.kubernetes.options.spinkube') || (!get('experimental.containerEngine.webAssembly.enabled') && !get('experimental.kubernetes.options.spinkube'))"
+          :disabled="spinLocked"
           label="Spin operator"
           @update:model-value="set('experimental.kubernetes.options.spinkube', $event)"
         />

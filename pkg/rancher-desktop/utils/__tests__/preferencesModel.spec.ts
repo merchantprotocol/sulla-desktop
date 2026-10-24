@@ -44,6 +44,7 @@ describe('preferencesModel', () => {
       'virtualMachine.type':       'vz',
       'virtualMachine.mount.type': 'virtiofs',
     });
-    expect(changesForVmType('vz', { mount: 'reverse-sshfs', useRosetta: false }, 'darwin')).toEqual({ 'virtualMachine.type': 'vz' });
+    expect(changesForVmType('vz', { mount: 'reverse-sshfs', useRosetta: false }, 'darwin'))
+      .toEqual({ 'virtualMachine.type': 'vz' });
   });
 });

@@ -97,7 +97,9 @@ export function useModelSettings() {
   }
 
   async function loadSlots() {
-    await Promise.all((['primary', 'secondary', 'subconscious'] as ModelSlot[]).flatMap(slot => [loadModels(slot), loadAccounts(slot)]));
+    const slots: ModelSlot[] = ['primary', 'secondary', 'subconscious'];
+
+    await Promise.all(slots.flatMap(slot => [loadModels(slot), loadAccounts(slot)]));
   }
 
   /**
@@ -177,7 +179,9 @@ export function useModelSettings() {
   }
 
   function setPrimaryModel(modelId: string) {
-    return run(async() => applyState(await ipcRenderer.invoke('model-provider:select-model', state.primaryProvider, modelId)));
+    return run(async() => {
+      applyState(await ipcRenderer.invoke('model-provider:select-model', state.primaryProvider, modelId));
+    });
   }
 
   function setSecondaryProvider(id: string) {

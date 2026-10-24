@@ -6,7 +6,8 @@ export async function confirmResetKubernetes(): Promise<void> {
     type:            'warning',
     title:           'Reset Kubernetes',
     message:         'Reset Kubernetes?',
-    detail:          'Deletes every workload and starts a fresh cluster. Docker images stay unless you also delete them.',
+    detail:          'Deletes every workload and starts a fresh cluster. ' +
+      'Docker images stay unless you also delete them.',
     checkboxLabel:   'Also delete container images',
     checkboxChecked: false,
     buttons:         ['Reset', 'Cancel'],
@@ -24,7 +25,8 @@ export async function confirmFactoryReset(): Promise<void> {
     type:            'warning',
     title:           'Factory reset',
     message:         'Reset Sulla Desktop to factory settings?',
-    detail:          'This removes all containers, images, settings and Sulla data on this computer, then quits Sulla. It can’t be undone.',
+    detail:          'This removes all containers, images, settings and Sulla data on this computer, ' +
+      'then quits Sulla. It can’t be undone.',
     checkboxLabel:   'Keep cached system images',
     checkboxChecked: false,
     buttons:         ['Factory reset', 'Cancel'],

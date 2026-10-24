@@ -52,18 +52,29 @@ const currentDisk = computed(() => disks.value.find(d => !d.disabled)?.gb ?? 100
 
 const vmOptions = computed(() => [
   {
-    value: 'vz', title: 'Apple Virtualization', subtitle: 'Fastest. Needs macOS 13 or later.', tag: 'Recommended', disabled: !vzSupported.value,
+    value:    'vz',
+    title:    'Apple Virtualization',
+    subtitle: 'Fastest. Needs macOS 13 or later.',
+    tag:      'Recommended',
+    disabled: !vzSupported.value,
   },
   { value: 'qemu', title: 'QEMU', subtitle: 'Works on older Macs.' },
 ]);
 
 const mountOptions = computed(() => [
   {
-    value: 'virtiofs', title: 'VirtioFS', subtitle: platform === 'darwin' ? 'Fastest. Needs Apple Virtualization.' : 'Fastest.', tag: 'Recommended', disabled: !mountWorksWith('virtiofs', vmType.value, platform),
+    value:    'virtiofs',
+    title:    'VirtioFS',
+    subtitle: platform === 'darwin' ? 'Fastest. Needs Apple Virtualization.' : 'Fastest.',
+    tag:      'Recommended',
+    disabled: !mountWorksWith('virtiofs', vmType.value, platform),
   },
   { value: 'reverse-sshfs', title: 'Reverse SSHFS', subtitle: 'Works with QEMU.' },
   {
-    value: '9p', title: '9P', subtitle: 'Works with QEMU.', disabled: !mountWorksWith('9p', vmType.value, platform),
+    value:    '9p',
+    title:    '9P',
+    subtitle: 'Works with QEMU.',
+    disabled: !mountWorksWith('9p', vmType.value, platform),
   },
 ]);
 
@@ -72,12 +83,25 @@ const engineOptions = [
   { value: 'containerd', title: 'containerd', subtitle: 'Uses nerdctl. Images and containers are kept separately.' },
 ];
 
+const rosettaLine = computed(() => {
+  if (!isArm.value) {
+    return 'Only on Macs with Apple silicon.';
+  }
+
+  return vmType.value === 'vz' ? 'Much faster than emulation for amd64 images.' : 'Needs Apple Virtualization.';
+});
+const patternsLocked = computed(() => {
+  return !get('containerEngine.allowedImages.enabled') || isLocked('containerEngine.allowedImages.patterns');
+});
+
 const patterns = computed(() => get<string[]>('containerEngine.allowedImages.patterns') ?? []);
 const newPattern = ref('');
 const addingPattern = ref(false);
 
 function chooseVm(value: string) {
-  void setMany(changesForVmType(value as VmType, { mount: mountType.value, useRosetta: !!get('virtualMachine.useRosetta') }, platform));
+  const current = { mount: mountType.value, useRosetta: !!get('virtualMachine.useRosetta') };
+
+  void setMany(changesForVmType(value as VmType, current, platform));
 }
 
 function addPattern() {
@@ -196,7 +220,7 @@ onMounted(async() => {
       <PrefRow
         v-if="platform === 'darwin'"
         title="Run Intel images with Rosetta"
-        :subtitle="!isArm ? 'Only on Macs with Apple silicon.' : vmType !== 'vz' ? 'Needs Apple Virtualization.' : 'Much faster than emulation for amd64 images.'"
+        :subtitle="rosettaLine"
         :off="!isArm || vmType !== 'vz'"
       >
         <PrefToggle
@@ -418,7 +442,7 @@ onMounted(async() => {
         <button
           type="button"
           class="btn sm"
-          :disabled="!get('containerEngine.allowedImages.enabled') || isLocked('containerEngine.allowedImages.patterns')"
+          :disabled="patternsLocked"
           @click="addingPattern = !addingPattern"
         >
           <PrefIcon name="plus" />Add
@@ -446,7 +470,7 @@ onMounted(async() => {
               <button
                 type="button"
                 class="btn sm ghost"
-                :disabled="!get('containerEngine.allowedImages.enabled') || isLocked('containerEngine.allowedImages.patterns')"
+                :disabled="patternsLocked"
                 @click="removePattern(pattern)"
               >Remove</button>
             </span>

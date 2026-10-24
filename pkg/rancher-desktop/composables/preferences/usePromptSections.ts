@@ -141,7 +141,8 @@ export function usePromptSections() {
       return undefined;
     }
     try {
-      const created = await ipcRenderer.invoke('system-prompt:add', { id, title, priority: 100 }) as PromptSection | null;
+      const input = { id, title, priority: 100 };
+      const created = await ipcRenderer.invoke('system-prompt:add', input) as PromptSection | null;
 
       await load();
 

@@ -1,14 +1,19 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+
 import PrefCard from '../PrefCard.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
-import { DEFAULT_WORKER_CONCURRENCY, WORKER_CONCURRENCY_KEY, isValidWorkerConcurrency } from '@pkg/shared/workerConcurrency';
+import {
+  DEFAULT_WORKER_CONCURRENCY, WORKER_CONCURRENCY_KEY, isValidWorkerConcurrency,
+} from '@pkg/shared/workerConcurrency';
 
 const workers = useSullaSetting<number>(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, 'number');
 const { get, set, isLocked } = useEngineSettings();
+const watching = computed(() => !!get('experimental.externalWaitMonitorEnabled'));
 
 function saveWorkers(event: Event) {
   const raw = (event.target as HTMLInputElement).value;
@@ -85,7 +90,7 @@ function saveConcurrency(event: Event) {
           max="32"
           aria-label="Events checked at once"
           :value="get('experimental.externalWaitMonitorConcurrency')"
-          :disabled="!get('experimental.externalWaitMonitorEnabled') || isLocked('experimental.externalWaitMonitorConcurrency')"
+          :disabled="!watching || isLocked('experimental.externalWaitMonitorConcurrency')"
           @change="saveConcurrency"
         >
       </PrefRow>
@@ -96,7 +101,7 @@ function saveConcurrency(event: Event) {
       >
         <PrefToggle
           :model-value="get('experimental.externalWaitCommentSuppressionEnabled')"
-          :disabled="!get('experimental.externalWaitMonitorEnabled') || isLocked('experimental.externalWaitCommentSuppressionEnabled')"
+          :disabled="!watching || isLocked('experimental.externalWaitCommentSuppressionEnabled')"
           label="Hold back duplicate task comments"
           @update:model-value="set('experimental.externalWaitCommentSuppressionEnabled', $event)"
         />
