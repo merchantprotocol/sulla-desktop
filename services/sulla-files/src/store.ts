@@ -19,7 +19,7 @@ export class Store {
     } catch { return false } finally { await handle?.close() }
   }
 
-  async get(collectionId:string, id:string) {
+  async get(collectionId:string, id:string):Promise<Buffer> {
     return readFile(this.path(collectionId, id));
   }
 
