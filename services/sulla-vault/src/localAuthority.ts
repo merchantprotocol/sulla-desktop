@@ -1556,7 +1556,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
       [/^\/desktop-channel\/tickets$/, ['POST']],
       [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
-      [/^\/cloud-runtime\/v1\/device\/(?:workflows|agents|skills|custom-agents|recipes|usage|memory)$/, ['PUT', 'DELETE']],
+      [/^\/cloud-runtime\/v1\/device\/(?:workflows|agents|skills|custom-agents|recipes|usage|memory|model-catalog)$/, ['PUT', 'DELETE']],
       [/^\/cloud-runtime\/v1\/device\/use-cases$/, ['DELETE']],
       [/^\/cloud-runtime\/v1\/device$/, ['DELETE']],
       [/^\/cloud-chat-links$/, ['GET', 'POST']],

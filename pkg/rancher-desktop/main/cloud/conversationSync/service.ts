@@ -108,7 +108,7 @@ class ConversationSyncServiceImpl {
       await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(frame.linkId)}/replies/${encodeURIComponent(frame.replyId)}/complete`,{headers:{'Content-Type':'application/json'},body:JSON.stringify({messageId,...this.encrypt(frame.conversationId,'assistant',messageId,result.content)})});
     };
     const onFrame=(f:Record<string,unknown>)=>{ void complete(f).catch(err=>console.warn('[ConversationSync] completion failed:',err)); };
-    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content}]},onFrame,onFrame);
+    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content}],...(frame.selection?.providerId?{providerId:frame.selection.providerId}:{}),...(frame.selection?.modelId?{modelId:frame.selection.modelId}:{}),...(frame.selection?.agentId?{agentId:frame.selection.agentId}:{})},onFrame,onFrame);
   }
 
   // ── Links ────────────────────────────────────────────────────
