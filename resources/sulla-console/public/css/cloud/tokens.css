@@ -1,0 +1,100 @@
+/* Sulla Cloud app: theme tokens.
+   The 10 theme sets are copied verbatim from Sulla Desktop
+   (pkg/rancher-desktop/assets/styles/themes/*.css) via the approved mockup
+   (Projects/sulla-desktop/mockups/sulla-cloud/v3/sulla-cloud-mockup-final-v2.html).
+   The palette lives on <html>, so popovers, dialogs and toasts rendered outside
+   the shell still get the theme. js/cloud/shell/theme-boot.js sets the class. */
+
+/* ── Real Sulla Desktop theme tokens (extracted verbatim from pkg/rancher-desktop/assets/styles/themes/*.css) ── */
+.theme-noir-light{--bg-page:#f4f7fb;--bg-surface:#ffffff;--bg-surface-alt:#eef2f8;--bg-surface-hover:#e4eaf4;--bg-input:#ffffff;--text-primary:#1a2332;--text-secondary:#3d4f63;--text-muted:#6a7d94;--text-link:#3a7fa0;--border-default:#c8d5e4;--border-subtle:#dde6f0;--border-strong:#a8bccf;--accent-primary:#397d9d;--accent-primary-hover:#5096b3;--status-success:#16a34a;--status-warning:#b45309;--status-error:#b91c1c;--bg-success:rgba(22, 163, 74, 0.1);--bg-warning:rgba(180, 83, 9, 0.1);--bg-error:rgba(185, 28, 28, 0.1);--shadow-sm:0 1px 3px rgba(26, 35, 50, 0.08), 0 1px 2px rgba(26, 35, 50, 0.04);--shadow-md:0 4px 12px rgba(26, 35, 50, 0.1), 0 2px 6px rgba(26, 35, 50, 0.06);--text-on-accent:#ffffff}
+.theme-noir-dark{--bg-page:#01030a;--bg-surface:#070d1a;--bg-surface-alt:#03060c;--bg-surface-hover:#070d1a;--bg-input:#01030a;--text-primary:#f3f5f8;--text-secondary:#dee4ec;--text-muted:#a9b3c1;--text-link:#5096b3;--border-default:rgba(168, 192, 220, 0.08);--border-subtle:rgba(168, 192, 220, 0.08);--border-strong:#484f5a;--accent-primary:#5096b3;--accent-primary-hover:#6ab0cc;--status-success:#3fb950;--status-warning:#e3b341;--status-error:#f85149;--bg-success:rgba(63, 185, 80, 0.18);--bg-warning:rgba(227, 179, 65, 0.18);--bg-error:rgba(248, 81, 73, 0.18);--shadow-sm:0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);--shadow-md:0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);--text-on-accent:#f3f5f8}
+.theme-protocol-light{--bg-page:#f4f7fb;--bg-surface:#ffffff;--bg-surface-alt:#eef2f8;--bg-surface-hover:#e4eaf4;--bg-input:#ffffff;--text-primary:#1a2332;--text-secondary:#3d4f63;--text-muted:#6a7d94;--text-link:#3a7fa0;--border-default:#c8d5e4;--border-subtle:#dde6f0;--border-strong:#a8bccf;--accent-primary:#5096b3;--accent-primary-hover:#3a7fa0;--status-success:#16803c;--status-warning:#b45309;--status-error:#b91c1c;--bg-success:rgba(22, 128, 60, 0.1);--bg-warning:rgba(180, 83, 9, 0.1);--bg-error:rgba(185, 28, 28, 0.1);--shadow-sm:0 1px 3px rgba(26, 35, 50, 0.08), 0 1px 2px rgba(26, 35, 50, 0.04);--shadow-md:0 4px 12px rgba(26, 35, 50, 0.1), 0 2px 6px rgba(26, 35, 50, 0.06);--text-on-accent:#ffffff}
+.theme-protocol-dark{--bg-page:#0d1117;--bg-surface:#161b22;--bg-surface-alt:#1c2128;--bg-surface-hover:#21262d;--bg-input:#0d1117;--text-primary:#e6edf3;--text-secondary:#b1bac4;--text-muted:#8b949e;--text-link:#5096b3;--border-default:#30363d;--border-subtle:#21262d;--border-strong:#484f58;--accent-primary:#5096b3;--accent-primary-hover:#6ab0cc;--status-success:#3fb950;--status-warning:#e3b341;--status-error:#f85149;--bg-success:rgba(63, 185, 80, 0.18);--bg-warning:rgba(227, 179, 65, 0.18);--bg-error:rgba(248, 81, 73, 0.18);--shadow-sm:0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);--shadow-md:0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);--text-on-accent:#ffffff}
+.theme-ocean-light{--bg-page:#f0f7ff;--bg-surface:#e3f2fd;--bg-surface-alt:#d6ecfb;--bg-surface-hover:#bbdefb;--bg-input:#ffffff;--text-primary:#0a1929;--text-secondary:#1a3a5c;--text-muted:#5a7fa0;--text-link:#0277bd;--border-default:#bbdefb;--border-subtle:#d6ecfb;--border-strong:#90caf9;--accent-primary:#4fc3f7;--accent-primary-hover:#29b6f6;--status-success:#22c55e;--status-warning:#f59e0b;--status-error:#ef4444;--bg-success:rgba(34, 197, 94, 0.1);--bg-warning:rgba(245, 158, 11, 0.1);--bg-error:rgba(239, 68, 68, 0.1);--shadow-sm:0 1px 2px 0 rgba(10, 25, 41, 0.06);--shadow-md:0 4px 6px -1px rgba(10, 25, 41, 0.1), 0 2px 4px -2px rgba(10, 25, 41, 0.08);--text-on-accent:#ffffff}
+.theme-ocean-dark{--bg-page:#0a1929;--bg-surface:#132f4c;--bg-surface-alt:#1a3a5c;--bg-surface-hover:#224870;--bg-input:#1a3a5c;--text-primary:#e3f2fd;--text-secondary:#90caf9;--text-muted:#64b5f6;--text-link:#4fc3f7;--border-default:rgba(144, 202, 249, 0.12);--border-subtle:rgba(144, 202, 249, 0.06);--border-strong:rgba(144, 202, 249, 0.24);--accent-primary:#4fc3f7;--accent-primary-hover:#29b6f6;--status-success:#4ade80;--status-warning:#fbbf24;--status-error:#f87171;--bg-success:rgba(74, 222, 128, 0.12);--bg-warning:rgba(251, 191, 36, 0.12);--bg-error:rgba(248, 113, 113, 0.12);--shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.4);--shadow-md:0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);--text-on-accent:#ffffff}
+.theme-nord-light{--bg-page:#eceff4;--bg-surface:#e5e9f0;--bg-surface-alt:#d8dee9;--bg-surface-hover:#c9d1e0;--bg-input:#ffffff;--text-primary:#2e3440;--text-secondary:#3b4252;--text-muted:#4c566a;--text-link:#5e81ac;--border-default:#d8dee9;--border-subtle:#e5e9f0;--border-strong:#c0c8d8;--accent-primary:#88c0d0;--accent-primary-hover:#81a1c1;--status-success:#a3be8c;--status-warning:#ebcb8b;--status-error:#bf616a;--bg-success:rgba(163, 190, 140, 0.15);--bg-warning:rgba(235, 203, 139, 0.15);--bg-error:rgba(191, 97, 106, 0.12);--shadow-sm:0 1px 2px 0 rgba(46, 52, 64, 0.06);--shadow-md:0 4px 6px -1px rgba(46, 52, 64, 0.1), 0 2px 4px -2px rgba(46, 52, 64, 0.08);--text-on-accent:#eceff4}
+.theme-nord-dark{--bg-page:#2e3440;--bg-surface:#3b4252;--bg-surface-alt:#434c5e;--bg-surface-hover:#4c566a;--bg-input:#3b4252;--text-primary:#eceff4;--text-secondary:#d8dee9;--text-muted:#a5b1c2;--text-link:#88c0d0;--border-default:rgba(216, 222, 233, 0.12);--border-subtle:rgba(216, 222, 233, 0.06);--border-strong:rgba(216, 222, 233, 0.24);--accent-primary:#88c0d0;--accent-primary-hover:#81a1c1;--status-success:#a3be8c;--status-warning:#ebcb8b;--status-error:#bf616a;--bg-success:rgba(163, 190, 140, 0.15);--bg-warning:rgba(235, 203, 139, 0.15);--bg-error:rgba(191, 97, 106, 0.15);--shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.3);--shadow-md:0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);--text-on-accent:#2e3440}
+.theme-default-light{--bg-page:#ffffff;--bg-surface:#f8fafc;--bg-surface-alt:#f1f5f9;--bg-surface-hover:#e2e8f0;--bg-input:#ffffff;--text-primary:#0d0d0d;--text-secondary:#64748b;--text-muted:#94a3b8;--text-link:#0284c7;--border-default:#e2e8f0;--border-subtle:#f1f5f9;--border-strong:#cbd5e1;--accent-primary:#0ea5e9;--accent-primary-hover:#0284c7;--status-success:#22c55e;--status-warning:#f59e0b;--status-error:#ef4444;--bg-success:rgba(34, 197, 94, 0.1);--bg-warning:rgba(245, 158, 11, 0.1);--bg-error:rgba(239, 68, 68, 0.1);--shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.05);--shadow-md:0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);--text-on-accent:#ffffff}
+.theme-default-dark{--bg-page:#0f172a;--bg-surface:#1e293b;--bg-surface-alt:#334155;--bg-surface-hover:#475569;--bg-input:#243447;--text-primary:#ffffff;--text-secondary:#94a3b8;--text-muted:#cbd5e1;--text-link:#38bdf8;--border-default:rgba(255, 255, 255, 0.1);--border-subtle:#334155;--border-strong:#4b5563;--accent-primary:#38bdf8;--accent-primary-hover:#0ea5e9;--status-success:#4ade80;--status-warning:#fbbf24;--status-error:#f87171;--bg-success:rgba(74, 222, 128, 0.12);--bg-warning:rgba(251, 191, 36, 0.12);--bg-error:rgba(248, 113, 113, 0.12);--shadow-sm:0 1px 2px 0 rgba(0, 0, 0, 0.3);--shadow-md:0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);--text-on-accent:#ffffff}
+
+
+/* ── Surface palette. Same names as FilesBrowser.vue / AgentsTab.vue, derived from the active theme.
+   Defined on <html> (which carries the theme class) so popovers, dialogs and toasts outside .app get it too. ── */
+html {
+  --paper: var(--bg-page);
+  --paper-2: var(--bg-surface-alt);
+  --card-solid: var(--bg-surface);
+  --card: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --dim: var(--text-muted);
+  --line: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --line-2: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  --accent: var(--accent-primary);
+  --accent-light: var(--accent-primary-hover);
+  --accent-2: color-mix(in srgb, var(--accent-primary) 78%, var(--text-primary));
+  --accent-soft: color-mix(in srgb, var(--accent-primary) 11%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent-primary) 34%, transparent);
+  --on-accent: var(--text-on-accent, #fff);
+  --ok: var(--status-success); --ok-soft: color-mix(in srgb, var(--status-success) 13%, transparent);
+  --warn: var(--status-warning); --warn-soft: color-mix(in srgb, var(--status-warning) 14%, transparent);
+  --bad: var(--status-error); --bad-soft: color-mix(in srgb, var(--status-error) 12%, transparent);
+  --idle: var(--text-muted); --idle-soft: color-mix(in srgb, var(--text-muted) 16%, transparent);
+  --ink-05: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --ink-08: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --nav-bg: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+  --top-bg: color-mix(in srgb, var(--bg-surface) 40%, transparent);
+  --glow-1: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  --glow-2: color-mix(in srgb, var(--accent-primary) 6%, transparent);
+  --tint: 26, 35, 50;
+  --fi-img: #6b4fbf; --fi-img-bg: rgba(107, 79, 191, .12);
+  --fi-vid: #c0392b; --fi-vid-bg: rgba(217, 64, 58, .10);
+  --fi-pdf: #b26f05; --fi-pdf-bg: rgba(217, 138, 10, .13);
+  --fi-aud: #167a42; --fi-aud-bg: rgba(31, 157, 85, .12);
+  --shadow: 0 1px 2px rgba(var(--tint), .04), 0 10px 30px -12px rgba(var(--tint), .12);
+  --shadow-sm: 0 1px 1px rgba(var(--tint), .04), 0 2px 8px -2px rgba(var(--tint), .08);
+  --shadow-lg: 0 2px 4px rgba(var(--tint), .06), 0 30px 60px -20px rgba(var(--tint), .28);
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --display: "Playfair Display", Georgia, serif;
+  --r: 12px;
+}
+/* Noir Light keeps the approved palette with AA-safe muted text for Jonathon’s high-contrast Light preference. */
+html.theme-noir-light { --muted: #4f5d70; --dim: #5f6d80; --paper-2: #eaf0f6; --accent: #397d9d; --accent-2: #2f6a86; --ok: #167a42; --warn: #d98a0a; --bad: #d9403a; --line: rgba(26,35,50,.09); --line-2: rgba(26,35,50,.14); --card: rgba(255,255,255,.82); --nav-bg: rgba(255,255,255,.55); --top-bg: rgba(255,255,255,.4); }
+/* Dark themes: AgentsTab.vue's .dark recipe. */
+html.dark { --tint: 0, 0, 0; --card: color-mix(in srgb, var(--bg-surface) 88%, transparent); --nav-bg: color-mix(in srgb, var(--bg-surface) 70%, transparent); --top-bg: color-mix(in srgb, var(--bg-page) 70%, transparent); --glow-1: color-mix(in srgb, var(--accent-primary) 13%, transparent); --fi-img: #a58cf0; --fi-vid: #f08a7e; --fi-pdf: #f2b14b; --fi-aud: #6fd39a; }
+html.theme-noir-dark { --card-solid: #0b1220; --paper-2: #0e1626; --card: rgba(11,18,32,.86); }
+
+/* Scrollbars stay invisible until the scroll area is hovered or actively
+   scrolling (shell.js toggles .is-scrolling). The 8px gutter never changes,
+   so content doesn't shift. */
+html { --sb-thumb: color-mix(in srgb, var(--text) 25%, transparent); --sb-thumb-hover: color-mix(in srgb, var(--text) 40%, transparent); }
+::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background-color: transparent; background-clip: padding-box; }
+:hover::-webkit-scrollbar-thumb, .is-scrolling::-webkit-scrollbar-thumb { background-color: var(--sb-thumb); }
+::-webkit-scrollbar-thumb:hover { background-color: var(--sb-thumb-hover); }
+/* Firefox has no ::-webkit-scrollbar; use the standard properties there only, so Chrome keeps the rules above. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  *:hover, .is-scrolling { scrollbar-color: var(--sb-thumb) transparent; }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg-page); font-family: var(--sans); color: var(--text); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+svg { display: block; }
+[hidden] { display: none !important; }
+/* Primary controls use the approved theme accent exactly. */
+html.theme-noir-light { --text-on-accent: #ffffff; }
+html.theme-protocol-light, html.theme-ocean-light, html.theme-nord-light, html.theme-default-light { --text-on-accent: #0d1b2a; }
+html.theme-noir-dark { --text-on-accent: #01030a; }
+html.theme-protocol-dark, html.theme-ocean-dark, html.theme-nord-dark, html.theme-default-dark { --text-on-accent: #f3f5f8; }
+html.theme-default-light { --text-muted: #475569; --accent-2: #0369a1; }
+html.theme-ocean-light { --text-muted: #365a75; --accent-2: #006494; }
+html.theme-protocol-light { --accent-2: #2f6a86; }
+html.theme-nord-light { --accent-2: #3f5f85; }
+html.theme-noir-light { --nav-small-text: #4f5d70; }

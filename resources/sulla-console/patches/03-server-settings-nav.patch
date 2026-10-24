@@ -1,0 +1,282 @@
+Subject: 03-server-settings-nav: Shell: Server administration settings, server brand and sign-in card
+
+diff --git a/css/cloud/shell.css b/css/cloud/shell.css
+index d238f62ab8dd17ea7a30ebb0e5475a40a3d47c6a..5c3c201c96f1cb88e707cae97453fe580de777cf 100644
+--- a/css/cloud/shell.css
++++ b/css/cloud/shell.css
+@@ -108,6 +108,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-
+ .pop .hint { padding: 6px 9px 8px; font-size: 11.5px; color: var(--dim); }
+ 
+ .themebox .seg button { cursor: pointer; }
++.themebox [data-theme-label] { font-weight: 500; }
+ 
+ /* Boot curtain: shown until auth resolves so the shell never flashes empty data. */
+ .boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--paper); z-index: 40; }
+diff --git a/js/cloud/shell/shell.js b/js/cloud/shell/shell.js
+index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b2f1960a3 100644
+--- a/js/cloud/shell/shell.js
++++ b/js/cloud/shell/shell.js
+@@ -1,4 +1,4 @@
+-// Sulla Cloud app: the shared shell every /cloud/ page renders.
++// Sulla Server app: the shared shell every /cloud/ page renders.
+ //
+ // A page is plain HTML: <body data-route="files"> plus these scripts. The
+ // shell signs the user in, resolves the organization, draws the sidebar and
+@@ -23,6 +23,7 @@
+   const states = window.CloudStates;
+   const ic = (name) => window.CloudIcons.get(name);
+   const $ = (sel, root = document) => root.querySelector(sel);
++  const serverHost = () => document.querySelector('meta[name="sulla-server-host"]')?.content || location.host;
+ 
+   function esc(value) {
+     return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+@@ -47,13 +48,13 @@
+   const ROUTES = {
+     home: { nav: 'home', title: 'Home', soon: ['Devices online and running agents', 'Recent chats, workflow runs and files', 'Shared links and vault sync status'] },
+     chat: { nav: 'chat', title: 'Chat', soon: ['Cloud chats and chats you link from Sulla Desktop', 'Where each reply runs, with a Runs on picker', 'Linking is opt-in; nothing uploads until you turn it on'] },
+-    files: { nav: 'files', title: 'Files', soon: ['Files from Sulla Cloud and your online devices', 'Shared by you and shared with you', 'Previews, history and share links'] },
++    files: { nav: 'files', title: 'Files', soon: ['Files from Sulla Server and your online devices', 'Shared by you and shared with you', 'Previews, history and share links'] },
+     editor: { nav: 'files', title: 'Editor', crumbs: [{ label: 'Files', href: 'files.html' }, { label: 'Editor' }], soon: ['Edit Sulla documents in the browser', 'Saves a new version and flags conflicts', 'Live presence and version history by device'] },
+     passwords: { nav: 'passwords', title: 'Passwords', soon: ['Your vault, synced from Sulla Desktop › Profile when you turn sync on', 'Unlocks in this browser only; the server never sees your passwords', 'Audit log and vault settings'] },
+     workflows: { nav: 'use-cases', title: 'Workflows', soon: ['Status, last run and the last 12 runs', 'Next run, trigger, and where each one runs', 'Run detail with steps and logs'] },
+     'workflow-run': { nav: 'use-cases', title: 'Run', crumbs: [{ label: 'Workflows', href: 'workflows.html' }, { label: 'Run' }], soon: ['Step timeline for one run', 'Output of the failing step', 'Run details and the full log'] },
+-    agents: { nav: 'use-cases', title: 'Live Agents', soon: ['Agents running in Sulla Cloud and on each device', 'Message or stop an agent', 'Offline devices shown as last seen, never as running'] },
+-    'use-cases': { nav: 'use-cases', title: 'Use Cases', soon: ['Browse use cases and read each one', 'Install to Sulla Cloud or to a device', 'My Library and updates'] },
++    agents: { nav: 'use-cases', title: 'Live Agents', soon: ['Agents running in Sulla Server and on each device', 'Message or stop an agent', 'Offline devices shown as last seen, never as running'] },
++    'use-cases': { nav: 'use-cases', title: 'Use Cases', soon: ['Browse use cases and read each one', 'Install to Sulla Server or to a device', 'My Library and updates'] },
+     skills: { nav: 'use-cases', title: 'Saved Skills' },
+     'custom-agents': { nav: 'use-cases', title: 'Custom Agents' },
+     recipes: { nav: 'use-cases', title: 'Recipes' },
+@@ -62,6 +63,7 @@
+     devices: { nav: 'home', title: 'Devices', crumbs: [{ label: 'Home', href: 'index.html' }, { label: 'Devices' }] },
+     account: { title: 'Account settings' },
+     'org-settings': { title: 'Organization settings' },
++    'server-admin': { title: 'Server administration' },
+     'not-found': { title: 'Page not found' },
+   };
+ 
+@@ -82,7 +84,7 @@
+   const SUBNAV = {
+     files: [
+       { title: 'Browse', items: [
+-        { id: 'files', label: 'My Files', icon: 'folderLine', href: 'files.html#sec=files' },
++        { id: 'files', label: 'Files', icon: 'folderLine', href: 'files.html#sec=files' },
+         { id: 'shared', label: 'Shared', icon: 'share', href: 'files.html#sec=shared' },
+         { id: 'recent', label: 'Recent', icon: 'clock', href: 'files.html#sec=recent' },
+         { id: 'starred', label: 'Starred', icon: 'star', href: 'files.html#sec=starred' },
+@@ -197,11 +199,29 @@
+       { group: 'Danger zone' },
+       { id: 'danger', label: 'Danger zone', icon: 'alert', danger: true },
+     ],
++    server: [
++      { group: 'Server' },
++      { id: 'overview', label: 'Overview', icon: 'server' },
++      { id: 'users', label: 'Users & seats', icon: 'users' },
++      { id: 'license', label: 'License', icon: 'key' },
++      { group: 'Access' },
++      { id: 'domains', label: 'Domains & access', icon: 'globe' },
++      { id: 'signin', label: 'Sign-in methods', icon: 'lock' },
++      { id: 'providers', label: 'Model providers', icon: 'agent' },
++      { id: 'desktops', label: 'Linked Desktops', icon: 'laptop' },
++      { group: 'Maintenance' },
++      { id: 'storage', label: 'Storage & backups', icon: 'folderLine' },
++      { id: 'updates', label: 'Updates', icon: 'clock' },
++      { id: 'audit', label: 'Audit log', icon: 'list' },
++    ],
+   };
++  // Cloud-only settings sections the server never offers.
++  const CLOUD_ONLY_SETTINGS = new Set(['billing', 'servers']);
++  const SETTINGS_HOME = { account: { label: 'Account settings', href: 'account.html#st=profile' }, org: { label: 'Organization settings', href: 'organization-settings.html#st=general' }, server: { label: 'Server administration', href: 'server-admin.html#st=overview' } };
+   const SETTINGS_LABEL = { home: 'Home', chat: 'Chat', files: 'Files', passwords: 'Passwords', workflows: 'Workflows', agents: 'Agents', 'use-cases': 'Use Cases', organizations: 'Organizations' };
+ 
+   function settingsHref(kind, id) {
+-    return `${kind === 'account' ? 'account.html' : 'organization-settings.html'}#st=${id}`;
++    return `${kind === 'account' ? 'account.html' : kind === 'server' ? 'server-admin.html' : 'organization-settings.html'}#st=${id}`;
+   }
+ 
+   function normalizedPagePath(value) {
+@@ -228,11 +248,14 @@
+     const profile = api.profile() || {};
+     const org = api.activeOrg();
+     const from = settingsFrom();
+-    const items = (SETTINGS_NAV[state.settings] || []).filter((item) => !item.id || !state.settingsHidden.has(item.id));
+-    let h = `<a class="navback" href="${esc(from.href)}"><span class="sv">${ic('arrowLeft')}</span><span>Back to Sulla Cloud</span><span class="cnt">${esc(from.label)}</span></a>`;
++    const items = (SETTINGS_NAV[state.settings] || []).filter((item) => !item.id || (!state.settingsHidden.has(item.id) && !CLOUD_ONLY_SETTINGS.has(item.id)));
++    let h = `<a class="navback" href="${esc(from.href)}"><span class="sv">${ic('arrowLeft')}</span><span>Back to Sulla Server</span><span class="cnt">${esc(from.label)}</span></a>`;
+     if (state.settings === 'account') {
+       h += `<div class="brand"><div class="mark">${ic('user')}</div><div><b>Account settings</b><span>Follows you across organizations</span></div></div>`;
+       h += `<div class="idcard"><span class="avatar">${esc(personInitials(profile))}</span><span class="t"><b>${esc(profile.name || profile.businessName || 'Your account')}</b><small>${esc(profile.email || '')}</small></span></div>`;
++    } else if (state.settings === 'server') {
++      h += `<div class="brand"><div class="mark">${ic('server')}</div><div><b>Server administration</b><span>Every organization on this server</span></div></div>`;
++      h += `<div class="idcard"><span class="avatar sq">S</span><span class="t"><b>Sulla Server</b><small>${esc(serverHost())}</small></span></div>`;
+     } else {
+       h += `<div class="brand"><div class="mark">${ic('building')}</div><div><b>Organization settings</b><span>Scoped to this organization</span></div></div>`;
+       h += `<button class="orgbtn" id="settingsOrgBtn" type="button" aria-haspopup="menu">${orgAvatar(org)}<span class="t"><b>${esc(org?.name || 'Organization')}</b><small>${esc(cap(org?.role || 'member'))}</small></span><span class="chev">${ic('chevDown')}</span></button>`;
+@@ -277,8 +300,8 @@
+       box.innerHTML = '<div class="navnote">Devices could not load.</div>';
+       return;
+     }
+-    // Sulla Cloud itself: reachable, since this page just talked to it.
+-    let h = `<div class="devline"><span class="sv">${ic('syncOnline')}</span><span class="n">Sulla Cloud</span><span class="dot" title="Online"></span></div>`;
++    // Sulla Server itself: reachable, since this page just talked to it.
++    let h = `<div class="devline"><span class="sv">${ic('server')}</span><span class="n">Sulla Server</span><span class="dot" title="Online"></span></div>`;
+     const cutoff = Date.now() - 30 * 86400000;
+     const older = state.devices.filter((d) => { const t = parseDate(d.lastSeenAt)?.getTime(); return !d.online && t && t < cutoff; });
+     h += state.devices.filter((d) => !older.includes(d)).map((d) => `<a class="devline ${d.online ? '' : 'off'}" href="devices.html#id=${encodeURIComponent(d.id)}" title="${esc(`${d.name} · ${d.online ? 'Online' : `Last seen ${localWhen(d.lastSeenAt)}`}`)}" aria-label="${esc(`${d.name} · ${d.online ? 'Online' : 'Offline'}`)}"><span class="sv">${ic(deviceIcon(d))}</span><span class="n">${esc(d.name)}</span><span class="dot ${d.online ? '' : 'off'}"></span></a>`).join('');
+@@ -315,7 +338,7 @@
+     const route = ROUTES[state.route];
+     const settingsItem = state.settings ? (SETTINGS_NAV[state.settings] || []).find((item) => item.id === state.settingsActive) : null;
+     const trail = state.settings
+-      ? [...(state.settings === 'org' && org ? [{ label: org.name, href: 'organizations.html' }] : []), { label: state.settings === 'account' ? 'Account settings' : 'Organization settings', href: state.settings === 'account' ? 'account.html#st=profile' : 'organization-settings.html#st=general' }, { label: settingsItem?.label || route.title }]
++      ? [...(state.settings === 'org' && org ? [{ label: org.name, href: 'organizations.html' }] : []), SETTINGS_HOME[state.settings], { label: settingsItem?.label || route.title }]
+       : (state.crumbs || route.crumbs || [{ label: route.title }]);
+     let h = !state.settings && org ? `<a class="c" href="organizations.html">${esc(org.name)}</a><span>›</span>` : '';
+     trail.forEach((c, i) => {
+@@ -323,7 +346,7 @@
+       h += last ? `<b>${esc(c.label)}</b>` : `<a class="c" href="${esc(c.href || '#')}">${esc(c.label)}</a><span>›</span>`;
+     });
+     $('#crumbs').innerHTML = h;
+-    document.title = `${trail[trail.length - 1].label} · Sulla Cloud`;
++    document.title = `${trail[trail.length - 1].label} · Sulla Server`;
+   }
+ 
+   function renderOrgPop() {
+@@ -352,7 +375,7 @@
+   function themeBoxHtml() {
+     const opts = window.CloudTheme.SCHEMES.map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
+     return `<div class="themebox" title="Theme: the same token sets Sulla Desktop ships">
+-      <label class="sel"><span>Theme</span> <b data-theme-label style="font-weight:500"></b><select data-theme-scheme aria-label="Theme">${opts}</select></label>
++      <label class="sel"><span>Theme</span> <b data-theme-label></b><select data-theme-scheme aria-label="Theme">${opts}</select></label>
+       <div class="seg" role="group" aria-label="Mode"><button type="button" data-mode="light"><span class="bi">${ic('sun')}</span>Light</button><button type="button" data-mode="dark"><span class="bi">${ic('moon')}</span>Dark</button></div>
+     </div>`;
+   }
+@@ -375,8 +398,8 @@
+   // ── Layout ────────────────────────────────────────────────────────────
+   function shellHtml() {
+     return `<div class="app${state.settings ? ' in-settings' : ''}" id="app">
+-      <div class="navwrap"><nav class="nav nav-main" aria-label="Sulla Cloud">
+-        <div class="brand"><div class="mark">S</div><div><b>Sulla Cloud</b><span>${esc(location.host || 'sulladesktop.com')} · web</span></div></div>
++      <div class="navwrap"><nav class="nav nav-main" aria-label="Sulla Server">
++        <div class="brand"><div class="mark">S</div><div><b>Sulla Server</b><span>${esc(serverHost())} · web</span></div></div>
+         <button class="orgbtn" id="orgBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="orgPop"></button>
+         <div id="navItems"></div>
+         <div class="sep"></div>
+@@ -401,7 +424,7 @@
+ 
+   // ── Command palette ───────────────────────────────────────────────────
+   function commandItems() {
+-    const destinations = [...NAV.map((item) => ({ ...item, group: 'Navigate' })), { id: 'devices', label: 'Devices', icon: 'laptop', href: 'devices.html', group: 'Navigate' }];
++    const destinations = [...NAV.map((item) => ({ ...item, group: 'Navigate' })), { id: 'devices', label: 'Devices', icon: 'laptop', href: 'devices.html', group: 'Navigate' }, ...(window.SullaServerPages || [])];
+     const devices = Array.isArray(state.devices) ? state.devices.map((device) => ({
+       id: `device-${device.id}`, label: device.name, icon: deviceIcon(device),
+       href: `devices.html#id=${encodeURIComponent(device.id)}`, group: 'Devices',
+@@ -454,7 +477,7 @@
+     if (state.route !== 'files') return false;
+     const section = new URLSearchParams(location.hash.replace(/^#/, '')).get('sec');
+     const copy = section === 'starred'
+-      ? { title: 'Starred', icon: 'star', body: "Starred files aren't available in Cloud yet." }
++      ? { title: 'Starred', icon: 'star', body: "Starred files aren't available on this server yet." }
+       : section === 'agent'
+         ? { title: 'Agent files', icon: 'agent', body: 'Files your agents create will appear here once your Desktop syncs them.' }
+         : null;
+@@ -503,8 +526,7 @@
+       <button class="ln" type="button" data-settings-href="account.html#st=notifications"><span>${ic('bell')}</span>Notifications</button><div class="ms"></div>
+       <button class="ln" type="button" data-settings-href="organization-settings.html#st=general"><span>${ic('building')}</span>Organization settings<span class="tr">${esc(org?.name || '')}</span></button>
+       <button class="ln" type="button" data-href="organizations.html"><span>${ic('building')}</span>Switch organization<span class="tr">${api.orgs().length}</span></button>
+-      <button class="ln" type="button" data-href="/dashboard/support-app.html"><span>${ic('help')}</span>Help and support <small>(old dashboard)</small></button>
+-      ${profile.isSuperAdmin === true ? `<button class="ln" type="button" data-href="/dashboard/admin/analytics.html"><span>${ic('shield')}</span>Admin console <small>(old dashboard)</small></button>` : ''}
++      ${profile.isServerAdmin === true ? `<button class="ln" type="button" data-settings-href="server-admin.html#st=overview"><span>${ic('server')}</span>Server administration</button>` : ''}
+       <button class="ln" type="button" data-mode="${dark ? 'light' : 'dark'}"><span>${ic(dark ? 'sun' : 'moon')}</span>${dark ? 'Light' : 'Dark'} mode<span class="tr">${dark ? 'Dark' : 'Light'}</span></button><div class="ms"></div>
+       <button class="ln danger" type="button" data-signout><span>${ic('close')}</span>Sign out</button>`;
+   }
+@@ -573,7 +595,7 @@
+     states.empty(body, {
+       icon: NAV.find((n) => n.id === route.nav)?.icon || 'note',
+       title: 'Not connected yet',
+-      body: 'This screen is part of the new Sulla Cloud app and is still being built. Nothing below is shown until it reads your real data.',
++      body: 'This screen is part of the new Sulla Server app and is still being built. Nothing below is shown until it reads your real data.',
+     });
+     const list = document.createElement('ul');
+     route.soon.forEach((line) => {
+@@ -602,7 +624,7 @@
+     states.empty(box, {
+       icon: 'building',
+       title: 'You are not in an organization yet',
+-      body: 'Everything in Sulla Cloud belongs to an organization. Create one, or ask someone to invite you to theirs.',
++      body: 'Everything in Sulla Server belongs to an organization. Create one, or ask someone to invite you to theirs.',
+       actions: [{ label: 'Create organization', primary: true, onClick: () => showCreateOrg(box) }],
+     });
+   }
+@@ -633,23 +655,20 @@
+ 
+   // ── Sign in ───────────────────────────────────────────────────────────
+   function renderSignIn(message) {
+-    document.title = 'Sign in · Sulla Cloud';
++    document.title = 'Sign in · Sulla Server';
+     document.body.classList.add('is-signin');
+     document.body.innerHTML = `<div class="signin"><div class="signin-card">
+-      <div class="brand"><div class="mark">S</div><div><b>Sulla Cloud</b><span>Same account as Sulla Desktop and Sulla Mobile</span></div></div>
++      <div class="brand"><div class="mark">S</div><div><b>Sulla Server</b><span>${esc(serverHost())}</span></div></div>
+       <h1>Sign in</h1>
+-      <p>Pick a method. A code signs you in, or creates your account if you're new.</p>
++      <p>Use the email address your invitation was sent to.</p>
+       <div class="seg" role="tablist" aria-label="Sign-in method">
+         <button type="button" role="tab" data-method="code" class="on">Email code</button>
+-        <button type="button" role="tab" data-method="phone">Phone</button>
+         <button type="button" role="tab" data-method="password">Password</button>
+       </div>
+       <form data-form novalidate></form>
+       <div class="err" role="alert" data-err>${esc(message || '')}</div>
+-      <div class="signin-divider"><span>or</span></div>
+-      <button class="btn signin-apple" type="button" data-apple hidden>Sign in with Apple</button>
+-      <p class="signin-new">New to Sulla? <a href="/downloads.html">Get the desktop app</a></p>
+-      <nav class="signin-links" aria-label="Sulla links"><a href="/support.html">Help</a><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a></nav>
++      <p class="signin-new">No account? Ask your administrator for an invitation.</p>
++      <nav class="signin-links" aria-label="Sulla links"><a href="https://sulladesktop.com/support.html">Help</a><a href="https://sulladesktop.com/privacy.html">Privacy</a><a href="https://sulladesktop.com/terms.html">Terms</a></nav>
+       ${themeBoxHtml()}
+     </div></div>
+     <div class="toast" id="toast" role="status" aria-live="polite"><span class="dot"></span><span id="toastMsg"></span></div>`;
+@@ -742,7 +761,6 @@
+       }
+     });
+     draw();
+-    enableApple();
+   }
+ 
+   // ── Toast ─────────────────────────────────────────────────────────────
+@@ -773,7 +791,7 @@
+       if (t.dataset.settingsHref) { rememberSettingsFrom(); const next = new URL(t.dataset.settingsHref, location.href); if (normalizedPagePath(next.href) === normalizedPagePath(location.href)) location.hash = next.hash; else location.href = t.dataset.settingsHref; return; }
+       if (t.dataset.href) { location.href = t.dataset.href; return; }
+       if (t.hasAttribute('data-signout')) {
+-        ask({ title: 'Sign out of Sulla Cloud?', body: 'You can sign back in at any time.', okLabel: 'Sign out', danger: true }).then((yes) => { if (yes) api.signOut().finally(() => location.reload()); });
++        ask({ title: 'Sign out of Sulla Server?', body: 'You can sign back in at any time.', okLabel: 'Sign out', danger: true }).then((yes) => { if (yes) api.signOut().finally(() => location.reload()); });
+         return;
+       }
+       if (t.dataset.mode) window.CloudTheme.set({ mode: t.dataset.mode });
+@@ -825,7 +843,7 @@
+ 
+     const curtain = document.createElement('div');
+     curtain.className = 'boot';
+-    curtain.innerHTML = '<div class="state loading"><span class="spinner"></span><span>Opening Sulla Cloud…</span></div>';
++    curtain.innerHTML = '<div class="state loading"><span class="spinner"></span><span>Opening Sulla Server…</span></div>';
+     document.body.appendChild(curtain);
+ 
+     let needsOrg = false;
+@@ -837,7 +855,7 @@
+     } catch (error) {
+       curtain.remove();
+       if (error?.status === 401 || !api.isSignedIn()) { renderSignIn('Your session ended. Sign in again.'); return; }
+-      states.error(document.body, error, { title: 'Sulla Cloud could not open', retry: () => location.reload() });
++      states.error(document.body, error, { title: 'Sulla Server could not open', retry: () => location.reload() });
+       return;
+     }
+ 
+@@ -912,7 +930,7 @@
+     // deferred script after shell.js is fine).
+     screen(def) {
+       state.settings = def?.settings || null;
+-      if (state.settings && !['account', 'org'].includes(state.settings)) throw new Error('CloudShell.screen settings must be account or org.');
++      if (state.settings && !['account', 'org', 'server'].includes(state.settings)) throw new Error('CloudShell.screen settings must be account, org or server.');
+       if (!def || typeof def.mount !== 'function') throw new Error('CloudShell.screen needs a mount(ctx) function.');
+       state.screen = def;
+     },

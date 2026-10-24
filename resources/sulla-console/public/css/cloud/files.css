@@ -1,0 +1,112 @@
+/* Sulla Cloud app: Files + Shared screens. Reuses tokens/components from
+   tokens.css, shell.css and components.css — only Files-specific layout
+   (table file-icon cells, grid tiles, detail panel, share dialog, crumbs)
+   lives here. */
+
+.crumbtrail { display: flex; align-items: center; gap: 6px; margin: -6px 0 12px; font-size: 12px; color: var(--dim); }
+.crumbtrail a { color: var(--accent-2); font-weight: 500; }
+.crumbtrail a:hover { text-decoration: underline; }
+.crumbtrail b { color: var(--text); font-weight: 600; }
+
+.files-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 100%; }
+.files-main { min-width: 0; }
+.files-layout:not(:has(.files-detail)) { grid-template-columns: minmax(0, 1fr); }
+
+/* File-type icon chip, reused in table rows, grid tiles and the detail panel. */
+.file-fi { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--ink-05); color: var(--muted); flex: none; }
+.file-fi svg { width: 16px; height: 16px; }
+.file-fi.fi-doc { background: var(--accent-soft); color: var(--accent-2); }
+.file-fi.fi-img { background: var(--fi-img-bg); color: var(--fi-img); }
+.file-fi.fi-vid { background: var(--fi-vid-bg); color: var(--fi-vid); }
+.file-fi.fi-pdf { background: var(--fi-pdf-bg); color: var(--fi-pdf); }
+.file-fi.fi-aud { background: var(--fi-aud-bg); color: var(--fi-aud); }
+.file-fi.fi-code { background: var(--ink-08); color: var(--muted); }
+
+.files-tbl td:first-child { width: 42px; padding-right: 0; }
+.files-tbl .person { display: inline-flex; align-items: center; gap: 7px; }
+.files-tbl .av, .accrow .av { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-2); font-size: 9.5px; font-weight: 700; flex: none; }
+.files-tbl .cf, .cf { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.files-tbl .cf .sv, .cf .sv { width: 13px; height: 13px; display: grid; } .cf .sv svg { width: 13px; height: 13px; }
+.cf .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-left: 2px; }
+.cf .dot.off { background: var(--dim); }
+.cf.dim { color: var(--dim); }
+
+.gtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.gtile { border: 1px solid var(--line); border-radius: var(--r); background: var(--card); backdrop-filter: blur(12px); box-shadow: var(--shadow); padding: 10px; cursor: pointer; }
+.gtile:hover { border-color: var(--accent-line); }
+.gtile.is-sel { border-color: var(--accent); background: var(--accent-soft); }
+.gtile .gprev { height: 88px; border-radius: 8px; background: var(--paper-2); display: grid; place-items: center; margin-bottom: 8px; }
+.gtile .gprev .file-fi { width: 40px; height: 40px; background: transparent; }
+.gtile .gprev .file-fi svg { width: 22px; height: 22px; }
+.gtile .gname { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gtile .gmeta { font-size: 11px; margin-top: 2px; }
+
+.files-detail { width: 360px; min-width: 0; height: 100%; }
+.files-detail .dpad { padding: 16px; position: relative; }
+.files-detail .dclose { position: absolute; top: 10px; right: 10px; }
+.files-detail .dprev { height: 110px; border-radius: 10px; background: var(--paper-2); display: grid; place-items: center; margin-bottom: 12px; }
+.files-detail .dprev .file-fi { width: 52px; height: 52px; background: transparent; }
+.files-detail .dprev .file-fi svg { width: 28px; height: 28px; }
+.files-detail h3 { margin: 0 0 2px; font-size: 15px; padding-right: 28px; word-break: break-word; }
+.files-detail .dacts { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.dtabs { margin: 10px 0 12px; width: 100%; }
+.dtabs button { flex: 1; justify-content: center; }
+.dpane .drow { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.dpane .drow:last-child { border-bottom: 0; }
+.dpane .drow span { color: var(--muted); }
+.dpane .dsub { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); font-weight: 600; margin: 12px 0 6px; }
+.dpane .dsub:first-child { margin-top: 0; }
+.accrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12.5px; }
+.accrow button { margin-left: auto; }
+.linkrow { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.linkrow input { flex: 1; min-width: 0; }
+.vrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.vrow:last-child { border-bottom: 0; }
+.vrow span.dim { margin-left: auto; font-size: 11px; }
+
+.gtile[data-kind="folder"] .gprev { background: var(--accent-soft); }
+
+.radiorow { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; cursor: pointer; }
+.radiorow input[type="radio"] { margin-top: 3px; flex: none; }
+.radiorow + .radiorow { border-top: 1px solid var(--line); }
+.files-tbl .sort-button { font: inherit; text-transform: inherit; letter-spacing: inherit; padding: 0; background: none; border: 0; color: inherit; cursor: pointer; }
+.files-tbl .sort-button:hover { color: var(--text); }
+
+
+/* Approved Files toolbar, filters, list and 360px inspector. */
+.files-toolbar { margin-bottom: 14px; }
+.files-toolbar .files-new { height: 36px; padding-inline: 15px; border-radius: 999px; }
+.files-toolbar h1 { font-size: 20px; font-weight: 650; }
+.files-toolbar .right .btn { min-height: 25px; padding: 4px 9px; }
+.files-filters .sel { min-height: 29px; }
+.files-filters .view-r { margin-left: auto; gap: 8px; }
+.files-tbl tr.row { height: 52px; }
+.files-tbl .check { width: 34px; padding-right: 0; }
+.files-tbl .check input { width: 14px; height: 14px; }
+.files-tbl .file-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.files-tbl .file-name > div { min-width: 0; }
+.files-tbl .file-name b { font-size: 12.5px; font-weight: 500; }
+.files-detail { width: 360px; min-width: 0; height: 100%; border-left: 1px solid var(--line); border-radius: 0; background: var(--card-solid); box-shadow: none; }
+.files-detail > header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.files-detail > header .t { flex: 1; min-width: 0; }
+.files-detail > header strong, .files-detail > header small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-detail > header small { color: var(--dim); font-size: 11px; }
+.files-detail .preview-box { display: grid; height: 220px; margin: 16px; place-items: center; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r); background: var(--paper-2); }
+.files-detail .preview-box .file-fi { width: 52px; height: 52px; background: transparent; }
+.files-detail .preview-box .file-fi svg { width: 28px; height: 28px; }
+.files-detail .dpad { padding: 0; }
+.files-detail .detail-actions { padding: 0 16px 16px; margin: 0; }
+.files-detail .detail-tabs { display: flex; width: auto; margin: 0; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.files-detail .detail-tabs button { flex: none; justify-content: initial; padding: 10px 8px; border: 0; border-bottom: 2px solid transparent; color: var(--muted); background: transparent; font-size: 12.5px; font-weight: 500; }
+.files-detail .detail-tabs button.active { border-color: var(--accent); color: var(--text); font-weight: 600; }
+.files-detail .detail-tabs span { padding: 1px 6px; border-radius: 999px; background: var(--paper-2); font-size: 11px; }
+.files-detail .detail-body { padding: 14px 16px 18px; }
+.files-detail .kv { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 12.5px; }
+.files-detail .kv dt { color: var(--dim); }
+.files-detail .kv dd { margin: 0; color: var(--text); font-weight: 400; text-align: left; min-width: 0; }
+.files-detail .own { display: inline-flex; align-items: center; gap: 7px; }
+.files-detail .own .av { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-2); font-size: 9px; font-weight: 700; }
+.detail-more { position: relative; }
+.detail-more-menu { position: absolute; z-index: 4; top: calc(100% + 4px); right: 0; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--card-solid); box-shadow: var(--shadow); }
+.detail-more-menu .btn { white-space: nowrap; }
+@media (max-width: 900px) { .files-layout { display: block; } .files-detail { width: 100%; position: static; border: 1px solid var(--line); border-radius: var(--r); } }
