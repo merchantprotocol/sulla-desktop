@@ -186,6 +186,8 @@ main() {
     default_public_url="http://$(hostname -f 2>/dev/null || hostname):8787"
     [[ "$SULLA_RUNTIME" != kubernetes ]] || default_public_url="http://$(hostname -f 2>/dev/null || hostname)"
     ask SULLA_PUBLIC_URL "Public URL" "$default_public_url"
+    default_vault_host="vault.$(printf '%s' "$SULLA_PUBLIC_URL" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')"
+    ask SULLA_VAULT_HOST "Vault hostname" "$default_vault_host"
     ask SULLA_ORGANIZATION "Organization name" "My organization"
     ask SULLA_ADMIN_EMAIL "First admin email" "admin@example.com"
     ask SULLA_ADMIN_NAME "First admin name" Administrator
@@ -303,22 +305,20 @@ main() {
   [[ -f "$env_file" ]] || {
     env_tmp="$env_file.tmp"
     postgres_password="$(openssl rand -hex 32)"; jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"; bootstrap_token="$(openssl rand -hex 32)"
-    agent_api_token="$(openssl rand -hex 32)"
+    agent_api_token="$(openssl rand -hex 32)"; relay_device_secret="$(openssl rand -hex 32)"; relay_internal_token="$(openssl rand -hex 32)"
+    server_id="$(cat /proc/sys/kernel/random/uuid)"
     authority_hex="$(openssl rand -hex 16)"
     authority_id="${authority_hex:0:8}-${authority_hex:8:4}-4${authority_hex:13:3}-8${authority_hex:17:3}-${authority_hex:20:12}"
-    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
-      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$agent_api_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback" >"$env_tmp"
+    printf 'SULLA_RUNTIME=%q\nSULLA_SOURCE_SHA=%q\nSULLA_PUBLIC_URL=%q\nSULLA_PUBLIC_SCHEME=%q\nSULLA_ORGANIZATION=%q\nSULLA_ADMIN_EMAIL=%q\nSULLA_ADMIN_NAME=%q\nSULLA_POSTGRES_PASSWORD=%q\nSULLA_VAULT_JWT_SECRET=%q\nSULLA_VAULT_SERVER_BOOTSTRAP_TOKEN=%q\nSULLA_AGENT_API_TOKEN=%q\nSULLA_RELAY_IMAGE=%q\nSULLA_SERVER_ID=%q\nSULLA_VAULT_HOST=%q\nSULLA_VAULT_URL=%q\nSULLA_RELAY_DEVICE_TOKEN_SECRET=%q\nSULLA_RELAY_INTERNAL_TOKEN=%q\nSULLA_DESKTOP_EXECUTOR_URL=%q\nSULLA_DESKTOP_EXECUTOR_TOKEN=%q\nSULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES=%q\nSULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID=%q\nSULLA_ACCOUNTS_WEB_REDIRECT_URIS=%q\n' \
+      "$SULLA_RUNTIME" "$SULLA_SOURCE_SHA" "$SULLA_PUBLIC_URL" "$SULLA_URL_SCHEME" "$SULLA_ORGANIZATION" "$SULLA_ADMIN_EMAIL" "$SULLA_ADMIN_NAME" "$postgres_password" "$jwt_secret" "$bootstrap_token" "$agent_api_token" "sulla-relay:${SULLA_SOURCE_SHA:0:12}" "$server_id" "$SULLA_VAULT_HOST" "${SULLA_URL_SCHEME}://$SULLA_VAULT_HOST" "$relay_device_secret" "$relay_internal_token" "${SULLA_DESKTOP_EXECUTOR_URL:-}" "${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" "$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" "$authority_id" "${SULLA_PUBLIC_URL%/}/accounts-api/v1/web/callback" >"$env_tmp"
     if [[ "$SULLA_RUNTIME" == compose ]]; then
       tls_dir="$SULLA_DIR/tls"; mkdir -p "$tls_dir"
       [[ -z "$SULLA_TLS_CERT" ]] || cp "$SULLA_TLS_CERT" "$tls_dir/tls.crt"
       [[ -z "$SULLA_TLS_KEY" ]] || cp "$SULLA_TLS_KEY" "$tls_dir/tls.key"
       if [[ -n "$SULLA_TLS_CERT" ]]; then chown -R 1000:1000 "$tls_dir"; chmod 700 "$tls_dir"; chmod 600 "$tls_dir"/*; fi
       source_dir="$SULLA_DIR/sources/$SULLA_SOURCE_SHA"
-      if [[ "$SULLA_CONSOLE_MODE" == native-lima ]]; then
-        COMPOSE_PROFILES=; SULLA_CONSOLE_UPSTREAM=http://host.docker.internal:30121
-      else
-        COMPOSE_PROFILES=standalone-console; SULLA_CONSOLE_UPSTREAM=http://console:8786
-      fi
+      # Server mode always runs its own console; native-lima remains a desktop-only option.
+      COMPOSE_PROFILES=; SULLA_CONSOLE_UPSTREAM=http://console:8786
       printf 'SULLA_PORT=%q\nSULLA_BIND_ADDRESS=%q\nSULLA_DATA_DIR=%q\nSULLA_CONSOLE_MODE=%q\nCOMPOSE_PROFILES=%q\nSULLA_CONSOLE_UPSTREAM=%q\nSULLA_TLS_DIR=%q\nSULLA_TLS_CERT_CONTAINER_PATH=%q\nSULLA_TLS_KEY_CONTAINER_PATH=%q\nSULLA_IMAGE_TAG=%q\nSULLA_SOURCE_DIR=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_PORT" "$SULLA_BIND_ADDRESS" "$SULLA_DATA_DIR" "$SULLA_CONSOLE_MODE" "$COMPOSE_PROFILES" "$SULLA_CONSOLE_UPSTREAM" "$tls_dir" "$([[ -n "$SULLA_TLS_CERT" ]] && echo /run/sulla-tls/tls.crt)" "$([[ -n "$SULLA_TLS_KEY" ]] && echo /run/sulla-tls/tls.key)" "${SULLA_SOURCE_SHA:0:12}" "$source_dir" sulla-server_default "sulla-agent:${SULLA_SOURCE_SHA:0:12}" "sulla-workflows:${SULLA_SOURCE_SHA:0:12}" >>"$env_tmp"
     else
       printf 'SULLA_KUBERNETES_MODE=%q\nSULLA_KUBECONFIG=%q\nSULLA_KUBECONTEXT=%q\nSULLA_VAULT_IMAGE=%q\nSULLA_FILES_IMAGE=%q\nSULLA_ACCOUNTS_IMAGE=%q\nSULLA_AGENTS_IMAGE=%q\nSULLA_AGENT_IMAGE=%q\nSULLA_WORKFLOWS_IMAGE=%q\nSULLA_WORKFLOW_RUNNER_IMAGE=%q\nSULLA_TOOLS_IMAGE=%q\nSULLA_CONSOLE_IMAGE=%q\nSULLA_DOCKER_NETWORK=%q\nSULLA_STORAGE_CLASS=%q\nSULLA_STORAGE_SIZE=%q\nSULLA_FILES_STORAGE_SIZE=%q\nSULLA_INGRESS_MODE=%q\nSULLA_HOSTNAME=%q\nSULLA_TLS_SECRET=%q\n' "$SULLA_KUBERNETES_MODE" "$SULLA_KUBECONFIG" "$SULLA_KUBECONTEXT" "$SULLA_VAULT_IMAGE" "$SULLA_FILES_IMAGE" "$SULLA_ACCOUNTS_IMAGE" "$SULLA_AGENTS_IMAGE" "$SULLA_AGENT_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_WORKFLOWS_IMAGE" "$SULLA_TOOLS_IMAGE" "$SULLA_CONSOLE_IMAGE" sulla-server_default "$SULLA_STORAGE_CLASS" "$SULLA_STORAGE_SIZE" "$SULLA_FILES_STORAGE_SIZE" "$SULLA_INGRESS_MODE" "$SULLA_HOSTNAME" "$SULLA_TLS_SECRET" >>"$env_tmp"
@@ -329,6 +329,11 @@ main() {
   ensure_files_master_key "$env_file"
   # shellcheck disable=SC1090
   set -a; . "$env_file"; set +a
+  if [[ -z ${SULLA_SERVER_ID:-} ]]; then SULLA_SERVER_ID="$(cat /proc/sys/kernel/random/uuid)"; printf 'SULLA_SERVER_ID=%q\n' "$SULLA_SERVER_ID" >>"$env_file"; fi
+  if [[ -z ${SULLA_VAULT_HOST:-} ]]; then SULLA_VAULT_HOST="vault.$SULLA_URL_HOST"; printf 'SULLA_VAULT_HOST=%q\n' "$SULLA_VAULT_HOST" >>"$env_file"; fi
+  if [[ -z ${SULLA_VAULT_URL:-} ]]; then SULLA_VAULT_URL="${SULLA_URL_SCHEME}://${SULLA_VAULT_HOST}"; printf 'SULLA_VAULT_URL=%q\n' "$SULLA_VAULT_URL" >>"$env_file"; fi
+  if [[ -z ${SULLA_RELAY_DEVICE_TOKEN_SECRET:-} ]]; then SULLA_RELAY_DEVICE_TOKEN_SECRET="$(openssl rand -hex 32)"; printf 'SULLA_RELAY_DEVICE_TOKEN_SECRET=%q\n' "$SULLA_RELAY_DEVICE_TOKEN_SECRET" >>"$env_file"; fi
+  if [[ -z ${SULLA_RELAY_INTERNAL_TOKEN:-} ]]; then SULLA_RELAY_INTERNAL_TOKEN="$(openssl rand -hex 32)"; printf 'SULLA_RELAY_INTERNAL_TOKEN=%q\n' "$SULLA_RELAY_INTERNAL_TOKEN" >>"$env_file"; fi
   secrets_dir="$SULLA_DIR/secrets"
   mkdir -p "$secrets_dir"
   chmod 700 "$secrets_dir"
@@ -370,7 +375,7 @@ main() {
     printf 'SULLA_ACCOUNTS_SESSION_SECRET_FILE=%q\nSULLA_ACCOUNTS_ENCRYPTION_KEY_FILE=%q\nSULLA_ACCOUNTS_ADMIN_SECRET_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE=%q\nSULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE=%q\n' "$SULLA_ACCOUNTS_SESSION_SECRET_FILE" "$SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE" "$SULLA_ACCOUNTS_ADMIN_SECRET_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_USERNAME_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE" "$SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE" >>"$env_file"
   fi
   declare -A service_tokens=()
-  for service in accounts vault files agents workflows; do
+  for service in accounts console vault files agents workflows; do
     variable="SULLA_ACCOUNTS_${service^^}_TOKEN_FILE"
     service_file="${!variable:-$secrets_dir/accounts-$service.token}"
     if [[ ! -s "$service_file" ]]; then write_secret "$service_file" "$(openssl rand -hex 32)"; fi
@@ -382,7 +387,7 @@ main() {
   json_tmp="$secrets_dir/accounts-service-tokens.json.tmp"
   printf '{' >"$json_tmp"
   first=true
-  for service in accounts vault files agents workflows; do
+  for service in accounts console vault files agents workflows; do
     [[ "$first" == true ]] || printf ',' >>"$json_tmp"; first=false
     audience="sulla-$service"
     printf '"%s":{"token":"%s","issuers":["%s/auth/realms/sulla"],"allowedAudiences":["%s"],"pathPrefixes":["/v1/private/ui-sessions/resolve","/v1/private/resolve-context"],"methods":["POST"]}' "$service" "${service_tokens[$service]}" "${SULLA_PUBLIC_URL%/}" "$audience" >>"$json_tmp"
@@ -392,6 +397,7 @@ main() {
   chmod 600 "$secrets_dir/accounts-service-tokens.json"
   SULLA_ACCOUNTS_SERVICE_TOKENS_FILE="$secrets_dir/accounts-service-tokens.json"
   printf 'SULLA_ACCOUNTS_SERVICE_TOKENS_FILE=%q\n' "$SULLA_ACCOUNTS_SERVICE_TOKENS_FILE" >>"$env_file"
+  if [[ -z ${SULLA_RELAY_IMAGE:-} ]]; then SULLA_RELAY_IMAGE="sulla-relay:${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_RELAY_IMAGE=%q\n' "$SULLA_RELAY_IMAGE" >>"$env_file"; fi
   if [[ -z ${SULLA_AGENT_API_TOKEN:-} ]]; then
     SULLA_AGENT_API_TOKEN="$(openssl rand -hex 32)"; printf 'SULLA_AGENT_API_TOKEN=%q\n' "$SULLA_AGENT_API_TOKEN" >>"$env_file"
   fi
@@ -407,7 +413,7 @@ main() {
   workload_service_token="$(<"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
   [[ ${#workload_service_token} -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 characters"
   [[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
-  for service in accounts vault files agents workflows; do
+  for service in accounts console vault files agents workflows; do
     [[ "$workload_service_token" != "${service_tokens[$service]}" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
   done
   if ! grep -q '^SULLA_DESKTOP_EXECUTOR_URL=' "$env_file"; then printf 'SULLA_DESKTOP_EXECUTOR_URL=%q\n' "${SULLA_DESKTOP_EXECUTOR_URL:-}" >>"$env_file"; fi
@@ -427,6 +433,7 @@ main() {
     if [[ -z ${SULLA_WORKFLOW_RUNNER_IMAGE:-} ]]; then SULLA_WORKFLOW_RUNNER_IMAGE="sulla-workflows:${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_WORKFLOW_RUNNER_IMAGE=%q\n' "$SULLA_WORKFLOW_RUNNER_IMAGE" >>"$env_file"; fi
   fi
   if [[ ${SULLA_RUNTIME:-} == kubernetes ]]; then
+    if [[ -z ${SULLA_RELAY_IMAGE:-} ]]; then SULLA_RELAY_IMAGE="ghcr.io/merchantprotocol/sulla-relay:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_RELAY_IMAGE=%q\n' "$SULLA_RELAY_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_FILES_IMAGE:-} ]]; then SULLA_FILES_IMAGE="ghcr.io/merchantprotocol/sulla-files:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_FILES_IMAGE=%q\n' "$SULLA_FILES_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_ACCOUNTS_IMAGE:-} ]]; then SULLA_ACCOUNTS_IMAGE="ghcr.io/merchantprotocol/sulla-accounts:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_ACCOUNTS_IMAGE=%q\n' "$SULLA_ACCOUNTS_IMAGE" >>"$env_file"; fi
     if [[ -z ${SULLA_AGENTS_IMAGE:-} ]]; then SULLA_AGENTS_IMAGE="ghcr.io/merchantprotocol/sulla-agents:sha-${SULLA_SOURCE_SHA:0:12}"; printf 'SULLA_AGENTS_IMAGE=%q\n' "$SULLA_AGENTS_IMAGE" >>"$env_file"; fi
@@ -451,8 +458,7 @@ main() {
     tar -xzf "$archive" --strip-components=1 -C "$source_dir"
     compose=(docker compose --env-file /dev/null -f "$SULLA_DIR/compose.yaml")
     docker build --pull -t "$SULLA_AGENT_IMAGE" -f "$SULLA_SOURCE_DIR/services/sulla-agent/Dockerfile" "$SULLA_SOURCE_DIR"
-    build_services=(accounts vault files agents workflows tools)
-    [[ "$SULLA_CONSOLE_MODE" != standalone ]] || build_services+=(console)
+    build_services=(accounts vault files agents workflows tools relay console)
     "${compose[@]}" build --pull "${build_services[@]}"
     ensure_native_lima_console
     if ! "${compose[@]}" up -d --remove-orphans; then
@@ -474,7 +480,14 @@ main() {
       "${compose[@]}" logs --tail=100 vault files gateway >&2 || true
       fail "Sulla services did not become healthy within 5 minutes"
     fi
-    "${compose[@]}" exec vault node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
+    accounts_org_file="$SULLA_DIR/accounts-organization-id"
+    if ! [[ -s "$accounts_org_file" ]]; then
+      "${compose[@]}" exec -T accounts node dist/serverBootstrapCli.js --url http://127.0.0.1:3020 --token-file /run/secrets/accounts-admin --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" --organization-id-file /run/sulla-accounts-private/organization-id <&3
+      "${compose[@]}" cp accounts:/run/sulla-accounts-private/organization-id "$accounts_org_file"
+    else
+      log "Accounts owner already set up; kept the existing owner."
+    fi
+    "${compose[@]}" exec vault node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" --accounts-organization-id "$(cat "$accounts_org_file")" <&3
   else
     verify_default_image "$SULLA_VAULT_IMAGE" merchantprotocol/sulla-vault
     verify_default_image "$SULLA_FILES_IMAGE" merchantprotocol/sulla-files
@@ -493,7 +506,12 @@ main() {
     kube+=(--context "$SULLA_KUBECONTEXT")
     "${kube[@]}" cluster-info >/dev/null 2>&1 || fail "the saved Kubernetes context cannot reach a cluster"
     ./deploy-sulla.sh </dev/null
-    "${kube[@]}" -n sulla exec -it deployment/sulla-vault -- node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" <&3
+    accounts_org_file="$SULLA_DIR/accounts-organization-id"
+    if ! [[ -s "$accounts_org_file" ]]; then
+      "${kube[@]}" -n sulla exec -i deployment/sulla-accounts -- node dist/serverBootstrapCli.js --url http://127.0.0.1:3020 --token-file /run/sulla-secrets/accounts-admin --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" --organization-id-file /run/sulla-accounts-private/organization-id <&3
+      "${kube[@]}" -n sulla cp sulla/$("${kube[@]}" -n sulla get pod -l app=sulla-accounts -o jsonpath='{.items[0].metadata.name}'):/run/sulla-accounts-private/organization-id "$accounts_org_file"
+    fi
+    "${kube[@]}" -n sulla exec -i deployment/sulla-vault -- node dist/serverBootstrapCli.js --url http://127.0.0.1:8787 --email "$SULLA_ADMIN_EMAIL" --name "$SULLA_ADMIN_NAME" --organization "$SULLA_ORGANIZATION" --accounts-organization-id "$(cat "$accounts_org_file")" <&3
   fi
   log "Sulla Server is ready: ${SULLA_PUBLIC_URL%/}/console"
   log "Configuration is stored in ${env_file} (root-readable only)."

@@ -24,7 +24,7 @@ services:
       - sh
       - -ec
       - >-
-        for database in sulla_files sulla_accounts keycloak sulla_agents sulla_workflows sulla_tools; do
+        for database in sulla_files sulla_accounts keycloak sulla_agents sulla_workflows sulla_tools sulla_console; do
         if [ "$(psql -h postgres -U sulla -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$$database'")" != 1 ]; then
         createdb -h postgres -U sulla -O sulla "$$database"; fi; done
   vault:
@@ -127,7 +127,7 @@ services:
       SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID: sulla-web
       SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS: ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS}
       SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
-      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-agents,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-console,sulla-vault,sulla-files,sulla-agents,sulla-workflows
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/postgres-username
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
@@ -263,20 +263,91 @@ services:
       timeout: 3s
       retries: 30
   console:
-    profiles: [standalone-console]
     image: sulla-console:${SULLA_IMAGE_TAG}
     build:
       context: ${SULLA_SOURCE_DIR}
       dockerfile: services/sulla-console/Dockerfile
     restart: unless-stopped
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+      accounts: { condition: service_healthy }
+      vault: { condition: service_healthy }
+      files: { condition: service_healthy }
+      agents: { condition: service_healthy }
+      workflows: { condition: service_healthy }
     environment:
       SULLA_CONSOLE_HOST: 0.0.0.0
       SULLA_CONSOLE_PORT: "8786"
+      SULLA_CONSOLE_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_console
+      SULLA_ACCOUNTS_URL: http://accounts:3020
+      SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-console-token
+      SULLA_FILES_URL: http://files:8792
+      SULLA_VAULT_URL: http://vault:8787
+      SULLA_AGENTS_URL: http://agents:8789
+      SULLA_WORKFLOWS_URL: http://workflows:8788
+      SULLA_SERVER_ID: ${SULLA_SERVER_ID}
+    secrets:
+      - accounts-console-token
+    volumes:
+      - ${SULLA_DATA_DIR}:/var/lib/sulla-server:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8786/healthz"]
       interval: 5s
       timeout: 3s
       retries: 30
+  relay:
+    image: sulla-relay:${SULLA_IMAGE_TAG}
+    build:
+      context: ${SULLA_SOURCE_DIR}
+      dockerfile: services/sulla-relay/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      PORT: "8790"
+      SULLA_REDIS_URL: redis://redis:6379
+      SULLA_RELAY_DEVICE_TOKEN_SECRET: ${SULLA_RELAY_DEVICE_TOKEN_SECRET}
+      SULLA_RELAY_INTERNAL_TOKEN: ${SULLA_RELAY_INTERNAL_TOKEN}
+      SULLA_RELAY_MAX_IN_FLIGHT: "16"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8790/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      DELETE: 0
+      ALLOW_START: 1
+      ALLOW_STOP: 0
+      ALLOW_RESTARTS: 0
+      IMAGES: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      INFO: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+  backup:
+    image: sulla-files:${SULLA_IMAGE_TAG}
+    restart: "no"
+    depends_on:
+      files: { condition: service_healthy }
+      docker-socket-proxy: { condition: service_started }
+    environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      SULLA_FILES_MODE: server
+      SULLA_FILES_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files
+      SULLA_FILES_VAULT_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla
+      SULLA_FILES_MASTER_KEY: ${SULLA_FILES_MASTER_KEY:?Files master is required}
+      SULLA_FILES_BACKUP_TARGET: /backup
+    volumes:
+      - ${SULLA_DATA_DIR}/files:/var/lib/sulla-files:ro
+      - ${SULLA_DATA_DIR}/files-backup:/backup
+    command: ["node", "dist/index.js", "backup"]
   gateway:
     image: nginx:1.29-alpine
     restart: unless-stopped
@@ -285,6 +356,9 @@ services:
       SULLA_TLS_KEY_CONTAINER_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}
       SULLA_CONSOLE_UPSTREAM: ${SULLA_CONSOLE_UPSTREAM}
       SULLA_PUBLIC_SCHEME: ${SULLA_PUBLIC_SCHEME}
+      SULLA_VAULT_HOST: ${SULLA_VAULT_HOST}
+      SULLA_RELAY_UPSTREAM: http://relay:8790
+      SULLA_VAULT_UPSTREAM: http://vault:8787
     entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
     ports:
       - "${SULLA_BIND_ADDRESS}:${SULLA_PORT}:8787"
@@ -318,6 +392,8 @@ secrets:
     file: ${SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE}
   keycloak-web-client-secret:
     file: ${SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE}
+  accounts-console-token:
+    file: ${SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE}
   accounts-vault-token:
     file: ${SULLA_ACCOUNTS_VAULT_TOKEN_FILE}
   accounts-files-token:

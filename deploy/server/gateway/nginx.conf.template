@@ -30,6 +30,8 @@ http {
     set $files_upstream http://files:8792;
     set $agents_upstream http://agents:8789;
     set $workflows_upstream http://workflows:8788;
+    set $relay_upstream ${SULLA_RELAY_UPSTREAM};
+    set $vault_public_upstream ${SULLA_VAULT_UPSTREAM};
 
     location /accounts-api/v1/web/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
     location /accounts-api/ { return 404; }
@@ -48,6 +50,23 @@ http {
     location /services/workflows/api/ { rewrite ^/services/workflows/api/(.*)$ /v1/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/workflows/ { rewrite ^/services/workflows/(.*)$ /ui/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
     location = / { return 308 /console/; }
+    location ^~ /api/ {
+      proxy_pass $console_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Proto ${SULLA_PUBLIC_SCHEME};
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location ^~ /relay/ {
+      proxy_pass $relay_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Proto ${SULLA_PUBLIC_SCHEME};
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
     location / {
       proxy_pass $console_upstream;
       proxy_http_version 1.1;
@@ -59,4 +78,20 @@ http {
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
   }
+  server {
+    listen 8787${TLS_DIRECTIVES};
+    server_name ${SULLA_VAULT_HOST};
+    resolver ${DNS_RESOLVER} ipv6=off valid=10s;
+    location / {
+      proxy_pass $vault_public_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_set_header Host $http_host;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Proto ${SULLA_PUBLIC_SCHEME};
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+  }
+
 }

@@ -14,6 +14,13 @@ spec:
           env:
             - {name: SULLA_CONSOLE_HOST, value: "0.0.0.0"}
             - {name: SULLA_CONSOLE_PORT, value: "8786"}
+            - {name: SULLA_CONSOLE_DATABASE_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: console-database-url}}}
+            - {name: SULLA_SERVER_ID, valueFrom: {secretKeyRef: {name: sulla-server, key: server-id}}}
+            - {name: SULLA_ACCOUNTS_URL, value: http://sulla-accounts:3020}
+            - {name: SULLA_FILES_URL, value: http://sulla-files:8792}
+            - {name: SULLA_VAULT_URL, value: http://sulla-vault:8787}
+            - {name: SULLA_AGENTS_URL, value: http://sulla-agents:8789}
+            - {name: SULLA_WORKFLOWS_URL, value: http://sulla-workflows:8788}
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
 ---
