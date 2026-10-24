@@ -4,6 +4,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LicenseError, ServerLicenseManager } from './license.mjs';
 
 const host = process.env.SULLA_CONSOLE_HOST ?? '0.0.0.0';
 const port = Number(process.env.SULLA_CONSOLE_PORT ?? 8786);
@@ -16,6 +17,17 @@ const targets = {
   agents: process.env.SULLA_CONSOLE_AGENTS_URL ?? 'http://127.0.0.1:8789',
   workflows: process.env.SULLA_CONSOLE_WORKFLOWS_URL ?? 'http://127.0.0.1:30122',
 };
+const license = new ServerLicenseManager({
+  stateFile: process.env.SULLA_SERVER_LICENSE_STATE_FILE ?? '/var/lib/sulla-console/license.json',
+  publicKey: process.env.SULLA_SERVER_LICENSE_PUBLIC_KEY ?? '',
+  cloudUrl: process.env.SULLA_CLOUD_API_URL ?? 'https://api.sulladesktop.com',
+  seatCount: async() => Number(process.env.SULLA_SERVER_SEAT_COUNT ?? 0),
+});
+await license.init();
+const checkInTimer = setInterval(() => license.checkIn().catch(error => console.error('[license] check-in failed', error)), 60_000);
+checkInTimer.unref();
+void license.checkIn();
+
 const tlsCaFiles = {
   vault: process.env.SULLA_CONSOLE_VAULT_CA_FILE,
   files: process.env.SULLA_CONSOLE_FILES_CA_FILE,
@@ -74,6 +86,19 @@ function proxy(request, response, targetValue, pathname, service) {
 createServer(async(request, response) => {
   headers(response);
   const url = new URL(request.url ?? '/', 'http://console.invalid');
+  if (url.pathname === '/license' && request.method === 'GET') {
+    await license.evaluate(); response.writeHead(200, { 'Content-Type':'application/json; charset=utf-8' }); response.end(JSON.stringify(license.status())); return;
+  }
+  if (url.pathname === '/license/activate' && request.method === 'POST') {
+    let raw=''; request.on('data', chunk => { raw += chunk; if (raw.length > 16384) request.destroy(); }); request.on('end', async() => {
+      try { const body=JSON.parse(raw||'{}'); const status=await license.activate(body.licenseKey); void license.checkIn({force:true}); response.writeHead(200, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify(status)); }
+      catch(error) { const status=error instanceof LicenseError ? 422 : 400; response.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify({error:error.code||'invalid_request',message:error.message})); }
+    }); return;
+  }
+  if (url.pathname === '/license/catalog-access' && request.method === 'GET') {
+    try { response.writeHead(200, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify(license.requireCatalog())); }
+    catch(error) { response.writeHead(403, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify({error:'license_required',state:error.code,message:error.message})); } return;
+  }
   if (url.pathname === '/healthz') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     response.end('{"status":"ok","service":"sulla-console"}');

@@ -272,6 +272,11 @@ services:
     environment:
       SULLA_CONSOLE_HOST: 0.0.0.0
       SULLA_CONSOLE_PORT: "8786"
+      SULLA_SERVER_LICENSE_PUBLIC_KEY: ${SULLA_SERVER_LICENSE_PUBLIC_KEY:?Server license public key is required}
+      SULLA_CLOUD_API_URL: ${SULLA_CLOUD_API_URL:-https://api.sulladesktop.com}
+      SULLA_SERVER_LICENSE_STATE_FILE: /var/lib/sulla-console/license.json
+    volumes:
+      - ${SULLA_DATA_DIR}/console:/var/lib/sulla-console
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8786/healthz"]
       interval: 5s

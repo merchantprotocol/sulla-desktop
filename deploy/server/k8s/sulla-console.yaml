@@ -2,11 +2,12 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: sulla-console, namespace: sulla}
 spec:
-  replicas: 2
+  replicas: 1
   selector: {matchLabels: {app: sulla-console}}
   template:
     metadata: {labels: {app: sulla-console}}
     spec:
+      volumes: [{name: license-state, persistentVolumeClaim: {claimName: sulla-console-license}}]
       containers:
         - name: console
           image: __SULLA_CONSOLE_IMAGE__
@@ -14,6 +15,10 @@ spec:
           env:
             - {name: SULLA_CONSOLE_HOST, value: "0.0.0.0"}
             - {name: SULLA_CONSOLE_PORT, value: "8786"}
+            - {name: SULLA_SERVER_LICENSE_STATE_FILE, value: "/var/lib/sulla-console/license.json"}
+            - {name: SULLA_CLOUD_API_URL, value: "https://api.sulladesktop.com"}
+            - {name: SULLA_SERVER_LICENSE_PUBLIC_KEY, valueFrom: {secretKeyRef: {name: sulla-license, key: public-key}}}
+          volumeMounts: [{name: license-state, mountPath: /var/lib/sulla-console}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
 ---
@@ -23,3 +28,10 @@ metadata: {name: sulla-console, namespace: sulla}
 spec:
   selector: {app: sulla-console}
   ports: [{name: http, port: 8786, targetPort: http}]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: sulla-console-license, namespace: sulla}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 16Mi}}
