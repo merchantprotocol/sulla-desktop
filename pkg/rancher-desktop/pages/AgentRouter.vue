@@ -146,6 +146,7 @@ import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
+import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
 import { openDocumentTab, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -205,9 +206,15 @@ const activeTabMode = computed(() => {
   return active?.mode;
 });
 
-// Track active sub-tab for highlighting the correct ModeRail icon
-// (e.g., 'mywork' when mode is 'routines')
-const activeSubTab  = ref<string | undefined>(undefined);
+// Which ModeRail icon a Workflows / Use Cases tab lights up, from the
+// Studio sidebar page it is showing.
+const activeSubTab = computed(() => {
+  const match = route.path.match(/^\/Browser\/(.+)$/);
+  const active = match ? browserTabs.find(t => t.id === match[1]) : undefined;
+  if (active?.mode !== 'routines' && active?.mode !== 'marketplace') return undefined;
+
+  return railSubTabFor(active.studioSection ?? (active.mode === 'routines' ? 'workflows' : 'browse'));
+});
 
 interface RecipeRailApp {
   slug: string; label: string; icon: string; url: string;
@@ -230,14 +237,6 @@ function openRailApp(slug: string) {
   }
 
   router.push(`/Browser/${ tab.id }`);
-}
-
-// Listen for sub-tab changes from BrowserTab
-function onRoutinesSubTabChange(event: Event) {
-  const customEvent = event as CustomEvent;
-  if (customEvent.detail?.subTab) {
-    activeSubTab.value = customEvent.detail.subTab;
-  }
 }
 
 // ── Bookmarks pane ──
@@ -294,7 +293,8 @@ function onModeRailSelect(mode: string, subTab?: string) {
   // Always spawn a new tab for the clicked mode instead of mutating the
   // active one — rail clicks should behave like "open a new <mode> tab".
   const url = mode === 'browser' ? 'https://www.google.com' : 'about:blank';
-  const tab = createTab(url, { mode: mode as any });
+  const studioSection = isStudioSection(subTab) ? subTab : undefined;
+  const tab = createTab(url, { mode: mode as any, studioSection });
 
   router.push(`/Browser/${ tab.id }`);
 }
@@ -603,7 +603,6 @@ onMounted(async() => {
   ipcRenderer.invoke('startup-progress' as any).then(snapshot => onBootSnapshot(undefined, snapshot)).catch(() => undefined);
 
   // Register sub-tab change listener
-  window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
@@ -659,7 +658,6 @@ onUnmounted(() => {
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
   }
-  window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);

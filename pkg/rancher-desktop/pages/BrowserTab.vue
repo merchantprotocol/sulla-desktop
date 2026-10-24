@@ -267,13 +267,6 @@
       </div>
     </template>
 
-    <!-- Agents mode: live view of every running loop (subagents, heartbeat, routines, jobs) -->
-    <template v-else-if="tabMode === 'agents'">
-      <div class="flex-1 min-h-0 overflow-hidden">
-        <AgentsTab />
-      </div>
-    </template>
-
     <!-- Secretary mode: continuous transcription with wake word -->
     <template v-else-if="tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -309,18 +302,13 @@
       </div>
     </template>
 
-    <template v-else-if="tabMode === 'usage'">
-      <div class="flex-1 min-h-0 overflow-hidden">
-        <UsagePage />
-      </div>
-    </template>
-
     <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
     <template v-else-if="tabMode === 'routines' || tabMode === 'marketplace'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
         <RoutinesHome
           v-if="!activeRoutineId"
-          :initial-tab="routinesLandingTab ?? (tabMode === 'marketplace' ? 'marketplace' : 'mywork')"
+          :section="studioSection"
+          @update:section="onStudioSection"
           @open-workflow="onOpenRoutine"
           @new-blank="onNewBlankRoutine"
         />
@@ -381,7 +369,6 @@ import FileEditorTab from './FileEditorTab.vue';
 import FilesPage from './FilesPage.vue';
 import DocumentPage from './DocumentPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
-import AgentsTab from './AgentsTab.vue';
 import HistoryTab from './HistoryTab.vue';
 import LabsPage from './LabsPage.vue';
 import MyAccount from './MyAccount.vue';
@@ -390,12 +377,12 @@ import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
-import UsagePage from './UsagePage.vue';
 import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import { isStudioSection, type StudioSection } from '@pkg/components/routines/studioSections';
 import { useBookmarks } from '@pkg/composables/useBookmarks';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useFocusGuard } from '@pkg/composables/useFocusGuard';
@@ -419,10 +406,8 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   labs:          'Labs',
   'file-editor': 'Editor',
   terminal:      'Terminal',
-  agents:        'Agents',
   files:         'File Manager',
   decide:        'Decide',
-  usage:         'Usage',
 };
 
 const props = defineProps<{
@@ -459,12 +444,11 @@ function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'marketpla
 
   updateTab(props.tabId, { mode: typedMode, title: MODE_TITLES[typedMode] });
 
-  // A subTab arg lets ModeRail deep-link directly to the right tab
-  // inside RoutinesHome.
-  if (typedMode === 'routines' && subTab) {
-    if (subTab === 'mywork' || subTab === 'marketplace') {
-      routinesLandingTab.value = subTab;
-    }
+  // A subTab arg deep-links to a Studio sidebar page. 'mywork' and
+  // 'marketplace' are the older names for Workflows and Browse.
+  if (typedMode === 'routines' || typedMode === 'marketplace') {
+    const section = subTab === 'mywork' ? 'workflows' : subTab === 'marketplace' ? 'browse' : subTab;
+    updateTab(props.tabId, { studioSection: isStudioSection(section) ? section : (typedMode === 'routines' ? 'workflows' : 'browse') });
   }
 
   if (typedMode === 'browser') {
@@ -483,18 +467,14 @@ const activeRoutineId = ref<string | null>(null);
 const activeRoutineMode = ref<'edit' | 'run'>('edit');
 // Set when the workflows list opens a specific past run.
 const activeRoutineRunId = ref<string | null>(null);
-// After backing out of a routine we always want to land on My Work,
-// even if the user originally opened the routine from Use Cases. Null means "defer to tabMode for initial tab".
-const routinesLandingTab = ref<'mywork' | 'marketplace' | null>(null);
+// The Studio sidebar page lives on the tab so the mode rail can open a
+// specific page and light the matching icon.
+const studioSection = computed<StudioSection>(() => getTab(props.tabId)?.studioSection ?? (tabMode.value === 'marketplace' ? 'browse' : 'workflows'));
 
-// Notify ModeRail when sub-tab changes so it can highlight the correct icon
-watch(routinesLandingTab, (newTab) => {
-  if (newTab) {
-    window.dispatchEvent(new CustomEvent('sulla:routines-subtab-change', {
-      detail: { subTab: newTab },
-    }));
-  }
-}, { immediate: true });
+function onStudioSection(section: StudioSection) {
+  const mode: BrowserTabMode = section === 'workflows' ? 'routines' : 'marketplace';
+  updateTab(props.tabId, { studioSection: section, mode, title: MODE_TITLES[mode] });
+}
 
 function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit', runId?: string) {
   activeRoutineId.value = id;
@@ -505,7 +485,7 @@ function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit', runId?: string
 function onBackToRoutinesHome() {
   activeRoutineId.value = null;
   activeRoutineRunId.value = null;
-  routinesLandingTab.value = 'mywork';
+  updateTab(props.tabId, { studioSection: 'workflows', mode: 'routines', title: MODE_TITLES.routines });
 }
 
 async function onNewBlankRoutine() {

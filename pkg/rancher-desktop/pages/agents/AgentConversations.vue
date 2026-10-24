@@ -1,6 +1,6 @@
 <!--
-  AgentConversations — stored conversations for one agent, opened by clicking
-  an agent row in AgentsTab.
+  AgentConversations — stored conversations for one agent, opened from the
+  sub-agent drawer.
 
   Left: that agent channel's conversation_history rows (newest first, paged).
   Right: the selected conversation's message log — user prompts, assistant
