@@ -3,6 +3,7 @@ import { getDesktopDeviceId } from '../../deviceIdentity';
 import { getCurrentUserId } from '../../sullaCloudAuth';
 import { DevicesCloudApi } from '../../devicesCloudApi';
 import { isCloudSignedIn } from '../cloudFetch';
+import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
 import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection } from './containerClient';
 import Logging from '@pkg/utils/logging';
@@ -44,6 +45,7 @@ class FilesSyncV1Impl {
   private async tick():Promise<void> {
     if(this.running||this.stopped)return; this.running=true;
     try {
+      const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.files){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const status=await this.status(); const enabled=status.collections.filter(c=>c.enabled);
       if(!enabled.length){this.backoff=1_000;this.schedule(IDLE_MS);return}

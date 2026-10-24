@@ -16,6 +16,7 @@ import os from 'os';
 import { BrowserWindow, dialog } from 'electron';
 
 import { cloudRequest, isCloudSignedIn } from '../../cloud/cloudFetch';
+import { getCloudPreferences } from '../../cloud/cloudSettings';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { installTemplateWithDependencies } from '../install';
 
@@ -73,7 +74,8 @@ async function report(id: string, status: 'active' | 'failed', error?: string): 
 }
 
 async function runPendingInstalls(): Promise<void> {
-  if (polling || !(await isCloudSignedIn())) return;
+  const prefs = await getCloudPreferences();
+  if (polling || !prefs.enabled || !prefs.useCases || !(await isCloudSignedIn())) return;
   polling = true;
   try {
     const deviceId = await getDesktopDeviceId();

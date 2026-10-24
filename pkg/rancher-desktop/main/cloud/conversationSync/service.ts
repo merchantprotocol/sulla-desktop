@@ -143,7 +143,8 @@ class ConversationSyncServiceImpl {
     return this.syncing;
   }
   private async runSync(){
-    if((await getCloudPreferences()).conversations) await this.linkConversations(true);
+    { const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.conversations)return; }
+    await this.linkConversations(true);
     const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)return;
     const payload=await r.json() as any;
     for(const link of (payload.data?.conversations??[]) as Link[]){

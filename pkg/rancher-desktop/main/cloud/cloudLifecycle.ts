@@ -18,14 +18,14 @@ import { getDesktopRelayClient } from '../desktopRelay';
 import { DevicesCloudApi } from '../devicesCloudApi';
 import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync';
 import { ApprovedClients } from './approvedClients';
-import { getCloudPreferences, onCloudPreferencesChanged, setCloudPreferences, type CloudPreferences } from './cloudSettings';
-import { type ObjectKind } from './desktopObjectSync';
+import { getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
+import { CloudDataSync, type ProjectionKind } from './cloudDataSync';
 import { VaultSyncV3 } from './vaultSyncV3';
 import { FilesSyncV1 } from './filesSyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
-import { CloudRuntimeProjectionSync } from './runtimeProjection/sync';
+import { CloudRuntimeProjectionSync, syncRuntimeProjections } from './runtimeProjection/sync';
 import { dispatchCloudAgentCommand } from '@pkg/agent/tools/agents/cloudProjection';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -127,23 +127,35 @@ async function stopConversationSync(): Promise<void> {
   SullaSync.stop();
 }
 
+async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
+  if (!prefs.enabled) {
+    await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop();
+    DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); return;
+  }
+  if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
+  if (prefs.vault) VaultSyncV3.start(); else VaultSyncV3.stop();
+  if (prefs.files) FilesSyncV1.start(); else FilesSyncV1.stop();
+  if (prefs.useCases) DeviceInstallSync.start(); else DeviceInstallSync.stop();
+  if (prefs.workflows || prefs.liveAgents) CloudRuntimeProjectionSync.start(); else CloudRuntimeProjectionSync.stop();
+  if (prefs.skills || prefs.customAgents || prefs.recipes || prefs.usage || prefs.memory) CloudDataSync.start(); else CloudDataSync.stop();
+}
+
 function installPrefsListener() {
   if (prefsListenerInstalled) return;
   prefsListenerInstalled = true;
   onCloudPreferencesChanged((prefs, changed) => {
     if (!signedIn) return;
     DevicesCloudApi.heartbeat().catch(() => undefined);
-    if (changed.includes('conversations')) {
-      (prefs.conversations ? startConversationSync().then(() => ConversationSyncService.linkAll()) : stopConversationSync()).catch(err => console.warn('[CloudLifecycle] conversation sync toggle failed:', err));
-    }
-    if (changed.includes('vault')) (prefs.vault ? VaultSyncV3.syncNow() : VaultSyncV3.pause()).catch(() => undefined);
+    applySyncPreferences(prefs).then(() => {
+      if (prefs.enabled && changed.includes('conversations') && prefs.conversations) return ConversationSyncService.linkAll();
+    }).catch(err => console.warn('[CloudLifecycle] sync preference change failed:', err));
     broadcast();
   });
   DevicesCloudApi.onStateChange((state) => {
     // Revoked from the dashboard: stop the channel; heartbeats keep polling
     // so a restore brings it back without a restart.
     if (state.revoked) { getChannel().stop(); FilesSyncV1.stop() }
-    else if (signedIn && state.registered) { getChannel().start(); FilesSyncV1.start() }
+    else if (signedIn && state.registered) { getChannel().start(); getCloudPreferences().then(p => { if (isCloudKindEnabled(p, 'files')) FilesSyncV1.start() }).catch(() => undefined) }
     broadcast();
   });
 }
@@ -158,12 +170,7 @@ export async function startCloudServices(): Promise<void> {
   // The channel needs the key enrolled first; if registration failed it
   // retries on its own backoff.
   if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
-  if (prefs.conversations) await startConversationSync().catch(err => console.warn('[CloudLifecycle] SullaSync start failed:', err));
-  ConversationSyncService.start();
-  VaultSyncV3.start();
-  FilesSyncV1.start();
-  DeviceInstallSync.start();
-  CloudRuntimeProjectionSync.start();
+  await applySyncPreferences(prefs).catch(err => console.warn('[CloudLifecycle] sync services start failed:', err));
   broadcast();
 }
 
@@ -174,6 +181,7 @@ export async function stopCloudServices(): Promise<void> {
   FilesSyncV1.stop();
   DeviceInstallSync.stop();
   CloudRuntimeProjectionSync.stop();
+  CloudDataSync.stop();
   await stopConversationSync().catch(() => undefined);
   ConversationSyncService.stop();
   DevicesCloudApi.stopHeartbeat();
@@ -191,7 +199,7 @@ export interface CloudConnectionStatus {
   device:          ReturnType<typeof DevicesCloudApi.getState>;
   keyFingerprint:  string | null;
   approvedClients: { clientId: string; label: string; surface: string; approvedAt: string; lastUsedAt?: string }[];
-  objectSync:      ReturnType<typeof VaultSyncV3.getStatus>;
+  objectSync:      Array<ReturnType<typeof VaultSyncV3.getStatus>[number] | ReturnType<typeof CloudDataSync.getStatus>[number]>;
 }
 
 export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus> {
@@ -204,7 +212,7 @@ export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus>
     device:          DevicesCloudApi.getState(),
     keyFingerprint:  fingerprint,
     approvedClients: ApprovedClients.list().map(({ publicKey: _pk, ...rest }) => rest),
-    objectSync:      VaultSyncV3.getStatus(),
+    objectSync:      [...VaultSyncV3.getStatus(), ...CloudDataSync.getStatus()],
   };
 }
 
@@ -236,13 +244,17 @@ export function initCloudConnectionEvents(): void {
     return getCloudConnectionStatus();
   });
 
-  ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: ObjectKind) => {
+  ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: CloudDataKind | 'all') => {
     if (kind === 'vault') await VaultSyncV3.syncNow();
+    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
+    else if (['skills','customAgents','recipes','usage','memory'].includes(kind)) await CloudDataSync.syncNow(kind as ProjectionKind, true);
     return getCloudConnectionStatus();
   });
 
-  ipc.handle('sulla-cloud-connection:delete-cloud-copy', async(_e: unknown, kind: ObjectKind) => {
+  ipc.handle('sulla-cloud-connection:delete-cloud-copy', async(_e: unknown, kind: CloudDataKind | 'all') => {
     if (kind === 'vault') await VaultSyncV3.deleteCloudCopy();
+    else if (kind === 'all') await CloudDataSync.deleteAll();
+    else await CloudDataSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
   });
 }

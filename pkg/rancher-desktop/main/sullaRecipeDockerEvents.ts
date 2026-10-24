@@ -135,10 +135,7 @@ async function runCompose(recipeDir: string, args: string[]): Promise<{ stdout: 
 
 // ─── IPC registration ────────────────────────────────────────────────────────
 
-export function initSullaRecipeDockerEvents(): void {
-  // ── Status ──────────────────────────────────────────────────────────────
-
-  ipcMainProxy.handle('recipe-docker-status', async(_event: Electron.IpcMainInvokeEvent, slug: string) => {
+export async function getRecipeDockerStatus(slug: string) {
     try {
       const resolved = await resolveRecipeDir(slug);
 
@@ -200,7 +197,12 @@ export function initSullaRecipeDockerEvents(): void {
 
       return { running: false, containers: [], error: String(err) };
     }
-  });
+}
+
+export function initSullaRecipeDockerEvents(): void {
+  // ── Status ──────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('recipe-docker-status', async(_event: Electron.IpcMainInvokeEvent, slug: string) => getRecipeDockerStatus(slug));
 
   // ── Log streaming ────────────────────────────────────────────────────────
 
