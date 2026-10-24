@@ -8,7 +8,10 @@ export { isCloudSignedIn };
 
 function vaultMessage(error: VaultBrokerError): Error {
   if (error.code === 'vault_locked' || error.status === 423) return new Error('Waiting for the vault to be unlocked.');
-  if (error.status === 404 || error.code === 'not_found') return new Error('Update Sulla Vault to use Sulla Cloud features.');
+  if (error.code === 'credential_field_missing' || /Sulla Cloud session is unavailable/i.test(error.message)) {
+    return new Error('Sign in to Sulla Cloud again.');
+  }
+  if (error.status === 404 && error.code === 'not_found') return new Error('Update Sulla Vault to use Sulla Cloud features.');
   return error;
 }
 

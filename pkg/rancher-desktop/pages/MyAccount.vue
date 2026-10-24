@@ -1152,6 +1152,7 @@ function refreshAccountsAfterAuthorization() {
 async function refreshCloudStatus() {
   try {
     cloudStatus.value = await ipcRenderer.invoke('sulla-cloud:get-status');
+    if (!cloudStatus.value.signedIn && cloudStatus.value.lastError) cloudError.value = cloudStatus.value.lastError;
   } catch (err) {
     console.error('[MyAccount] get-status failed:', err);
   }

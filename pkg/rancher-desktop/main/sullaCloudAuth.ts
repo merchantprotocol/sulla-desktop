@@ -20,6 +20,7 @@
  *   - Sign in with Apple ...... sulla-cloud:apple-sign-in (takes identity token)
  */
 
+import { IntegrationValueModel } from '@pkg/agent/database/models/IntegrationValueModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -83,6 +84,11 @@ interface AuthResult {
 function signedOutStatus(lastError?: string): AuthStatus {
   return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
 }
+
+const SIGN_IN_AGAIN = 'Sign in to Sulla Cloud again.';
+let startupAdoptionComplete = false;
+let startupAdoptionPromise: Promise<void> | null = null;
+let startupAdoptionError: string | undefined;
 
 function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
   if (error instanceof VaultBrokerError) {
@@ -204,6 +210,7 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
     const broker = requireConfiguredCredentialBroker();
     const status = await broker.status();
     if (!status.unlocked) throw new Error('vault is locked');
+    await ensureLegacySessionAdopted();
     metadata = await broker.integrationMetadata(INTEGRATION_ID);
   } catch (err) {
     throw new VaultNotReadyError(`vault not ready: ${ (err as Error)?.message || err }`);
@@ -213,11 +220,98 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
   return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
+/**
+ * Adopt a session written by Desktop before the container vault became the
+ * authority. The handoff runs at most once successfully per process; startup
+ * retries it while Postgres/the vault are unavailable. Tokens never leave the
+ * main process except for the existing fixed-purpose vault adoption call.
+ */
+async function ensureLegacySessionAdopted(): Promise<void> {
+  if (!usesContainerVaultAuthority() || startupAdoptionComplete) return;
+  if (startupAdoptionPromise) return startupAdoptionPromise;
+  startupAdoptionPromise = (async() => {
+    const broker = requireConfiguredCredentialBroker();
+    const metadata = await broker.integrationMetadata(INTEGRATION_ID);
+    if (metadata.activeAccountId || metadata.accounts.length > 0) {
+      await IntegrationValueModel.deleteLegacySullaCloudSession();
+      startupAdoptionComplete = true;
+      return;
+    }
+
+    const legacy = await IntegrationValueModel.findLegacySullaCloudSession();
+    const userId = legacy?.user_id;
+    const refreshToken = legacy?.refresh_token;
+    if (!legacy) {
+      startupAdoptionComplete = true;
+      return;
+    }
+    if (!userId || !refreshToken) {
+      startupAdoptionError = SIGN_IN_AGAIN;
+      startupAdoptionComplete = true;
+      return;
+    }
+
+    let refreshed: Response;
+    try {
+      refreshed = await fetch(`${ API_BASE }/auth/refresh`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ refreshToken }),
+      });
+    } catch (error) {
+      throw new VaultNotReadyError(`cloud refresh unavailable: ${ (error as Error)?.message || error }`);
+    }
+    if (refreshed.status === 401 || refreshed.status === 403) {
+      startupAdoptionError = SIGN_IN_AGAIN;
+      startupAdoptionComplete = true;
+      return;
+    }
+    if (!refreshed.ok) throw new VaultNotReadyError(`cloud refresh failed: HTTP ${ refreshed.status }`);
+    const tokens = await refreshed.json() as { accessToken?: string; refreshToken?: string };
+    if (!tokens.accessToken) {
+      startupAdoptionError = SIGN_IN_AGAIN;
+      startupAdoptionComplete = true;
+      return;
+    }
+
+    let contractors: CloudContractor[] = [];
+    try {
+      contractors = legacy.contractors_json ? JSON.parse(legacy.contractors_json) as CloudContractor[] : [];
+    } catch { /* use an empty list for legacy single-contractor sessions */ }
+    const activeContractorId = legacy.active_contractor_id || userId;
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new VaultNotReadyError('Desktop vault session service is unavailable');
+    try {
+      await client.adoptSullaCloudSession({
+        userId, activeContractorId, contractors,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || refreshToken,
+      });
+    } catch (error) {
+      if (error instanceof VaultBrokerError && error.code === 'invalid_operation') {
+        startupAdoptionError = SIGN_IN_AGAIN;
+        startupAdoptionComplete = true;
+        return;
+      }
+      throw error;
+    }
+    await IntegrationValueModel.deleteLegacySullaCloudSession();
+    await clearLegacySettings();
+    startupAdoptionError = undefined;
+    startupAdoptionComplete = true;
+    console.log('[SullaCloudAuth] Adopted existing Sulla Cloud session into the container vault');
+  })().finally(() => {
+    startupAdoptionPromise = null;
+  });
+  return startupAdoptionPromise;
+}
+
 async function clearSession(): Promise<void> {
   if (usesContainerVaultAuthority()) {
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.clearSullaCloudSession();
+    await IntegrationValueModel.deleteLegacySullaCloudSession();
     await clearLegacySettings();
     return;
   }
@@ -248,7 +342,7 @@ function findActiveContractor(session: SessionIdentity): CloudContractor | null 
 async function buildStatus(lastError?: string): Promise<AuthStatus> {
   const session = await loadSessionIdentity();
   if (!session) {
-    return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError };
+    return { signedIn: false, userId: '', activeContractorId: '', phone: '', name: '', contractorCount: 0, lastError: lastError ?? startupAdoptionError };
   }
   const active = findActiveContractor(session);
   return {
