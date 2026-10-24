@@ -31,13 +31,13 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import StudioTopbar from './StudioTopbar.vue';
 interface Recipe { slug: string; name: string; description: string; version: string; image?: string; extension?: string; updatedAt: string }
 interface Container { name: string; service: string; state: string; status: string; ports: string[] }
-interface RecipeStatus { running: boolean; containers: Container[]; webPorts?: string[]; error?: string }
+interface RecipeStatus { running: boolean; containers: Container[]; webPorts?: number[]; error?: string }
 const recipes = ref<Recipe[]>([]); const statuses = reactive<Record<string, RecipeStatus | undefined>>({}); const actions = reactive<Record<string, boolean>>({}); const search = ref(''); const loading = ref(true); const error = ref(''); const active = ref<Recipe | null>(null); const tab = ref<'overview'|'logs'|'shell'>('overview'); const actionMessage = ref(''); const actionError = ref(false); let timer: ReturnType<typeof setInterval> | undefined;
 const filtered = computed(() => { const q = search.value.trim().toLowerCase(); return q ? recipes.value.filter(r => `${r.name} ${r.description} ${r.slug}`.toLowerCase().includes(q)) : recipes.value; }); const activeStatus = computed(() => active.value ? statuses[active.value.slug] : undefined);
 function statusLabel(status?: RecipeStatus) { return !status ? 'Checking…' : status.error ? 'Unavailable' : status.running ? 'Running' : 'Stopped'; }
 function statusClass(status?: RecipeStatus) { return status?.error ? 'bad' : status?.running ? 'ok' : ''; }
 function containerLabel(status?: RecipeStatus) { if (!status) return 'Checking…'; if (!status.containers.length) return '—'; return `${status.containers.length} · ${status.containers.map(c => c.service).join(', ')}`; }
-function extractPort(value: string) { return value.match(/\d+/)?.[0] ?? ''; }
+function extractPort(value: string | number) { return String(value).match(/\d+/)?.[0] ?? ''; }
 function primaryPort(status?: RecipeStatus) { return status?.webPorts?.[0] ? extractPort(status.webPorts[0]) : ''; }
 async function refresh(slug: string) { statuses[slug] = await ipcRenderer.invoke('recipe-docker-status', slug); }
 async function refreshAll() { await Promise.all(recipes.value.map(r => refresh(r.slug))); }
@@ -47,8 +47,9 @@ function closeDetail() { active.value = null; actionMessage.value = ''; }
 async function start(slug: string) { actions[slug] = true; actionMessage.value = ''; try { const result = await ipcRenderer.invoke('recipe-start-stream', slug); actionMessage.value = `Starting recipe (${result.sessionId}).`; actionError.value = false; setTimeout(() => void refresh(slug), 1200); } catch (e) { actionError.value = true; actionMessage.value = e instanceof Error ? e.message : String(e); } finally { actions[slug] = false; } }
 async function stop(slug: string) { actions[slug] = true; const result = await ipcRenderer.invoke('recipe-stop', slug); actions[slug] = false; actionError.value = !result.ok; actionMessage.value = result.ok ? 'Recipe stopped.' : result.error ?? result.stderr ?? 'Could not stop recipe.'; await refresh(slug); }
 async function restart(slug: string) { await stop(slug); if (!actionError.value) await start(slug); }
-function openPort(port: string) { const n = extractPort(port); if (n) ipcRenderer.send('extensions/open-external', `http://localhost:${n}`); }
-function openDashboard(status?: RecipeStatus) { const port = primaryPort(status); if (port) ipcRenderer.send('extensions/open-external', `http://localhost:${port}`); }
+// Recipe dashboards open in the Sulla browser, like the Use Cases dashboard link.
+function openPort(port: string | number) { const n = extractPort(port); if (n) window.open(`http://localhost:${n}`, '_blank', 'noopener'); }
+function openDashboard(status?: RecipeStatus) { const port = primaryPort(status); if (port) openPort(port); }
 onMounted(async() => { await load(); timer = setInterval(() => void refreshAll(), 10000); }); onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 
