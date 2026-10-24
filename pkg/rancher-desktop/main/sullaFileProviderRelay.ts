@@ -191,7 +191,8 @@ export class FileProviderRelay {
     const rows = await this.files.json<any[]>('/v1/collections');
     const items = new Map<string, FileProviderItem>();
     const used = new Set<string>();
-    for (const row of rows.filter(row => typeof row?.id === 'string' && UUID.test(row.id))) {
+    // Logs and Training Data stay hidden in Finder, as they are in the File Manager.
+    for (const row of rows.filter(row => typeof row?.id === 'string' && UUID.test(row.id) && row.systemArea !== 'logs' && row.systemArea !== 'training-data')) {
       const id = row.id.toLowerCase();
       let name = String(row.name ?? 'Collection').replace(/[/\0\\:]/g, '-').trim() || 'Collection';
       if (name === '.' || name === '..') name = 'Collection';
