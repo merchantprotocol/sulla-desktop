@@ -32,9 +32,12 @@ export async function migrate(db: Database): Promise<void> {
   try {
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-console-migrations'))");
+    // Create the ledger first: a failed lookup would abort the whole transaction on a fresh database.
+    await client.query('CREATE SCHEMA IF NOT EXISTS sulla_console');
+    await client.query('CREATE TABLE IF NOT EXISTS sulla_console.schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
     for (const file of files) {
       const version = file.replace(/\.sql$/, '');
-      const applied = await client.query('SELECT 1 FROM sulla_console.schema_migrations WHERE version=$1', [version]).catch(() => ({ rowCount: 0 }));
+      const applied = await client.query('SELECT 1 FROM sulla_console.schema_migrations WHERE version=$1', [version]);
       if (applied.rowCount) continue;
       await client.query(await readFile(resolve(directory, file), 'utf8'));
       await client.query('INSERT INTO sulla_console.schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING', [version]);
