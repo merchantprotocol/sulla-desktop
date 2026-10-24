@@ -905,6 +905,7 @@ export interface IpcMainInvokeEvents {
     version:     string;
     image?:      string;
     extension?:  string;
+    webPorts?:   number[];
     updatedAt:   string;
   }[];
   'library-list-integrations': () => {
@@ -1182,6 +1183,7 @@ export interface IpcMainInvokeEvents {
   'recipe-docker-status': (slug: string) => {
     running:    boolean;
     containers: { name: string; service: string; state: string; status: string; ports: string[] }[];
+    webPorts?:  number[];
     error?:     string;
   };
   'recipe-rail-apps': () => {
