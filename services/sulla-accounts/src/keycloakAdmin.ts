@@ -67,7 +67,7 @@ export async function getHostedUser(config: AccountsConfig, id: string): Promise
 }
 
 export async function createHostedUser(config: AccountsConfig, input: {
-  username: string; email?: string; firstName?: string; lastName?: string; password: string; temporaryPassword?: boolean;
+  username: string; email?: string; firstName?: string; lastName?: string; password?: string; temporaryPassword?: boolean;
 }): Promise<HostedUser> {
   const users = endpoints(config).users;
   const response = await keycloakRequest(config, users, {
@@ -75,7 +75,7 @@ export async function createHostedUser(config: AccountsConfig, input: {
     body: JSON.stringify({
       username: input.username, email: input.email, firstName: input.firstName, lastName: input.lastName,
       enabled: true, emailVerified: false,
-      credentials: [{ type: 'password', value: input.password, temporary: input.temporaryPassword ?? true }],
+      ...(input.password ? { credentials: [{ type: 'password', value: input.password, temporary: input.temporaryPassword ?? true }] } : {}),
     }),
   });
   const location = response.headers.get('location');
@@ -125,5 +125,64 @@ export async function assignHostedRealmRole(config: AccountsConfig, userId: stri
   const role = await keycloakRequest(config, `${base.realm}/roles/${encodeURIComponent(roleName)}`);
   await keycloakRequest(config, `${base.users}/${encodeURIComponent(userId)}/role-mappings/realm`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify([await role.json()]),
+  });
+}
+
+export async function listHostedUsers(config: AccountsConfig): Promise<HostedUser[]> {
+  const response = await keycloakRequest(config, `${endpoints(config).users}?max=10000`);
+  const users = await response.json();
+  if (!Array.isArray(users)) throw new Error('Keycloak returned an invalid users result');
+  return users.map(publicUser);
+}
+
+export async function sendHostedUserActions(config: AccountsConfig, id: string, actions: string[] = ['UPDATE_PASSWORD']): Promise<void> {
+  const query = new URLSearchParams();
+  if (config.keycloakWebClientId) query.set('client_id', config.keycloakWebClientId);
+  if (config.consoleMainUrl) query.set('redirect_uri', config.consoleMainUrl);
+  await keycloakRequest(config, `${endpoints(config).users}/${encodeURIComponent(id)}/execute-actions-email?${query}`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(actions),
+  });
+}
+
+export async function getRealmSettings(config: AccountsConfig): Promise<Record<string, unknown>> {
+  const response = await keycloakRequest(config, endpoints(config).realm);
+  return object(await response.json());
+}
+
+export async function updateRealmSettings(config: AccountsConfig, updates: Record<string, unknown>): Promise<void> {
+  const current = await getRealmSettings(config);
+  await keycloakRequest(config, endpoints(config).realm, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...current, ...updates, registrationAllowed: false }),
+  });
+}
+
+export async function testRealmSmtp(config: AccountsConfig, smtp: Record<string, unknown>): Promise<void> {
+  await keycloakRequest(config, `${endpoints(config).realm}/testSMTPConnection`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(smtp),
+  });
+}
+
+export async function getRealmEvents(config: AccountsConfig, max = 100): Promise<unknown[]> {
+  const query = new URLSearchParams({ max: String(Math.min(Math.max(max, 1), 500)) });
+  const response = await keycloakRequest(config, `${endpoints(config).realm}/events?${query}`);
+  const events = await response.json();
+  if (!Array.isArray(events)) throw new Error('Keycloak returned invalid events');
+  return events.filter(event => ['LOGIN', 'LOGIN_ERROR', 'LOGOUT'].includes(String(object(event).type)));
+}
+
+export async function getOtpRequired(config: AccountsConfig): Promise<boolean> {
+  const response = await keycloakRequest(config, `${endpoints(config).realm}/authentication/required-actions`);
+  const actions = await response.json();
+  if (!Array.isArray(actions)) throw new Error('Keycloak returned invalid required actions');
+  return actions.some(action => object(action).alias === 'CONFIGURE_TOTP' && object(action).enabled === true && object(action).defaultAction === true);
+}
+
+export async function setOtpRequired(config: AccountsConfig, required: boolean): Promise<void> {
+  const url = `${endpoints(config).realm}/authentication/required-actions/CONFIGURE_TOTP`;
+  const current = await keycloakRequest(config, url);
+  await keycloakRequest(config, url, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...object(await current.json()), enabled: true, defaultAction: required }),
   });
 }

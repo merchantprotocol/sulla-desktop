@@ -16,7 +16,10 @@ import {
 import { base64url, digest } from './crypto.js';
 import { assertOrganizationUserMutation, organizationUsers } from './consoleAuthorization.js';
 import { fetchJson, object, string, stringArray } from './http.js';
-import { assignHostedRealmRole, createHostedUser, deleteHostedUser, getHostedUser, resetHostedPassword, updateHostedUser, updateHostedUserProfile } from './keycloakAdmin.js';
+import {
+  assignHostedRealmRole, createHostedUser, deleteHostedUser, getHostedUser, getOtpRequired, getRealmEvents, getRealmSettings, listHostedUsers,
+  resetHostedPassword, sendHostedUserActions, setOtpRequired, testRealmSmtp, updateHostedUser, updateHostedUserProfile, updateRealmSettings,
+} from './keycloakAdmin.js';
 import {
   authorityAccessToken,
   beginAuthorization,
@@ -26,6 +29,7 @@ import {
   type Authority,
 } from './oidc.js';
 import { beginWebLogin, clearWebCookies, completeWebLogin, revokeWebSession, webIdentity } from './webAuth.js';
+import { seatLimitReached } from './seatLimit.js';
 
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
@@ -72,6 +76,22 @@ async function requireOrganizationAdmin(db: Database, identity: { issuer: string
   );
   const roles = found.rows[0]?.roles as string[] | undefined;
   if (!roles?.some(role => role === 'owner' || role === 'admin')) throw new HttpError(403, 'organization administration is not allowed');
+}
+
+async function occupiedSeats(db: Database, config: AccountsConfig): Promise<number> {
+  const [users, memberships, invitations] = await Promise.all([
+    listHostedUsers(config),
+    db.query("SELECT DISTINCT subject FROM accounts.memberships WHERE issuer=$1 AND revoked_at IS NULL", [config.keycloakIssuer]),
+    db.query("SELECT count(*)::int AS count FROM accounts.invitations WHERE accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()"),
+  ]);
+  const enabled = new Set(users.filter(user => user.enabled).map(user => user.id));
+  return memberships.rows.filter(row => enabled.has(String(row.subject))).length + Number(invitations.rows[0].count);
+}
+
+async function assertSeatAvailable(db: Database, config: AccountsConfig, replacingPending = false): Promise<void> {
+  const limit = await db.query('SELECT seat_limit FROM accounts.server_limits WHERE singleton=true');
+  const used = await occupiedSeats(db, config);
+  if (seatLimitReached(used, Number(limit.rows[0]?.seat_limit ?? 25), replacingPending)) throw new HttpError(409, 'seat_limit_reached');
 }
 
 function publicAuthority(authority: Record<string, unknown>): Record<string, unknown> {
@@ -771,7 +791,8 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
   router.get('/users', route(async(request, response) => {
     const identity = await webIdentity(db, config, request).catch(() => { throw new HttpError(401, 'authentication_required'); });
     const organizationId = uuid(request.query.organizationId, 'organizationId');
-    await requireOrganizationAdmin(db, identity, organizationId);
+    const active = await db.query('SELECT 1 FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND organization_id=$3 AND revoked_at IS NULL', [identity.issuer, identity.subject, organizationId]);
+    if (!active.rowCount) throw new HttpError(403, 'organization membership is not active');
     const memberships = await db.query(
       `SELECT id,subject,roles,groups,created_at,updated_at FROM accounts.memberships
         WHERE issuer=$1 AND organization_id=$2 AND revoked_at IS NULL ORDER BY created_at,id`,
@@ -783,32 +804,19 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
 
   router.post('/users', route(async(request, response) => {
     const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
-    const input = requestBody(request);
-    const organizationId = uuid(input.organizationId, 'organizationId');
-    await requireOrganizationAdmin(db, identity, organizationId);
-    const roles = membershipRoles(input.roles ?? ['member']);
+    const input = requestBody(request); const organizationId = uuid(input.organizationId, 'organizationId');
+    await requireOrganizationAdmin(db, identity, organizationId); const roles = membershipRoles(input.roles ?? ['member']);
     if (!roles.length) throw new HttpError(400, 'at least one role is required');
     const password = string(input.temporaryPassword, 'temporaryPassword', 1024);
     if (password.length < 12) throw new HttpError(400, 'temporaryPassword must contain at least 12 characters');
-    const user = await createHostedUser(config, {
-      username: string(input.username, 'username', 254),
-      email: input.email === undefined ? undefined : string(input.email, 'email', 254),
-      firstName: input.firstName === undefined ? undefined : string(input.firstName, 'firstName', 120),
-      lastName: input.lastName === undefined ? undefined : string(input.lastName, 'lastName', 120),
-      password,
-    });
-    let membership;
+    const client = await db.connect(); let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
     try {
-      membership = await db.query(
-        `INSERT INTO accounts.memberships(id,issuer,subject,organization_id,roles,groups)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,issuer,subject,organization_id,roles,groups,created_at,updated_at`,
-        [randomUUID(), config.keycloakIssuer, user.id, organizationId, roles, stringArray(input.groups ?? [], 'groups')],
-      );
-    } catch (error) {
-      await updateHostedUser(config, user.id, false).catch(() => undefined);
-      throw error;
-    }
-    response.status(201).json({ ...user, membership: membership.rows[0] });
+      await client.query('BEGIN'); await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
+      await assertSeatAvailable(db, config);
+      user = await createHostedUser(config, { username: string(input.username, 'username', 254), email: input.email === undefined ? undefined : string(input.email, 'email', 254), firstName: input.firstName === undefined ? undefined : string(input.firstName, 'firstName', 120), lastName: input.lastName === undefined ? undefined : string(input.lastName, 'lastName', 120), password });
+      const membership = await client.query(`INSERT INTO accounts.memberships(id,issuer,subject,organization_id,roles,groups) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id,issuer,subject,organization_id,roles,groups,created_at,updated_at`, [randomUUID(), config.keycloakIssuer, user.id, organizationId, roles, stringArray(input.groups ?? [], 'groups')]);
+      await client.query('COMMIT'); response.status(201).json({ ...user, membership: membership.rows[0] });
+    } catch(error) { await client.query('ROLLBACK'); if (user) await deleteHostedUser(config, user.id).catch(() => undefined); throw error; } finally { client.release(); }
   }));
 
   router.patch('/users/:id', route(async(request, response) => {
@@ -847,6 +855,51 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       response.status(204).end();
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }));
+
+
+  router.delete('/memberships/self', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
+    const organizationId = uuid(request.query.organizationId, 'organizationId');
+    const membership = await db.query('SELECT id,roles FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND organization_id=$3 AND revoked_at IS NULL', [identity.issuer, identity.subject, organizationId]);
+    if (!membership.rows[0]) throw new HttpError(404, 'membership not found');
+    if ((membership.rows[0].roles as string[]).some(role => role === 'owner' || role === 'admin')) {
+      const admins = await db.query("SELECT count(*)::int AS count FROM accounts.memberships WHERE issuer=$1 AND organization_id=$2 AND revoked_at IS NULL AND roles && ARRAY['owner','admin']::text[]", [identity.issuer, organizationId]);
+      if (Number(admins.rows[0].count) <= 1) throw new HttpError(409, 'the final organization administrator cannot leave');
+    }
+    await db.query('UPDATE accounts.memberships SET revoked_at=now(),updated_at=now() WHERE id=$1', [membership.rows[0].id]); response.status(204).end();
+  }));
+
+  router.delete('/organizations/:organizationId/members/:userId', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); });
+    const organizationId = uuid(request.params.organizationId, 'organizationId'); await requireOrganizationAdmin(db, identity, organizationId);
+    const userId = string(request.params.userId, 'user id', 128); const membership = await db.query('SELECT id,roles FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND organization_id=$3 AND revoked_at IS NULL', [config.keycloakIssuer, userId, organizationId]);
+    if (!membership.rows[0]) throw new HttpError(404, 'membership not found');
+    if ((membership.rows[0].roles as string[]).some(role => role === 'owner' || role === 'admin')) { const admins = await db.query("SELECT count(*)::int AS count FROM accounts.memberships WHERE issuer=$1 AND organization_id=$2 AND revoked_at IS NULL AND roles && ARRAY['owner','admin']::text[]", [config.keycloakIssuer, organizationId]); if (Number(admins.rows[0].count) <= 1) throw new HttpError(409, 'the final organization administrator cannot be removed'); }
+    await db.query('UPDATE accounts.memberships SET revoked_at=now(),updated_at=now() WHERE id=$1', [membership.rows[0].id]); response.status(204).end();
+  }));
+
+  router.get('/organizations/:organizationId/invitations', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request).catch(() => { throw new HttpError(401, 'authentication_required'); }); const organizationId = uuid(request.params.organizationId, 'organizationId'); await requireOrganizationAdmin(db, identity, organizationId);
+    const found = await db.query('SELECT id,email,roles,expires_at,accepted_at,revoked_at,created_at,updated_at FROM accounts.invitations WHERE organization_id=$1 ORDER BY created_at DESC', [organizationId]); response.json({ invitations: found.rows });
+  }));
+
+  router.post('/organizations/:organizationId/invitations', route(async(request, response) => {
+    const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); }); const organizationId = uuid(request.params.organizationId, 'organizationId'); await requireOrganizationAdmin(db, identity, organizationId);
+    const input = requestBody(request); const email = string(input.email, 'email', 254).trim().toLowerCase(); const roles = membershipRoles(input.roles ?? ['member']); const client = await db.connect(); let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
+    try { await client.query('BEGIN'); await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))"); await assertSeatAvailable(db, config);
+      user = await createHostedUser(config, { username: email, email }); const token = base64url(32); const expiresAt = new Date(Date.now() + 7 * 86400_000);
+      const invitation = await client.query(`INSERT INTO accounts.invitations(id,organization_id,email,roles,token_digest,invited_by_subject,keycloak_user_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,email,roles,expires_at,created_at`, [randomUUID(), organizationId, email, roles, digest(token), identity.subject, user.id, expiresAt]);
+      await sendHostedUserActions(config, user.id); await client.query('COMMIT'); response.status(201).json({ invitation: invitation.rows[0] });
+    } catch(error) { await client.query('ROLLBACK'); if (user) await deleteHostedUser(config, user.id).catch(() => undefined); throw error; } finally { client.release(); }
+  }));
+
+  router.delete('/organizations/:organizationId/invitations/:id', route(async(request, response) => { const identity = await webIdentity(db, config, request, true).catch(() => { throw new HttpError(403, 'web_session_required'); }); const organizationId=uuid(request.params.organizationId,'organizationId'); await requireOrganizationAdmin(db,identity,organizationId); const changed=await db.query('UPDATE accounts.invitations SET revoked_at=now(),updated_at=now() WHERE id=$1 AND organization_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING keycloak_user_id',[uuid(request.params.id,'invitation id'),organizationId]); if(!changed.rows[0]) throw new HttpError(404,'invitation not found'); await deleteHostedUser(config,changed.rows[0].keycloak_user_id).catch(()=>undefined); response.status(204).end(); }));
+  router.post('/organizations/:organizationId/invitations/:id/resend', route(async(request,response)=>{ const identity=await webIdentity(db,config,request,true).catch(()=>{throw new HttpError(403,'web_session_required');}); const organizationId=uuid(request.params.organizationId,'organizationId'); await requireOrganizationAdmin(db,identity,organizationId); const found=await db.query('SELECT keycloak_user_id FROM accounts.invitations WHERE id=$1 AND organization_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()',[uuid(request.params.id,'invitation id'),organizationId]); if(!found.rows[0]) throw new HttpError(404,'invitation not found'); await sendHostedUserActions(config,found.rows[0].keycloak_user_id); await db.query('UPDATE accounts.invitations SET updated_at=now() WHERE id=$1',[request.params.id]); response.status(204).end(); }));
+
+  router.post('/invite/accept', route(async(request,response)=>{ const input=requestBody(request);const token=string(input.token,'token',1024);const password=string(input.password,'password',1024);if(password.length<12)throw new HttpError(400,'password must contain at least 12 characters');const client=await db.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");await assertSeatAvailable(db,config,true);const found=await client.query("SELECT * FROM accounts.invitations WHERE token_digest=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE",[digest(token)]);const invite=found.rows[0];if(!invite)throw new HttpError(404,'invitation not found');await resetHostedPassword(config,invite.keycloak_user_id,password);await client.query('INSERT INTO accounts.memberships(id,issuer,subject,organization_id,roles,groups) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(issuer,subject,organization_id) DO UPDATE SET roles=EXCLUDED.roles,revoked_at=NULL,updated_at=now()',[randomUUID(),config.keycloakIssuer,invite.keycloak_user_id,invite.organization_id,invite.roles,[]]);await client.query('UPDATE accounts.invitations SET accepted_at=now(),updated_at=now() WHERE id=$1',[invite.id]);await client.query('COMMIT');response.status(204).end();}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();} }));
+
+  router.get('/invite/mine', route(async(request,response)=>{ const identity=await webIdentity(db,config,request).catch(()=>{throw new HttpError(401,'authentication_required');}); const user=await getHostedUser(config,identity.subject); const found=await db.query("SELECT id,organization_id,email,roles,expires_at,created_at FROM accounts.invitations WHERE lower(email)=lower($1) AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()",[user.email]); response.json({invitations:found.rows}); }));
+  router.post('/invite/mine/:id/accept', route(async(request,response)=>{ const identity=await webIdentity(db,config,request,true).catch(()=>{throw new HttpError(403,'web_session_required');}); const user=await getHostedUser(config,identity.subject); const client=await db.connect(); try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");await assertSeatAvailable(db,config,true);const invite=await client.query("SELECT * FROM accounts.invitations WHERE id=$1 AND lower(email)=lower($2) AND keycloak_user_id=$3 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE",[uuid(request.params.id,'invitation id'),user.email,identity.subject]);if(!invite.rows[0])throw new HttpError(404,'invitation not found');await client.query('INSERT INTO accounts.memberships(id,issuer,subject,organization_id,roles,groups) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(issuer,subject,organization_id) DO UPDATE SET roles=EXCLUDED.roles,revoked_at=NULL,updated_at=now()',[randomUUID(),config.keycloakIssuer,identity.subject,invite.rows[0].organization_id,invite.rows[0].roles,[]]);await client.query('UPDATE accounts.invitations SET accepted_at=now(),updated_at=now() WHERE id=$1',[invite.rows[0].id]);await client.query('COMMIT');response.status(204).end();}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();} }));
 
   return router;
 }
@@ -967,6 +1020,11 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
     const client = await db.connect();
     try {
       await client.query('BEGIN');
+      if (issuer === config.keycloakIssuer) {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
+        const alreadySeated = await client.query('SELECT 1 FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL LIMIT 1', [issuer, subject]);
+        if (!alreadySeated.rowCount) await assertSeatAvailable(db, config);
+      }
       const current = await client.query('SELECT issuer,organization_id,roles FROM accounts.memberships WHERE id=$1 FOR UPDATE', [id]);
       const lockIds = [...new Set([organizationId, current.rows[0]?.organization_id].filter(Boolean))].sort();
       for (const lockId of lockIds) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`sulla-accounts-org-admin:${lockId}`]);
@@ -1016,6 +1074,15 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
       response.status(204).end();
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }));
+
+
+  router.get('/users', route(async(_request,response)=>{ const users=await listHostedUsers(config); const memberships=await db.query('SELECT subject,organization_id,roles,created_at FROM accounts.memberships WHERE issuer=$1 AND revoked_at IS NULL',[config.keycloakIssuer]); response.json({users:users.map(user=>({...user,organizations:memberships.rows.filter(row=>row.subject===user.id)}))}); }));
+  router.get('/limits', route(async(_request,response)=>{ const limit=await db.query('SELECT seat_limit,updated_at FROM accounts.server_limits WHERE singleton=true'); response.json({seatLimit:Number(limit.rows[0].seat_limit),seatsUsed:await occupiedSeats(db,config),updatedAt:limit.rows[0].updated_at}); }));
+  router.put('/limits', route(async(request,response)=>{ const value=requestBody(request).seatLimit; if(typeof value!=='number'||!Number.isInteger(value)||value<1)throw new HttpError(400,'seatLimit is invalid'); const used=await occupiedSeats(db,config); if(value<used)throw new HttpError(409,'seat_limit_below_usage'); const saved=await db.query('UPDATE accounts.server_limits SET seat_limit=$1,updated_at=now() WHERE singleton=true RETURNING seat_limit,updated_at',[value]); response.json({seatLimit:Number(saved.rows[0].seat_limit),seatsUsed:used,updatedAt:saved.rows[0].updated_at}); }));
+  router.get('/signin', route(async(_request,response)=>{ const realm=await getRealmSettings(config); response.json({passwordPolicy:realm.passwordPolicy??'',otpRequired:await getOtpRequired(config),smtp:realm.smtpServer??{},registrationAllowed:false}); }));
+  router.put('/signin', route(async(request,response)=>{ const input=requestBody(request); const updates:Record<string,unknown>={registrationAllowed:false}; if(input.passwordPolicy!==undefined)updates.passwordPolicy=string(input.passwordPolicy,'passwordPolicy',4096); if(input.smtp!==undefined)updates.smtpServer=object(input.smtp); if(input.otpRequired!==undefined){if(typeof input.otpRequired!=='boolean')throw new HttpError(400,'otpRequired is invalid');await setOtpRequired(config,input.otpRequired);} await updateRealmSettings(config,updates); response.status(204).end(); }));
+  router.post('/signin/test-email', route(async(request,response)=>{ const input=requestBody(request); await testRealmSmtp(config,input.smtp===undefined?object((await getRealmSettings(config)).smtpServer):object(input.smtp)); response.status(204).end(); }));
+  router.get('/events', route(async(request,response)=>{ const max=request.query.max===undefined?100:Number(request.query.max); response.json({events:await getRealmEvents(config,Number.isFinite(max)?max:100)}); }));
 
   return router;
 }

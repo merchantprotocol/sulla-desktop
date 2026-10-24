@@ -17,6 +17,7 @@ const config = {
   keycloakAdminUsername: 'synthetic-admin', keycloakAdminPassword: 'synthetic-password',
   keycloakMembershipAudience: 'sulla-membership', keycloakResourceAudiences: new Set(['sulla-files']),
   webCallbackUrl: 'https://console.example/accounts-api/v1/web/callback', consoleMainUrl: 'https://console.example/console',
+  serverId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', serverDisplayName: 'Synthetic Server',
   secureCookies: true, trustedProxy: true,
 } satisfies AccountsConfig;
 
