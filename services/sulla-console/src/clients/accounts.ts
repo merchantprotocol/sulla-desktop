@@ -8,13 +8,26 @@ import { UpstreamClient } from './upstream.js';
 export interface AccountsSession {
   authenticated: true;
   identity: { issuer: string; subject: string };
+  serverAdmin: boolean;
   organizations: Array<{ id: string; name: string; slug: string; roles: string[]; groups: string[] }>;
   expiresAt: string;
 }
 
 export class AccountsClient extends UpstreamClient {
+  constructor(baseUrl: URL, private readonly adminSecret?: string) {
+    super(baseUrl);
+  }
+
   session(request: Request): Promise<AccountsSession> {
     return this.request('/v1/web/session', { headers: forwardedWebHeaders(request) });
+  }
+
+  admin<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!this.adminSecret) throw new Error('Accounts admin secret is not configured');
+    const headers = new Headers(init.headers);
+    headers.set('authorization', `Bearer ${this.adminSecret}`);
+    if (init.body) headers.set('content-type', 'application/json');
+    return this.request(`/v1/admin${path}`, { ...init, headers });
   }
 }
 

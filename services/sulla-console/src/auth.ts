@@ -34,11 +34,11 @@ function equal(left?: string, right?: string): boolean {
 export function requireWebSession(clients: UpstreamClients) {
   return async(request: Request, response: Response, next: NextFunction): Promise<void> => {
     try {
+      request.consoleSession = await clients.accounts.session(request);
       if (!SAFE_METHODS.has(request.method) && !equal(request.header('x-sulla-csrf'), cookie(request, 'sulla-console-csrf'))) {
         response.status(403).json({ error: 'invalid_csrf' });
         return;
       }
-      request.consoleSession = await clients.accounts.session(request);
       next();
     } catch (error) {
       if (error instanceof UpstreamError && (error.status === 401 || error.status === 403)) {
