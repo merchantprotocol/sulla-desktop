@@ -208,10 +208,11 @@ export class SecureDesktopChannel {
 
   /** Exposed for tests. */
   async onMessage(raw: string): Promise<void> {
-    let env: ClientFrameEnvelope & { type: string };
-    try { env = JSON.parse(raw) } catch { return }
-    if (env?.type === 'server_frame') { await this.deps.serverDispatch?.((env as any).frame ?? {}); return; }
-    if (env?.type !== 'client_frame') return; // connected/pong/error from the relay itself
+    let parsed: any;
+    try { parsed = JSON.parse(raw) } catch { return }
+    if (parsed?.type === 'server_frame') { await this.deps.serverDispatch?.(parsed.frame ?? {}); return; }
+    if (parsed?.type !== 'client_frame') return; // connected/pong/error from the relay itself
+    const env = parsed as ClientFrameEnvelope;
     const clientId = env.from?.clientId;
     if (!clientId) return;
 

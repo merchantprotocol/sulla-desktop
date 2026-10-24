@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import type { JsonWebKey as NodeJsonWebKey } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { app, safeStorage } from 'electron';
@@ -60,7 +61,7 @@ class ConversationSyncServiceImpl {
     return key;
   }
   wrapKey(conversationId:string, publicJwk:JsonWebKey) {
-    const publicKey=crypto.createPublicKey({key:publicJwk,format:'jwk'});
+    const publicKey=crypto.createPublicKey({key:publicJwk as NodeJsonWebKey,format:'jwk'});
     return crypto.publicEncrypt({key:publicKey,oaepHash:'sha256'},this.ensureKey(conversationId)).toString('base64');
   }
   private encrypt(conversationId:string, role:Role, messageId:string, body:string):EncryptedBody {
