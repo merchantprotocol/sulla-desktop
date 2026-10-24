@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Replicated File Provider for Sulla Files. Every byte goes through the Files
 /// service via Sulla Desktop main (RelayClient); deletes go to Files Trash and
 /// conflicting edits are kept as a sibling copy, never overwritten.
-final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
+final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, NSFileProviderCustomAction {
     private let domain: NSFileProviderDomain
     private let queue = DispatchQueue(label: "io.sulla.desktop.FileProvider.relay", qos: .userInitiated, attributes: .concurrent)
 
@@ -77,9 +77,6 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             defer { progress.completedUnitCount = 1 }
             let id = SullaItem.wire(item.itemIdentifier)
             do {
-                if changedFields.contains(.contentPolicy), id.hasPrefix("c.") {
-                    _ = try RelayClient.shared.call("pin", ["id": id, "keep": item.contentPolicy == .downloadEagerlyAndKeepDownloaded])
-                }
                 var args: [String: Any] = ["id": id]
                 if changedFields.contains(.filename) { args["name"] = item.filename }
                 if changedFields.contains(.parentItemIdentifier) { args["parentId"] = SullaItem.wire(item.parentItemIdentifier) }
@@ -107,6 +104,30 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
             defer { progress.completedUnitCount = 1 }
             do {
                 _ = try RelayClient.shared.call("delete", ["id": SullaItem.wire(identifier), "recursive": options.contains(.recursive)])
+                completionHandler(nil)
+            } catch { completionHandler(error.asFileProviderError) }
+        }
+    }
+
+    /// Finder actions on a collection: mirrors Files keep_on_computer, which the
+    /// item reports back as its content policy (download eagerly and keep).
+    func performAction(identifier actionIdentifier: NSFileProviderExtensionActionIdentifier, onItemsWithIdentifiers itemIdentifiers: [NSFileProviderItemIdentifier], completionHandler: @escaping (Error?) -> Void) -> Progress {
+        let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
+        let keep: Bool
+        switch actionIdentifier.rawValue {
+        case "io.sulla.desktop.FileProvider.keep": keep = true
+        case "io.sulla.desktop.FileProvider.online-only": keep = false
+        default:
+            completionHandler(NSError(domain: NSCocoaErrorDomain, code: NSFeatureUnsupportedError))
+            return progress
+        }
+        return run(progress) {
+            do {
+                for identifier in itemIdentifiers {
+                    _ = try RelayClient.shared.call("pin", ["id": SullaItem.wire(identifier), "keep": keep])
+                    progress.completedUnitCount += 1
+                }
+                NSFileProviderManager(for: self.domain)?.signalEnumerator(for: .workingSet) { _ in }
                 completionHandler(nil)
             } catch { completionHandler(error.asFileProviderError) }
         }

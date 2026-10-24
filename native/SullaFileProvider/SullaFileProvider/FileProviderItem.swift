@@ -59,6 +59,11 @@ final class SullaItem: NSObject, NSFileProviderItem {
         isCollection && json["keepOnComputer"] as? Bool == true ? .downloadEagerlyAndKeepDownloaded : .inherited
     }
 
+    /// Read by the Finder action activation rules in Info.plist.
+    var userInfo: [AnyHashable: Any]? {
+        isCollection ? ["sullaCollection": 1, "sullaKeep": json["keepOnComputer"] as? Bool == true ? 1 : 0] : nil
+    }
+
     private static func date(_ value: Any?) -> Date? {
         guard let text = value as? String else { return nil }
         let formatter = ISO8601DateFormatter()

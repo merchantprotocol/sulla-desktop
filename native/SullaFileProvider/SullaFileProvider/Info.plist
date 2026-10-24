@@ -11,6 +11,18 @@
   <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSExtension</key><dict>
+    <key>NSExtensionFileProviderActions</key><array>
+      <dict>
+        <key>NSExtensionFileProviderActionIdentifier</key><string>io.sulla.desktop.FileProvider.keep</string>
+        <key>NSExtensionFileProviderActionName</key><string>Keep on this Mac</string>
+        <key>NSExtensionFileProviderActionActivationRule</key><string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.sullaCollection == 1 AND $fileproviderItem.userInfo.sullaKeep == 0 ).@count &gt; 0</string>
+      </dict>
+      <dict>
+        <key>NSExtensionFileProviderActionIdentifier</key><string>io.sulla.desktop.FileProvider.online-only</string>
+        <key>NSExtensionFileProviderActionName</key><string>Allow online only</string>
+        <key>NSExtensionFileProviderActionActivationRule</key><string>SUBQUERY ( fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.sullaCollection == 1 AND $fileproviderItem.userInfo.sullaKeep == 1 ).@count &gt; 0</string>
+      </dict>
+    </array>
     <key>NSExtensionFileProviderDocumentGroup</key><string>946AF7TL74.io.sulla.desktop</string>
     <key>NSExtensionFileProviderSupportsEnumeration</key><true/>
     <key>NSExtensionPointIdentifier</key><string>com.apple.fileprovider-nonui</string>

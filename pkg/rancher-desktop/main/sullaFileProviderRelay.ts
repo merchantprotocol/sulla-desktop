@@ -313,9 +313,11 @@ export class FileProviderRelay {
     const next:Record<string, string> = {};
     let more = false;
     for (const collectionId of Object.keys(since)) if (!collections.has(collectionId)) deleted.add(`c.${ collectionId }`);
-    for (const [collectionId, item] of collections) {
+    // Collection names and keep_on_computer pins are not journaled; resending them is cheap and idempotent.
+    for (const item of collections.values()) updated.set(item.id, item);
+    for (const collectionId of collections.keys()) {
       const after = since[collectionId];
-      if (after === undefined) { updated.set(item.id, item); next[collectionId] = await this.head(collectionId); continue }
+      if (after === undefined) { next[collectionId] = await this.head(collectionId); continue }
       const page = await this.files.json<any[]>(`/v1/collections/${ enc(collectionId) }/journal?after=${ after }`);
       let seq = BigInt(after);
       const latest = new Map<string, any>();
