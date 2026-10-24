@@ -273,3 +273,9 @@ sudo /usr/local/bin/k3s-uninstall.sh
 ```
 
 The uninstall scripts remove k3s containers, cluster state, and local storage managed by that installation. Back up Sulla data first.
+
+## Server license trust key
+
+The console verifies Sulla Cloud license tokens offline. `SULLA_SERVER_LICENSE_PUBLIC_KEY` must contain the base64 DER/SPKI Ed25519 public key that matches the Cloud Worker `SERVER_LICENSE_SIGNING_KEY` secret. The private key never belongs on the server. Compose persists the activated token in `${SULLA_DATA_DIR}/console/license.json` with container mode `0600`; Kubernetes reads the public key from the `sulla-license` Secret and stores activation state in `sulla-console-license`.
+
+Use Cases clients must call `GET /license/catalog-access` before loading or installing catalog entries. It returns `403 license_required` for missing, invalid, expired, revoked-on-check-in, or over-seat licenses. License status is exposed as `GET /license`. Until the authenticated Console API owns activation, `POST /license/activate` (`{"licenseKey":"…"}`) accepts loopback requests only.
