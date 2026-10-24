@@ -200,7 +200,8 @@ export interface ModelUsageSummary extends UsageAggregate {
 }
 
 export interface DailyUsageSummary extends UsageAggregate {
-  date: string;
+  date:      string;
+  providers: Array<{ id: string; label: string; totalTokens: number }>;
 }
 
 interface NormalizedUsageRecord extends CliUsageRecord {
@@ -340,7 +341,15 @@ function summarizeDaily(records: NormalizedUsageRecord[], since: Date): DailyUsa
     const key = localDateKey(new Date(record.ts));
     if (days.has(key)) days.get(key)!.push(record);
   }
-  return [...days].map(([date, dayRecords]) => ({ date, ...summarize(dayRecords) }));
+  return [...days].map(([date, dayRecords]) => ({
+    date,
+    ...summarize(dayRecords),
+    providers: [...new Set(dayRecords.map(record => record.providerId))].map(id => ({
+      id,
+      label: dayRecords.find(record => record.providerId === id)?.providerLabel ?? humanize(id),
+      totalTokens: summarize(dayRecords.filter(record => record.providerId === id)).totalTokens,
+    })).sort((a, b) => b.totalTokens - a.totalTokens),
+  }));
 }
 
 function summarize(records: CliUsageRecord[]): UsageAggregate {
