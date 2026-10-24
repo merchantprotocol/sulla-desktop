@@ -6,6 +6,8 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import { getActiveAgentsRegistry } from '@pkg/agent/services/ActiveAgentsRegistry';
 import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
+import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
+import { defaultChatHeartbeatConfig, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
 import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
 import { findTaskByThread, getAllJobs, getJob } from '@pkg/agent/tools/agents/jobRegistry';
@@ -87,6 +89,38 @@ async function companionJobMessage(target: Awaited<ReturnType<typeof companionJo
   const result = await sendJobMessage({ jobId: target.jobId, taskIndex: target.taskIndex, message });
   if (!result.successBoolean) throw new Error(result.responseString);
   return result;
+}
+
+async function companionConversationId(value: unknown): Promise<string> {
+  const conversationId = companionString(value, 'Conversation', 200, true)!;
+  const rows = await postgresClient.query(
+    `SELECT id FROM claude_conversations WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+    [conversationId],
+  );
+  if (!rows.length) throw new Error('Conversation not found');
+  return conversationId;
+}
+
+function companionHeartbeatState(conversationId: string) {
+  const service = getChatHeartbeatService();
+  let status = service.status(conversationId);
+  if (!status) {
+    status = service.register({
+      threadId: conversationId,
+      channel: 'sulla-desktop',
+      config: defaultChatHeartbeatConfig(),
+    });
+  }
+  return {
+    conversationId,
+    enabled: status.enabled,
+    intervalMinutes: status.intervalMinutes,
+    message: status.message,
+    nextAt: status.nextAt === null ? null : new Date(status.nextAt).toISOString(),
+    paused: !!status.paused,
+    runningOn: 'desktop' as const,
+    online: true,
+  };
 }
 
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
@@ -238,6 +272,28 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
       [params.conversationId, limit],
     );
     return { conversationId: params.conversationId, messages: rows };
+  }
+  case 'chat.heartbeat.read': {
+    const conversationId = await companionConversationId(params.conversationId);
+    return companionHeartbeatState(conversationId);
+  }
+  case 'chat.heartbeat.update': {
+    const conversationId = await companionConversationId(params.conversationId);
+    if (typeof params.enabled !== 'boolean') throw new Error('enabled required');
+    const intervalMinutes = params.intervalMinutes === null ? null : Number(params.intervalMinutes);
+    if (params.enabled && (typeof intervalMinutes !== 'number' || !Number.isFinite(intervalMinutes) || intervalMinutes < 0.1 || intervalMinutes > 1440)) {
+      throw new Error('intervalMinutes must be between 0.1 and 1440');
+    }
+    if (typeof params.message !== 'string' || !params.message.trim() || params.message.length > 4000) {
+      throw new Error('message must be 1-4000 characters');
+    }
+    const service = getChatHeartbeatService();
+    if (!service.has(conversationId)) companionHeartbeatState(conversationId);
+    service.configure(conversationId, normalizeChatHeartbeatConfig({
+      intervalMinutes: params.enabled ? intervalMinutes : null,
+      message: params.message,
+    }));
+    return companionHeartbeatState(conversationId);
   }
   case 'heartbeat.read':
     return {
