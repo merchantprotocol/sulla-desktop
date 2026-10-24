@@ -552,7 +552,7 @@ export function createApp(
     // The 'sulla' ingest lane (bundled Docs) now writes into the owner's home collection.
     response.json((await db.query(`SELECT id,system_area AS "systemArea" FROM collections WHERE system_area IN ('logs','training-data')
       UNION ALL (SELECT id,'sulla' FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE
-      ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1)`,[config.userId])).rows);
+      ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1)`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
@@ -738,13 +738,13 @@ export function createApp(
   // lookups now pay for a scalar revision read and receive 304, rather than
   // rebuilding and transferring the complete multi-megabyte tree every second.
   const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
-  let fuseTreeSnapshotRequest:Promise<{ body:Buffer; revision:string }> | undefined;
+  const fuseTreeSnapshotRequests=new Map<string,Promise<{ body:Buffer; revision:string }>>();
   const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
     const revision=await fuseTreeRevision();
     const cached=fuseTreeSnapshots.get(area); if (cached?.revision===revision) return cached;
-    if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
-    fuseTreeSnapshotRequest=(async()=>{
+    const pending=fuseTreeSnapshotRequests.get(area); if (pending) return pending;
+    const request=(async()=>{
       // One consistent database snapshot avoids retry starvation during active
       // ingestion and labels the tree with precisely the revision it represents.
       const client=await db.connect();
@@ -752,14 +752,14 @@ export function createApp(
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
         const revision=String((await client.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0].revision);
         const [collections,files,folders]=await Promise.all([
-          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
+          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
             AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
             ORDER BY explorer_path,id`,[area,config.userId]),
           client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
             f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
             ORDER BY f.collection_id,f.path`,[area,config.userId]),
-          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
+          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
         ]);
 
         // Each mount serves exactly one collection at its root (home, Logs or Training Data).
@@ -769,8 +769,9 @@ export function createApp(
         await client.query('COMMIT');
         const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-    })().finally(()=>{fuseTreeSnapshotRequest=undefined});
-    return fuseTreeSnapshotRequest;
+    })().finally(()=>{fuseTreeSnapshotRequests.delete(area)});
+    fuseTreeSnapshotRequests.set(area,request);
+    return request;
   };
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
@@ -1276,7 +1277,7 @@ export function createApp(
   // Agents write Use Case drafts into the home collection; /v1/local/* is desktop-only.
   app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
     identity(request);
-    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
+    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
     if (!row) throw new HttpError(404, 'Home collection is not initialized');
     response.json({ collectionId: row.id });
   } catch (error) { next(error) } });

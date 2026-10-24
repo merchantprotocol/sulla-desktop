@@ -4,7 +4,7 @@ import type { Config } from './config.js';
 export interface SullaCollectionMigrationSummary { moved:number; collisions:number }
 
 const homeQuery = `SELECT * FROM collections WHERE owner_user_id=$1 AND published=TRUE AND legacy_source=FALSE
-  AND system_area IS NULL ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1`;
+  AND system_area IS NULL ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1`;
 
 async function occupied(client:pg.PoolClient, collectionId:string, path:string):Promise<boolean> {
   return Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND path=$2
