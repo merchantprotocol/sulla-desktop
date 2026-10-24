@@ -38,3 +38,11 @@ describe('local authority ChatGPT routing', () => {
     }
   });
 });
+
+describe('local authority BYO usage route', () => {
+  test('allows only POST to the exact usage ingestion path', () => {
+    expect(localAuthorityTestHooks.allowsByoUsageCloudRequest('POST', '/usage/byo-events')).toBe(true);
+    expect(localAuthorityTestHooks.allowsByoUsageCloudRequest('GET', '/usage/byo-events')).toBe(false);
+    expect(localAuthorityTestHooks.allowsByoUsageCloudRequest('POST', '/usage/byo-events/extra')).toBe(false);
+  });
+});

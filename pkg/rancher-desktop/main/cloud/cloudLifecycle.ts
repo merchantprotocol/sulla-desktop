@@ -20,6 +20,7 @@ import { DeviceInstallSync } from '../marketplace/cloudInstall/deviceInstallSync
 import { ApprovedClients } from './approvedClients';
 import { getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, setCloudPreferences, type CloudDataKind, type CloudPreferences } from './cloudSettings';
 import { CloudDataSync, type ProjectionKind } from './cloudDataSync';
+import { ByoUsageSync } from './byoUsageSync';
 import { VaultSyncV3 } from './vaultSyncV3';
 import { FilesSyncV1 } from './filesSyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
@@ -130,7 +131,7 @@ async function stopConversationSync(): Promise<void> {
 async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (!prefs.enabled) {
     await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop();
-    DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); return;
+    DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); ByoUsageSync.stop(); return;
   }
   if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
   if (prefs.vault) VaultSyncV3.start(); else VaultSyncV3.stop();
@@ -138,6 +139,7 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   if (prefs.useCases) DeviceInstallSync.start(); else DeviceInstallSync.stop();
   if (prefs.workflows || prefs.liveAgents) CloudRuntimeProjectionSync.start(); else CloudRuntimeProjectionSync.stop();
   if (prefs.skills || prefs.customAgents || prefs.recipes || prefs.usage || prefs.memory) CloudDataSync.start(); else CloudDataSync.stop();
+  if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
 
 function installPrefsListener() {
@@ -182,6 +184,7 @@ export async function stopCloudServices(): Promise<void> {
   DeviceInstallSync.stop();
   CloudRuntimeProjectionSync.stop();
   CloudDataSync.stop();
+  ByoUsageSync.stop();
   await stopConversationSync().catch(() => undefined);
   ConversationSyncService.stop();
   DevicesCloudApi.stopHeartbeat();
@@ -246,8 +249,8 @@ export function initCloudConnectionEvents(): void {
 
   ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: CloudDataKind | 'all') => {
     if (kind === 'vault') await VaultSyncV3.syncNow();
-    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
-    else if (['skills','customAgents','recipes','usage','memory'].includes(kind)) await CloudDataSync.syncNow(kind as ProjectionKind, true);
+    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
+    else if (['skills','customAgents','recipes','usage','memory'].includes(kind)) { await CloudDataSync.syncNow(kind as ProjectionKind, true); if (kind === 'usage') await ByoUsageSync.flush(); }
     return getCloudConnectionStatus();
   });
 
