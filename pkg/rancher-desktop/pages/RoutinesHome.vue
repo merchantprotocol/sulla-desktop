@@ -71,15 +71,6 @@
           <button
             type="button"
             class="tab"
-            :class="{ on: activeTab === 'library' }"
-            @click="activeTab = 'library'"
-          >
-            Library
-            <span class="tab-num">{{ totalLibraryCount }}</span>
-          </button>
-          <button
-            type="button"
-            class="tab"
             :class="{ on: activeTab === 'marketplace' }"
             @click="activeTab = 'marketplace'"
           >
@@ -133,14 +124,14 @@
           v-if="routinesController.routines.value.length === 0 && !routinesController.isLoading.value"
           kicker="No workflows yet"
           title="Your stage is empty."
-          message="You haven't built a workflow yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
+          message="You haven't built a workflow yet. Get one from Use Cases, or compose one from scratch on the canvas."
         >
           <button
             type="button"
             class="btn primary"
-            @click="activeTab = 'library'"
+            @click="activeTab = 'marketplace'"
           >
-            Browse your library →
+            Browse Use Cases →
           </button>
           <button
             type="button"
@@ -179,17 +170,10 @@
               ＋ Write a new workflow
             </button>
             <div class="closer-sub">
-              Start blank · or borrow from {{ templatesController.templates.value.length }} template{{ templatesController.templates.value.length === 1 ? '' : 's' }}
+              Start blank · or get one from Use Cases
             </div>
           </div>
         </template>
-      </template>
-
-      <!-- ═══════ LIBRARY TAB ═══════ -->
-      <template v-else-if="activeTab === 'library'">
-        <LibraryTab
-          @use-template="onUseTemplate"
-        />
       </template>
 
       <!-- ═══════ PACKAGES TAB (internal key stays 'marketplace') ═══════ -->
@@ -229,18 +213,15 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
-import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
 import PackagesTab from '@pkg/components/routines/PackagesTab.vue';
 import WorkflowTable from '@pkg/components/routines/WorkflowTable.vue';
-import { useLibrary } from '@pkg/composables/useLibrary';
 import { useRoutines } from '@pkg/composables/useRoutines';
-import { useTemplates } from '@pkg/composables/useTemplates';
 import type { WorkflowRunSummaries } from '@pkg/main/workflowRunSummaries';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
-type Tab = 'mywork' | 'library' | 'marketplace';
+type Tab = 'mywork' | 'marketplace';
 
 const props = withDefaults(defineProps<{
   initialTab?: Tab;
@@ -248,14 +229,13 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'open-workflow', id: string, mode?: 'edit' | 'run', runId?: string): void
-  (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
   (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>(props.initialTab);
 
-// Watch for external navigation (e.g., clicking Library in ModeRail)
+// Watch for external navigation (e.g., clicking Use Cases in ModeRail)
 watch(() => props.initialTab, (newTab) => {
   if (newTab && newTab !== activeTab.value) {
     activeTab.value = newTab;
@@ -265,15 +245,6 @@ watch(() => props.initialTab, (newTab) => {
 // Composables = the controller layer. The view only reads their reactive
 // state and forwards user intents back to them or up to the parent.
 const routinesController = useRoutines();
-const templatesController = useTemplates();
-
-// Total count across all four library kinds — shown on the Library tab button.
-// `useLibrary()` is a module-scoped singleton; calling it here mounts the
-// same store the Library tab uses, and `loadAll()` hydrates all four kinds
-// so the badge reflects reality even before the user ever clicks in. The
-// call is idempotent — if the Library tab already loaded, this is a no-op.
-const libraryStore = useLibrary();
-const totalLibraryCount = computed(() => libraryStore.totalCount.value);
 
 // The playbill can't query Postgres until the backend has booted — the
 // tab is restored from localStorage on first paint, which regularly
@@ -285,12 +256,6 @@ const { systemReady } = useStartupProgress();
 async function loadAll() {
   await Promise.all([
     routinesController.load(),
-    templatesController.load(),
-    // Hydrate every library kind so the Studio tab badge shows the true
-    // total across routines/skills/functions/recipes without waiting for
-    // the user to open the Library tab first. Singleton store — second
-    // caller (LibraryTab) gets the same cached counts.
-    libraryStore.loadAll(),
     loadRunSummaries(),
   ]);
 }
@@ -345,7 +310,6 @@ const heroKicker = computed(() => {
   switch (activeTab.value) {
   case 'mywork':
     return 'The Cast';
-  case 'library':     return 'The Library';
   case 'marketplace': return 'Use Cases';
   default:            return 'The Studio';
   }
@@ -354,7 +318,6 @@ const heroKicker = computed(() => {
 const heroTitle = computed(() => {
   switch (activeTab.value) {
   case 'mywork':      return 'My Work.';
-  case 'library':     return 'Library.';
   case 'marketplace': return 'Use Cases.';
   default:            return 'Studio.';
   }
@@ -364,15 +327,12 @@ const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
   if (activeTab.value === 'mywork') {
     if (count === 0) {
-      return 'Nothing running, nothing scheduled, nothing idle. Start from a template in your Library, or compose something new from the canvas.';
+      return 'Nothing running, nothing scheduled, nothing idle. Get one from Use Cases, or compose something new from the canvas.';
     }
     const plural = count === 1 ? '' : 's';
     const reclaimed = routinesController.stats.value.reclaimed;
 
     return `${ count } workflow${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
-  }
-  if (activeTab.value === 'library') {
-    return 'Your collected workflows, agents, skills, functions, integrations, and recipes. Everything installed from a use case or added by hand lives here.';
   }
   if (activeTab.value === 'marketplace') {
     return 'Get Sulla doing a new job in one click. Each use case brings everything it needs.';
@@ -385,8 +345,6 @@ const ribbonStatusLabel = computed(() => {
   switch (activeTab.value) {
   case 'marketplace':
     return 'Browsing Sulla Cloud';
-  case 'library':
-    return `${ templatesController.templates.value.length } templates on disk`;
   case 'mywork':
     return `${ routinesController.routines.value.length } in database`;
   default:
@@ -458,9 +416,6 @@ async function onRunNow(id: string) {
     runRequests.value = next;
     void loadRunSummaries();
   });
-}
-function onUseTemplate(slug: string) {
-  emit('use-template', slug);
 }
 function onNewBlank() {
   emit('new-blank');
@@ -537,9 +492,9 @@ async function onRestoreRoutine(id: string) {
 }
 
 // A package can add workflows, skills, agents and more in one go, so
-// refresh the templates and every Library kind after install / remove.
+// refresh the workflows list after install / remove.
 async function onPackagesInstalled() {
-  await Promise.all([templatesController.load(), libraryStore.loadAll()]);
+  await routinesController.load();
 }
 
 async function onExport(id: string) {
@@ -565,10 +520,8 @@ async function onImport() {
 
       return;
     }
-    // Refresh the templates view so the newly-landed folder shows up.
-    await templatesController.load();
-    // Switch to the library tab so the user sees the new card.
-    activeTab.value = 'library';
+    await routinesController.load();
+    showFeedback('success', 'Imported.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Routines] Import failed:', err);

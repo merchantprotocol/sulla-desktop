@@ -322,7 +322,6 @@
           v-if="!activeRoutineId"
           :initial-tab="routinesLandingTab ?? (tabMode === 'marketplace' ? 'marketplace' : 'mywork')"
           @open-workflow="onOpenRoutine"
-          @use-template="onUseTemplate"
           @new-blank="onNewBlankRoutine"
         />
         <template v-else>
@@ -451,7 +450,7 @@ function navigateToAgentParent(): void {
   window.dispatchEvent(new CustomEvent('sulla:navigate-agent-parent', { detail: { parentThreadId } }));
 }
 
-function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'library' | 'marketplace' | string) {
+function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'marketplace' | string) {
   // Narrow the mode string to a known BrowserTabMode. Unknown values
   // are ignored — they can only arrive from ModeRail's emit, which is
   // typed as `string` for flexibility.
@@ -460,10 +459,10 @@ function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'library' 
 
   updateTab(props.tabId, { mode: typedMode, title: MODE_TITLES[typedMode] });
 
-  // Library/My Work both route to `routines` mode; a subTab arg lets
-  // ModeRail deep-link directly to the right tab inside RoutinesHome.
+  // A subTab arg lets ModeRail deep-link directly to the right tab
+  // inside RoutinesHome.
   if (typedMode === 'routines' && subTab) {
-    if (subTab === 'mywork' || subTab === 'library' || subTab === 'marketplace') {
+    if (subTab === 'mywork' || subTab === 'marketplace') {
       routinesLandingTab.value = subTab;
     }
   }
@@ -485,9 +484,8 @@ const activeRoutineMode = ref<'edit' | 'run'>('edit');
 // Set when the workflows list opens a specific past run.
 const activeRoutineRunId = ref<string | null>(null);
 // After backing out of a routine we always want to land on My Work,
-// even if the user originally opened the routine from the Marketplace
-// or Library tab. Null means "defer to tabMode for initial tab".
-const routinesLandingTab = ref<'mywork' | 'library' | 'marketplace' | null>(null);
+// even if the user originally opened the routine from Use Cases. Null means "defer to tabMode for initial tab".
+const routinesLandingTab = ref<'mywork' | 'marketplace' | null>(null);
 
 // Notify ModeRail when sub-tab changes so it can highlight the correct icon
 watch(routinesLandingTab, (newTab) => {
@@ -508,20 +506,6 @@ function onBackToRoutinesHome() {
   activeRoutineId.value = null;
   activeRoutineRunId.value = null;
   routinesLandingTab.value = 'mywork';
-}
-
-async function onUseTemplate(slug: string) {
-  // Clone the template into the workflows table, then open the new
-  // routine in the canvas editor. The IPC call does all the heavy
-  // lifting (manifest read + workflow wrapping + DB upsert); here we
-  // just translate the returned id into a navigation.
-  try {
-    const result = await ipcRenderer.invoke('routines-template-instantiate', slug);
-    activeRoutineId.value = result.id;
-  } catch (err) {
-    console.error(`[BrowserTab] Failed to instantiate template "${ slug }":`, err);
-    // Leave the user on the template list so they can try again.
-  }
 }
 
 async function onNewBlankRoutine() {

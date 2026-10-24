@@ -206,7 +206,7 @@ const activeTabMode = computed(() => {
 });
 
 // Track active sub-tab for highlighting the correct ModeRail icon
-// (e.g., 'library' vs 'mywork' when mode is 'routines')
+// (e.g., 'mywork' when mode is 'routines')
 const activeSubTab  = ref<string | undefined>(undefined);
 
 interface RecipeRailApp {
@@ -297,19 +297,6 @@ function onModeRailSelect(mode: string, subTab?: string) {
   const tab = createTab(url, { mode: mode as any });
 
   router.push(`/Browser/${ tab.id }`);
-
-  // Library lives inside the routines page as a sub-tab. The freshly
-  // created BrowserTab defaults its RoutinesHome landing tab to
-  // "mywork"/"marketplace" based on mode; to deep-link to "library"
-  // we fire the mode-rail-select event after the new tab has mounted
-  // so its handler can flip routinesLandingTab.
-  if (subTab === 'library' && mode === 'routines') {
-    setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('sulla:mode-rail-select', {
-        detail: { mode, subTab },
-      }));
-    }, 50);
-  }
 }
 
 // ── App version ──
