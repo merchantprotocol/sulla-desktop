@@ -4,7 +4,7 @@
       <div class="error-header">
         <img
           id="logo"
-          src="../../../resources/icons/logo-square-red@2x.png"
+          src="../../../resources/icons/sulla-app-icon.png"
         >
         <span>
           <h2 data-test="k8s-error-header">

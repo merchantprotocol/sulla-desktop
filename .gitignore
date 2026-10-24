@@ -15,7 +15,6 @@
 /resources/spin-operator*
 /resources/win32/
 /resources/models/
-/src/go/rdctl/pkg/options/generated/*.go
 /.yarn/
 .DS_Store
 justfile

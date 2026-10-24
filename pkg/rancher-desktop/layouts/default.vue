@@ -36,7 +36,6 @@
       <Images v-show="activeMainTab === '/Images'" />
       <Snapshots v-show="activeMainTab === '/Snapshots'" />
       <Troubleshooting v-show="activeMainTab === '/Troubleshooting'" />
-      <Diagnostics v-show="activeMainTab === '/Diagnostics'" />
       <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
       <RouterView v-if="!activeMainTab" />
     </main>
@@ -63,7 +62,6 @@ import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { mapTypedState } from '@pkg/entry/store';
 import Containers from '@pkg/pages/Containers.vue';
-import Diagnostics from '@pkg/pages/Diagnostics.vue';
 import Images from '@pkg/pages/Images.vue';
 import PortForwarding from '@pkg/pages/PortForwarding.vue';
 import Snapshots from '@pkg/pages/Snapshots.vue';
@@ -86,7 +84,6 @@ export default {
     Images,
     Snapshots,
     Troubleshooting,
-    Diagnostics,
   },
 
   setup() {
@@ -103,7 +100,6 @@ export default {
   computed: {
     routes() {
       const badges = {
-        '/Diagnostics': this.diagnosticsCount,
       };
 
       return mainRoutes.map((route) => {
@@ -142,17 +138,9 @@ export default {
         '/Troubleshooting': {
           eyebrow: 'Troubleshooting', headline: 'When the engine needs attention.', lead: 'Open logs, reset Kubernetes, or return the runtime to a clean state.',
         },
-        '/Diagnostics': {
-          eyebrow: 'Diagnostics', headline: 'Know what is healthy, and what is not.', lead: 'Run system checks, inspect failures, and mute findings you have reviewed.',
-        },
       })[this.activeMainTab] ?? { eyebrow: '', headline: '', lead: '' };
     },
-    /** @returns {number} The number of diagnostics errors. */
-    diagnosticsCount() {
-      return this.diagnostics.filter(diagnostic => !diagnostic.mute).length;
-    },
     ...mapState('credentials', ['credentials']),
-    ...mapTypedState('diagnostics', ['diagnostics']),
     ...mapGetters('extensions', ['installedExtensions']),
   },
 
@@ -225,12 +213,11 @@ export default {
     async fetch() {
       await this.$store.dispatch('credentials/fetchCredentials');
       if (!this.credentials.port || !this.credentials.user || !this.credentials.password) {
-        console.log(`Credentials aren't ready for getting diagnostics -- will try later`);
+        console.log(`Backend credentials aren't ready -- will try later`);
 
         return;
       }
       await this.$store.dispatch('preferences/fetchPreferences');
-      await this.$store.dispatch('diagnostics/fetchDiagnostics');
     },
 
     openDashboard() {
@@ -580,8 +567,7 @@ export default {
 
   .troubleshooting-items > *,
   .snapshots .cards > div,
-  .general > div,
-  .diagnostics > .status {
+  .general > div {
     border-radius: 18px;
     background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
     box-shadow: inset 0 0 0 1px var(--docker-hairline);
@@ -619,13 +605,7 @@ export default {
     font-weight: 600;
   }
 
-  .diagnostics > .status {
-    padding: 18px;
-  }
 
-  .diagnostics .item-results::first-letter {
-    color: var(--nx-danger);
-  }
 
   .status-bar {
     border-color: var(--docker-hairline);

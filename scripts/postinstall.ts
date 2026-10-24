@@ -46,7 +46,6 @@ const userTouchedDependencies = [
   new tools.DockerProvidedCredHelpers(),
   new tools.ECRCredHelper(),
   new tools.SpinCLI(),
-  new goUtils.RDCtl(versionToStamp),
   new goUtils.GoDependency('docker-credential-none'),
 ];
 
@@ -78,7 +77,6 @@ const windowsDependencies = [
 // Dependencies that are specific to WSL.
 const wslDependencies = [
   new Moproxy(),
-  new goUtils.RDCtl(versionToStamp),
   new goUtils.GoDependency('guestagent', 'staging'),
   new goUtils.GoDependency('networking/cmd/vm', 'staging/vm-switch'),
   new goUtils.GoDependency('networking/cmd/network', 'staging/network-setup'),
@@ -214,7 +212,6 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
   const platform = os.platform();
   const criticalBinaries = [
     { name: 'limactl', path: path.join(resourcesDir, platform, 'lima', 'bin', 'limactl') },
-    { name: 'rdctl', path: path.join(resourcesDir, platform, 'bin', 'rdctl') },
   ];
 
   for (const bin of criticalBinaries) {

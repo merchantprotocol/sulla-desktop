@@ -285,18 +285,6 @@ export const actions = {
 
     return severities;
   },
-  async setShowMuted({ dispatch }, isMuted: boolean) {
-    await dispatch(
-      'preferences/commitPreferences',
-      {
-        payload: {
-          version:     CURRENT_SETTINGS_VERSION,
-          diagnostics: { showMuted: isMuted },
-        },
-      },
-      { root: true },
-    );
-  },
   setCanApply({ commit }, canApply: boolean) {
     commit('SET_CAN_APPLY', canApply);
   },
@@ -327,9 +315,6 @@ export const getters = {
   },
   canApply(state, getters) {
     return (getters.isPreferencesDirty && state.preferencesError.length === 0) || state.canApply;
-  },
-  showMuted(state) {
-    return state.preferences.diagnostics.showMuted;
   },
   isPreferenceLocked: (state) => (value: string) => {
     return _.get(state.lockedPreferences, value);

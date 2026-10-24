@@ -27,7 +27,6 @@ import { mobileToolManifests } from './mobile/manifests';
 import { modelsToolManifests } from './models/manifests';
 import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
-import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { reflexToolManifests } from './reflex/manifests';
 import { toolRegistry } from './registry';
@@ -64,7 +63,6 @@ toolRegistry.registerManifests([
   ...modelsToolManifests,
   ...notifyToolManifests,
   ...pgToolManifests,
-  ...rdctlToolManifests,
   ...redisToolManifests,
   ...rulesToolManifests,
   ...reflexToolManifests,

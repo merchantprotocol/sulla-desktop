@@ -538,7 +538,7 @@ function migrateSettingsToCurrentVersion(settings: Record<string, any>): Setting
 
 /**
  * Used to migrate a settings payload from an earlier version to the current one.
- * Input payloads are expected to come from either the argument to `rdctl api settings -X PUT ...`
+ * Input payloads are expected to come from either the settings API
  * or a deployment profile.
  *
  * The contents of settings files go through the unexported function `migrateSettingsToCurrentVersion`

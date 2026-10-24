@@ -98,7 +98,6 @@ export default class WSLKubernetesBackend extends events.EventEmitter implements
 
         return undefined;
       } finally {
-        mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available });
       }
     })();
   }

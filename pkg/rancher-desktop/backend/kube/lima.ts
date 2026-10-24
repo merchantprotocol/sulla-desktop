@@ -351,7 +351,6 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
 
         return undefined;
       } finally {
-        mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available });
       }
     })();
   }

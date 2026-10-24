@@ -197,46 +197,6 @@ Initiates a graceful shutdown of the application. The server closes immediately 
 
 ---
 
-## Diagnostics
-
-### GET /v1/diagnostic_categories
-
-Returns a JSON array of diagnostic category names.
-
-**Response:**
-- `200` -- `application/json` array of strings.
-- `404` -- `"No diagnostic categories found"`.
-
-### GET /v1/diagnostic_ids
-
-Returns diagnostic check IDs for a given category.
-
-**Query parameters:**
-- `category` (string, required) -- The category to list IDs for.
-
-**Response:**
-- `200` -- `application/json` array of strings.
-- `400` -- Missing `category` parameter.
-- `404` -- No checks found for the given category.
-
-### GET /v1/diagnostic_checks
-
-Returns diagnostic check results, optionally filtered by category and/or ID.
-
-**Query parameters:**
-- `category` (string, optional) -- Filter by category.
-- `id` (string, optional) -- Filter by specific check ID.
-
-**Response:** `200` -- `application/json` -- `DiagnosticsResultCollection` object.
-
-### POST /v1/diagnostic_checks
-
-Runs all diagnostic checks and returns the results.
-
-**Response:** `200` -- `application/json` -- `DiagnosticsResultCollection` object.
-
----
-
 ## Extensions
 
 ### GET /v1/extensions

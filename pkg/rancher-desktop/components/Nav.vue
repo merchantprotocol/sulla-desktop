@@ -176,7 +176,6 @@ export default defineComponent({
         '/Images':          '◇',
         '/Snapshots':       '◷',
         '/Troubleshooting': '⌁',
-        '/Diagnostics':     '◎',
       } as Record<string, string>)[route] ?? '·';
     },
     updateIndicator() {

@@ -195,14 +195,6 @@ export default class SettingsValidator {
         showAll:   this.checkBoolean,
         namespace: this.checkString,
       },
-      diagnostics: {
-        mutedChecks:  this.checkBooleanMapping,
-        showMuted:    this.checkBoolean,
-        connectivity: {
-          interval: this.checkNumber(0, 2 ** 31 - 1),
-          timeout:  this.checkNumber(1, 2 ** 31 - 1),
-        },
-      },
     };
     this.canonicalizeSynonyms(newSettings);
     const errors: string[] = [];

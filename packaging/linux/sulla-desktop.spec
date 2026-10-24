@@ -163,7 +163,7 @@ Sulla Desktop is a source-available project to bring AI Agent Autonomy to the de
 
 %build
 # Generate icons
-icon="resources/resources/icons/logo-square-512.png"
+icon="resources/resources/icons/sulla-app-icon.png"
 for size in 512x512 256x256 128x128 96x96 64x64 48x48 32x32 24x24 16x16; do
   mkdir "share/icons/hicolor/${size}/apps" -p
   convert -resize "${size}" "${icon}" "share/icons/hicolor/${size}/apps/%{name}.png"

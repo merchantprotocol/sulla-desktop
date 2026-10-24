@@ -1946,7 +1946,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     // Clean up deprecated keys in config.paths, if present.
     // These keys are no longer used and may cause errors
-    // during rdctl shutdown when upgrading to version
+    // during application shutdown when upgrading to version
     // 1.20.x or later.
     delete (config.paths as any)['vdeSwitch'];
     delete (config.paths as any)['vdeVMNet'];
@@ -2905,7 +2905,6 @@ start_pre() {
         this.progressTracker.numeric('Virtual machine started', 40, 100);
 
         // Clear the diagnostic about not having Kubernetes versions
-        mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available: true });
 
         if (config.kubernetes.enabled) {
           t = Date.now();
@@ -2923,7 +2922,6 @@ start_pre() {
             }
             // The desired version was unavailable, and we couldn't find a fallback.
             // Notify the user, and turn off Kubernetes.
-            mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available: false });
             this.writeSetting({ kubernetes: { enabled: false } });
           }
         }

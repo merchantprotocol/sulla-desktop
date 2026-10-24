@@ -3,7 +3,6 @@ import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
 import AgentRoutines from '../pages/AgentRoutines.vue';
 import Containers from '../pages/Containers.vue';
 import DenyRoot from '../pages/DenyRoot.vue';
-import Diagnostics from '../pages/Diagnostics.vue';
 import Dialog from '../pages/Dialog.vue';
 import FirstRun from '../pages/FirstRun.vue';
 import Images from '../pages/Images.vue';
@@ -67,9 +66,6 @@ export default createRouter({
     },
     {
       path: '/Troubleshooting', component: Troubleshooting, name: 'Troubleshooting',
-    },
-    {
-      path: '/Diagnostics', component: Diagnostics, name: 'Diagnostics',
     },
     {
       path: '/extensions/:id/:root(.*)/:src', component: ExtensionsItem, name: 'rdx-root-src-id',

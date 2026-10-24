@@ -51,7 +51,6 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
 | docker | 9 | |
 | lima | 6 | |
 | kubectl | 3 | |
-| rdctl | 10 | |
 | calendar | 7 | |
 | vault | 7 | |
 | extensions | 4 | |
@@ -140,7 +139,6 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
    Rewrote with verified live counts per category.
 
 10. **`agent-patterns/known-gaps.md` was missing environment reality check.**
-    Added section listing n8n-not-running, Twenty CRM broken, heartbeat-disabled-default, and the `rdctl_shell` quoting limitation.
 
 ---
 
@@ -154,7 +152,6 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
 
 **Workaround for host testing:** hit the backend URL directly with curl.
 
-### `rdctl_shell` is restricted
 Does NOT accept pipes (`|`), redirects (`>`, `<`), chain operators (`&&`, `;`), or quoted shell wrappers. Single command + args only. Multi-step work needs multiple calls.
 
 ### Observational memory survives via `sulla_settings`
@@ -173,7 +170,6 @@ Credentials encrypted with AES-256-GCM. VMK derived from master password via PBK
 - `spawn_agent` end-to-end (would have spun up work)
 - AppleScript (would have touched user's macOS apps)
 - Kubectl delete (obviously)
-- `rdctl_reset` (would have wiped the cluster)
 
 For these, the docs describe the contract but haven't been battle-tested in this sweep.
 

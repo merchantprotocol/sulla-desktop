@@ -1,9 +1,9 @@
 #!/bin/ash
 
 # wsl-exec is used to execute user-issued shell commands from
-# rdctl shell ... in a correct namespace. If the experimental
+# VM shell ... in a correct namespace. If the experimental
 # rancher desktop networking is enabled all the resulting
-# shell from rdctl shell will be executed in the new namespace
+# shell from VM shell will be executed in the new namespace
 # associated with the rd networking; otherwise, it will be executed
 # in the default namespace.
 

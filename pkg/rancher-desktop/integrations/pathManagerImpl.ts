@@ -60,13 +60,7 @@ export class RcFilePathManager implements PathManager {
   protected async manageLinesInFile(fileName: string, filePath: string, lines: string[], desiredPresent: boolean) {
     try {
       await manageLinesInFile(filePath, lines, desiredPresent);
-      mainEvents.emit('diagnostics-event', {
-        id: 'path-management', fileName, error: undefined,
-      });
     } catch (error: any) {
-      mainEvents.emit('diagnostics-event', {
-        id: 'path-management', fileName, error,
-      });
       throw error;
     }
   }
@@ -100,14 +94,8 @@ export class RcFilePathManager implements PathManager {
           } catch (error: any) {
             if (error.code === 'ENOENT') {
               // If the file does not exist, it is not an error.
-              mainEvents.emit('diagnostics-event', {
-                id: 'path-management', fileName, error: undefined,
-              });
               continue;
             }
-            mainEvents.emit('diagnostics-event', {
-              id: 'path-management', fileName, error,
-            });
             throw error;
           }
           await this.manageLinesInFile(fileName, filePath, [pathLine], !linesAdded);
@@ -136,9 +124,6 @@ export class RcFilePathManager implements PathManager {
 
         return this.manageLinesInFile(fileName, rcPath, [pathLine], desiredPresent);
       }));
-
-      mainEvents.invoke('diagnostics-trigger', 'RD_BIN_IN_BASH_PATH');
-      mainEvents.invoke('diagnostics-trigger', 'RD_BIN_IN_ZSH_PATH');
     });
   }
 

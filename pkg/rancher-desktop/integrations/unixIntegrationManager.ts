@@ -113,7 +113,7 @@ export default class UnixIntegrationManager implements IntegrationManager {
     }
 
     // manage the special rancher-desktop integration; this symlink
-    // exists so that rdctl can find the path to the AppImage
+    // exists so management processes can find the AppImage path
     // that Rancher Desktop is running from
     const rancherDesktopPath = path.join(this.integrationDir, RDIntegration);
     const appImagePath = process.env['APPIMAGE'];

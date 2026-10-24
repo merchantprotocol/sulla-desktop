@@ -31,7 +31,6 @@ describe('host execution gate', () => {
       ['applescript', 'applescript_execute'],
       ['capture', 'screenshot'],
       ['lima', 'lima_shell'],
-      ['rdctl', 'rdctl_shell'],
       ['secretary', 'start'],
     ].every(([category, name]) => toolRequiresHostAccess(category, name))).toBe(true);
 

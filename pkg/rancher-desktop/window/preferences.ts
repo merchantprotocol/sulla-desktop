@@ -24,7 +24,7 @@ export function openPreferences() {
     resizable:       false,
     minimizable:     false,
     show:            false,
-    icon:            path.join(paths.resources, 'icons', 'logo-square-512.png'),
+    icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
     parent:          getWindow('main') ?? undefined,
     webPreferences:  {
       devTools:         !app.isPackaged,

@@ -11,7 +11,7 @@ script:
   - unzip $BUILD_SOURCE_DIR/sulla-desktop.zip -d $BUILD_APPDIR/opt/sulla-desktop
   - chmod 04755 $BUILD_APPDIR/opt/sulla-desktop/chrome-sandbox
   - mv $BUILD_APPDIR/opt/sulla-desktop/resources/resources/linux/sulla-desktop.desktop $BUILD_APPDIR
-  - convert -resize 512x512 $BUILD_APPDIR/opt/sulla-desktop/resources/resources/icons/logo-square-512.png $BUILD_APPDIR/sulla-desktop.png
+  - convert -resize 512x512 $BUILD_APPDIR/opt/sulla-desktop/resources/resources/icons/sulla-app-icon.png $BUILD_APPDIR/sulla-desktop.png
   - mv $BUILD_APPDIR/opt/sulla-desktop/resources/resources/linux/lima/bin/qemu-* $BUILD_APPDIR/usr/bin
   - mv $BUILD_APPDIR/opt/sulla-desktop/resources/resources/linux/lima/share/qemu $BUILD_APPDIR/usr/share
   - mv $BUILD_APPDIR/opt/sulla-desktop/resources/resources/linux/lima/lib $BUILD_APPDIR/usr
