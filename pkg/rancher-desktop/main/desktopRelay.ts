@@ -46,6 +46,7 @@ import {
   type NormalizedMobileTurn,
 } from '@pkg/main/mobileRelayContent';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { validateChatSelection } from '@pkg/main/chatSelection';
 import Logging from '@pkg/utils/logging';
 
 
@@ -93,6 +94,9 @@ interface IncomingMessage {
   // attached files — see mobileRelayContent.ts.
   messages?:       { role: 'user' | 'assistant' | 'system'; content: unknown }[];
   conversationId?: string;
+  providerId?:     string;
+  modelId?:        string;
+  agentId?:        string;
   /**
    * When the mobile picks a specific desktop to route to (AI Assistant →
    * Which Desktop), the chat payload carries that device's id. The relay
@@ -794,6 +798,7 @@ export class DesktopRelayClient {
     }
     console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
+    const selection = await validateChatSelection(msg);
     // Injected mid-run turns are part of the conversation record too.
     await this.scribeTurn(conversationId, 'user', transcriptText(turn), { id: msg.userMessageId });
     const wsService = getWebSocketClientService();
@@ -806,6 +811,7 @@ export class DesktopRelayClient {
           source:      'mobile-relay',
           inputSource: 'keyboard',
           conversationId,
+          ...selection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },
@@ -871,6 +877,7 @@ export class DesktopRelayClient {
     this.ensureMobileChannelBridge();
 
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
+    const selection = await validateChatSelection(msg);
 
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
@@ -892,6 +899,7 @@ export class DesktopRelayClient {
           source:         'mobile-relay',
           inputSource:    'keyboard',
           conversationId,
+          ...selection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },

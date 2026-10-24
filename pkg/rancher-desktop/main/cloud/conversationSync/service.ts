@@ -11,6 +11,7 @@ import Logging from '@pkg/utils/logging';
 import { cloudRequest } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { getDesktopDeviceId } from '../../deviceIdentity';
+import { normalizeMobileContent, persistMobileAttachments, transcriptText } from '../../mobileRelayContent';
 import { safeDelta, type EncryptedBody, type LinkPrivacyMode } from './privacy';
 
 const console = Logging.background;
@@ -70,12 +71,14 @@ class ConversationSyncServiceImpl {
     const data=Buffer.concat([cipher.update(body,'utf8'),cipher.final(),cipher.getAuthTag()]);
     return {ciphertext:data.toString('base64url'),nonce:nonce.toString('base64url'),keyVersion:1};
   }
-  private decrypt(conversationId:string, role:Role, messageId:string, body:{ciphertext:string;nonce:string}) {
+  private decryptBytes(conversationId:string, role:Role, messageId:string, body:{ciphertext:string;nonce:string}) {
     const key=this.keys.get(conversationId); if(!key) throw new Error('conversation key unavailable');
     const nonce=Buffer.from(body.nonce,'base64url'),raw=Buffer.from(body.ciphertext,'base64url'),tag=raw.subarray(raw.length-16),data=raw.subarray(0,-16);
     const dec=crypto.createDecipheriv('aes-256-gcm',key,nonce);dec.setAAD(aad(conversationId,role,messageId));dec.setAuthTag(tag);
-    return Buffer.concat([dec.update(data),dec.final()]).toString('utf8');
+    return Buffer.concat([dec.update(data),dec.final()]);
   }
+  private decrypt(conversationId:string, role:Role, messageId:string, body:{ciphertext:string;nonce:string}) { return this.decryptBytes(conversationId,role,messageId,body).toString('utf8'); }
+
   private async messageExists(id:string) {
     return !!(await postgresClient.queryOne('SELECT 1 FROM conversation_messages WHERE id = $1 LIMIT 1',[id]));
   }
@@ -92,10 +95,26 @@ class ConversationSyncServiceImpl {
     if(!this.dispatcher||!prefs.remoteAccess){ await fail(); return; }
     // The AAD binds the body to clientRequestId; refusing a known id stops replays.
     if(await this.messageExists(frame.clientRequestId)) return;
-    let content:string;
-    try { content=this.decrypt(frame.conversationId,'user',frame.clientRequestId,frame); }
+    let content:string, dispatchContent:unknown, parts:unknown = undefined;
+    try {
+      const plaintext=this.decrypt(frame.conversationId,'user',frame.clientRequestId,frame);
+      let envelope:any=null; try { envelope=JSON.parse(plaintext); } catch { /* legacy text */ }
+      if(envelope?.v===1&&Array.isArray(envelope.attachments)) {
+        const hydrated:any[]=[];
+        for(const ref of envelope.attachments.slice(0,6)) {
+          const response=await cloudRequest('GET',`/cloud-chat-links/${encodeURIComponent(frame.linkId)}/attachments/${encodeURIComponent(ref.id)}`);if(!response.ok)throw new Error('attachment unavailable');
+          const remote=(await response.json() as any).data?.attachment;if(!remote?.ciphertext)throw new Error('attachment unavailable');
+          const data=this.decryptBytes(frame.conversationId,'user',ref.id,remote).toString('base64');
+          hydrated.push({type:ref.kind==='image'?'image':'document',source:{type:'base64',media_type:ref.mimeType,data},...(ref.kind==='document'?{title:ref.name}:{})});
+        }
+        const turn=normalizeMobileContent([...(envelope.text?[{type:'text',text:envelope.text}]:[]),...hydrated]);
+        const saved=await persistMobileAttachments(path.join(app.getPath('userData'),'chat-attachments','cloud'),frame.conversationId,frame.clientRequestId,turn.files);
+        content=transcriptText(turn); dispatchContent=[...(envelope.text?[{type:'text',text:envelope.text}]:[]),...hydrated];
+        parts=envelope.attachments.map((a:any,i:number)=>({id:a.id||`${frame.clientRequestId}-${i}`,name:a.name||turn.files[i]?.name||'attachment',size:a.size||0,kind:a.kind==='image'?'image':'file',source:saved[i]}));
+      } else { content=plaintext; dispatchContent=content; }
+    }
     catch { console.warn('[ConversationSync] rejected a linked reply that does not decrypt'); await fail(); return; }
-    await ConversationMessagesModel.append({id:frame.clientRequestId,conversation_id:frame.conversationId,role:'user',content,source:'cloud-linked',routed_to:'desktop'});
+    await ConversationMessagesModel.append({id:frame.clientRequestId,conversation_id:frame.conversationId,role:'user',content,parts,source:'cloud-linked',routed_to:'desktop'});
     let settled=false;
     const complete=async(result:Record<string,unknown>)=>{
       if(settled) return;
@@ -108,7 +127,12 @@ class ConversationSyncServiceImpl {
       await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(frame.linkId)}/replies/${encodeURIComponent(frame.replyId)}/complete`,{headers:{'Content-Type':'application/json'},body:JSON.stringify({messageId,...this.encrypt(frame.conversationId,'assistant',messageId,result.content)})});
     };
     const onFrame=(f:Record<string,unknown>)=>{ void complete(f).catch(err=>console.warn('[ConversationSync] completion failed:',err)); };
-    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content}]},onFrame,onFrame);
+    const selection=frame.selection&&typeof frame.selection==='object'?{
+      ...(typeof frame.selection.providerId==='string'?{providerId:frame.selection.providerId}:{}),
+      ...(typeof frame.selection.modelId==='string'?{modelId:frame.selection.modelId}:{}),
+      ...(typeof frame.selection.agentId==='string'?{agentId:frame.selection.agentId}:{}),
+    }:{};
+    await this.dispatcher({type:'chat',conversationId:frame.conversationId,userMessageId:frame.clientRequestId,messages:[{role:'user',content:dispatchContent}],...selection},onFrame,onFrame);
   }
 
   // ── Links ────────────────────────────────────────────────────
@@ -170,13 +194,18 @@ class ConversationSyncServiceImpl {
     const r=await cloudRequest('GET',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results`);if(!r.ok)return;
     const results=((await r.json() as any).data?.results??[]) as CloudResult[];
     for(const x of results){
-      let user:string,assistant:string;
+      let user:string,assistant:string,userParts:unknown=undefined;
       try {
         user=this.decrypt(conv,'user',x.clientRequestId,x);
         assistant=this.decrypt(conv,'assistant',x.messageId,{ciphertext:x.responseCiphertext,nonce:x.responseNonce});
+        let envelope:any=null;try{envelope=JSON.parse(user)}catch{/* legacy text */}
+        if(envelope?.v===1&&Array.isArray(envelope.attachments)){
+          user=typeof envelope.text==='string'?envelope.text:'';
+          userParts=envelope.attachments.map((a:any,i:number)=>({id:typeof a?.id==='string'?a.id:`${x.clientRequestId}-${i}`,name:typeof a?.name==='string'?a.name:'attachment',size:typeof a?.size==='number'?a.size:0,kind:a?.kind==='image'?'image':'file'}));
+        }
       } catch { console.warn(`[ConversationSync] skipped a Cloud result that does not decrypt (${x.id})`); continue; }
       await ConversationMessagesModel.appendMany([
-        {id:x.clientRequestId,conversation_id:conv,role:'user',content:user,source:'cloud-linked',routed_to:'cloud',created_at:utc(x.createdAt)},
+        {id:x.clientRequestId,conversation_id:conv,role:'user',content:user,parts:userParts,source:'cloud-linked',routed_to:'cloud',created_at:utc(x.createdAt)},
         {id:x.messageId,conversation_id:conv,role:'assistant',content:assistant,source:'cloud-fallback',routed_to:'cloud',created_at:utc(x.completedAt||x.createdAt)},
       ]);
       await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results/${encodeURIComponent(x.id)}/ack`);
