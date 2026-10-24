@@ -905,6 +905,7 @@ export interface IpcMainInvokeEvents {
     version:     string;
     image?:      string;
     extension?:  string;
+    webPorts?:   string[];
     updatedAt:   string;
   }[];
   'library-list-integrations': () => {
