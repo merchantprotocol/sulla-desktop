@@ -1562,6 +1562,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/cloud-chat-links$/, ['GET', 'POST']],
       [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}$/, ['DELETE']],
       [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/deltas$/, ['POST']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/attachments\/[A-Za-z0-9._:~-]{1,200}$/, ['GET']],
       [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results$/, ['GET']],
       [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results\/[A-Za-z0-9_-]{1,200}\/ack$/, ['POST']],
       [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/replies\/[A-Za-z0-9_-]{1,200}\/(?:fail|complete)$/, ['POST']],
