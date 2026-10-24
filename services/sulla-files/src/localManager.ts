@@ -1443,7 +1443,7 @@ export class LocalFilesManager {
     const payload = { collectionId, file: item.file, version: item.version, manifest: item.manifest, chunks, baseServerVersionId: item.version.base_server_version_id ?? item.version.parent_version_id };
     const prep = await this.remote('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(payload) });
     if (prep.conflict) { await this.keepConflict(item, prep.currentVersionId); return }
-    for (const id of prep.missing ?? []) { const response = await fetch(new URL(`/v1/chunks/${ item.version.chunk_collection_id }/${ id }`, this.config.serverUrl), { method: 'PUT', headers: this.headers({ 'content-type': 'application/octet-stream' }), body: await this.store.get(item.version.chunk_collection_id, id) }); if (!response.ok) throw new Error(`chunk upload failed ${ response.status }`); }
+    for (const id of prep.missing ?? []) { const response = await fetch(new URL(`/v1/chunks/${ item.version.chunk_collection_id }/${ id }`, this.config.serverUrl), { method: 'PUT', headers: this.headers({ 'content-type': 'application/octet-stream' }), body: new Uint8Array(await this.store.get(item.version.chunk_collection_id, id)) }); if (!response.ok) throw new Error(`chunk upload failed ${ response.status }`); }
     await this.remote('/v1/versions/commit', { method: 'POST', body: JSON.stringify(payload) }); await this.db.query('UPDATE file_versions SET base_server_version_id=id WHERE id=$1', [item.version.id]);
   }
 

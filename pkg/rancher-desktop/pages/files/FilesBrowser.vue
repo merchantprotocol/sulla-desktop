@@ -204,7 +204,7 @@
           >
             <span class="bi" v-html="icons.syncOnline" /> {{ cloudBackup?.enabled ? 'Backed up to Sulla Cloud' : 'Back up to Sulla Cloud' }}
           </button>
-          <button class="btn sm ghost" type="button" :disabled="busy || loading" @click="openCloudRestore">Restore from Sulla Cloud</button>
+          <button v-if="dataSource.listCloudCollections && dataSource.restoreCloudCollection" class="btn sm ghost" type="button" :disabled="busy || loading" @click="openCloudRestore">Restore from Sulla Cloud</button>
           <span v-if="cloudBackup?.enabled" class="cloud-backup-status" :title="cloudBackupTitle">{{ cloudBackupLine }}</span>
           <button
             v-if="dataSource.openPreferences"
@@ -880,7 +880,7 @@
       <h2>Restore from Sulla Cloud</h2>
       <p>This creates a Files collection inside Sulla, where agents can read it through Files. It does not put files into Documents or any other Mac folder.</p>
       <p v-if="cloudRestoreError" class="error">{{ cloudRestoreError }}</p>
-      <div v-if="cloudRestoreVaultOpen" class="cloud-vault-host"><VaultPage modal restore-files /></div>
+      <div v-if="cloudRestoreVaultOpen" class="cloud-vault-host"><slot name="cloud-vault" /></div>
       <template v-else>
         <p v-if="!cloudCollections.length" class="muted">No unrestored Cloud collections were found.</p>
         <article v-for="collection in cloudCollections" :key="collection.collectionId" class="cloud-collection">
@@ -902,7 +902,6 @@ import ShareSheet from './ShareSheet.vue';
 import { supportsDocumentEditor } from './editor/editorTypes';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
 import SharedByMe from './SharedByMe.vue';
-import VaultPage from '../VaultPage.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
 import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
 
@@ -910,13 +909,12 @@ import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
 import { isFilesFolderReplacementDestination, isFilesFolderState, isFilesOperationState, type FilesCollisionDestination, type FilesCollisionPolicy, type FilesCrossCollectionCapability, type FilesDataSource, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationItem, type FilesOperationItemReceipt, type FilesOperationReceipt, type FilesOperationRetry, type FilesSnapshot, type FilesTrashItem } from './types';
 import type { ExplorerColumns, ExplorerLocation, ExplorerTarget } from './composables/useFilesExplorerInteractions';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { CloudFilesCollection } from '@pkg/main/cloud/filesSyncV1/containerClient';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
+interface CloudFilesCollection { collectionId:string; bytes:number; updatedAt:string }
 const cloudRestoreDialog=ref<HTMLDialogElement|null>(null); const cloudCollections=ref<CloudFilesCollection[]>([]); const cloudRestoreError=ref(''); const cloudRestoreVaultOpen=ref(false); let pendingCloudRestore:CloudFilesCollection|undefined;
-async function openCloudRestore(){ cloudRestoreError.value=''; cloudRestoreVaultOpen.value=false; cloudCollections.value=await ipcRenderer.invoke('files-ui:cloud-collections'); cloudRestoreDialog.value?.showModal() }
-async function restoreCloudCollection(collection:CloudFilesCollection){ pendingCloudRestore=collection; busy.value=true; cloudRestoreError.value=''; try { await ipcRenderer.invoke('files-ui:restore-cloud-collection',{collectionId:collection.collectionId,name:`Restored ${new Date(collection.updatedAt).toLocaleDateString()}`}); await refresh(true); cloudRestoreDialog.value?.close() } catch(cause){ const message=cause instanceof Error?cause.message:String(cause); if(/cloud_vault_locked|Unlock the Cloud vault/.test(message))cloudRestoreVaultOpen.value=true; else cloudRestoreError.value=message } finally { busy.value=false } }
+async function openCloudRestore(){ cloudRestoreError.value=''; cloudRestoreVaultOpen.value=false; cloudCollections.value=await props.dataSource.listCloudCollections?.() ?? []; cloudRestoreDialog.value?.showModal() }
+async function restoreCloudCollection(collection:CloudFilesCollection){ pendingCloudRestore=collection; busy.value=true; cloudRestoreError.value=''; try { if (!props.dataSource.restoreCloudCollection) throw new Error('Cloud restore is unavailable.'); await props.dataSource.restoreCloudCollection(collection.collectionId,`Restored ${new Date(collection.updatedAt).toLocaleDateString()}`); await refresh(true); cloudRestoreDialog.value?.close() } catch(cause){ const message=cause instanceof Error?cause.message:String(cause); if(/cloud_vault_locked|Unlock the Cloud vault/.test(message))cloudRestoreVaultOpen.value=true; else cloudRestoreError.value=message } finally { busy.value=false } }
 async function continueCloudRestore(){ if(pendingCloudRestore)await restoreCloudCollection(pendingCloudRestore) }
 const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem, collectionId?:string] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';

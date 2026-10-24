@@ -435,6 +435,8 @@ export interface FilesDataSource {
   updateFolderDescription?(folderId:string, description:string, namingHint?:string):Promise<void>;
   setCollectionCloudSync?(collectionId:string, enabled:boolean):Promise<void>;
   setCloudBackup?(collectionId:string, enabled:boolean):Promise<void>;
+  listCloudCollections?():Promise<{ collectionId:string; bytes:number; updatedAt:string }[]>;
+  restoreCloudCollection?(collectionId:string, name:string):Promise<void>;
   createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;
