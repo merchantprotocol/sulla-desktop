@@ -146,26 +146,23 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
-type Tab = 'mywork' | 'marketplace';
-
 const props = withDefaults(defineProps<{
-  initialTab?: Tab;
-}>(), { initialTab: 'mywork' });
+  section?: StudioSection;
+}>(), { section: 'workflows' });
 
 const emit = defineEmits<{
   (e: 'open-workflow', id: string, mode?: 'edit' | 'run', runId?: string): void
   (e: 'new-blank'): void
   (e: 'restore-routine', id: string): void
+  (e: 'update:section', section: StudioSection): void
 }>();
 
-// The rail's Workflows / Use Cases entries land on their sidebar section.
-const landingSection = (tab: Tab): StudioSection => (tab === 'marketplace' ? 'browse' : 'workflows');
-const section = ref<StudioSection>(landingSection(props.initialTab));
+// The sidebar page is owned by the tab, so the mode rail can open Live
+// Agents or Token Usage directly and light the matching icon.
+const section = ref<StudioSection>(props.section);
 
-// Watch for external navigation (e.g., clicking Use Cases in ModeRail)
-watch(() => props.initialTab, (newTab) => {
-  if (newTab) section.value = landingSection(newTab);
-});
+watch(() => props.section, (next) => { if (next !== section.value) section.value = next; });
+watch(section, (next) => { if (next !== props.section) emit('update:section', next); });
 
 // Composables = the controller layer. The view only reads their reactive
 // state and forwards user intents back to them or up to the parent.

@@ -1,8 +1,9 @@
 import { reactive, readonly, ref, watch } from 'vue';
 
+import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'agents' | 'files' | 'paper' | 'decide' | 'usage';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
@@ -27,6 +28,8 @@ export interface BrowserTab {
   documentFile?: { fileId: string; path: string; collectionId?: string };
   /** Recipe rail identity used to refocus its single app tab. */
   recipeAppSlug?: string;
+  /** Studio sidebar page a Workflows / Use Cases tab is showing. */
+  studioSection?: StudioSection;
   /**
    * Last time something touched this tab (create, updateTab, URL/title/content
    * change from backend). Used for idle-close of agent tabs. Only populated
@@ -77,7 +80,7 @@ function loadPersistedTabs(): BrowserTab[] {
     if (!Array.isArray(parsed)) return [];
     // Drop stale file-editor tabs — they reference absolute paths that may
     // no longer be valid (moved, outside sandbox, etc). The file tree reopens them.
-    const noFileEditor = parsed.filter((t: any) => t?.mode !== 'file-editor');
+    const noFileEditor = parsed.filter((t: any) => t?.mode !== 'file-editor').map(migrateLegacyMode);
     // Dedupe by (url + mode) so a runaway "open same URL 500 times" loop
     // collapses to a single entry on restore.
     const seen = new Set<string>();
@@ -275,6 +278,15 @@ try {
   // Non-Electron context (tests) — skip.
 }
 
+// Tabs saved before the old Agents and Usage screens were removed now
+// open their Studio replacements: Live Agents and Token Usage.
+function migrateLegacyMode<T extends { mode?: string; title?: string; studioSection?: StudioSection }>(tab: T): T {
+  if (tab?.mode === 'agents') return { ...tab, mode: 'marketplace', title: 'Use Cases', studioSection: 'live' } as T;
+  if (tab?.mode === 'usage') return { ...tab, mode: 'marketplace', title: 'Use Cases', studioSection: 'usage' } as T;
+
+  return tab;
+}
+
 // ── Closed-tab history ──
 
 function loadClosedTabs(): ClosedTab[] {
@@ -283,7 +295,7 @@ function loadClosedTabs(): ClosedTab[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed;
+    return parsed.map(migrateLegacyMode);
   } catch {
     return [];
   }
@@ -449,14 +461,12 @@ export function useBrowserTabs() {
     labs:         'Labs',
     'file-editor': 'Editor',
     terminal:     'Terminal',
-    agents:       'Agents',
     files:        'File Manager',
     paper:        'Paper',
     decide:       'Decide',
-    usage:        'Usage',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -470,6 +480,7 @@ export function useBrowserTabs() {
       ...(opts?.filesNavigation ? { filesNavigation: opts.filesNavigation } : {}),
       ...(opts?.documentFile ? { documentFile: opts.documentFile } : {}),
       ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
+      ...(opts?.studioSection ? { studioSection: opts.studioSection } : {}),
     };
 
     tabs.push(tab);
