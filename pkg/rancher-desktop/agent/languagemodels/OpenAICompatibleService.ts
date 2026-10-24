@@ -415,12 +415,23 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     const textParts: string[] = [];
     let reasoning = '';
     const toolCalls: any[] = [];
+    const citationUrls = new Set<string>();
+
+    for (const citation of Array.isArray(raw.citations) ? raw.citations : []) {
+      const url = typeof citation === 'string' ? citation : citation?.url;
+      if (typeof url === 'string' && /^https?:\/\//.test(url)) citationUrls.add(url);
+    }
 
     for (const item of output) {
       if (item?.type === 'message' && Array.isArray(item.content)) {
         for (const block of item.content) {
           if (block?.type === 'output_text' && typeof block.text === 'string') {
             textParts.push(block.text);
+            for (const annotation of Array.isArray(block.annotations) ? block.annotations : []) {
+              if (annotation?.type === 'url_citation' && typeof annotation.url === 'string') {
+                citationUrls.add(annotation.url);
+              }
+            }
           } else if (block?.type === 'refusal' && typeof block.refusal === 'string') {
             textParts.push(block.refusal);
           }
@@ -440,7 +451,13 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     // Some servers also send the convenience `output_text` aggregate.
-    const content = textParts.join('') || (typeof raw.output_text === 'string' ? raw.output_text : '');
+    let content = textParts.join('') || (typeof raw.output_text === 'string' ? raw.output_text : '');
+    // Responses API inline citations are enabled by default. Also preserve the
+    // complete citation list for proxies that omit inline markdown.
+    const missingCitationUrls = [...citationUrls].filter(url => !content.includes(url));
+    if (missingCitationUrls.length > 0) {
+      content += `${ content.trim() ? '\n\n' : '' }Sources:\n${ missingCitationUrls.map(url => `- ${ url }`).join('\n') }`;
+    }
     const finishReason = toolCalls.length > 0
       ? 'tool_calls'
       : raw.incomplete_details?.reason === 'max_output_tokens' ? 'length' : 'stop';

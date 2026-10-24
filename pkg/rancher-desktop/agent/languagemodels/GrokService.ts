@@ -1,7 +1,8 @@
-import { type LLMServiceConfig } from './BaseLanguageModel';
+import { type ChatMessage, type LLMServiceConfig } from './BaseLanguageModel';
 import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import type { BrokerInjection } from '../../vault-broker';
 
@@ -37,6 +38,12 @@ export const GROK_CLI_USER_AGENT = `grok-pager/${ GROK_CLI_VERSION } grok-shell/
 
 /** Default model on the subscription lane (500k context, Responses backend). */
 export const GROK_SUBSCRIPTION_DEFAULT_MODEL = 'grok-4.5';
+
+/** xAI server-side search tools. These execute remotely and never enter Sulla's ToolExecutor. */
+export const GROK_NATIVE_SEARCH_TOOLS = [
+  { type: 'x_search' },
+  { type: 'web_search' },
+] as const;
 
 /** Context windows advertised by the proxy's /models catalog (2026-07). */
 const GROK_SUBSCRIPTION_CONTEXT_WINDOWS: Record<string, number> = {
@@ -104,16 +111,24 @@ export class GrokService extends OpenAICompatibleService {
       }
     }
 
+    const nativeSearch = await SullaSettingsModel.get('grokNativeSearch', true);
+
     return new GrokService({
       id:      'grok',
       model,
       baseUrl: oauthMode ? GROK_SUBSCRIPTION_BASE_URL : GROK_METERED_BASE_URL,
       apiKey,
       accountId,
-    }, oauthMode);
+    }, oauthMode, nativeSearch !== false);
   }
 
-  constructor(config: LLMServiceConfig, private readonly oauthMode = false) {
+  private nativeSearchSupported = true;
+
+  constructor(
+    config: LLMServiceConfig,
+    private readonly oauthMode = false,
+    private readonly nativeSearchEnabled = true,
+  ) {
     super(config);
   }
 
@@ -136,11 +151,53 @@ export class GrokService extends OpenAICompatibleService {
    * name; the metered lane keeps default name-based detection.
    */
   protected override endpointFor(model: string): string {
-    return this.oauthMode ? '/responses' : super.endpointFor(model);
+    // xAI's current X/Web Search tools are supported by the Responses API,
+    // not the legacy Chat Completions API. Keep the old metered route when
+    // the setting is disabled.
+    return this.oauthMode || this.nativeSearchEnabled ? '/responses' : super.endpointFor(model);
   }
 
   protected override usesResponsesAPIFor(model: string): boolean {
-    return this.oauthMode ? true : super.usesResponsesAPIFor(model);
+    return this.oauthMode || this.nativeSearchEnabled ? true : super.usesResponsesAPIFor(model);
+  }
+
+  /** Merge xAI's remote tools with Sulla function tools without changing their shape. */
+  protected override buildRequestBody(messages: ChatMessage[], options: any): any {
+    const body = super.buildRequestBody(messages, options);
+
+    if (!this.nativeSearchEnabled || !this.nativeSearchSupported) return body;
+
+    const tools = Array.isArray(body.tools) ? [...body.tools] : [];
+    const existingTypes = new Set(tools.map((tool: any) => tool?.type));
+    for (const tool of GROK_NATIVE_SEARCH_TOOLS) {
+      if (!existingTypes.has(tool.type)) tools.push({ ...tool });
+    }
+    body.tools = tools;
+
+    return body;
+  }
+
+  /**
+   * A lane or older model may reject server-side tool declarations. If it
+   * does, retry once without them and
+   * remember that result for this service instance so ordinary chat survives.
+   */
+  protected override async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
+    try {
+      return await super.sendRawRequest(messages, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const rejectedTools = this.nativeSearchEnabled && this.nativeSearchSupported &&
+        /HTTP (?:400|403|404|422):/i.test(message) &&
+        /(?:x_search|web_search|tool|unsupported|unknown)/i.test(message);
+
+      if (!rejectedTools) throw err;
+
+      this.nativeSearchSupported = false;
+      console.warn('[GrokService] Grok endpoint rejected native search tools; retrying without them');
+
+      return super.sendRawRequest(messages, options);
+    }
   }
 
   /**
