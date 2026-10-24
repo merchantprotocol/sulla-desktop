@@ -1,0 +1,170 @@
+name: macOS native components
+
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'scripts/build-macos-native.sh'
+      - 'scripts/package.ts'
+      - 'packaging/**'
+      - 'build/*entitlements*'
+      - '.github/workflows/macos-native.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - 'scripts/build-macos-native.sh'
+      - 'scripts/package.ts'
+      - 'packaging/**'
+      - 'build/*entitlements*'
+      - '.github/workflows/macos-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  unsigned:
+    name: Build unsigned native components
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+      - name: Build unsigned native components
+        run: |
+          set -euo pipefail
+          if [[ ! -x scripts/build-macos-native.sh ]]; then
+            echo "::notice::scripts/build-macos-native.sh is not on this revision; skipping until the native build script lands."
+            exit 0
+          fi
+          scripts/build-macos-native.sh "$RUNNER_TEMP/native"
+
+  signed:
+    name: Build signed native components
+    # Signing only ever runs from main, even for manual runs (the environment also restricts branches).
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    runs-on: macos-15
+    timeout-minutes: 20
+    environment: macos-signing
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Select latest Xcode
+        run: |
+          set -euo pipefail
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+      - name: Check signing inputs
+        id: signing
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          MACOS_PROFILE_APP_BASE64: ${{ secrets.MACOS_PROFILE_APP_BASE64 }}
+          MACOS_PROFILE_FILE_PROVIDER_BASE64: ${{ secrets.MACOS_PROFILE_FILE_PROVIDER_BASE64 }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            MACOS_DEVELOPER_ID_P12_BASE64 \
+            MACOS_DEVELOPER_ID_P12_PASSWORD \
+            MACOS_PROFILE_APP_BASE64 \
+            MACOS_PROFILE_FILE_PROVIDER_BASE64; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::notice::Signing environment is not fully configured; skipping signed build."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [[ ! -x scripts/build-macos-native.sh ]]; then
+            echo "::notice::scripts/build-macos-native.sh is not on this revision; skipping until the native build script lands."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Import certificate and profiles
+        if: steps.signing.outputs.ready == 'true'
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          MACOS_PROFILE_APP_BASE64: ${{ secrets.MACOS_PROFILE_APP_BASE64 }}
+          MACOS_PROFILE_FILE_PROVIDER_BASE64: ${{ secrets.MACOS_PROFILE_FILE_PROVIDER_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN_PATH="$RUNNER_TEMP/macos-signing.keychain-db"
+          P12_PATH="$RUNNER_TEMP/developer-id.p12"
+          PROFILE_APP_PATH="$RUNNER_TEMP/Sulla_Desktop_Developer_ID.provisionprofile"
+          PROFILE_FILE_PROVIDER_PATH="$RUNNER_TEMP/Sulla_Desktop_File_Provider_Developer_ID.provisionprofile"
+          MACOS_KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          printf '%s' "$MACOS_DEVELOPER_ID_P12_BASE64" | base64 -D > "$P12_PATH"
+          printf '%s' "$MACOS_PROFILE_APP_BASE64" | base64 -D > "$PROFILE_APP_PATH"
+          printf '%s' "$MACOS_PROFILE_FILE_PROVIDER_BASE64" | base64 -D > "$PROFILE_FILE_PROVIDER_PATH"
+
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_DEVELOPER_ID_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          rm -f "$P12_PATH"
+      - name: Build signed native components
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          scripts/build-macos-native.sh "$RUNNER_TEMP/native" \
+            --sign "Developer ID Application: JONATHON CALEB BYRDZIAK (946AF7TL74)" \
+            --profile-app "$RUNNER_TEMP/Sulla_Desktop_Developer_ID.provisionprofile" \
+            --profile-fp "$RUNNER_TEMP/Sulla_Desktop_File_Provider_Developer_ID.provisionprofile"
+      - name: Verify signed app extensions
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          found=false
+          while IFS= read -r -d '' extension; do
+            found=true
+            codesign --verify --deep --strict --verbose=2 "$extension"
+          done < <(find "$RUNNER_TEMP/native" -type d -name '*.appex' -print0)
+          if [[ "$found" != true ]]; then
+            echo "::error::The signed build produced no .appex bundles."
+            exit 1
+          fi
+      # - name: Notarize native archive (not enabled yet)
+      #   env:
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_TEAM_ID: 946AF7TL74
+      #     APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      #     # Or use an App Store Connect API key instead.
+      #   run: |
+      #     set -euo pipefail
+      #     xcrun notarytool submit "$ARCHIVE" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+      - name: Upload signed app extensions
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: macos-native-signed
+          path: ${{ runner.temp }}/native/**/*.appex
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          set -euo pipefail
+          security delete-keychain "$RUNNER_TEMP/macos-signing.keychain-db" 2>/dev/null || true
+          rm -f \
+            "$RUNNER_TEMP/developer-id.p12" \
+            "$RUNNER_TEMP/Sulla_Desktop_Developer_ID.provisionprofile" \
+            "$RUNNER_TEMP/Sulla_Desktop_File_Provider_Developer_ID.provisionprofile"
