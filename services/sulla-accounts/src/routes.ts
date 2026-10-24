@@ -19,6 +19,7 @@ import { fetchJson, object, string, stringArray } from './http.js';
 import {
   assignHostedRealmRole,
   createHostedUser,
+  hasHostedRealmRole,
   deleteHostedUser,
   getHostedUser,
   getOtpRequired,
@@ -843,9 +844,14 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
         [identity.issuer, identity.subject],
       );
       const expires = await db.query('SELECT expires_at FROM accounts.web_sessions WHERE id=$1', [identity.id]);
+      const serverAdmin =
+        config.mode === 'server' &&
+        identity.issuer === config.keycloakIssuer &&
+        (await hasHostedRealmRole(config, identity.subject, 'server-admin').catch(() => false));
       response.json({
         authenticated: true,
         identity: { issuer: identity.issuer, subject: identity.subject },
+        serverAdmin,
         organizations: found.rows,
         expiresAt: new Date(expires.rows[0].expires_at).toISOString(),
       });

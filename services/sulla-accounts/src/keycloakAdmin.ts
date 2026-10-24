@@ -162,6 +162,13 @@ export async function assignHostedRealmRole(config: AccountsConfig, userId: stri
   });
 }
 
+export async function hasHostedRealmRole(config: AccountsConfig, userId: string, roleName: string): Promise<boolean> {
+  const base = endpoints(config);
+  const response = await keycloakRequest(config, `${base.users}/${encodeURIComponent(userId)}/role-mappings/realm/composite`);
+  const roles = await response.json();
+  return Array.isArray(roles) && roles.some(role => role?.name === roleName);
+}
+
 export async function listHostedUsers(config: AccountsConfig): Promise<HostedUser[]> {
   const response = await keycloakRequest(config, `${endpoints(config).users}?max=10000`);
   const users = await response.json();
