@@ -61,7 +61,7 @@ final class SullaEnumerator: NSObject, NSFileProviderEnumerator {
 
     private static func offset(_ page: NSFileProviderPage) -> Int {
         let data = page.rawValue
-        if data == NSFileProviderPage.initialPageSortedByName.rawValue || data == NSFileProviderPage.initialPageSortedByDate.rawValue || data.count != 8 { return 0 }
+        if data == NSFileProviderPage.initialPageSortedByName as Data || data == NSFileProviderPage.initialPageSortedByDate as Data || data.count != 8 { return 0 }
         return Int(data.withUnsafeBytes { Int64(bigEndian: $0.loadUnaligned(as: Int64.self)) })
     }
 }
