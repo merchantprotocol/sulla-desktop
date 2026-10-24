@@ -128,8 +128,8 @@ class ConversationSyncServiceImpl {
   }
   /** Explicit "Link all conversations": links every chat, including previously unlinked ones. */
   async linkAll() { await this.linkConversations(false); }
-  private async linkConversations(onlyNew:boolean) {
-    const conversations=await ConversationHistoryModel.getRecent(onlyNew?50:2000,'chat');
+  private async linkConversations(onlyNew:boolean,limit=onlyNew?50:2000) {
+    const conversations=await ConversationHistoryModel.getRecent(limit,'chat');
     for(const conversation of conversations) {
       if(onlyNew&&this.linked.has(conversation.id)) continue;
       try { await this.link(conversation.id,conversation.title||'New conversation','encrypted_bodies'); } catch(err) { console.warn(`[ConversationSync] could not link ${conversation.id}:`,err); }
@@ -138,13 +138,16 @@ class ConversationSyncServiceImpl {
   async unlink(linkId:string,deleteCloudCopy=false){const r=await cloudRequest('DELETE',`/cloud-chat-links/${encodeURIComponent(linkId)}?deleteCloudCopy=${deleteCloudCopy}`);if(!r.ok)throw new Error(`Unlink failed (${r.status})`)}
 
   // ── Sync ─────────────────────────────────────────────────────
+  private historyLinked=false;
   syncNow():Promise<void> {
     if(!this.syncing) this.syncing=this.runSync().finally(()=>{this.syncing=null});
     return this.syncing;
   }
   private async runSync(){
     { const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.conversations)return; }
-    await this.linkConversations(true);
+    // Profile › Conversations links every chat: the first pass after start
+    // covers the whole history, later passes only pick up new chats.
+    await this.linkConversations(true,this.historyLinked?50:2000);this.historyLinked=true;
     const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)return;
     const payload=await r.json() as any;
     for(const link of (payload.data?.conversations??[]) as Link[]){
