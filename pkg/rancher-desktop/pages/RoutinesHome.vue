@@ -606,7 +606,26 @@ async function onImport() {
 .use-cases-mode .topline,
 .use-cases-mode > .scroll-area > .canvas > .ribbon,
 .use-cases-mode .hero { display: none; }
-.use-cases-mode .shell { max-width: none; min-height: 100%; padding: 0; }
+// Use Cases owns the whole tab: no width cap, no padding, full height.
+// The extra .routines-home keeps this ahead of theme overrides such as
+// `.theme-noir .shell`, which would otherwise re-cap the width.
+.routines-home.use-cases-mode > .scroll-area > .canvas {
+  display: flex;
+  flex-direction: column;
+}
+.routines-home.use-cases-mode .shell {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.routines-home.use-cases-mode .shell > :deep(.use-cases) {
+  flex: 1;
+  border-radius: 0;
+}
 
 .scroll-area {
   position: absolute;
