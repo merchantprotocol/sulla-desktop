@@ -251,6 +251,12 @@ class SullaFilesWatcher {
     this.unlockPermitted = true;
     this.unlocking++;
     try { await traceAsync('files ensureUnlocked', () => this.ensureUnlocked()) } finally { this.unlocking-- }
+    // Roots may have tried to enroll while a restarted Files container was
+    // still locked. Retry each stored root once after unlock succeeds.
+    const { getSullaFilesRootRegistry } = await import('./sullaFilesRootRegistry');
+    for (const root of await getSullaFilesRootRegistry().stored()) {
+      await this.enrollRoot(root).catch(error => console.warn(`[SullaFiles] tracked root ${ root.id } re-enrollment after unlock failed:`, error));
+    }
     this.startBackgroundIngest();
     this.useCases.start();
   }
