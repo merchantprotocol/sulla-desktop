@@ -1091,6 +1091,13 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       } catch {
         throw new HttpError(403, 'web_session_required');
       }
+      // On a server, organizations are created by the server admin, never by members.
+      if (config.mode === 'server') {
+        const serverAdmin =
+          identity.issuer === config.keycloakIssuer &&
+          (await hasHostedRealmRole(config, identity.subject, 'server-admin').catch(() => false));
+        if (!serverAdmin) throw new HttpError(403, 'server_admin_required');
+      }
       const input = requestBody(request);
       const id = randomUUID();
       const name = string(input.name, 'name', 120).trim();
