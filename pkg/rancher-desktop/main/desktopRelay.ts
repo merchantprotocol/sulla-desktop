@@ -542,7 +542,7 @@ export class DesktopRelayClient {
 
     if (msg.type === 'companion_request') {
       if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      await this.runCompanionRequest(msg, frame => this.send(frame), false);
+      await this.runCompanionRequest(msg, frame => this.send(frame));
       return;
     }
 
@@ -717,7 +717,7 @@ export class DesktopRelayClient {
       if (!msg.requestId) return;
       const threadId = typeof msg.params?.conversationId === 'string' ? msg.params.conversationId : '';
       if (threadId) this.setSecureRoute(threadId, reply);
-      await this.runCompanionRequest(msg, respond, true);
+      await this.runCompanionRequest(msg, respond);
       return;
     }
     const conversationId = msg.conversationId;
@@ -738,11 +738,8 @@ export class DesktopRelayClient {
     while (this.secureRoutes.size > 500) this.secureRoutes.delete(this.secureRoutes.keys().next().value!);
   }
 
-  private async runCompanionRequest(msg: IncomingMessage, respond: (frame: Record<string, unknown>) => void, approvedDevice: boolean) {
+  private async runCompanionRequest(msg: IncomingMessage, respond: (frame: Record<string, unknown>) => void) {
     try {
-      if ((msg.method === 'chat.heartbeat.read' || msg.method === 'chat.heartbeat.update') && !approvedDevice) {
-        throw new Error('Per-chat heartbeat requires an approved device');
-      }
       const { mobileCompanionRequest } = await import('./mobileCompanion');
       const result = msg.method === 'chat.runs' ? { conversations: [...this.activeConversations] } : await mobileCompanionRequest(msg.method || '', msg.params || {});
       if (msg.method === 'chat.answer' || (msg.method === 'decisions.resolve' && (result as any)?.settled)) {
