@@ -3,6 +3,8 @@
 
 import { createHash } from 'crypto';
 
+import { ByoUsageSync, type ByoUsageSource } from '@pkg/main/cloud/byoUsageSync';
+
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { MeterableUsageModel } from '../database/models/MeterableUsageModel';
 
@@ -370,7 +372,7 @@ export abstract class BaseLanguageModel {
       // Override time_spent with real wall-clock time
       normalized.metadata.time_spent = Math.round(performance.now() - startTime);
       normalized.metadata.model = effectiveModel;
-      await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
+      await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel), options.executionContext, options.nodeName);
 
       // Log the response
       if (convId) {
@@ -494,7 +496,7 @@ export abstract class BaseLanguageModel {
 
         normalized.metadata.time_spent = Math.round(performance.now() - startTime);
         normalized.metadata.model = effectiveModel;
-        await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel));
+        await this.recordMeterableTokens(normalized, options.profileId, options.usageEventId, this.usageEventId(messages, options, effectiveModel), options.executionContext, options.nodeName);
 
         // Log response
         if (convId) {
@@ -549,6 +551,8 @@ export abstract class BaseLanguageModel {
     profileId: string | undefined,
     usageEventId: string | undefined,
     derivedUsageEventId: string,
+    executionContext?: ToolExecutionContext,
+    nodeName?: string,
   ): Promise<void> {
     const quantity = Number(response.metadata.tokens_used ?? 0);
     if (!Number.isFinite(quantity) || quantity <= 0) return;
@@ -572,6 +576,22 @@ export abstract class BaseLanguageModel {
         output_tokens:     response.metadata.completion_tokens,
       },
     }).catch(() => { /* accounting must never break a model turn */ });
+    // API services use the owner's provider credential. Local engines and
+    // subscription CLIs are not BYO-key calls, and Cloud-billed calls never
+    // enter this path, so excluding them prevents duplicate Cloud billing.
+    const provider = this.providerId?.trim().toLowerCase();
+    if (provider && !['ollama', 'claude-code', 'codex', 'cursor', 'opencode'].includes(provider)) {
+      const source: ByoUsageSource = executionContext?.workflow_execution_id ? 'routine' : executionContext?.job_id ? 'agent' : 'chat';
+      const agent = executionContext?.agent_id || nodeName;
+      await ByoUsageSync.enqueue({
+        provider,
+        model: response.metadata.model || this.getModel(),
+        inputTokens: Number(response.metadata.prompt_tokens ?? 0),
+        outputTokens: Number(response.metadata.completion_tokens ?? 0),
+        ...(agent ? { agent } : {}),
+        source,
+      }).catch(error => console.warn(`[${ this.getProviderName() }] BYO usage queue failed:`, error));
+    }
   }
 
   protected usageEventId(messages: ChatMessage[], options: { conversationId?: string }, effectiveModel: string): string {

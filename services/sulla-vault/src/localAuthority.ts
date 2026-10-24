@@ -289,7 +289,12 @@ class StreamingRedactor {
   }
 }
 
+function allowsByoUsageCloudRequest(method: string, path: string): boolean {
+  return method === 'POST' && path === '/usage/byo-events';
+}
+
 export const localAuthorityTestHooks = {
+  allowsByoUsageCloudRequest,
   credentialField,
   operationDigest,
   privateAddress,
@@ -1581,7 +1586,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}$/, ['GET', 'DELETE']],
       [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}\/bundle$/, ['PUT']],
     ];
-    if (!rules.some(([pattern, methods]) => pattern.test(target.pathname) && methods.includes(method))) {
+    if (!allowsByoUsageCloudRequest(method, target.pathname) && !rules.some(([pattern, methods]) => pattern.test(target.pathname) && methods.includes(method))) {
       throw new LocalVaultError('policy_denied', 403, 'Sulla Cloud request path or method is not allowlisted');
     }
     const state = await this.db.query<{ active_account_id: string }>(
