@@ -71,11 +71,14 @@
         class="nav-button"
         @open-dashboard="openDashboard"
       />
-      <preferences-button
+      <button
+        type="button"
         data-testid="preferences-button"
-        class="nav-button"
-        @open-preferences="openPreferences"
-      />
+        class="nav-button btn role-secondary btn-icon-text"
+        @click="openPreferences"
+      >
+        {{ t('nav.userMenu.preferences') }}
+      </button>
     </div>
   </nav>
 </template>
@@ -91,7 +94,6 @@ import NavIconExtension from './NavIconExtension.vue';
 import NavItem from './NavItem.vue';
 
 import DashboardButton from '@pkg/components/DashboardOpen.vue';
-import PreferencesButton from '@pkg/components/Preferences/ButtonOpen.vue';
 import router from '@pkg/entry/router';
 import type { ExtensionState } from '@pkg/store/extensions';
 import { hexEncode } from '@pkg/utils/string-encode';
@@ -107,7 +109,6 @@ export default defineComponent({
     NavItem,
     NavIconExtension,
     DashboardButton,
-    PreferencesButton,
   },
   props: {
     items: {
@@ -175,7 +176,6 @@ export default defineComponent({
         '/PortForwarding':  '↗',
         '/Images':          '◇',
         '/Snapshots':       '◷',
-        '/Troubleshooting': '⌁',
         '/Diagnostics':     '◎',
       } as Record<string, string>)[route] ?? '·';
     },

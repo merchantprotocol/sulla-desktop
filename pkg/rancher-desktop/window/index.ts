@@ -142,8 +142,6 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 
 const mainUrl = `${ webRoot }/agent.html`;
 const dockerDashboardUrl = `${ webRoot }/index.html`;
-const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
-const audioSettingsUrl = `${ webRoot }/audio-settings.html`;
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -272,15 +270,15 @@ export function openMain() {
     Shortcuts.register(
       window,
       { ...CommandOrControl, key: 'L' },
-      () => openLanguageModelSettings(),
-      'open language model settings',
+      () => openPreferences('models'),
+      'open AI model preferences',
     );
 
     Shortcuts.register(
       window,
       { ...CommandOrControl, shift: true, key: 'U' },
-      () => openAudioSettings(),
-      'open audio settings',
+      () => openPreferences('voice'),
+      'open voice and audio preferences',
     );
 
   }
@@ -369,81 +367,6 @@ export function openDockerDashboard() {
         contextIsolation: false,
       },
     });
-
-  app.dock?.show();
-
-  return window;
-}
-
-/**
- * Open the Language Model Settings window; if it is already open, focus it.
- */
-export function openLanguageModelSettings() {
-  console.log('[openLanguageModelSettings] Called.');
-
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.min(Math.trunc(width * 0.7), 1000);
-  const defaultHeight = Math.min(Math.trunc(height * 0.7), 650);
-
-  const window = createWindow(
-    'language-model-settings',
-    languageModelSettingsUrl,
-    {
-      title:          'Sulla Desktop - Language Model Settings',
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      webPreferences: {
-        devTools:         !app.isPackaged,
-        nodeIntegration:  true,
-        contextIsolation: false,
-        webSecurity:      false, // Allow fetch to localhost services
-      },
-    });
-
-  // Clean up window mapping when closed so it can be reopened
-  window.on('closed', () => {
-    delete windowMapping['language-model-settings'];
-  });
-
-  app.dock?.show();
-
-  return window;
-}
-
-/**
- * Open the Audio Settings window; if it is already open, focus it.
- */
-export function openAudioSettings() {
-  console.log('[openAudioSettings] Called.');
-
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.min(Math.trunc(width * 0.7), 1000);
-  const defaultHeight = Math.min(Math.trunc(height * 0.7), 650);
-
-  const window = createWindow(
-    'audio-settings',
-    audioSettingsUrl,
-    {
-      title:          'Sulla Desktop - Audio Settings',
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      webPreferences: {
-        devTools:         !app.isPackaged,
-        nodeIntegration:  true,
-        contextIsolation: false,
-        webSecurity:      false,
-      },
-    });
-
-  window.on('closed', () => {
-    delete windowMapping['audio-settings'];
-  });
 
   app.dock?.show();
 

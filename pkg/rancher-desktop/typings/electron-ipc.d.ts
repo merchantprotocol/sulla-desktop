@@ -115,9 +115,11 @@ export interface IpcMainEvents {
   // #endregion
 
   // #region Preferences
-  'preferences-open':       () => void;
+  'preferences-open':       (section?: string) => void;
   'preferences-close':      () => void;
   'preferences-set-dirty':  (isDirty: boolean) => void;
+  /** Open a tab (vault, integrations…) in the main window from Preferences. */
+  'preferences/open-main-tab': (mode: string) => void;
   'get-debugging-statuses': () => void;
   // #endregion
 

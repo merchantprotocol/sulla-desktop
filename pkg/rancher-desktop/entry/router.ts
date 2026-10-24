@@ -13,7 +13,6 @@ import Preferences from '../pages/Preferences.vue';
 import RoutinesHome from '../pages/RoutinesHome.vue';
 import Snapshots from '../pages/Snapshots.vue';
 import SudoPrompt from '../pages/SudoPrompt.vue';
-import Troubleshooting from '../pages/Troubleshooting.vue';
 import UnmetPrerequisites from '../pages/UnmetPrerequisites.vue';
 import Usage from '../pages/Usage.vue';
 import Volumes from '../pages/Volumes.vue';
@@ -64,9 +63,6 @@ export default createRouter({
     },
     {
       path: '/snapshots/create', component: SnapshotsCreate, name: 'snapshots-create',
-    },
-    {
-      path: '/Troubleshooting', component: Troubleshooting, name: 'Troubleshooting',
     },
     {
       path: '/Diagnostics', component: Diagnostics, name: 'Diagnostics',

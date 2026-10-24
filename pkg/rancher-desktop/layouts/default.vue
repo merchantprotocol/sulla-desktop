@@ -35,7 +35,6 @@
       <PortForwarding v-show="activeMainTab === '/PortForwarding'" />
       <Images v-show="activeMainTab === '/Images'" />
       <Snapshots v-show="activeMainTab === '/Snapshots'" />
-      <Troubleshooting v-show="activeMainTab === '/Troubleshooting'" />
       <Diagnostics v-show="activeMainTab === '/Diagnostics'" />
       <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
       <RouterView v-if="!activeMainTab" />
@@ -67,7 +66,6 @@ import Diagnostics from '@pkg/pages/Diagnostics.vue';
 import Images from '@pkg/pages/Images.vue';
 import PortForwarding from '@pkg/pages/PortForwarding.vue';
 import Snapshots from '@pkg/pages/Snapshots.vue';
-import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
 import Volumes from '@pkg/pages/Volumes.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -85,7 +83,6 @@ export default {
     PortForwarding,
     Images,
     Snapshots,
-    Troubleshooting,
     Diagnostics,
   },
 
@@ -138,9 +135,6 @@ export default {
         },
         '/Snapshots': {
           eyebrow: 'Snapshots', headline: 'A safe point to return to.', lead: 'Capture the current runtime state and restore it when you need to rewind.',
-        },
-        '/Troubleshooting': {
-          eyebrow: 'Troubleshooting', headline: 'When the engine needs attention.', lead: 'Open logs, reset Kubernetes, or return the runtime to a clean state.',
         },
         '/Diagnostics': {
           eyebrow: 'Diagnostics', headline: 'Know what is healthy, and what is not.', lead: 'Run system checks, inspect failures, and mute findings you have reviewed.',

@@ -5,6 +5,5 @@ export const mainRoutes = [
   { route: '/PortForwarding' },
   { route: '/Images' },
   { route: '/Snapshots' },
-  { route: '/Troubleshooting' },
   { route: '/Diagnostics' },
 ];
