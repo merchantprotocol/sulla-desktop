@@ -7,13 +7,17 @@ import { UpstreamClient } from './upstream.js';
 
 export interface AccountsSession {
   authenticated: true;
-  identity: { issuer: string; subject: string; roles?: string[]; realmRoles?: string[] };
+  identity: { issuer: string; subject: string };
+  serverAdmin: boolean;
   organizations: Array<{ id: string; name: string; slug: string; roles: string[]; groups: string[] }>;
   expiresAt: string;
 }
 
 export class AccountsClient extends UpstreamClient {
-  constructor(baseUrl: URL, private readonly adminSecret?: string) { super(baseUrl); }
+  constructor(baseUrl: URL, private readonly adminSecret?: string) {
+    super(baseUrl);
+  }
+
   session(request: Request): Promise<AccountsSession> {
     return this.request('/v1/web/session', { headers: forwardedWebHeaders(request) });
   }

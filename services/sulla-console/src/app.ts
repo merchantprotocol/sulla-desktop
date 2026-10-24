@@ -10,14 +10,32 @@ import type { UpstreamClients } from './clients/index.js';
 import type { ServerLicenseManager } from './license.js';
 import { consoleError, createRouteRegistry } from './routes.js';
 
-export function createApp(db: Database, config: ConsoleConfig, clients: UpstreamClients, license: ServerLicenseManager) {
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "img-src 'self' data:",
+  "style-src 'self'",
+  "script-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'self'",
+  "form-action 'none'",
+].join('; ');
+
+export function createApp(
+  db: Database,
+  config: ConsoleConfig,
+  clients: UpstreamClients,
+  license: ServerLicenseManager,
+) {
   const app = express();
   app.disable('x-powered-by');
   if (config.trustedProxy) app.set('trust proxy', 1);
   app.use((_request, response, next) => {
     response.set({
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': "default-src 'self'; connect-src 'self'; frame-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; form-action 'none'",
+      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'SAMEORIGIN',
@@ -27,11 +45,17 @@ export function createApp(db: Database, config: ConsoleConfig, clients: Upstream
   app.use(express.json({ limit: '1mb', type: 'application/json' }));
   app.get('/healthz', (_request, response) => response.json({ status: 'ok', service: 'sulla-console' }));
   app.get('/readyz', async(_request, response) => {
-    try { await db.query('SELECT 1'); response.json({ ready: true }); }
-    catch { response.status(503).json({ ready: false }); }
+    try {
+      await db.query('SELECT 1');
+      response.json({ ready: true });
+    } catch {
+      response.status(503).json({ ready: false });
+    }
   });
   app.use('/api', requireWebSession(clients), createRouteRegistry({ db, clients, config, license }));
-  if (config.publicDirectory) app.use('/console', express.static(config.publicDirectory, { fallthrough: false, index: 'index.html' }));
+  if (config.publicDirectory) {
+    app.use('/console', express.static(config.publicDirectory, { fallthrough: false, index: 'index.html' }));
+  }
   app.use(consoleError);
   return app;
 }

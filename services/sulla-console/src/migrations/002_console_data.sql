@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS sulla_console.audit_events (
   details jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS conversations_scope_idx ON sulla_console.conversations(organization_id, issuer, subject, updated_at DESC);
+CREATE INDEX IF NOT EXISTS conversations_scope_idx
+  ON sulla_console.conversations(organization_id, issuer, subject, updated_at DESC);
 CREATE INDEX IF NOT EXISTS messages_conversation_idx ON sulla_console.messages(conversation_id, created_at);
 CREATE TABLE IF NOT EXISTS sulla_console.usage_events (
   id uuid PRIMARY KEY,

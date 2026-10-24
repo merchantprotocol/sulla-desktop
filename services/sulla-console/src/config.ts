@@ -33,7 +33,8 @@ function serviceUrl(name: string): URL {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error(`${name} is invalid`);
+  const plain = ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  if (!plain || url.search || url.hash) throw new Error(`${name} is invalid`);
   return url;
 }
 
@@ -48,7 +49,9 @@ export async function loadConfig(): Promise<ConsoleConfig> {
     workflowsUrl: serviceUrl('SULLA_CONSOLE_WORKFLOWS_URL'),
     trustedProxy: process.env.SULLA_CONSOLE_TRUSTED_PROXY === '1',
     publicDirectory: process.env.SULLA_CONSOLE_PUBLIC_DIR ?? '/opt/sulla-console/public',
-    accountsAdminSecret: process.env.SULLA_ACCOUNTS_ADMIN_SECRET_FILE ? await secretText('SULLA_ACCOUNTS_ADMIN_SECRET_FILE') : undefined,
+    accountsAdminSecret: process.env.SULLA_ACCOUNTS_ADMIN_SECRET_FILE
+      ? await secretText('SULLA_ACCOUNTS_ADMIN_SECRET_FILE')
+      : undefined,
     licensePublicKey: process.env.SULLA_SERVER_LICENSE_PUBLIC_KEY ?? '',
     licenseStateFile: process.env.SULLA_SERVER_LICENSE_STATE_FILE ?? '/var/lib/sulla-console/license.json',
     cloudUrl: process.env.SULLA_CLOUD_API_URL ?? 'https://api.sulladesktop.com',

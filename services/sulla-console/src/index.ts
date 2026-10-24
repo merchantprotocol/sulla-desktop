@@ -17,15 +17,19 @@ const license = new ServerLicenseManager({
   stateFile: config.licenseStateFile,
   publicKey: config.licensePublicKey,
   cloudUrl: config.cloudUrl,
+  // Accounts counts active members and pending invitations, the same number it enforces seats on.
   seatCount: async() => {
-    const result = await clients.accounts.admin<{ users?: Array<{ active?: boolean }> }>('/users');
-    return (result.users ?? []).filter(user => user.active !== false).length;
+    const limits = await clients.accounts.admin<{ seatsUsed: number }>('/limits');
+    return limits.seatsUsed;
   },
 });
 await license.init();
-const checkInTimer = setInterval(() => void license.checkIn().catch(error => console.error('[license] check-in failed', error)), 60_000);
+function checkIn(): void {
+  license.checkIn().catch(error => console.error('[license] check-in failed', error));
+}
+const checkInTimer = setInterval(checkIn, 60_000);
 checkInTimer.unref();
-void license.checkIn();
+checkIn();
 const server = createServer(createApp(db, config, clients, license));
 server.listen(config.port, '0.0.0.0', () => console.log(`sulla-console listening on :${config.port}`));
 
