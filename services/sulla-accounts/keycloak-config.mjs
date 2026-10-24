@@ -49,7 +49,7 @@ export function staleKeycloakIds(rows, field, expected) {
 export function buildKeycloakConfig(environment) {
   const membershipAudience = environment.membershipAudience;
   if (!/^[A-Za-z0-9._-]+$/.test(membershipAudience)) throw new Error(`invalid audience ${membershipAudience}`);
-  const resourceAudiences = audiences(environment.resourceAudiences);
+  const resourceAudiences = [...new Set([...audiences(environment.resourceAudiences), 'sulla-console', 'sulla-desktop-enrollment'])];
   if (resourceAudiences.includes(membershipAudience)) throw new Error('membership audience must not also be a resource audience');
 
   const membershipScope = audienceScope(`sulla-audience-${membershipAudience}`, membershipAudience);
@@ -59,7 +59,7 @@ export function buildKeycloakConfig(environment) {
   const clientAttributes = { 'sulla.reconciliation.version': '1' };
 
   return {
-    realm: { realm: environment.realm, enabled: true, registrationAllowed: false, resetPasswordAllowed: true, loginTheme: 'sulla' },
+    realm: { realm: environment.realm, enabled: true, registrationAllowed: false, resetPasswordAllowed: true, loginTheme: 'sulla', eventsEnabled: true, eventsListeners: ['jboss-logging'], enabledEventTypes: ['LOGIN', 'LOGIN_ERROR', 'LOGOUT'] },
     membershipScope,
     resourceScopes,
     nativeClient: {
