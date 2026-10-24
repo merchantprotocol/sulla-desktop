@@ -18,15 +18,17 @@ interface FileRootView {
   activation:    'active' | 'pending-restart' | 'offline';
   removable:     boolean;
 }
+interface FileProviderView { supported:boolean; enabled:boolean; running:boolean; helperPresent:boolean; registered?:boolean; error?:string }
 interface BackupDestination { id:string; kind:'local'|'nas'|'s3'; label:string; status?:{state:'running'|'verified'|'failed';finished_at?:string;error_message?:string} }
 
 export default defineComponent({
   name: 'preferences-body-files',
   data() {
-    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupSubfolder:'', backupEndpoint:'', backupShare:'', backupProtocol:'smb' as 'smb'|'nfs', backupBucket:'', backupRegion:'', backupCredentialId:'', backupPoll:undefined as ReturnType<typeof setInterval>|undefined, rootPoll:undefined as ReturnType<typeof setInterval>|undefined, loading: true, error: '', saving: new Set<string>() };
+    return { roots: [] as FileRootView[], backups:[] as BackupDestination[], backupKind:'local' as 'local'|'nas'|'s3', backupLabel:'', backupSubfolder:'', backupEndpoint:'', backupShare:'', backupProtocol:'smb' as 'smb'|'nfs', backupBucket:'', backupRegion:'', backupCredentialId:'', backupPoll:undefined as ReturnType<typeof setInterval>|undefined, rootPoll:undefined as ReturnType<typeof setInterval>|undefined, fileProvider:undefined as FileProviderView|undefined, fileProviderSaving:false, loading: true, error: '', saving: new Set<string>() };
   },
   async mounted() {
     await this.load();
+    void this.loadFileProvider();
     this.rootPoll=setInterval(()=>{ if(this.roots.some(root=>root.state==='scanning'||root.state==='syncing')) void this.loadRoots() },1_000);
     this.backupPoll=setInterval(()=>{
       if(this.backups.some(destination=>destination.status?.state==='running')) void this.loadBackups();
@@ -34,6 +36,13 @@ export default defineComponent({
   },
   beforeUnmount() { if(this.backupPoll) clearInterval(this.backupPoll); if(this.rootPoll) clearInterval(this.rootPoll) },
   methods: {
+    async loadFileProvider() {
+      try { this.fileProvider=await ipcRenderer.invoke('files-preferences:file-provider-status') } catch(error) { this.error=error instanceof Error?error.message:String(error) }
+    },
+    async setFileProvider(enabled:boolean) {
+      this.fileProviderSaving=true; this.error='';
+      try { this.fileProvider=await ipcRenderer.invoke('files-preferences:set-file-provider',{enabled}) } catch(error) { this.error=error instanceof Error?error.message:String(error) } finally { this.fileProviderSaving=false }
+    },
     async loadRoots() {
       try { this.roots=await ipcRenderer.invoke('files-preferences:list-roots') } catch(error) { this.error=error instanceof Error?error.message:String(error) }
     },
@@ -111,6 +120,15 @@ export default defineComponent({
       >
         Add folder
       </button>
+    </div>
+    <div v-if="fileProvider?.supported" class="files-heading backup-heading">
+      <div>
+        <h3>Finder location</h3>
+        <p class="description">Shows Sulla Files in Finder under Locations (~/Library/CloudStorage). Your Documents folder isn't moved. Only you can turn this on.</p>
+        <p v-if="fileProvider.enabled && fileProvider.registered === false" class="description">Approve Sulla in System Settings → General → Login Items &amp; Extensions → File Provider.</p>
+        <p v-if="fileProvider.error" class="root-error">{{ fileProvider.error }}</p>
+      </div>
+      <button class="btn role-secondary" :disabled="fileProviderSaving || !fileProvider.helperPresent" @click="setFileProvider(!fileProvider.enabled)">{{ fileProvider.enabled ? 'Turn off' : 'Turn on' }}</button>
     </div>
     <div class="files-heading backup-heading"><div><h3>Backups</h3><p class="description">Hourly for 24 hours, daily for 30 days, and weekly for 12 weeks. Snapshots are verified before older copies are pruned.</p></div></div>
     <div class="root-controls backup-add">

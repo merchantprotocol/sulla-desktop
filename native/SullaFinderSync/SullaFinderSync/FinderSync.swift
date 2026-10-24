@@ -4,7 +4,7 @@ import Darwin
 import FinderSync
 
 private let syncAttribute = "io.sulla.files.sync-state"
-private let appGroup = "group.io.sulla.desktop"
+private let appGroup = "946AF7TL74.io.sulla.desktop"
 
 final class FinderSync: FIFinderSync {
     private var watchedRoots: [URL] = []

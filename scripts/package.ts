@@ -200,43 +200,75 @@ class Builder {
     // runs before codesign, not inside afterPack.
     // await this.flipFuses(context);
     await this.writeLinuxDesktopFile(context);
-    await this.buildFinderSyncExtension(context);
-    await this.signFinderSyncExtension(context);
+    await this.buildMacNativeExtensions(context);
   }
 
-  protected async buildFinderSyncExtension(context:AfterPackContext):Promise<void> {
-    if (context.electronPlatformName !== 'darwin') return;
-    const output = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-finder-sync-'));
+  /**
+   * Builds and signs SullaFinderSync.appex, SullaFileProvider.appex and
+   * SullaFileProviderHelper with scripts/build-macos-native.sh, then embeds
+   * them. electron-builder skips Contents/PlugIns and (via signIgnore) the
+   * helper, so these signatures survive; the app seal covers them.
+   */
+  protected async buildMacNativeExtensions(context:AfterPackContext):Promise<void> {
+    const { MacPackager } = await import('app-builder-lib/out/macPackager');
+
+    if (context.electronPlatformName !== 'darwin' || !(context.packager instanceof MacPackager)) return;
+    const { keychainFile } = await context.packager.codeSigningInfo.value;
+    const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
+    const output = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-macos-native-'));
     try {
-      const arch = context.arch === Arch.x64 ? 'x86_64' : 'arm64';
-      await spawnFile('/usr/bin/xcodebuild', [
-        '-project', path.join(process.cwd(), 'native/SullaFinderSync/SullaFinderSync.xcodeproj'),
-        '-target', 'SullaFinderSync', '-configuration', 'Release', '-sdk', 'macosx',
-        `ARCHS=${ arch }`, 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGNING_ALLOWED=NO',
-        `CONFIGURATION_BUILD_DIR=${ output }`,
-      ], { stdio: 'inherit' });
+      const args = [output];
+      if (identity) {
+        args.push('--sign', identity.name || identity.hash!);
+        if (process.env.SULLA_MAC_PROVISIONING_PROFILE_APP) args.push('--profile-app', process.env.SULLA_MAC_PROVISIONING_PROFILE_APP);
+        if (process.env.SULLA_MAC_PROVISIONING_PROFILE_FILE_PROVIDER) args.push('--profile-fp', process.env.SULLA_MAC_PROVISIONING_PROFILE_FILE_PROVIDER);
+      } else {
+        log.warn('No Developer ID identity; native macOS extensions are ad-hoc signed and will not load outside development.');
+      }
+      await spawnFile(path.join(process.cwd(), 'scripts/build-macos-native.sh'), args, {
+        stdio: 'inherit',
+        env:   {
+          ...process.env,
+          SULLA_NATIVE_ARCHS: context.arch === Arch.x64 ? 'x86_64' : context.arch === Arch.universal ? 'arm64 x86_64' : 'arm64',
+          ...(keychainFile ? { SULLA_CODESIGN_KEYCHAIN: keychainFile } : {}),
+        },
+      });
       const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
       const plugins = path.join(appPath, 'Contents', 'PlugIns');
       await fs.promises.mkdir(plugins, { recursive: true });
-      await fs.promises.cp(path.join(output, 'SullaFinderSync.appex'), path.join(plugins, 'SullaFinderSync.appex'), { recursive: true });
+      for (const appex of ['SullaFinderSync.appex', 'SullaFileProvider.appex']) {
+        await fs.promises.cp(path.join(output, appex), path.join(plugins, appex), { recursive: true, verbatimSymlinks: true });
+      }
+      await fs.promises.cp(path.join(output, 'SullaFileProviderHelper'), path.join(appPath, 'Contents', 'MacOS', 'SullaFileProviderHelper'));
     } finally {
       await fs.promises.rm(output, { recursive: true, force: true });
     }
   }
 
-  protected async signFinderSyncExtension(context:AfterPackContext):Promise<void> {
-    const { MacPackager } = await import('app-builder-lib/out/macPackager');
-
-    if (!(context.packager instanceof MacPackager)) return;
-    const { keychainFile } = await context.packager.codeSigningInfo.value;
-    const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
-    if (!identity) throw new Error('Finder Sync packaging could not resolve the Developer ID signing identity.');
-    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
-    const extensionPath = path.join(appPath, 'Contents', 'PlugIns', 'SullaFinderSync.appex');
-    const args = ['--force', '--sign', identity.hash || identity.name, '--timestamp', '--options', 'runtime'];
-    if (keychainFile) args.push('--keychain', keychainFile);
-    args.push('--entitlements', path.join(process.cwd(), 'native/SullaFinderSync/SullaFinderSync/SullaFinderSync.entitlements'), extensionPath);
-    await spawnFile('/usr/bin/codesign', args, { stdio: 'inherit' });
+  /**
+   * With SULLA_MAC_PROVISIONING_PROFILE_APP set, the app embeds that Developer ID
+   * profile and claims its application identifier. Without it the app is signed
+   * exactly as before (app group only; Team-ID-prefixed groups need no profile).
+   */
+  protected async configureMacProvisioning(config:ReadWrite<Configuration>):Promise<void> {
+    const mac = (config.mac ??= {}) as ReadWrite<NonNullable<Configuration['mac']>>;
+    const ignored = mac.signIgnore ? [mac.signIgnore].flat() : [];
+    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$'];
+    const profile = process.env.SULLA_MAC_PROVISIONING_PROFILE_APP?.trim();
+    if (!profile) return;
+    const { stdout } = await spawnFile('/usr/bin/security', ['cms', '-D', '-i', profile], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const decoded = plist.parse(stdout) as Record<string, any>;
+    const teamId = decoded.TeamIdentifier?.[0];
+    const applicationIdentifier = decoded.Entitlements?.['com.apple.application-identifier'];
+    if (typeof teamId !== 'string' || applicationIdentifier !== `${ teamId }.${ config.appId }`) {
+      throw new Error(`SULLA_MAC_PROVISIONING_PROFILE_APP is not a profile for ${ config.appId }`);
+    }
+    const base = plist.parse(await fs.promises.readFile(mac.entitlements ?? 'packaging/entitlements.mac.plist', 'utf-8')) as Record<string, plist.PlistValue>;
+    const entitlements = path.join(buildUtils.distDir, 'entitlements.mac.provisioned.plist');
+    await fs.promises.writeFile(entitlements, plist.build({ ...base, 'com.apple.application-identifier': applicationIdentifier, 'com.apple.developer.team-identifier': teamId }), 'utf-8');
+    mac.entitlements = entitlements;
+    mac.provisioningProfile = profile;
+    log.info({ applicationIdentifier }, 'Embedding the Developer ID provisioning profile in the app');
   }
 
   async package(): Promise<CliOptions> {
@@ -290,6 +322,7 @@ class Builder {
       delete section[key];
     }
 
+    if (electronPlatform === 'mac') await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
 
