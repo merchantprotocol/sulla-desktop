@@ -75,14 +75,6 @@ export function useAccountSettings() {
   const authorizationNotice = ref('');
   let authorizationRefreshArmed = false;
 
-  // Password change
-  const showChangePassword = ref(false);
-  const currentPassword = ref('');
-  const newPassword = ref('');
-  const confirmPassword = ref('');
-  const passwordError = ref('');
-  const passwordSuccess = ref('');
-  const changingPassword = ref(false);
 
   // Vault stats
   const vaultStats = ref({ totalAccounts: 0, integrationTypes: 0 });
@@ -504,46 +496,6 @@ export function useAccountSettings() {
     }
   }
 
-  async function changePassword() {
-    passwordError.value = '';
-    passwordSuccess.value = '';
-
-    if (!currentPassword.value) {
-      passwordError.value = 'Current password is required.';
-      return;
-    }
-    if (newPassword.value.length < 8) {
-      passwordError.value = 'New password must be at least 8 characters.';
-      return;
-    }
-    if (newPassword.value !== confirmPassword.value) {
-      passwordError.value = 'Passwords do not match.';
-      return;
-    }
-
-    changingPassword.value = true;
-    try {
-      // Main verifies the current password and re-wraps the vault key. Stored
-      // credentials and the existing recovery key stay valid.
-      await ipcRenderer.invoke('vault:change-password', {
-        currentPassword: currentPassword.value,
-        newPassword:     newPassword.value,
-      });
-      passwordSuccess.value = 'Master password updated. Your existing recovery key still works.';
-      currentPassword.value = '';
-      newPassword.value = '';
-      confirmPassword.value = '';
-      showChangePassword.value = false;
-    } catch (err) {
-      passwordError.value = String((err as Error)?.message ?? '').includes('VAULT_WRONG_PASSWORD')
-        ? 'Current password is incorrect.'
-        : 'Failed to change password. Please try again.';
-      console.error('[Preferences] Password change failed:', err);
-    } finally {
-      changingPassword.value = false;
-    }
-  }
-
   onMounted(async() => {
     await loadProfile();
     refreshAccounts();
@@ -577,13 +529,6 @@ export function useAccountSettings() {
     discoveredAuthority,
     selectedAudience,
     authorizationNotice,
-    showChangePassword,
-    currentPassword,
-    newPassword,
-    confirmPassword,
-    passwordError,
-    passwordSuccess,
-    changingPassword,
     vaultStats,
     vaultStatsKnown,
     cloudStatus,
@@ -620,6 +565,5 @@ export function useAccountSettings() {
     appleSubmit,
     openAppleInVault,
     signOut,
-    changePassword,
   };
 }

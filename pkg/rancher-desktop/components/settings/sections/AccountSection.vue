@@ -16,9 +16,8 @@ const {
   accountsError, accountsNotice, accountsProfile, accountsDisplayName, accountsConnections,
   accountsMemberships, authorityUrl, authorityError, discoveredAuthority, selectedAudience,
   authorizationNotice, refreshAccounts, saveAccountsProfile, discoverAuthority, cancelAuthority,
-  enrollAuthority, disconnectAccount, authorizeAccount, authorityHost, showChangePassword,
-  currentPassword, newPassword, confirmPassword, passwordError, passwordSuccess, changingPassword,
-  changePassword, vaultStats, vaultStatsKnown, cloudStatus, relayStatus, cloudError, busy,
+  enrollAuthority, disconnectAccount, authorizeAccount, authorityHost, vaultStats, vaultStatsKnown,
+  cloudStatus, relayStatus, cloudError, busy,
   cloudTab, phoneInput, otpSent, otpCode, sendOtp, verifyOtp, resetPhoneFlow, emailInput,
   emailPassword, emailName, emailMode, emailCodeSent, emailCode, sendEmailCode, verifyEmailCode,
   emailSubmit, openAppleInVault, signOut,
@@ -585,56 +584,13 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
         <button
           type="button"
           class="btn sm"
-          @click="showChangePassword = !showChangePassword"
+          disabled
+          title="Coming soon"
         >
-          {{ showChangePassword ? 'Cancel' : 'Change' }}
+          Change
         </button>
+        <span class="soon">Changing it here: coming soon</span>
       </PrefRow>
-      <div
-        v-if="showChangePassword"
-        class="adv"
-      >
-        <PrefRow title="Current password">
-          <input
-            v-model="currentPassword"
-            class="inp"
-            type="password"
-            autocomplete="current-password"
-            aria-label="Current master password"
-          >
-        </PrefRow>
-        <PrefRow
-          title="New password"
-          subtitle="At least 8 characters."
-        >
-          <input
-            v-model="newPassword"
-            class="inp"
-            type="password"
-            autocomplete="new-password"
-            aria-label="New master password"
-          >
-        </PrefRow>
-        <PrefRow title="Confirm new password">
-          <input
-            v-model="confirmPassword"
-            class="inp"
-            type="password"
-            autocomplete="new-password"
-            aria-label="Confirm new master password"
-          >
-        </PrefRow>
-        <PrefRow>
-          <button
-            type="button"
-            class="btn sm pri"
-            :disabled="changingPassword"
-            @click="changePassword"
-          >
-            {{ changingPassword ? 'Changing…' : 'Change master password' }}
-          </button>
-        </PrefRow>
-      </div>
       <PrefRow
         title="Passwords"
         :subtitle="vaultStatsKnown ? `${ vaultStats.totalAccounts } saved` : ''"
@@ -647,13 +603,6 @@ onBeforeUnmount(() => ipcRenderer.removeListener('sulla-cloud-connection:status-
           Open Passwords
         </button>
       </PrefRow>
-      <p
-        v-if="passwordError || passwordSuccess"
-        class="note"
-        :class="{ badc: !!passwordError }"
-      >
-        {{ passwordError || passwordSuccess }}
-      </p>
     </PrefCard>
   </div>
 </template>
