@@ -275,6 +275,39 @@ export class IntegrationValueModel extends BaseModel<IntegrationValueAttributes>
     return this.decryptModels(models.filter(model => LOCAL_METADATA_PROPERTIES.has(model.attributes.property ?? '')));
   }
 
+  /**
+   * Read the pre-container-vault Sulla Cloud record for the one-time Desktop
+   * session handoff. This is deliberately narrower than the normal model
+   * finders: container-vault mode must not become a general secret-egress
+   * path just because an old integration_values row still exists.
+   */
+  static async findLegacySullaCloudSession(): Promise<Record<string, string> | null> {
+    if (typeof process !== 'undefined' && process.type === 'renderer') {
+      throw new Error('Legacy Sulla Cloud session migration is main-process only');
+    }
+    const rows = await this.query(
+      `SELECT "property", "value" FROM "integration_values"
+       WHERE "integration_id" = 'sulla-cloud'
+       ORDER BY "is_default" DESC, "updated_at" DESC`,
+      [],
+    );
+    if (rows.length === 0) return null;
+    const values: Record<string, string> = {};
+    for (const row of rows) {
+      const property = String(row.property ?? '');
+      if (values[property] !== undefined) continue;
+      const value = this.decryptValue(row.value as string);
+      if (value.startsWith(VAULT_PREFIX)) throw new Error('VAULT_LOCKED: legacy Sulla Cloud session is unavailable');
+      values[property] = value;
+    }
+    return values;
+  }
+
+  /** Remove the legacy record only after the container vault accepted it. */
+  static async deleteLegacySullaCloudSession(): Promise<void> {
+    await this.query(`DELETE FROM "integration_values" WHERE "integration_id" = 'sulla-cloud'`, []);
+  }
+
   /** Find all values for an integration across all accounts */
   static async findByIntegration(
     integrationId: string,

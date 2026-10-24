@@ -299,6 +299,7 @@ async function refreshCloudStatus() {
   const prevSignedIn = cloudStatus.value.signedIn;
   try {
     cloudStatus.value = await ipcRenderer.invoke('sulla-cloud:get-status');
+    if (!cloudStatus.value.signedIn && cloudStatus.value.lastError) cloudError.value = cloudStatus.value.lastError;
   } catch (err) {
     console.error('[SullaCloudCard] get-status failed:', err);
   }
