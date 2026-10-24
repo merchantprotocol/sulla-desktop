@@ -24,6 +24,8 @@
     <template v-else-if="name === 'pause'"><path d="M8 5v14M16 5v14"/></template>
     <template v-else-if="name === 'trash'"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></template>
     <template v-else-if="name === 'external'"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5"/></template>
+    <template v-else-if="name === 'pulse'"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></template>
+    <template v-else-if="name === 'usage'"><path d="M4 20V10M10 20V5M16 20v-7M21 20H3"/></template>
     <template v-else-if="name === 'info'"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></template>
     <template v-else><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="m4 7 8 4 8-4M12 11v10"/></template>
   </svg>

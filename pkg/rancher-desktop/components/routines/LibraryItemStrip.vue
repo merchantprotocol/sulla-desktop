@@ -1,0 +1,389 @@
+<template>
+  <div
+    class="strip"
+    :class="`kind-${kind}`"
+    :data-kind="kind"
+    :style="{ '--kind-color': kindColor }"
+  >
+    <div
+      class="icon"
+      :class="`kind-${kind}`"
+    >
+      {{ initials }}
+    </div>
+
+    <div class="body">
+      <div class="top">
+        <span
+          class="kind-badge"
+          :class="`kind-${kind}`"
+        >{{ kindLabel }}</span>
+        <span
+          v-if="item.version"
+          class="chip"
+        >v{{ item.version }}</span>
+        <span class="slug">{{ item.slug }}</span>
+      </div>
+      <div class="title">
+        {{ item.name }}
+      </div>
+      <div
+        v-if="item.description"
+        class="desc"
+      >
+        {{ item.description }}
+      </div>
+      <div
+        v-if="item.meta.length > 0"
+        class="meta"
+      >
+        <span
+          v-for="m in item.meta"
+          :key="m.label"
+          class="chip"
+        >
+          <span class="ml">{{ m.label }}</span>
+          <span class="mv">{{ m.value }}</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="cta">
+      <button
+        v-if="primaryLabel"
+        type="button"
+        class="btn primary"
+        @click="$emit('primary')"
+      >
+        {{ primaryLabel }}
+      </button>
+      <button
+        type="button"
+        class="btn ghost"
+        @click="$emit('view')"
+      >
+        View
+      </button>
+      <button
+        v-if="kind !== 'agents'"
+        type="button"
+        class="btn ghost"
+        @click="$emit('reveal')"
+      >
+        Reveal
+      </button>
+      <button
+        type="button"
+        class="btn ghost"
+        @click="$emit('publish')"
+      >
+        Publish to Marketplace
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+
+import type { LibraryArtifactKind, LibraryItem } from '@pkg/composables/useLibrary';
+import { marketplaceKindInfo, marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
+
+const props = defineProps<{
+  kind:          LibraryArtifactKind;
+  item:          LibraryItem;
+  primaryLabel?: string;
+}>();
+
+defineEmits<{
+  (e: 'primary'): void;
+  (e: 'view'): void;
+  (e: 'reveal'): void;
+  (e: 'publish'): void;
+}>();
+
+const kindLabel = computed(() => marketplaceKindLabel(props.kind === 'routines' ? 'routine' : props.kind));
+const kindColor = computed(() => marketplaceKindInfo(props.kind === 'routines' ? 'routine' : props.kind)?.color ?? '#8a94a6');
+
+const initials = computed(() => {
+  const source = props.item.name || props.item.slug || '??';
+  const words = source.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '??';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+
+  return (words[0][0] + words[1][0]).toUpperCase();
+});
+</script>
+
+<style scoped lang="scss">
+// Raised-card treatment — see MarketplaceStrip for the shared rationale.
+.strip {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 24px;
+  align-items: center;
+  padding: 20px 24px 20px 27px;
+  background: linear-gradient(135deg, rgba(30, 44, 72, 0.92), rgba(20, 32, 54, 0.88));
+  border: 1px solid rgba(168, 192, 220, 0.22);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.strip:hover {
+  border-color: rgba(196, 212, 230, 0.45);
+  background: linear-gradient(135deg, rgba(40, 58, 92, 0.95), rgba(28, 44, 72, 0.92));
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.55),
+    0 0 24px rgba(74, 111, 165, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.strip::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  opacity: 0.55;
+  transition: opacity 0.18s, width 0.18s;
+}
+.strip:hover::before { opacity: 1; width: 4px; }
+.strip::before { background: var(--kind-color); }
+
+.strip::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 24px; right: 24px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196, 212, 230, 0.25), transparent);
+  pointer-events: none;
+}
+
+.icon {
+  width: 56px; height: 56px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.icon { background: color-mix(in srgb, var(--kind-color) 65%, #10182a); }
+
+.body { min-width: 0; }
+.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.kind-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: white;
+}
+.kind-badge { background: color-mix(in srgb, var(--kind-color) 28%, transparent); border-color: var(--kind-color); }
+
+.slug {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--steel-400);
+}
+
+.title {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 19px;
+  color: white;
+  line-height: 1.15;
+  margin-bottom: 4px;
+}
+.desc {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  color: var(--steel-200);
+  line-height: 1.5;
+  margin-bottom: 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid rgba(168, 192, 220, 0.22);
+  color: var(--steel-200);
+  background: rgba(20, 30, 54, 0.4);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chip .ml { color: var(--steel-400); }
+.chip .mv { color: var(--steel-100); }
+
+.cta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+}
+.cta .btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cta .btn.primary {
+  background: linear-gradient(135deg, var(--steel-300), var(--steel-500));
+  color: white;
+  border-color: var(--steel-400);
+}
+.cta .btn.primary:hover { filter: brightness(1.15); }
+.cta .btn.ghost {
+  background: transparent;
+  color: var(--steel-200);
+  border-color: rgba(168, 192, 220, 0.3);
+}
+.cta .btn.ghost:hover { border-color: var(--steel-300); color: white; }
+
+.theme-noir .strip {
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 18px;
+  margin-bottom: 10px;
+  padding: 16px 18px;
+  border-color: var(--nx-hair);
+  border-radius: 17px;
+  background: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 3.5%, transparent);
+  box-shadow: inset 0 1px 0 rgb(from var(--nx-ink) calc(r + 12) calc(g + 10) calc(b + 7) / 0.018);
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.theme-noir .strip::before {
+  left: -1px;
+  top: 14px;
+  bottom: 14px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--nx-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--nx-accent) 60%, transparent);
+  opacity: 0;
+}
+
+.theme-noir .strip::after {
+  display: none;
+}
+
+.theme-noir .strip:hover {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 25%, transparent);
+  background: color-mix(in srgb, var(--nx-accent) 7.5%, transparent);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+}
+
+.theme-noir .strip:hover::before {
+  width: 3px;
+  opacity: 1;
+}
+
+.theme-noir .icon,
+.theme-noir .icon[class*="kind-"] {
+  width: 46px;
+  height: 46px;
+  border-color: color-mix(in srgb, var(--nx-accent-2) 24%, transparent);
+  border-radius: 13px;
+  color: var(--nx-read-1);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--nx-accent-2) 30%, transparent), color-mix(in srgb, var(--nx-accent) 10%, transparent));
+}
+
+.theme-noir .title {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 19px;
+  font-style: normal;
+  color: var(--nx-read-1);
+}
+
+.theme-noir .desc {
+  margin-bottom: 7px;
+  color: var(--nx-read-3);
+}
+
+.theme-noir .kind-badge,
+.theme-noir .chip {
+  border-color: color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 9%, transparent);
+  border-radius: 9px;
+  color: var(--nx-read-4);
+  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / 0.5);
+}
+
+.theme-noir .kind-badge[class*="kind-"] {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 22%, transparent);
+  color: var(--nx-accent-2);
+  background: color-mix(in srgb, var(--nx-accent) 10%, transparent);
+}
+
+.theme-noir .cta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  min-width: 260px;
+}
+
+.theme-noir .cta .btn {
+  border-radius: 16px;
+  transition: transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1), border-color 0.2s, background 0.2s;
+}
+
+.theme-noir .cta .btn:active {
+  transform: scale(0.95);
+}
+
+.theme-noir .cta .btn.primary {
+  border-color: color-mix(in srgb, var(--nx-accent-2) 42%, transparent);
+  background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-accent) 20%, transparent);
+}
+
+@media (max-width: 920px) {
+  .theme-noir .strip {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .theme-noir .cta {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+}
+
+/* Noir Light softens dark-only elevation shadows for paper surfaces. */
+.theme-noir-light .strip:hover {
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--nx-ink) 8%, transparent);
+}
+</style>
