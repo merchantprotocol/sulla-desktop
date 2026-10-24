@@ -82,7 +82,8 @@ export function initSullaMarketplaceEvents(): void {
 
   ipcMainProxy.handle('packages:list-installed', async() => {
     const { listInstalledPackages } = await import('@pkg/main/marketplace/databaseInstaller');
-    return listInstalledPackages();
+    // PackageManifest has no index signature; the IPC type declares manifest as Record<string, unknown>.
+    return await listInstalledPackages() as any;
   });
 
   // ── Browse approved templates ──
