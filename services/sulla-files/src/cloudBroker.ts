@@ -13,9 +13,13 @@ export interface BrokerExecuteOptions {
 }
 
 /** Files sync has its own vault policy with larger limits; every other Cloud path keeps the general one. */
-function brokerOperation(path:string):string {
+function brokerOperation(path:string, method:string):string {
   if (path === '/shares' || path.startsWith('/shares/')) return 'sulla-cloud.shares';
   if (path.startsWith('/files-sync/')) return 'sulla-cloud.files-sync';
+  if (/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}$/.test(path) && method === 'PUT') return 'sulla-cloud.cloud-files.catalog';
+  if (/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests$/.test(path) && method === 'GET') return 'sulla-cloud.cloud-files.requests';
+  if (/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests\/[A-Za-z0-9._~-]{1,200}\/content$/.test(path) && method === 'PUT') return 'sulla-cloud.cloud-files.content';
+  if (/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests\/[A-Za-z0-9._~-]{1,200}\/(?:link|fail)$/.test(path) && method === 'POST') return 'sulla-cloud.cloud-files.result';
   return 'sulla-cloud.api';
 }
 interface BrokerMetadata { activeAccountId?:string; accounts?:Array<{ accountId:string; active?:boolean; connected?:boolean }> }
@@ -61,7 +65,7 @@ export class FilesCloudBroker {
     const binary = body instanceof Uint8Array;
     const requestBody = binary ? Buffer.from(body).toString('base64') : body;
     const responseType = options.responseType ?? 'json';
-    const operation = brokerOperation(path);
+    const operation = brokerOperation(path, method.toUpperCase());
     if (responseType === 'base64' && operation !== 'sulla-cloud.files-sync') throw new Error('Binary responses are limited to Files sync');
     const result = await this.request<{ status:number; headers?:Record<string, string>; body:unknown }>('/v1/broker/execute', {
       method: 'POST', body: JSON.stringify({

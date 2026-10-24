@@ -36,7 +36,7 @@ export const FILES_SYNC_OPERATION = 'sulla-cloud.files-sync';
 
 /** Request and response byte caps for the generic (non-streaming) broker execute path. */
 export function brokerTransferLimits(operation: string): { request: number; response: number } {
-  if (operation === FILES_SYNC_OPERATION) return { request: FILES_SYNC_TRANSFER_BYTES, response: FILES_SYNC_TRANSFER_BYTES };
+  if (operation === FILES_SYNC_OPERATION || operation === 'sulla-cloud.cloud-files.content') return { request: FILES_SYNC_TRANSFER_BYTES, response: FILES_SYNC_TRANSFER_BYTES };
   if (operation === 'provider.transcription') return { request: TRANSCRIPTION_REQUEST_BYTES, response: DEFAULT_TRANSFER_BYTES };
   return { request: DEFAULT_TRANSFER_BYTES, response: DEFAULT_TRANSFER_BYTES };
 }

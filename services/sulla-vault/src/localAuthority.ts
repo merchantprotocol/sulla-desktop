@@ -1551,15 +1551,35 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
       [/^\/desktop-channel\/tickets$/, ['POST']],
       [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
+      [/^\/cloud-runtime\/v1\/device\/(?:workflows|agents)$/, ['PUT']],
+      [/^\/cloud-chat-links$/, ['GET', 'POST']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}$/, ['DELETE']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/deltas$/, ['POST']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results$/, ['GET']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results\/[A-Za-z0-9_-]{1,200}\/ack$/, ['POST']],
+      [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/replies\/[A-Za-z0-9_-]{1,200}\/(?:fail|complete)$/, ['POST']],
+      [/^\/cloud-usecase-installs\/v1\/device-installs\/pending$/, ['GET']],
+      [/^\/cloud-usecase-installs\/v1\/device-installs\/[0-9a-f-]{36}\/report$/, ['POST']],
+      [/^\/cloud-vault-sync\/status$/, ['GET']],
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
+      [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/bundle$/, ['GET']],
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
       [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
-      [/^\/files-sync\/v1\/(?:collections|usage)(?:\/.*)?$/, ['GET', 'POST', 'PUT', 'DELETE']],
-      [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}(?:\/chunks\/[0-9a-f]{64})?$/, ['GET', 'PUT']],
+      [/^\/files-sync\/v1\/collections$/, ['GET']],
+      [/^\/files-sync\/v1\/usage$/, ['GET']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/(?:changes|keys)$/, ['GET']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/keys\/[1-9][0-9]*$/, ['PUT']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['GET']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/uploads$/, ['POST']],
+      [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/commit$/, ['POST']],
+      [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}$/, ['GET']],
+      [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['PUT']],
       [/^\/sync\/(?:push|pull)$/, ['GET', 'POST']],
       [/^\/marketplace\/(?:browse|topics|mine)$/, ['GET']],
       [/^\/marketplace\/submit-manifest$/, ['POST']],
-      [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}(?:\/bundle)?$/, ['GET', 'PUT', 'DELETE']],
+      [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}$/, ['GET', 'DELETE']],
+      [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}\/bundle$/, ['PUT']],
     ];
     if (!rules.some(([pattern, methods]) => pattern.test(target.pathname) && methods.includes(method))) {
       throw new LocalVaultError('policy_denied', 403, 'Sulla Cloud request path or method is not allowlisted');
@@ -2519,7 +2539,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
     const trustedFirstParty = bypassAgentPolicy ||
-      ((input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION) &&
+      ((input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION || input.operation.startsWith('sulla-cloud.cloud-files.')) &&
         input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files');
     if (host && input.operation !== 'item.http' && !trustedFirstParty) {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });

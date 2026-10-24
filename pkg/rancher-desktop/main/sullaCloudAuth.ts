@@ -173,6 +173,11 @@ async function loadSession(): Promise<CloudSession | null> {
 
 type SessionIdentity = Pick<CloudSession, 'userId' | 'activeContractorId' | 'contractors'>;
 
+function activeConnectedAccountId(metadata: Awaited<ReturnType<ReturnType<typeof requireConfiguredCredentialBroker>['integrationMetadata']>>): string | undefined {
+  const active = metadata.accounts.find(account => account.accountId === metadata.activeAccountId && account.connected);
+  return active?.accountId ?? metadata.accounts.find(account => account.active && account.connected)?.accountId;
+}
+
 /**
  * Non-secret session identity. Under the container vault the app may read
  * only account metadata (tokens stay in the vault), so the identity comes
@@ -187,7 +192,7 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
   const status = await broker.status();
   if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Waiting for the vault to be unlocked.', 423);
   const metadata = await broker.integrationMetadata(INTEGRATION_ID);
-  const accountId = metadata.activeAccountId ?? metadata.accounts.find(a => a.active)?.accountId ?? metadata.accounts[0]?.accountId;
+  const accountId = activeConnectedAccountId(metadata);
   if (!accountId) return null;
   // Today userId === activeContractorId (single-contractor server response).
   return { userId: accountId, activeContractorId: accountId, contractors: [] };
@@ -215,8 +220,12 @@ async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> 
   } catch (err) {
     throw new VaultNotReadyError(`vault not ready: ${ (err as Error)?.message || err }`);
   }
-  const accountId = metadata.activeAccountId ?? metadata.accounts.find(a => a.active)?.accountId ?? metadata.accounts[0]?.accountId;
-  if (!accountId) return null;
+  const accountId = activeConnectedAccountId(metadata);
+  if (!accountId) {
+    startupAdoptionError = SIGN_IN_AGAIN;
+    return null;
+  }
+  startupAdoptionError = undefined;
   return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
@@ -854,12 +863,13 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
-    let lastError: string | undefined;
     try {
       await clearSession();
     } catch (err) {
       console.warn('[SullaCloudAuth] Could not remove the Sulla Cloud account:', err);
-      lastError = vaultSessionError(err, 'sign out');
+      // The broker clear is the authority. If it fails, keep Desktop paired
+      // and Cloud services running so both sides still describe one session.
+      return buildStatus(vaultSessionError(err, 'sign out'));
     }
     try {
       // Also disconnect the apple_signin vault record so it no longer shows
@@ -888,7 +898,7 @@ export function initSullaCloudAuthEvents(): void {
     }
     DevicesCloudApi.stopHeartbeat();
     console.log('[SullaCloudAuth] Signed out');
-    return buildStatus(lastError);
+    return buildStatus();
   });
 
   // Auto-pair relay on startup if we have a signed-in session.
