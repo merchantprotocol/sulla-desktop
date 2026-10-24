@@ -52,6 +52,11 @@ function headers(response) {
   response.setHeader('X-Frame-Options', 'SAMEORIGIN');
 }
 
+function isLoopbackRequest(request) {
+  const address = request.socket.remoteAddress ?? '';
+  return address === '::1' || /^127(?:\.\d{1,3}){3}$/.test(address) || /^::ffff:127(?:\.\d{1,3}){3}$/i.test(address);
+}
+
 function proxy(request, response, targetValue, pathname, service) {
   let target, origin, ca;
   try {
@@ -90,6 +95,11 @@ createServer(async(request, response) => {
     await license.evaluate(); response.writeHead(200, { 'Content-Type':'application/json; charset=utf-8' }); response.end(JSON.stringify(license.status())); return;
   }
   if (url.pathname === '/license/activate' && request.method === 'POST') {
+    if (!isLoopbackRequest(request)) {
+      response.writeHead(403, { 'Content-Type':'application/json; charset=utf-8' });
+      response.end('{"error":"forbidden"}');
+      return;
+    }
     let raw=''; request.on('data', chunk => { raw += chunk; if (raw.length > 16384) request.destroy(); }); request.on('end', async() => {
       try { const body=JSON.parse(raw||'{}'); const status=await license.activate(body.licenseKey); void license.checkIn({force:true}); response.writeHead(200, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify(status)); }
       catch(error) { const status=error instanceof LicenseError ? 422 : 400; response.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); response.end(JSON.stringify({error:error.code||'invalid_request',message:error.message})); }
