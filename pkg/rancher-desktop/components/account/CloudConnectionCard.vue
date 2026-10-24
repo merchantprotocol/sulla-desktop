@@ -36,7 +36,7 @@ function openFiles(){const existing=tabs.find(t=>t.mode==='files');const tab=exi
 const showDevices=ref(false);
 const channelLabel=computed(()=>({connected:'Connected',connecting:'Connecting…',error:status.value?.channel?.lastError?`Reconnecting — ${status.value.channel.lastError}`:'Reconnecting',stopped:'Off'} as Record<string,string>)[status.value?.channel?.state??'stopped']);
 function revoke(clientId:string){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:revoke-client',clientId))}
-function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/dashboard/cloud/devices.html')}
+function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/cloud/devices.html')}
 const groups=[
  {title:'Your work',items:[['workflows','↻','Workflows','Definitions, schedules, run history and status'],['skills','✦','Saved Skills','Every skill and its instructions, including drafts'],['customAgents','◉','Custom Agents','Profiles, prompts, models and skills'],['recipes','⬡','Recipes',"What's installed and its status. Containers only run on this Desktop."],['useCases','▦','Use Cases',"Your library and what's switched on"]].map(row)},
  {title:'Activity',items:[['liveAgents','∿','Live agents',"What's running right now"],['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
