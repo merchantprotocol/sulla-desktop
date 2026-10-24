@@ -2,7 +2,7 @@
 <component type="desktop">
   <id>sulla-desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>Apache-2.0 WITH Commons-Clause</project_license>
+  <project_license>LicenseRef-Sulla-Fair-Code-1.0 AND Apache-2.0</project_license>
   <name>Sulla Desktop</name>
   <summary>Sulla AI Agent Autonomy on the desktop</summary>
   <description>

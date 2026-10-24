@@ -20,7 +20,7 @@ Name:       sulla-desktop
 Version:    0
 Release:    0
 Summary:    AI Agent Autonomy on the desktop
-License:    Apache-2.0 WITH Commons-Clause
+License:    LicenseRef-Sulla-Fair-Code-1.0 AND Apache-2.0
 BuildRoot:  %{_tmppath}/%{name}-%{version}-build
 Group:      Development/Tools/Other
 Source0:    %{name}.zip

@@ -9,7 +9,7 @@
       <img src="https://img.shields.io/github/v/release/merchantprotocol/sulla-desktop?label=Latest&color=3d7fa0" alt="Latest Release" />
     </a>
     <a href="LICENSE">
-      <img src="https://img.shields.io/badge/License-Apache%202.0%20%2B%20Commons%20Clause-blue.svg" alt="Apache 2.0 + Commons Clause" />
+      <img src="https://img.shields.io/badge/License-Fair--code-blue.svg" alt="Sulla Fair-Code License" />
     </a>
     <a href="https://github.com/merchantprotocol/sulla-desktop/stargazers">
       <img src="https://img.shields.io/github/stars/merchantprotocol/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
@@ -162,9 +162,11 @@ Sulla runs on your machine, so scheduled work runs while it's on. It prevents sl
 
 ## License
 
-Licensed under Apache 2.0 with the [Commons Clause](LICENSE) restriction. See [LICENSE](LICENSE) for details.
+Sulla is **fair-code**: source-available under the [Sulla Fair-Code License](LICENSE). It is not open source.
 
-**In short:** You can use, modify and fork Sulla Desktop freely, including for internal commercial use. You **cannot** rebrand, white-label or resell it as your own product. See the [Trademark Policy](TRADEMARK.md) for branding requirements.
+**In short:** You can read, run, modify and share Sulla for free for your own company, team or personal use. You **cannot** resell it, rebrand or white-label it, run it as a hosted service for others, charge people to use it, or remove or bypass its license-key checks. Sulla Server is free up to a set number of users; beyond that it needs a paid license key. See the [Trademark Policy](TRADEMARK.md) for branding requirements.
+
+Portions that come from Rancher Desktop remain under the [Apache License 2.0](LICENSES/Apache-2.0.txt). See [NOTICE.md](NOTICE.md).
 
 Original Rancher Desktop copyright: © Rancher Labs, Inc. and contributors.
 
