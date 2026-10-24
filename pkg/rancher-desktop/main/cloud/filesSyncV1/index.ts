@@ -6,12 +6,14 @@ import { isCloudSignedIn } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
 import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection } from './containerClient';
+import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import Logging from '@pkg/utils/logging';
 export { requireHumanFilesSync } from './humanGuard';
 import { requireHumanFilesSync, type FilesSyncCaller } from './humanGuard';
 
 const console=Logging.background;
-const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
+const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000, ENROLLED_KEY='cloudSyncFilesEnrolled';
 class FilesSyncV1Impl {
   private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
   start():void { this.stopped=false; this.schedule(0) }
@@ -37,6 +39,20 @@ class FilesSyncV1Impl {
     const state=DevicesCloudApi.getState(); if(!state.registered||state.revoked)return null;
     const userId=await getCurrentUserId().catch(()=>''); return userId?{userId,deviceId:await getDesktopDeviceId()}:null;
   }
+  // Profile › Files on means every user collection syncs. Each one is switched
+  // on once; a later per-collection "off" in the Files screen is respected.
+  // System areas (logs, training data, Sulla) never leave the machine.
+  private async enrollCollections():Promise<void> {
+    const saved=await SullaSettingsModel.get(ENROLLED_KEY,'[]');
+    const done=new Set<string>(Array.isArray(saved)?saved:JSON.parse(String(saved||'[]')));
+    const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null}>>('/v1/collections');
+    for(const collection of collections){
+      if(collection.system_area||done.has(collection.id))continue;
+      await getSullaFilesClient().json(`/v1/collections/${encodeURIComponent(collection.id)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:true})});
+      await FilesSyncContainer.enable(collection.id,true);
+      done.add(collection.id); await SullaSettingsModel.set(ENROLLED_KEY,JSON.stringify([...done]),'string');
+    }
+  }
   private async relayEscrow():Promise<void> {
     const request=await FilesSyncContainer.escrowRequest();
     const wrapped=await FilesSyncContainer.vaultEscrowKey(request);
@@ -47,6 +63,7 @@ class FilesSyncV1Impl {
     try {
       const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.files){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const who=await this.identity(); if(!who){this.backoff=1_000;this.schedule(IDLE_MS);return}
+      await this.enrollCollections();
       const status=await this.status(); const enabled=status.collections.filter(c=>c.enabled);
       if(!enabled.length){this.backoff=1_000;this.schedule(IDLE_MS);return}
       if(enabled.some(c=>c.status==='needs-vault')) await this.relayEscrow();

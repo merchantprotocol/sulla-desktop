@@ -59,5 +59,5 @@ export async function buildWorkflowRunProjection(executionId: string): Promise<C
 
 export async function pushWorkflowProjection(upload: (path: string, body: unknown) => Promise<void>): Promise<void> {
   const [deviceId, workflows] = await Promise.all([getDesktopDeviceId(), buildWorkflowProjection()]);
-  await upload('/cloud-runtime/v1/device/workflows', { deviceId, workflows });
+  await upload('/cloud-runtime/v1/device/workflows', { deviceId, generatedAt: new Date().toISOString(), workflows });
 }
