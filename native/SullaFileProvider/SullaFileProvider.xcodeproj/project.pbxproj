@@ -1,0 +1,42 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1; classes = {}; objectVersion = 56;
+ objects = {
+  A1 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>";};
+  A2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>";};
+  A3 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>";};
+  A4 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayClient.swift; sourceTree = "<group>";};
+  A5 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
+  A6 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SullaFileProvider.entitlements; sourceTree = "<group>";};
+  A7 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SullaFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR;};
+  A8 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>";};
+  A9 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SullaFileProviderHelper.entitlements; sourceTree = "<group>";};
+  AA = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = SullaFileProviderHelper; sourceTree = BUILT_PRODUCTS_DIR;};
+  B1 = {isa = PBXBuildFile; fileRef = A1;};
+  B2 = {isa = PBXBuildFile; fileRef = A2;};
+  B3 = {isa = PBXBuildFile; fileRef = A3;};
+  B4 = {isa = PBXBuildFile; fileRef = A4;};
+  B5 = {isa = PBXBuildFile; fileRef = A8;};
+  C1 = {isa = PBXGroup; children = (C2, C4, C3); sourceTree = "<group>";};
+  C2 = {isa = PBXGroup; children = (A1, A2, A3, A4, A5, A6); path = SullaFileProvider; sourceTree = "<group>";};
+  C3 = {isa = PBXGroup; children = (A7, AA); name = Products; sourceTree = "<group>";};
+  C4 = {isa = PBXGroup; children = (A8, A9); path = SullaFileProviderHelper; sourceTree = "<group>";};
+  D1 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B1, B2, B3, B4); runOnlyForDeploymentPostprocessing = 0;};
+  D2 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  D3 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  D4 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B5); runOnlyForDeploymentPostprocessing = 0;};
+  D5 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+  E1 = {isa = PBXNativeTarget; buildConfigurationList = G2; buildPhases = (D1,D2,D3); buildRules = (); dependencies = (); name = SullaFileProvider; productName = SullaFileProvider; productReference = A7; productType = "com.apple.product-type.app-extension";};
+  E2 = {isa = PBXNativeTarget; buildConfigurationList = G3; buildPhases = (D4,D5); buildRules = (); dependencies = (); name = SullaFileProviderHelper; productName = SullaFileProviderHelper; productReference = AA; productType = "com.apple.product-type.tool";};
+  F1 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600;}; buildConfigurationList = G1; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en,Base); mainGroup = C1; productRefGroup = C3; projectDirPath = ""; projectRoot = ""; targets = (E1, E2);};
+  G1 = {isa = XCConfigurationList; buildConfigurations = (H1,H2); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  G2 = {isa = XCConfigurationList; buildConfigurations = (I1,I2); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  G3 = {isa = XCConfigurationList; buildConfigurations = (J1,J2); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;};
+  H1 = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = macosx;}; name = Debug;}; H2 = {isa = XCBuildConfiguration; buildSettings = {MACOSX_DEPLOYMENT_TARGET = 13.0; SDKROOT = macosx;}; name = Release;};
+  I1 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; APPLICATION_EXTENSION_API_ONLY = YES; CLANG_ENABLE_MODULES = YES; CODE_SIGN_ENTITLEMENTS = SullaFileProvider/SullaFileProvider.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = SullaFileProvider/Info.plist; MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = io.sulla.desktop.FileProvider; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0;}; name = Debug;};
+  I2 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; APPLICATION_EXTENSION_API_ONLY = YES; CLANG_ENABLE_MODULES = YES; CODE_SIGN_ENTITLEMENTS = SullaFileProvider/SullaFileProvider.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = SullaFileProvider/Info.plist; MACOSX_DEPLOYMENT_TARGET = 13.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = io.sulla.desktop.FileProvider; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0;}; name = Release;};
+  J1 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CODE_SIGN_ENTITLEMENTS = SullaFileProviderHelper/SullaFileProviderHelper.entitlements; CODE_SIGN_STYLE = Automatic; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = io.sulla.desktop.FileProviderHelper; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_VERSION = 5.0;}; name = Debug;};
+  J2 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CODE_SIGN_ENTITLEMENTS = SullaFileProviderHelper/SullaFileProviderHelper.entitlements; CODE_SIGN_STYLE = Automatic; MACOSX_DEPLOYMENT_TARGET = 13.0; PRODUCT_BUNDLE_IDENTIFIER = io.sulla.desktop.FileProviderHelper; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0;}; name = Release;};
+ };
+ rootObject = F1;
+}

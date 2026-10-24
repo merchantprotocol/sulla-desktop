@@ -20,6 +20,7 @@ import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { getSullaFilesWatcher } from './sullaFilesWatcher';
 import { getSullaFilesBackups } from './sullaFilesBackups';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
+import { getSullaFileProvider } from './sullaFileProvider';
 import { FilesSyncV1 } from './cloud/filesSyncV1';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
@@ -545,6 +546,8 @@ function initFilesMediaProtocol():void {
 }
 
 export function initSullaFilesIpc():void {
+  void getSullaFileProvider().start();
+  app.once('will-quit', () => { void getSullaFileProvider().stop() });
   const feeds = new Map<number, FilesChangeFeed>();
   ipcMain.handle('files-ui:watch', (event, collectionId:string) => {
     feeds.get(event.sender.id)?.stop();
@@ -742,6 +745,9 @@ export function initSullaFilesIpc():void {
     return getSullaFilesRootRegistry().update(id, updates);
   });
   ipcMain.handle('files-preferences:remove-root', (_event, id:string) => getSullaFilesRootRegistry().remove(id));
+  // Renderer IPC is the human's surface; agents have no path to this switch.
+  ipcMain.handle('files-preferences:file-provider-status', () => getSullaFileProvider().status());
+  ipcMain.handle('files-preferences:set-file-provider', (_event, input:{ enabled:boolean }) => getSullaFileProvider().setEnabled(input?.enabled === true, { kind: 'human' }));
   // File Manager uses the files-ui namespace; keep the preferences aliases for
   // the standalone Preferences window and existing integrations.
   ipcMain.handle('files-ui:list-roots', () => getSullaFilesRootRegistry().list());

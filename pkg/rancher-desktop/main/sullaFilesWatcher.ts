@@ -13,6 +13,7 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { FINDER_BADGE_ATTRIBUTE, FinderBadgeSync } from './sullaFinderBadges';
 import { SullaFilesSystemIngestJob, type SystemIngestRequest, type SystemIngestStatus } from './sullaFilesSystemIngest';
+import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 
@@ -412,8 +413,10 @@ class SullaFilesWatcher {
   private async configureFinderRoots(paths:string[]):Promise<void>{
     if(process.platform!=='darwin')return;
     try{
-      await spawnFile('/usr/bin/defaults',['write','group.io.sulla.desktop','FilesRoots','-array',...paths]);
-      if(paths[0])await spawnFile('/usr/bin/defaults',['write','group.io.sulla.desktop','FilesRoot',paths[0]]);
+      // The sandboxed Finder extension reads UserDefaults(suiteName:) from the group container, not ~/Library/Preferences.
+      const domain=sullaAppGroupDefaultsDomain();
+      await spawnFile('/usr/bin/defaults',['write',domain,'FilesRoots','-array',...paths]);
+      if(paths[0])await spawnFile('/usr/bin/defaults',['write',domain,'FilesRoot',paths[0]]);
     }catch(error){console.warn('[SullaFiles] Finder extension roots configuration failed:',error)}
   }
 

@@ -531,6 +531,8 @@ export interface IpcMainInvokeEvents {
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;
   'files-preferences:update-root': (input: { id: string; syncMode?: 'local' | 'server'; paused?: boolean; exclusions?: string[] }) => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView;
   'files-preferences:remove-root': (id: string) => void;
+  'files-preferences:file-provider-status': () => import('@pkg/main/sullaFileProvider').FileProviderStatus;
+  'files-preferences:set-file-provider': (input: { enabled: boolean }) => import('@pkg/main/sullaFileProvider').FileProviderStatus;
   'files-ui:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-ui:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;
   'files-ui:remove-root': (id: string) => void;
