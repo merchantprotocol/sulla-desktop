@@ -53,28 +53,34 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
   let userKey = null;
   let pending = new Map(); // token → { writes, head, plain: Map(id → item | null) }
   const keyBuffers = [];
+  // Sulla Server shared collections (read-only for now): what load() received, and the
+  // verified, decrypted items: id → { collectionId, name, record, item }.
+  let shared = { wrappedOrgKey: null, collections: [] };
+  let sharedItems = new Map();
 
   const requireUnlocked = () => {
     if (!userKey) throw new VaultError('locked', 'The vault is locked');
   };
   const requireItem = (id) => {
-    const item = items.get(id);
+    const item = items.get(id) ?? sharedItems.get(id)?.item;
     if (!item) throw new VaultError('not_found', 'That item is not in the vault');
     return item;
   };
 
   function listFields(id, item) {
-    const record = records.get(id);
+    const s = sharedItems.get(id);
+    const record = records.get(id) ?? s?.record;
     return {
       id, name: item.name, type: item.type, username: item.username || '', host: hostOf(item.uris?.[0]?.uri || ''),
-      favorite: !!item.favorite, folder: item.folder || '', agentMode: item.agentPolicy?.mode || 'only_me',
+      favorite: !!item.favorite, folder: s ? s.name : item.folder || '', readOnly: !!s, collection: s?.name || '', agentMode: item.agentPolicy?.mode || 'only_me',
       agentLevel: item.agentPolicy?.level || 'metadata', generation: record?.generation || 0,
     };
   }
 
   function list() {
     requireUnlocked();
-    return [...items].map(([id, item]) => listFields(id, item));
+    const sharedList = [...sharedItems].map(([id, s]) => [id, s.item]);
+    return [...items, ...sharedList].map(([id, item]) => listFields(id, item));
   }
 
   function decryptRecord(record) {
@@ -126,6 +132,10 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
     head = input.head;
     minSeq = Number.isSafeInteger(input.minSeq) ? input.minSeq : 0;
     records = new Map(input.records.map((r) => [r.id, r]));
+    shared = {
+      wrappedOrgKey: input.shared?.wrappedOrgKey ?? null,
+      collections: Array.isArray(input.shared?.collections) ? input.shared.collections : [],
+    };
     return { count: records.size };
   }
 
@@ -161,8 +171,62 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
       if (item) items.set(record.id, item);
       else unreadable++;
     }
-    return { list: list(), seq: head.seq, unreadable };
+    const opened = openShared(key);
+    return { list: list(), seq: head.seq, unreadable: unreadable + opened.unreadable, sharedSeqs: opened.seqs };
   }
+
+  // Verify and decrypt each shared collection the member can read. A collection that fails a
+  // check is left out (counted as unreadable); unverified data is never shown.
+  function openShared(key) {
+    sharedItems = new Map();
+    const seqs = {};
+    if (!shared.wrappedOrgKey || !shared.collections.length) return { unreadable: 0, seqs };
+    let keys;
+    try {
+      keys = env.openCollectionKeys({ bundle, wrappedOrgKey: shared.wrappedOrgKey, collections: shared.collections }, key);
+    } catch {
+      return { unreadable: shared.collections.length, seqs };
+    }
+    let unreadable = 0;
+    for (const c of shared.collections) {
+      const opened = keys.get(c.collectionId);
+      if (!opened) {
+        unreadable++;
+        continue;
+      }
+      keyBuffers.push(opened.key);
+      const recs = Array.isArray(c.records) ? c.records : [];
+      try {
+        if (c.head) {
+          const scope = { vaultId: bundle.vaultId, scope: c.collectionId };
+          env.verifyHead(c.head, opened.key, { ...scope, records: recs, minSeq: Number(c.minSeq) || 0 });
+          for (const r of recs) env.verifyRecord(r, opened.key, scope);
+        } else if (recs.length) {
+          throw new VaultError('state_mismatch', 'Collection records arrived without a head');
+        }
+      } catch {
+        unreadable++;
+        continue;
+      }
+      seqs[c.collectionId] = c.head?.seq ?? 0;
+      for (const r of recs) {
+        if (r.deleted || r.kind !== 'item') continue;
+        let item = null;
+        try {
+          item = validateItem(JSON.parse(env.decryptItem(r.item, opened.key, c.collectionId, r.id)));
+        } catch {
+          item = null;
+        }
+        if (item) sharedItems.set(r.id, { collectionId: c.collectionId, name: opened.name, record: r, item });
+        else unreadable++;
+      }
+    }
+    return { unreadable, seqs };
+  }
+
+  const requireOwn = (id) => {
+    if (id && sharedItems.has(id)) throw new VaultError('read_only', 'Shared collection items are read-only here for now');
+  };
 
   // File-sync roots and verified manifests never leave this worker.
   const fileRoots = new Map(); // collectionId -> { root, keyVersion }
@@ -298,6 +362,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
   /** Full plaintext for the editor (the owner asked to edit this item). */
   function editable(id) {
     requireUnlocked();
+    requireOwn(id);
     return structuredClone(requireItem(id));
   }
 
@@ -313,6 +378,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
   /** Encrypt one item under a fresh item key and stage a commit. */
   function prepareSave({ id = null, item }) {
     requireUnlocked();
+    requireOwn(id);
     const clean = validateItem(structuredClone(item));
     const itemId = id || randomUUID();
     const prior = records.get(itemId);
@@ -325,6 +391,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
 
   function prepareDelete(id) {
     requireUnlocked();
+    requireOwn(id);
     const prior = records.get(id);
     if (!prior || prior.deleted) throw new VaultError('not_found', 'That item is not in the vault');
     const record = env.buildRecord({ vaultId: bundle.vaultId, scope: SCOPE, kind: 'item', id, generation: prior.generation + 1, deleted: true }, userKey);
@@ -401,6 +468,8 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
     keyBuffers.length = 0;
     userKey = null;
     items = new Map();
+    sharedItems = new Map();
+    shared = { wrappedOrgKey: null, collections: [] };
     pending = new Map();
     records = new Map();
     bundle = null;

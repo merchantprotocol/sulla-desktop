@@ -109,12 +109,12 @@ export function createVaultClient({
     } catch { /* storage blocked: rollback detection falls back to first use */ }
   }
 
-  async function fetchRecords(vaultId, since) {
+  async function fetchRecords(vaultId, since, scope = 'personal') {
     const out = [];
     let head = null;
     let cursor = '';
     for (let page = 0; page < 200; page++) {
-      const q = new URLSearchParams({ scope: 'personal', since: String(since) });
+      const q = new URLSearchParams({ scope, since: String(since) });
       if (cursor) q.set('cursor', cursor);
       const res = await http('GET', `/vaults/${encodeURIComponent(vaultId)}/records?${q}`);
       if (head && res.head?.seq !== head.seq) throw new VaultClientError('head_moved', 'The vault changed while loading. Try again.');
@@ -142,10 +142,20 @@ export function createVaultClient({
   /** Fetch the ciphertext before the password is typed. */
   async function prefetch() {
     if (!status?.enabled) throw new VaultClientError('sync_off', 'Vault sync is off');
-    const bundle = await http('GET', `/vaults/${encodeURIComponent(status.vaultId)}/bundle`);
+    // A Sulla Server answers ?include=collections with { bundle, wrappedOrgKey, collections };
+    // Sulla Cloud ignores it and returns the bundle itself.
+    const res = await http('GET', `/vaults/${encodeURIComponent(status.vaultId)}/bundle?include=collections`);
+    const withShared = !!res?.bundle;
+    const bundle = withShared ? res.bundle : res;
+    const collections = [];
+    for (const c of withShared && Array.isArray(res.collections) ? res.collections : []) {
+      const page = c.headSeq > 0 ? await fetchRecords(status.vaultId, 0, c.collectionId) : { records: [], head: null };
+      collections.push({ ...c, records: page.records, head: page.head, minSeq: storedSeq(`${status.vaultId}:${c.collectionId}`) });
+    }
+    const shared = withShared ? { wrappedOrgKey: res.wrappedOrgKey, collections } : null;
     const { records, head } = await fetchRecords(status.vaultId, 0);
     if (!head) throw new VaultClientError('empty', 'The vault has no records yet');
-    await rpc('load', { bundle, records, head, minSeq: storedSeq(status.vaultId) });
+    await rpc('load', { bundle, records, head, minSeq: storedSeq(status.vaultId), shared });
     return { count: records.length };
   }
 
@@ -172,6 +182,7 @@ export function createVaultClient({
     const result = await rpc('unlock', password);
     unlocked = true;
     rememberSeq(status.vaultId, result.seq);
+    for (const [collectionId, seq] of Object.entries(result.sharedSeqs || {})) rememberSeq(`${status.vaultId}:${collectionId}`, seq);
     return result;
   }
 

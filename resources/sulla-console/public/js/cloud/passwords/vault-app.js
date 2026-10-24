@@ -364,7 +364,7 @@ function renderDetail(d) {
   for (const lf of d.legacyFields) f += lf.hidden ? field(d.id, lf.name, '', { secret: true, path: `field:${lf.index}` }) : field(d.id, lf.name, lf.value);
   if (d.notes) f += `<div class="detail-field"><span class="k">Notes</span><span class="v multiline">${esc(d.notes)}</span></div>`;
   const ladderOn = ag ? { metadata: 1, autofill: 2, full: 3 }[p.level] : 0;
-  const ro = paused();
+  const ro = paused() || d.readOnly;
   return `<div id="detail-content"><div class="dhead"><span class="tile xl${tint(d.name)}">${esc(initials(d.name))}</span><div class="grow"><h2 id="detail-name">${esc(d.name)}</h2><div class="small muted">${esc(typeLabel(d.type))}${d.folder ? ` · ${esc(d.folder)}` : ''}</div></div>
       <button class="btn sm" type="button" data-act="edit" ${ro ? 'disabled' : ''}>Edit</button><button class="btn sm" type="button" data-act="delete" title="Delete item" aria-label="Delete item" ${ro ? 'disabled' : ''}>${vism(VP.trash)}</button></div>
     <div class="field-stack">${f || '<div class="honest-state">This item has no fields yet.</div>'}</div>

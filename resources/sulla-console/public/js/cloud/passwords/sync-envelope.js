@@ -295,6 +295,48 @@ export function createSyncEnvelope(sodium) {
     }
   }
 
+  /**
+   * Sulla Server shared collections. The member's org key is sealed to their
+   * key pair; it opens each collection key and name. Returns a Map of
+   * collectionId → { key, name }; a collection whose key doesn't open is left
+   * out. The caller owns the keys and must zero them.
+   */
+  function openCollectionKeys({ bundle, wrappedOrgKey, collections }, userKey) {
+    if (wrappedOrgKey?.version !== 1 || wrappedOrgKey?.algorithm !== 'x25519-sealed-box' || typeof wrappedOrgKey?.ciphertext !== 'string') {
+      throw new EnvelopeError('envelope_shape', 'Organization key envelope is malformed');
+    }
+    const privateKey = open(bundle.encryptedPrivateKey, userKey, 'sulla:user-private-key:v1');
+    let orgKey;
+    try {
+      orgKey = sodium.crypto_box_seal_open(unb64(wrappedOrgKey.ciphertext), unb64(bundle.publicKey), privateKey);
+    } catch {
+      throw new EnvelopeError('decrypt_failed', 'The organization key could not be opened');
+    } finally {
+      privateKey.fill(0);
+    }
+    const out = new Map();
+    try {
+      for (const c of collections) {
+        let key;
+        try {
+          key = open(c.wrappedCollectionKey, orgKey, 'sulla:collection-key:v1');
+        } catch {
+          continue;
+        }
+        let name = 'Shared collection';
+        try {
+          name = dec.decode(open(c.encryptedName, orgKey, 'sulla:collection-name:v1'));
+        } catch {
+          // keep the generic name
+        }
+        out.set(c.collectionId, { key, name });
+      }
+    } finally {
+      orgKey.fill(0);
+    }
+    return out;
+  }
+
   function contentHash(record) {
     if (record.deleted) return '';
     return sha256(record.kind === 'item' ? record.item : record.encryptedName);
@@ -412,7 +454,7 @@ export function createSyncEnvelope(sodium) {
   }
 
   return {
-    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey,
+    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey, openCollectionKeys,
     buildBundle, verifyBundle, buildRecord, verifyRecord, stateHash, buildHead, verifyHead,
     encryptItem, decryptItem,
     encryptFolderName: (name, ownerKey, ownerId, folderId) => seal(enc.encode(name), ownerKey, folderAad(ownerId, folderId)),

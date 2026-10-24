@@ -186,7 +186,8 @@ function vaultPage(html) {
   let out = html.replace('{{SULLA_CONSOLE_URL}}', consoleUrl);
   if (args.mock) {
     const mock = '<script src="/vault-dev/mock-api.js"></script>\n'
-      + '<script src="/vault-dev/vault-fixture.js"></script>\n';
+      + '<script src="/vault-dev/vault-fixture.js"></script>\n'
+      + '<script src="/vault-dev/vault-shared-fixture.js"></script>\n';
     const meta = '<meta name="sulla-server-host" content="vault.sulla.northwind.co">\n';
     const first = '<script src="/js/cloud/passwords/tt-policy.js"';
     out = out.replace(first, `${meta}${mock}${first}`);

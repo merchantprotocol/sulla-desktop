@@ -655,9 +655,27 @@
     return null;
   }
 
+  // ?vault=shared on the vault page: the member also reads shared collections
+  // (vault-shared-fixture.js), the way a Sulla Server answers ?include=collections.
+  const SHARED = new URLSearchParams(location.search).get('vault') === 'shared';
+
+  function sharedRoute(path, params) {
+    const fx = window.SullaVaultFixture;
+    const sx = window.SullaVaultSharedFixture;
+    const vaultPath = `/cloud-vault-sync/vaults/${fx.bundle.vaultId}`;
+    if (path === `${vaultPath}/bundle` && params.get('include') === 'collections') {
+      const collections = sx.collections.map(({ records: _r, head: _h, ...c }) => c);
+      return ok({ bundle: fx.bundle, wrappedOrgKey: sx.wrappedOrgKey, collections });
+    }
+    const scope = params.get('scope');
+    const c = sx.collections.find((x) => x.collectionId === scope);
+    if (path === `${vaultPath}/records` && c) return ok({ head: c.head, records: c.records, nextCursor: null });
+    return null;
+  }
+
   // Vault origin endpoints, answered same-origin (vault.html only).
   function vaultRoute(method, path, params, body) {
-    const early = ENROLL ? enrollRoute(method, path, body) : null;
+    const early = (ENROLL ? enrollRoute(method, path, body) : null) || (SHARED ? sharedRoute(path, params) : null);
     if (early) return early;
     const fx = window.SullaVaultFixture;
     const org = currentOrg();
