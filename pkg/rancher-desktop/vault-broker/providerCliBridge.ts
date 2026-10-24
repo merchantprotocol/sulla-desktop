@@ -5,11 +5,12 @@ import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from './index';
 
-import Logging from '@pkg/utils/logging';
-
 import type { BrokerInjection, ToolExecutionContext, LocalVaultBrokerClient } from './index';
 
-const console = Logging.background;
+// This module is also loaded by the minimal sulla-tools image, which deliberately
+// does not ship Desktop's Electron-backed logging stack. Keep bridge diagnostics on
+// the process console so both runtimes can load the same module.
+const console = globalThis.console;
 
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const SAFE_REQUEST_HEADERS = new Set([
