@@ -13,7 +13,7 @@ index d238f62ab8dd17ea7a30ebb0e5475a40a3d47c6a..5c3c201c96f1cb88e707cae97453fe58
  /* Boot curtain: shown until auth resolves so the shell never flashes empty data. */
  .boot { position: fixed; inset: 0; display: grid; place-items: center; background: var(--paper); z-index: 40; }
 diff --git a/js/cloud/shell/shell.js b/js/cloud/shell/shell.js
-index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b2f1960a3 100644
+index 8dee261877d7902d8d9c1710158405b476c814f7..3411da837a24eb9b1d616f45c42fe6ad1c0f0de1 100644
 --- a/js/cloud/shell/shell.js
 +++ b/js/cloud/shell/shell.js
 @@ -1,4 +1,4 @@
@@ -22,15 +22,23 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
  //
  // A page is plain HTML: <body data-route="files"> plus these scripts. The
  // shell signs the user in, resolves the organization, draws the sidebar and
-@@ -23,6 +23,7 @@
+@@ -23,6 +23,15 @@
    const states = window.CloudStates;
    const ic = (name) => window.CloudIcons.get(name);
    const $ = (sel, root = document) => root.querySelector(sel);
 +  const serverHost = () => document.querySelector('meta[name="sulla-server-host"]')?.content || location.host;
++  // Data colours arrive as data-bg and are set through CSSOM, which a style-src 'self' policy allows.
++  const paint = (el) => {
++    if (el.dataset?.bg) el.style.background = el.dataset.bg;
++    el.querySelectorAll?.('[data-bg]').forEach((x) => { x.style.background = x.dataset.bg; });
++  };
++  new MutationObserver((changes) => changes.forEach((c) => c.addedNodes.forEach((n) => {
++    if (n.nodeType === 1) paint(n);
++  }))).observe(document.documentElement, { childList: true, subtree: true });
  
    function esc(value) {
      return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-@@ -47,13 +48,13 @@
+@@ -47,13 +56,13 @@
    const ROUTES = {
      home: { nav: 'home', title: 'Home', soon: ['Devices online and running agents', 'Recent chats, workflow runs and files', 'Shared links and vault sync status'] },
      chat: { nav: 'chat', title: 'Chat', soon: ['Cloud chats and chats you link from Sulla Desktop', 'Where each reply runs, with a Runs on picker', 'Linking is opt-in; nothing uploads until you turn it on'] },
@@ -47,7 +55,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      skills: { nav: 'use-cases', title: 'Saved Skills' },
      'custom-agents': { nav: 'use-cases', title: 'Custom Agents' },
      recipes: { nav: 'use-cases', title: 'Recipes' },
-@@ -62,6 +63,7 @@
+@@ -62,6 +71,7 @@
      devices: { nav: 'home', title: 'Devices', crumbs: [{ label: 'Home', href: 'index.html' }, { label: 'Devices' }] },
      account: { title: 'Account settings' },
      'org-settings': { title: 'Organization settings' },
@@ -55,7 +63,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      'not-found': { title: 'Page not found' },
    };
  
-@@ -82,7 +84,7 @@
+@@ -82,7 +92,7 @@
    const SUBNAV = {
      files: [
        { title: 'Browse', items: [
@@ -64,7 +72,25 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
          { id: 'shared', label: 'Shared', icon: 'share', href: 'files.html#sec=shared' },
          { id: 'recent', label: 'Recent', icon: 'clock', href: 'files.html#sec=recent' },
          { id: 'starred', label: 'Starred', icon: 'star', href: 'files.html#sec=starred' },
-@@ -197,11 +199,29 @@
+@@ -144,7 +154,7 @@
+   // ── Rendering ─────────────────────────────────────────────────────────
+   function orgAvatar(org, extra = '') {
+     const initials = String(org?.name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+-    const color = /^#[0-9a-f]{3,8}$/i.test(org?.color || '') ? ` style="background:${org.color}"` : '';
++    const color = /^#[0-9a-f]{3,8}$/i.test(org?.color || '') ? ` data-bg="${org.color}"` : '';
+     // No team colour set: pick one of the mockup's avatar gradients, stable per org id.
+     const hash = [...String(org?.id || '')].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 0);
+     const tone = ['a', 'd', 'p', 'm'][hash % 4];
+@@ -171,7 +181,7 @@
+       if (g.title) h += `<div class="sg-h">${esc(g.title)}</div>`;
+       (g.items || []).forEach((it) => {
+         const on = typeof it.active === 'function' ? it.active() : (it.active !== undefined ? it.active : current === it.id);
+-        const glyph = it.dot ? `<span class="tdot" style="background:${esc(it.dot)}"></span>` : ic(it.icon || 'note');
++        const glyph = it.dot ? `<span class="tdot" data-bg="${esc(it.dot)}"></span>` : ic(it.icon || 'note');
+         h += `<a href="${esc(it.href || '#')}" class="sub${on ? ' on' : ''}" title="${esc(it.label)}" aria-label="${esc(it.label)}"${on ? ' aria-current="page"' : ''}><span class="sv">${glyph}</span><span>${esc(it.label)}</span>${countHtml({ value: it.count, kind: it.countKind })}</a>`;
+       });
+     });
+@@ -197,11 +207,29 @@
        { group: 'Danger zone' },
        { id: 'danger', label: 'Danger zone', icon: 'alert', danger: true },
      ],
@@ -95,7 +121,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
    }
  
    function normalizedPagePath(value) {
-@@ -228,11 +248,14 @@
+@@ -228,11 +256,14 @@
      const profile = api.profile() || {};
      const org = api.activeOrg();
      const from = settingsFrom();
@@ -112,7 +138,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      } else {
        h += `<div class="brand"><div class="mark">${ic('building')}</div><div><b>Organization settings</b><span>Scoped to this organization</span></div></div>`;
        h += `<button class="orgbtn" id="settingsOrgBtn" type="button" aria-haspopup="menu">${orgAvatar(org)}<span class="t"><b>${esc(org?.name || 'Organization')}</b><small>${esc(cap(org?.role || 'member'))}</small></span><span class="chev">${ic('chevDown')}</span></button>`;
-@@ -277,8 +300,8 @@
+@@ -277,8 +308,8 @@
        box.innerHTML = '<div class="navnote">Devices could not load.</div>';
        return;
      }
@@ -123,7 +149,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      const cutoff = Date.now() - 30 * 86400000;
      const older = state.devices.filter((d) => { const t = parseDate(d.lastSeenAt)?.getTime(); return !d.online && t && t < cutoff; });
      h += state.devices.filter((d) => !older.includes(d)).map((d) => `<a class="devline ${d.online ? '' : 'off'}" href="devices.html#id=${encodeURIComponent(d.id)}" title="${esc(`${d.name} · ${d.online ? 'Online' : `Last seen ${localWhen(d.lastSeenAt)}`}`)}" aria-label="${esc(`${d.name} · ${d.online ? 'Online' : 'Offline'}`)}"><span class="sv">${ic(deviceIcon(d))}</span><span class="n">${esc(d.name)}</span><span class="dot ${d.online ? '' : 'off'}"></span></a>`).join('');
-@@ -315,7 +338,7 @@
+@@ -315,7 +346,7 @@
      const route = ROUTES[state.route];
      const settingsItem = state.settings ? (SETTINGS_NAV[state.settings] || []).find((item) => item.id === state.settingsActive) : null;
      const trail = state.settings
@@ -132,7 +158,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        : (state.crumbs || route.crumbs || [{ label: route.title }]);
      let h = !state.settings && org ? `<a class="c" href="organizations.html">${esc(org.name)}</a><span>›</span>` : '';
      trail.forEach((c, i) => {
-@@ -323,7 +346,7 @@
+@@ -323,7 +354,7 @@
        h += last ? `<b>${esc(c.label)}</b>` : `<a class="c" href="${esc(c.href || '#')}">${esc(c.label)}</a><span>›</span>`;
      });
      $('#crumbs').innerHTML = h;
@@ -141,7 +167,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
    }
  
    function renderOrgPop() {
-@@ -352,7 +375,7 @@
+@@ -352,7 +383,7 @@
    function themeBoxHtml() {
      const opts = window.CloudTheme.SCHEMES.map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
      return `<div class="themebox" title="Theme: the same token sets Sulla Desktop ships">
@@ -150,7 +176,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        <div class="seg" role="group" aria-label="Mode"><button type="button" data-mode="light"><span class="bi">${ic('sun')}</span>Light</button><button type="button" data-mode="dark"><span class="bi">${ic('moon')}</span>Dark</button></div>
      </div>`;
    }
-@@ -375,8 +398,8 @@
+@@ -375,8 +406,8 @@
    // ── Layout ────────────────────────────────────────────────────────────
    function shellHtml() {
      return `<div class="app${state.settings ? ' in-settings' : ''}" id="app">
@@ -161,7 +187,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
          <button class="orgbtn" id="orgBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="orgPop"></button>
          <div id="navItems"></div>
          <div class="sep"></div>
-@@ -401,7 +424,7 @@
+@@ -401,7 +432,7 @@
  
    // ── Command palette ───────────────────────────────────────────────────
    function commandItems() {
@@ -170,7 +196,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      const devices = Array.isArray(state.devices) ? state.devices.map((device) => ({
        id: `device-${device.id}`, label: device.name, icon: deviceIcon(device),
        href: `devices.html#id=${encodeURIComponent(device.id)}`, group: 'Devices',
-@@ -454,7 +477,7 @@
+@@ -454,7 +485,7 @@
      if (state.route !== 'files') return false;
      const section = new URLSearchParams(location.hash.replace(/^#/, '')).get('sec');
      const copy = section === 'starred'
@@ -179,7 +205,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        : section === 'agent'
          ? { title: 'Agent files', icon: 'agent', body: 'Files your agents create will appear here once your Desktop syncs them.' }
          : null;
-@@ -503,8 +526,7 @@
+@@ -503,8 +534,7 @@
        <button class="ln" type="button" data-settings-href="account.html#st=notifications"><span>${ic('bell')}</span>Notifications</button><div class="ms"></div>
        <button class="ln" type="button" data-settings-href="organization-settings.html#st=general"><span>${ic('building')}</span>Organization settings<span class="tr">${esc(org?.name || '')}</span></button>
        <button class="ln" type="button" data-href="organizations.html"><span>${ic('building')}</span>Switch organization<span class="tr">${api.orgs().length}</span></button>
@@ -189,7 +215,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        <button class="ln" type="button" data-mode="${dark ? 'light' : 'dark'}"><span>${ic(dark ? 'sun' : 'moon')}</span>${dark ? 'Light' : 'Dark'} mode<span class="tr">${dark ? 'Dark' : 'Light'}</span></button><div class="ms"></div>
        <button class="ln danger" type="button" data-signout><span>${ic('close')}</span>Sign out</button>`;
    }
-@@ -573,7 +595,7 @@
+@@ -573,7 +603,7 @@
      states.empty(body, {
        icon: NAV.find((n) => n.id === route.nav)?.icon || 'note',
        title: 'Not connected yet',
@@ -198,7 +224,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      });
      const list = document.createElement('ul');
      route.soon.forEach((line) => {
-@@ -602,7 +624,7 @@
+@@ -602,7 +632,7 @@
      states.empty(box, {
        icon: 'building',
        title: 'You are not in an organization yet',
@@ -207,7 +233,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        actions: [{ label: 'Create organization', primary: true, onClick: () => showCreateOrg(box) }],
      });
    }
-@@ -633,23 +655,20 @@
+@@ -633,23 +663,20 @@
  
    // ── Sign in ───────────────────────────────────────────────────────────
    function renderSignIn(message) {
@@ -236,7 +262,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        ${themeBoxHtml()}
      </div></div>
      <div class="toast" id="toast" role="status" aria-live="polite"><span class="dot"></span><span id="toastMsg"></span></div>`;
-@@ -742,7 +761,6 @@
+@@ -742,7 +769,6 @@
        }
      });
      draw();
@@ -244,7 +270,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
    }
  
    // ── Toast ─────────────────────────────────────────────────────────────
-@@ -773,7 +791,7 @@
+@@ -773,7 +799,7 @@
        if (t.dataset.settingsHref) { rememberSettingsFrom(); const next = new URL(t.dataset.settingsHref, location.href); if (normalizedPagePath(next.href) === normalizedPagePath(location.href)) location.hash = next.hash; else location.href = t.dataset.settingsHref; return; }
        if (t.dataset.href) { location.href = t.dataset.href; return; }
        if (t.hasAttribute('data-signout')) {
@@ -253,7 +279,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
          return;
        }
        if (t.dataset.mode) window.CloudTheme.set({ mode: t.dataset.mode });
-@@ -825,7 +843,7 @@
+@@ -825,7 +851,7 @@
  
      const curtain = document.createElement('div');
      curtain.className = 'boot';
@@ -262,7 +288,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
      document.body.appendChild(curtain);
  
      let needsOrg = false;
-@@ -837,7 +855,7 @@
+@@ -837,7 +863,7 @@
      } catch (error) {
        curtain.remove();
        if (error?.status === 401 || !api.isSignedIn()) { renderSignIn('Your session ended. Sign in again.'); return; }
@@ -271,7 +297,7 @@ index 8dee261877d7902d8d9c1710158405b476c814f7..49585a83b04549871923dee29aff321b
        return;
      }
  
-@@ -912,7 +930,7 @@
+@@ -912,7 +938,7 @@
      // deferred script after shell.js is fine).
      screen(def) {
        state.settings = def?.settings || null;

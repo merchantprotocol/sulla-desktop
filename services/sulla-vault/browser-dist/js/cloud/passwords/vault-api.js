@@ -16,7 +16,7 @@
   const meta = (name) => document.querySelector(`meta[name="${name}"]`)?.content || '';
   const configured = meta('sulla-dashboard-origin');
   // Always ends in /, so relative paths stay under the console.
-  const DASHBOARD = (configured && !configured.startsWith('{{')
+  const DASHBOARD = (/^https?:\/\//.test(configured)
     ? configured
     : `${location.protocol}//${location.host.replace(/^vault\./, '')}/console`).replace(/\/?$/, '/');
 

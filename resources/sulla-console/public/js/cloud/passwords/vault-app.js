@@ -168,7 +168,7 @@ async function pollStatus() {
     if (error.status === 401) { await client.lock(); window.VaultOrigin.toDashboard(); }
     return;
   }
-  if (!next.enabled) return lock('The vault was deleted from this server.');
+  if (!next.enabled) return lock(next.setup === 'rewrap' ? 'Your vault password changed. Unlock again with the new one.' : 'The vault was deleted from this server.');
   if (next.vaultId !== before?.vaultId || next.bundleGeneration !== before?.bundleGeneration || next.epoch !== before?.epoch) {
     return lock('Your master password or vault keys changed on Sulla Desktop. Unlock again with the current password.');
   }
@@ -198,7 +198,8 @@ async function open() {
   render();
   try {
     const status = await client.refreshStatus();
-    if (!status.enabled) { ui.phase = 'off'; render(); return; }
+    ui.setup = status.enabled ? null : status.setup || null;
+    if (!status.enabled) { ui.phase = ui.setup ? 'setup' : 'off'; render(); return; }
     await client.prefetch();
     ui.phase = 'locked';
   } catch (error) {
@@ -225,7 +226,8 @@ async function unlock(form) {
   form.querySelector('button[type=submit]').disabled = true;
   form.querySelector('button[type=submit]').textContent = 'Unlocking…';
   try {
-    const result = await client.unlock(password);
+    const result = ui.setup ? await client.enroll(password) : await client.unlock(password);
+    ui.setup = null;
     ui.fails = 0;
     ui.list = result.list;
     ui.phase = 'unlocked';
@@ -235,7 +237,7 @@ async function unlock(form) {
     pollTimer = setInterval(pollStatus, STATUS_POLL_MS);
     render();
   } catch (error) {
-    ui.phase = 'locked';
+    ui.phase = ui.setup ? 'setup' : 'locked';
     if (error.code === 'wrong_password') {
       ui.fails += 1;
       if (ui.fails >= MAX_FAILS) { ui.backoffUntil = Date.now() + BACKOFF_MS; ui.fails = 0; }
@@ -245,7 +247,7 @@ async function unlock(form) {
       return;
     }
     failIntegrity(error);
-    if (ui.phase === 'locked') render();
+    if (ui.phase === 'locked' || ui.phase === 'setup') render();
   }
 }
 
@@ -269,8 +271,8 @@ function renderLocked() {
   const s = client.status() || {};
   const files = route().vv === 'files';
   const wait = Date.now() < ui.backoffUntil;
-  return `<div class="vc"><section class="unlock-wrap"><div class="unlock-card card"><p class="eyebrow">Sulla Server ${files ? '· Files backup' : 'vault'} · ${esc(ui.ctx.org?.name || '')}</p><h1 class="title">${files ? 'Unlock your encrypted Files backup' : 'Unlock your vault'}</h1>
-    <p class="lead">${files ? 'Use your vault master password to open the encrypted Files backup. The password stays inside this browser tab.' : 'Your password stays inside this browser tab. Sulla Server and agents never receive it.'}</p>
+  return `<div class="vc"><section class="unlock-wrap"><div class="unlock-card card"><p class="eyebrow">Sulla Server ${files ? '· Files backup' : 'vault'} · ${esc(ui.ctx.org?.name || '')}</p><h1 class="title">${files ? 'Unlock your encrypted Files backup' : ui.setup === 'enroll' ? 'Set up your vault' : ui.setup === 'rewrap' ? 'Your vault password changed' : 'Unlock your vault'}</h1>
+    <p class="lead">${files ? 'Use your vault master password to open the encrypted Files backup. The password stays inside this browser tab.' : ui.setup ? 'Enter your vault unlock password. This browser opens your keys and signs your vault; the password never leaves this tab.' : 'Your password stays inside this browser tab. Sulla Server and agents never receive it.'}</p>
     ${ui.message ? `<div class="notice">${esc(ui.message)}</div>` : ''}
     ${s.syncPaused ? '<div class="notice">Sync is paused on Sulla Desktop. You can view items here, but edits are off until it is turned back on.</div>' : ''}
     <form data-unlock autocomplete="off"><label>Password<input type="password" name="password" autocomplete="off" spellcheck="false" ${wait ? 'disabled' : ''} required></label>
@@ -520,7 +522,7 @@ function render() {
   if (ui.phase === 'loading') { ui.ctx.states.loading(el, 'Loading your vault…'); return; }
   if (ui.phase === 'off') { el.innerHTML = renderOff(); return; }
   if (ui.phase === 'failed') { el.innerHTML = renderFailed(); return; }
-  if (ui.phase === 'locked' || ui.phase === 'unlocking') {
+  if (ui.phase === 'locked' || ui.phase === 'unlocking' || ui.phase === 'setup') {
     el.innerHTML = renderLocked();
     el.querySelector('input[type=password]')?.focus();
     return;

@@ -149,6 +149,24 @@ export function createVaultClient({
     return { count: records.length };
   }
 
+  /**
+   * Sulla Server: first unlock (status.setup 'enroll') or after a password
+   * change ('rewrap'). The worker MACs the bundle; only the MAC'd bundle and
+   * the empty personal head are sent. Then the normal load and unlock run.
+   */
+  async function enroll(password) {
+    const vault = encodeURIComponent(status.vaultId);
+    const setup = await http('GET', `/vaults/${vault}/enrollment`);
+    const made = await rpc('enroll', { fields: setup.fields, vaultId: status.vaultId, op: setup.op }, password);
+    if (setup.op === 'rewrap') {
+      await http('PUT', `/vaults/${vault}?op=rewrap`, { bundle: made.bundle, expectedBundleGeneration: setup.expectedBundleGeneration });
+    } else {
+      await http('PUT', `/vaults/${vault}?op=create`, { bundle: made.bundle, scope: 'personal', records: [], head: made.head });
+    }
+    await refreshStatus();
+    await prefetch();
+  }
+
   /** Local only: the worker decides; no request is made. */
   async function unlock(password) {
     const result = await rpc('unlock', password);
@@ -256,6 +274,12 @@ export function createVaultClient({
     filesLoadCollection, filesChunkIds, filesDownload,
     isUnlocked: () => unlocked,
     prefetch,
+    enroll: async (password) => {
+      await enroll(password);
+      const result = await unlock(password);
+      currentSeq = result.seq;
+      return result;
+    },
     unlock: async (password) => {
       const result = await unlock(password);
       currentSeq = result.seq;

@@ -279,6 +279,22 @@ export function createSyncEnvelope(sodium) {
     return userKey;
   }
 
+  /**
+   * First unlock on a Sulla Server (or after a password change): open the
+   * account's wrapped user key with the master password, before any bundle
+   * exists. Throws `wrong_password` locally. The caller zeroes the key.
+   */
+  function unwrapUserKey(fields, password) {
+    const masterKey = deriveMasterKey(password, fields?.kdf);
+    try {
+      return open(fields.encryptedUserKey, masterKey, 'sulla:user-key:v1');
+    } catch {
+      throw new EnvelopeError('wrong_password', 'Wrong master password');
+    } finally {
+      masterKey.fill(0);
+    }
+  }
+
   function contentHash(record) {
     if (record.deleted) return '';
     return sha256(record.kind === 'item' ? record.item : record.encryptedName);
@@ -396,7 +412,7 @@ export function createSyncEnvelope(sodium) {
   }
 
   return {
-    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle,
+    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey,
     buildBundle, verifyBundle, buildRecord, verifyRecord, stateHash, buildHead, verifyHead,
     encryptItem, decryptItem,
     encryptFolderName: (name, ownerKey, ownerId, folderId) => seal(enc.encode(name), ownerKey, folderAad(ownerId, folderId)),

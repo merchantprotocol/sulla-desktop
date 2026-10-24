@@ -24,6 +24,14 @@
   const ic = (name) => window.CloudIcons.get(name);
   const $ = (sel, root = document) => root.querySelector(sel);
   const serverHost = () => document.querySelector('meta[name="sulla-server-host"]')?.content || location.host;
+  // Data colours arrive as data-bg and are set through CSSOM, which a style-src 'self' policy allows.
+  const paint = (el) => {
+    if (el.dataset?.bg) el.style.background = el.dataset.bg;
+    el.querySelectorAll?.('[data-bg]').forEach((x) => { x.style.background = x.dataset.bg; });
+  };
+  new MutationObserver((changes) => changes.forEach((c) => c.addedNodes.forEach((n) => {
+    if (n.nodeType === 1) paint(n);
+  }))).observe(document.documentElement, { childList: true, subtree: true });
 
   function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,7 +154,7 @@
   // ── Rendering ─────────────────────────────────────────────────────────
   function orgAvatar(org, extra = '') {
     const initials = String(org?.name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-    const color = /^#[0-9a-f]{3,8}$/i.test(org?.color || '') ? ` style="background:${org.color}"` : '';
+    const color = /^#[0-9a-f]{3,8}$/i.test(org?.color || '') ? ` data-bg="${org.color}"` : '';
     // No team colour set: pick one of the mockup's avatar gradients, stable per org id.
     const hash = [...String(org?.id || '')].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 0);
     const tone = ['a', 'd', 'p', 'm'][hash % 4];
@@ -173,7 +181,7 @@
       if (g.title) h += `<div class="sg-h">${esc(g.title)}</div>`;
       (g.items || []).forEach((it) => {
         const on = typeof it.active === 'function' ? it.active() : (it.active !== undefined ? it.active : current === it.id);
-        const glyph = it.dot ? `<span class="tdot" style="background:${esc(it.dot)}"></span>` : ic(it.icon || 'note');
+        const glyph = it.dot ? `<span class="tdot" data-bg="${esc(it.dot)}"></span>` : ic(it.icon || 'note');
         h += `<a href="${esc(it.href || '#')}" class="sub${on ? ' on' : ''}" title="${esc(it.label)}" aria-label="${esc(it.label)}"${on ? ' aria-current="page"' : ''}><span class="sv">${glyph}</span><span>${esc(it.label)}</span>${countHtml({ value: it.count, kind: it.countKind })}</a>`;
       });
     });

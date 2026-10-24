@@ -1,7 +1,7 @@
 Subject: 06-vault-copy: Passwords: organization vault copy and a runtime console URL for the vault origin
 
 diff --git a/js/cloud/passwords/build-vault-origin.mjs b/js/cloud/passwords/build-vault-origin.mjs
-index be0e0e8beeddd183714a1a27b14f114995b4a87b..9fea6a0743ba97be47347ec8f8ad60b42c2baf08 100644
+index be0e0e8beeddd183714a1a27b14f114995b4a87b..3b718e34566779e81bf30672a3c31dd883e1ced3 100644
 --- a/js/cloud/passwords/build-vault-origin.mjs
 +++ b/js/cloud/passwords/build-vault-origin.mjs
 @@ -23,7 +23,10 @@ const arg = (name, fallback) => {
@@ -9,10 +9,10 @@ index be0e0e8beeddd183714a1a27b14f114995b4a87b..9fea6a0743ba97be47347ec8f8ad60b4
  };
  const out = path.resolve(arg('--out', path.join(root, '..', 'sulla-vault-origin-dist')));
 -const dashboardOrigin = new URL(arg('--dashboard-origin', 'https://sulladesktop.com')).origin;
-+// Sulla Server passes the console URL (https://<host>/console/) or the literal placeholder
-+// {{SULLA_CONSOLE_URL}}, which Vault replaces when it serves the page.
++// Sulla Server passes the console URL (https://<host>/console/) or a placeholder such as
++// __SULLA_DASHBOARD_ORIGIN__, which Vault replaces when it serves the page.
 +const dashboardArg = arg('--dashboard-origin', 'https://sulladesktop.com');
-+const dashboardOrigin = dashboardArg.startsWith('{{') ? dashboardArg : new URL(dashboardArg).href.replace(/\/$/, '');
++const dashboardOrigin = /^https?:\/\//.test(dashboardArg) ? new URL(dashboardArg).href.replace(/\/$/, '') : dashboardArg;
  if (out === root || out.startsWith(`${root}${path.sep}`)) throw new Error('--out must be outside the repository');
  
  const SODIUM = path.join(here, 'vendor/libsodium-wrappers-sumo-0.8.4.js');
@@ -111,7 +111,7 @@ index 095a5f6b53088a8effa9b4742844f306427ff785..491eb0fb4b15a7c1c6ca382ad5c969d8
        throw new EnvelopeError('head_chain', 'Manifest head does not extend the previously verified head');
      }
 diff --git a/js/cloud/passwords/vault-api.js b/js/cloud/passwords/vault-api.js
-index c83d8d55a4bb183c6ae83abe97eb3daba4b1ca35..8606e83818903e005796e261ed5fca38eb947cd5 100644
+index c83d8d55a4bb183c6ae83abe97eb3daba4b1ca35..7023266cc18d8fb82b2e9dd983f02fa5e845652c 100644
 --- a/js/cloud/passwords/vault-api.js
 +++ b/js/cloud/passwords/vault-api.js
 @@ -1,4 +1,4 @@
@@ -127,7 +127,7 @@ index c83d8d55a4bb183c6ae83abe97eb3daba4b1ca35..8606e83818903e005796e261ed5fca38
 -  const DASHBOARD = meta('sulla-dashboard-origin') || 'https://sulladesktop.com';
 +  const configured = meta('sulla-dashboard-origin');
 +  // Always ends in /, so relative paths stay under the console.
-+  const DASHBOARD = (configured && !configured.startsWith('{{')
++  const DASHBOARD = (/^https?:\/\//.test(configured)
 +    ? configured
 +    : `${location.protocol}//${location.host.replace(/^vault\./, '')}/console`).replace(/\/?$/, '/');
  

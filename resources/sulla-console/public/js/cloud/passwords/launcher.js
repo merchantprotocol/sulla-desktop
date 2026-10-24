@@ -53,7 +53,7 @@
       ctx.states.error(ctx.view, error, { title: 'Vault sync status could not load', retry: () => render(ctx) });
       return;
     }
-    if (!status?.enabled) {
+    if (!status?.enabled && !status?.setup) {
       if (status?.syncSettings?.vault) {
         const device = esc(status.sourceDeviceName || 'Sulla Desktop');
         const offline = status.sourceDeviceOnline === false;

@@ -87,6 +87,34 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
     }
   }
 
+  /**
+   * Sulla Server enrollment: MAC the account's bundle fields with the user key
+   * (opened here with the master password) and, for a new member, sign the
+   * empty personal head. Returns only the MAC'd bundle and head; no key leaves.
+   */
+  function enroll(input, password) {
+    if (!input?.fields || typeof input.vaultId !== 'string' || !['create', 'rewrap'].includes(input.op)) {
+      throw new VaultError('enroll_invalid', 'Vault setup data is incomplete');
+    }
+    let key;
+    try {
+      key = env.unwrapUserKey(input.fields, password);
+    } catch (error) {
+      if (error instanceof EnvelopeError) throw new VaultError(error.code, error.message);
+      throw error;
+    }
+    try {
+      const built = env.buildBundle(input.fields, key);
+      if (input.op === 'rewrap') return { bundle: built };
+      return { bundle: built, head: env.buildHead({ vaultId: input.vaultId, scope: SCOPE, seq: 1, records: [] }, key) };
+    } catch (error) {
+      if (error instanceof EnvelopeError) throw new VaultError(error.code, error.message);
+      throw error;
+    } finally {
+      key.fill(0);
+    }
+  }
+
   /** Store ciphertext fetched before the password is typed. No keys, no network. */
   function load(input) {
     wipe();
@@ -381,10 +409,10 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
   }
 
   return {
-    load, unlock, list, detail, reveal, editable, prepareSave, prepareDelete, commitAccepted, pendingItem, discard, merge, filesOpenEscrow, filesVerifyHead, filesLoadCollection, filesChunkIds, filesDownload, wipe,
+    enroll, load, unlock, list, detail, reveal, editable, prepareSave, prepareDelete, commitAccepted, pendingItem, discard, merge, filesOpenEscrow, filesVerifyHead, filesLoadCollection, filesChunkIds, filesDownload, wipe,
     // State inspection for the wipe test; returns references, never copies of secrets.
     _state: () => ({ keyBuffers: [...keyBuffers], itemCount: items.size, fileRootCount: fileRoots.size, unlocked: !!userKey, seq: head?.seq ?? null }),
   };
 }
 
-export const WORKER_OPS = ['load', 'unlock', 'list', 'detail', 'reveal', 'editable', 'prepareSave', 'prepareDelete', 'commitAccepted', 'pendingItem', 'discard', 'merge', 'filesOpenEscrow', 'filesVerifyHead', 'filesLoadCollection', 'filesChunkIds', 'filesDownload', 'wipe'];
+export const WORKER_OPS = ['enroll', 'load', 'unlock', 'list', 'detail', 'reveal', 'editable', 'prepareSave', 'prepareDelete', 'commitAccepted', 'pendingItem', 'discard', 'merge', 'filesOpenEscrow', 'filesVerifyHead', 'filesLoadCollection', 'filesChunkIds', 'filesDownload', 'wipe'];

@@ -630,8 +630,35 @@
     return notFound();
   }
 
+  // ?vault=enroll on the vault page: a member who hasn't set up their vault yet. Enrollment serves
+  // the fixture account's unsigned bundle fields; the browser MACs them and PUTs the bundle back.
+  const ENROLL = new URLSearchParams(location.search).get('vault') === 'enroll';
+  const enrolled = { bundle: null, head: null };
+  window.SullaMock.enrolled = enrolled;
+
+  function enrollRoute(method, path, body) {
+    const fx = window.SullaVaultFixture;
+    const vaultPath = `/cloud-vault-sync/vaults/${fx.bundle.vaultId}`;
+    if (path === '/cloud-vault-sync/status' && !enrolled.bundle) {
+      return ok({ enabled: false, orgId: currentOrg().id, vaultId: fx.bundle.vaultId, setup: 'enroll', collections: 0 });
+    }
+    if (path === `${vaultPath}/enrollment`) {
+      const { format: _f, v: _v, mac: _m, ...fields } = fx.bundle;
+      return ok({ op: 'create', fields, expectedBundleGeneration: 0 });
+    }
+    if (method === 'PUT' && path === vaultPath && body?.scope === 'personal') {
+      Object.assign(enrolled, { bundle: body.bundle, head: body.head });
+      return { status: 201, body: { ok: true, vaultId: fx.bundle.vaultId, headSeq: body.head.seq } };
+    }
+    if (enrolled.bundle && path === `${vaultPath}/bundle`) return ok(enrolled.bundle);
+    if (enrolled.bundle && path === `${vaultPath}/records`) return ok({ head: enrolled.head, records: [], nextCursor: null });
+    return null;
+  }
+
   // Vault origin endpoints, answered same-origin (vault.html only).
-  function vaultRoute(method, path, params) {
+  function vaultRoute(method, path, params, body) {
+    const early = ENROLL ? enrollRoute(method, path, body) : null;
+    if (early) return early;
     const fx = window.SullaVaultFixture;
     const org = currentOrg();
     if (path === '/cloud-vault-sync/browser/session') return ok({ ok: true, org: { id: org.id, name: org.name, role: org.role }, user: { name: ME.name, email: ME.email }, session: { id: 'vs_1', expiresAt: ahead(HOUR) } });
@@ -666,7 +693,7 @@
       return json(res.status, res.body);
     }
     if (url.origin === location.origin && (url.pathname.startsWith('/cloud-vault-sync') || url.pathname.startsWith('/files-sync'))) {
-      const res = vaultRoute(method, url.pathname, url.searchParams);
+      const res = vaultRoute(method, url.pathname, url.searchParams, body);
       await new Promise((r) => setTimeout(r, 40));
       return json(res.status, res.body);
     }
