@@ -46,3 +46,31 @@ describe('local authority BYO usage route', () => {
     expect(localAuthorityTestHooks.allowsByoUsageCloudRequest('POST', '/usage/byo-events/extra')).toBe(false);
   });
 });
+
+describe('local authority Sulla Cloud Desktop routes', () => {
+  test('allows only the exact Files catalog and content relay methods', () => {
+    const allowed: Array<[string, string]> = [
+      ['PUT', '/cloud-files/v1/catalog/11a08604-example'],
+      ['GET', '/cloud-files/v1/catalog/11a08604-example/desktop-requests'],
+      ['PUT', '/cloud-files/v1/catalog/11a08604-example/desktop-requests/request-1/content'],
+      ['POST', '/cloud-files/v1/catalog/11a08604-example/desktop-requests/request-1/link'],
+      ['POST', '/cloud-files/v1/catalog/11a08604-example/desktop-requests/request-1/fail'],
+      ['POST', '/shares'],
+      ['PATCH', '/shares/share-1'],
+      ['DELETE', '/shares/share-1'],
+      ['PUT', '/shares/share-1/content'],
+    ];
+    for (const [method, path] of allowed) {
+      expect(localAuthorityTestHooks.allowsSullaCloudDesktopRequest(method, path)).toBe(true);
+    }
+    for (const [method, path] of [
+      ['GET', '/cloud-files/v1/catalog/11a08604-example'],
+      ['POST', '/cloud-files/v1/catalog/11a08604-example/desktop-requests/request-1/content'],
+      ['GET', '/cloud-files/v1/files'],
+      ['GET', '/shares/share-1/content'],
+      ['PUT', '/cloud-files/v1/catalog/../../devices/register'],
+    ]) {
+      expect(localAuthorityTestHooks.allowsSullaCloudDesktopRequest(method, path)).toBe(false);
+    }
+  });
+});
