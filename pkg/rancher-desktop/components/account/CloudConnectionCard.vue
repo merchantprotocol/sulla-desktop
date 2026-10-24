@@ -6,6 +6,17 @@
     <span class="icon">{{ item.icon }}</span><div class="copy"><button v-if="item.link" type="button" class="link" @click="item.link()">{{ item.title }}</button><b v-else>{{ item.title }}</b><small>{{ item.detail }}</small></div><span :class="['privacy',item.private?'private':'account']">{{ item.privacy }}</span>
     <label class="switch"><input type="checkbox" :checked="!!status?.preferences?.[item.key]" :disabled="busy || (!enabled && item.key !== 'remoteAccess')" @change="toggleKind(item.key,checked($event),item.title)"><span /></label>
   </div></template>
+  <!-- Approvals live on this Desktop, so they are managed here, not on the web. -->
+  <div v-if="showDevices" class="devices">
+    <div class="drow"><span>Secure channel</span><b :class="['pill', status?.channel?.state === 'connected' ? 'on' : 'off']">{{ channelLabel }}</b></div>
+    <div v-if="status?.keyFingerprint" class="drow"><span>Device key</span><code>{{ status.keyFingerprint }}</code></div>
+    <div v-for="c in status?.approvedClients ?? []" :key="c.clientId" class="drow">
+      <span><b>{{ c.label }}</b><small>{{ c.surface === 'mobile' ? 'Phone' : 'Browser' }} · approved {{ fmt(c.approvedAt) }}<template v-if="c.lastUsedAt"> · last used {{ fmt(c.lastUsedAt) }}</template></small></span>
+      <button type="button" class="btn danger" :disabled="busy" @click="revoke(c.clientId)">Revoke</button>
+    </div>
+    <p v-if="!status?.approvedClients?.length" class="note">No browsers or phones approved yet. A new one asks first, and you approve it here after checking the 6-digit code.</p>
+    <button type="button" class="link" @click="openDesktopsPage">Open the Desktops page at sulladesktop.com ›</button>
+  </div>
   <div class="footer"><button class="btn" :disabled="busy||!enabled" @click="syncNow">Sync now</button><span/><button class="btn danger" :disabled="busy" @click="deleteAll">Delete my data from Sulla Cloud…</button></div>
   <p v-if="error" class="error">{{ error }}</p>
   <p class="note">Turning a switch off stops new uploads and asks whether to keep or delete what's already in Cloud. End-to-end encrypted data can't be read by Sulla's servers.</p>
@@ -22,12 +33,15 @@ const latest=computed(()=>objectStatuses.value.filter((x:any)=>x.lastSyncAt).sor
 const syncLine=computed(()=>!enabled.value?'Sync is off':latest.value?`Synced ${fmt(latest.value.lastSyncAt)}`:'Ready to sync');
 const lastChange=computed(()=>latest.value?.kind?titleFor(latest.value.kind):'');
 function openFiles(){const existing=tabs.find(t=>t.mode==='files');const tab=existing??createTab('about:blank',{mode:'files',title:'File Manager'});window.dispatchEvent(new CustomEvent('sulla:navigate-tab',{detail:{tabId:tab.id}}))}
-function openDevices(){const {shell}=require('electron');void shell.openExternal('https://sulladesktop.com/desktops')}
+const showDevices=ref(false);
+const channelLabel=computed(()=>({connected:'Connected',connecting:'Connecting…',error:status.value?.channel?.lastError?`Reconnecting — ${status.value.channel.lastError}`:'Reconnecting',stopped:'Off'} as Record<string,string>)[status.value?.channel?.state??'stopped']);
+function revoke(clientId:string){return run(()=>ipcRenderer.invoke('sulla-cloud-connection:revoke-client',clientId))}
+function openDesktopsPage(){ipcRenderer.send('extensions/open-external','https://sulladesktop.com/dashboard/cloud/devices.html')}
 const groups=[
  {title:'Your work',items:[['workflows','↻','Workflows','Definitions, schedules, run history and status'],['skills','✦','Saved Skills','Every skill and its instructions, including drafts'],['customAgents','◉','Custom Agents','Profiles, prompts, models and skills'],['recipes','⬡','Recipes',"What's installed and its status. Containers only run on this Desktop."],['useCases','▦','Use Cases',"Your library and what's switched on"]].map(row)},
  {title:'Activity',items:[['liveAgents','∿','Live agents',"What's running right now"],['usage','▮','Token usage','Tokens, cost and limits by day, provider and model']].map(row)},
  {title:'Private data',items:[privateRow('conversations','✉','Chat history','Your linked chat history','🔒 End-to-end encrypted'),privateRow('memory','⌘','Memory','What Sulla remembers about you and your business','🔒 End-to-end encrypted'),{...privateRow('files','▤','Files','Choose folders in File Manager','🔒 End-to-end encrypted'),link:openFiles},privateRow('vault','⚿','Passwords','Opens only with your master password','🔒 Zero-knowledge')]},
- {title:'Control',items:[{...row(['remoteAccess','⇄','Remote access','Let approved browsers and phones run tasks on this Desktop']),privacy:'Manage devices ›',link:openDevices}]},
+ {title:'Control',items:[{...row(['remoteAccess','⇄','Remote access','Let approved browsers and phones run tasks on this Desktop']),privacy:'Manage devices ›',link:()=>{showDevices.value=!showDevices.value}}]},
 ];
 function row(x:string[]){return{key:x[0] as Pref,icon:x[1],title:x[2],detail:x[3],privacy:'Readable by your account',private:false,link:undefined as undefined|(()=>void)}}
 function privateRow(key:Pref,icon:string,title:string,detail:string,privacy:string){return{key,icon,title,detail,privacy,private:true,link:undefined as undefined|(()=>void)}}
@@ -40,4 +54,12 @@ function onStatus(_e:unknown,s:Record<string,any>){status.value=s}onMounted(asyn
 </script>
 <style scoped>
 .sync-card{margin-top:14px;border:1px solid var(--line,rgba(26,35,50,.09));border-radius:12px;overflow:hidden;background:var(--card-solid,#fff)}.master{display:flex;gap:16px;align-items:flex-start;padding:20px}.master h2{margin:0 0 4px;font-size:16px}.destination{display:inline-block;margin-bottom:6px;color:var(--accent,#3a7fa0);font-size:12px;font-weight:600}.master p,.note{margin:0;color:var(--muted,#5b6778);font-size:12px;line-height:1.5}.master .switch{margin-left:auto}.status{display:flex;gap:18px;padding:11px 20px;border-top:1px solid var(--line);background:var(--paper,#f4f7fb);font-size:12px;color:var(--muted)}.status b{color:var(--ok,#1f9d55)}.section{padding:10px 20px 6px;border-top:1px solid var(--line);color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.row{display:grid;grid-template-columns:30px minmax(180px,1fr) auto 44px;gap:14px;align-items:center;padding:12px 20px;border-top:1px solid var(--line)}.icon{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:var(--accent-soft,rgba(58,127,160,.12));color:var(--accent,#3a7fa0)}.copy b,.link{display:block;font:500 13px inherit;color:var(--text);padding:0;border:0;background:none}.link{cursor:pointer}.copy small{display:block;color:var(--muted);font-size:11.5px;margin-top:2px}.privacy{padding:2px 8px;border-radius:9px;font-size:11px;white-space:nowrap}.privacy.private{background:var(--ok-soft,rgba(31,157,85,.12));color:var(--ok,#1f9d55)}.privacy.account{background:var(--paper);color:var(--muted)}.switch{position:relative;width:44px;height:24px}.switch input{position:absolute;opacity:0}.switch span{display:block;width:44px;height:24px;border-radius:12px;background:var(--line-2,#c9d1db);cursor:pointer}.switch span:after{content:'';display:block;width:18px;height:18px;border-radius:50%;background:#fff;transform:translate(3px,3px);transition:.15s;box-shadow:0 1px 3px #0004}.switch input:checked+span{background:var(--accent,#3a7fa0)}.switch input:checked+span:after{transform:translate(23px,3px)}.switch input:disabled+span{opacity:.35;cursor:default}.footer{display:grid;grid-template-columns:auto 1fr auto;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}.btn{min-height:32px;padding:0 13px;border:1px solid var(--line-2);border-radius:8px;background:var(--card-solid);color:var(--text);cursor:pointer}.danger,.error{color:var(--bad,#d9403a)}.note{padding:12px 20px;border-top:1px solid var(--line)}.alert,.error{padding:10px 20px;background:var(--bad-soft);font-size:12px}
+.devices { margin: 4px 16px 12px; padding: 10px 14px; border: 1px solid var(--nx-hair, #dfe4ea); border-radius: 10px; }
+.drow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--nx-hair, #dfe4ea); }
+.drow:last-of-type { border-bottom: 0; }
+.drow small { display: block; opacity: .7; font-size: 11.5px; }
+.drow code { font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 11.5px; }
+.pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+.pill.on { background: rgba(31, 157, 85, .12); color: #1f9d55; }
+.pill.off { background: rgba(138, 148, 163, .16); }
 </style>
