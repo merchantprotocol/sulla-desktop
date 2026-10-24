@@ -263,9 +263,9 @@ provision:
     USER_NAME="{{.User}}"
     # Wait briefly for the docker group to exist. Docker is installed by other
     # provisioning steps; on a slow first boot the group may not be present yet.
-    for i in 1 2 3 4 5; do
+    for i in 1 2 3 4; do
       getent group docker >/dev/null 2>&1 && break
-      sleep 1
+      sleep 0.25
     done
     if getent group docker >/dev/null 2>&1 && id "$USER_NAME" >/dev/null 2>&1; then
       if ! id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx docker; then
