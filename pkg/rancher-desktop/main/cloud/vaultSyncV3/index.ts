@@ -78,12 +78,12 @@ class VaultSyncV3Impl {
 
   private async syncIfEnabled(): Promise<void> {
     const prefs = await getCloudPreferences().catch(() => null);
-    if (prefs?.vault) await this.syncNow();
+    if (prefs?.enabled && prefs.vault) await this.syncNow();
   }
 
   private async pushIfDirty(): Promise<void> {
     const prefs = await getCloudPreferences().catch(() => null);
-    if (!prefs?.vault || this.inFlight || this.debounce) return;
+    if (!prefs?.enabled || !prefs.vault || this.inFlight || this.debounce) return;
     const local = await VaultSyncContainer.status().catch(() => null);
     if (!local?.configured || !local.pendingChanges) return;
     this.debounce = setTimeout(() => {
@@ -155,7 +155,7 @@ class VaultSyncV3Impl {
   private async run(): Promise<VaultSyncStatus> {
     try {
       const prefs = await getCloudPreferences();
-      if (!prefs.vault) return this.set({ skipped: 'disabled' });
+      if (!prefs.enabled || !prefs.vault) return this.set({ skipped: 'disabled' });
       const who = await this.identity();
       if (!who) return this.set({ skipped: 'signed_out' });
       const local = await VaultSyncContainer.status();

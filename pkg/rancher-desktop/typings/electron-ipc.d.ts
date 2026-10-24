@@ -406,10 +406,10 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
   'sulla-cloud-chat:unlink': (linkId: string, deleteCloudCopy: boolean) => void;
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
-  'sulla-cloud-connection:set-preferences':   (patch: { conversations?: boolean; vault?: boolean; remoteAccess?: boolean }) => Record<string, any>;
+  'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
-  'sulla-cloud-connection:sync-now':          (kind: 'vault') => Record<string, any>;
-  'sulla-cloud-connection:delete-cloud-copy': (kind: 'vault') => Record<string, any>;
+  'sulla-cloud-connection:sync-now':          (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
+  'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'workflows' | 'skills' | 'customAgents' | 'recipes' | 'useCases' | 'liveAgents' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };

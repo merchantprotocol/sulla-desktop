@@ -27,6 +27,9 @@ export interface CloudDeviceState {
   revoked:    boolean;
   /** Registration refused (e.g. device key mismatch / owned by another account). */
   error?:     string;
+  /** Owning organization returned by Cloud registration, when supported. */
+  teamId?:    string;
+  teamName?:  string;
 }
 let deviceState: CloudDeviceState = { registered: false, revoked: false };
 const stateListeners: ((s: CloudDeviceState) => void)[] = [];
@@ -41,7 +44,7 @@ function setDeviceState(next: CloudDeviceState) {
 async function reportedPreferences(): Promise<{ remoteAccess: 'enabled' | 'disabled'; syncSettings: Record<string, boolean> } | Record<string, never>> {
   try {
     const p = await getCloudPreferences();
-    return { remoteAccess: p.remoteAccess ? 'enabled' : 'disabled', syncSettings: { conversations: p.conversations, vault: p.vault } };
+    return { remoteAccess: p.remoteAccess ? 'enabled' : 'disabled', syncSettings: Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'remoteAccess')) };
   } catch {
     return {};
   }
@@ -104,7 +107,12 @@ export const DevicesCloudApi = {
         }
         return null;
       }
-      setDeviceState({ registered: true, revoked: !!res.data?.revoked });
+      setDeviceState({
+        registered: true,
+        revoked:    !!res.data?.revoked,
+        ...(typeof (res.data?.teamName ?? res.data?.team_name ?? res.data?.organizationName) === 'string' ? { teamName: res.data.teamName ?? res.data.team_name ?? res.data.organizationName } : {}),
+        ...(typeof (res.data?.teamId ?? res.data?.team_id) === 'string' ? { teamId: res.data.teamId ?? res.data.team_id } : {}),
+      });
       cachedDeviceId = meta.deviceId;
       console.log(`[DevicesApi] registered ${ meta.deviceId }`);
       return meta.deviceId;

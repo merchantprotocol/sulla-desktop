@@ -32,7 +32,8 @@ import { enqueueSyncOp } from './syncQueue';
 async function conversationSyncEnabled(): Promise<boolean> {
   try {
     const { getCloudPreferences } = await import('@pkg/main/cloud/cloudSettings');
-    return (await getCloudPreferences()).conversations;
+    const prefs = await getCloudPreferences();
+    return prefs.enabled && prefs.conversations;
   } catch {
     return false;
   }
