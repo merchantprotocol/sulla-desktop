@@ -32,7 +32,10 @@ if [[ -z "$GUEST_DIR" ]]; then
   command -v gh >/dev/null || { echo "gh is required to download the guest artifact" >&2; exit 1; }
   GUEST_DIR="$SCRATCH/guest"
   mkdir -p "$GUEST_DIR"
-  gh run download --repo merchantprotocol/sulla-desktop --workflow "$WORKFLOW" --name "$ARTIFACT" --dir "$GUEST_DIR"
+  run_id=$(gh run list --repo merchantprotocol/sulla-desktop --workflow "$WORKFLOW" \
+    --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+  [[ -n "$run_id" ]] || { echo "no successful $WORKFLOW run found" >&2; exit 1; }
+  gh run download "$run_id" --repo merchantprotocol/sulla-desktop --name "$ARTIFACT" --dir "$GUEST_DIR"
 fi
 
 KERNEL=${KERNEL:-$GUEST_DIR/vmlinuz}
