@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { AgentPolicy } from '@sulla/vault-crypto';
 import type { BrokerExecuteRequest } from './contracts.js';
-import { brokerTransferLimits, FILES_SYNC_OPERATION, validateOperation } from './operationPolicy.js';
+import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, validateOperation } from './operationPolicy.js';
 
 const HOST = 'sulla-workers.merchantprotocol.workers.dev';
 const ITEM_POLICY = { level: 'autofill', agents: [], sites: [] } as unknown as AgentPolicy;
@@ -73,4 +73,14 @@ test('base64 responses and 6 MiB transfers belong to the files-sync operation al
   // A full 4 MiB chunk wire fits; anything past 6 MiB does not.
   assert.ok(4 * 1024 * 1024 + 64 * 1024 <= brokerTransferLimits(FILES_SYNC_OPERATION).request);
   assert.ok(sixMiB + 1 > brokerTransferLimits(FILES_SYNC_OPERATION).request);
+});
+
+test('only the Files service skips the owner-only policy, and only for its own Cloud operations', () => {
+  for (const operation of [FILES_SYNC_OPERATION, 'sulla-cloud.shares', 'sulla-cloud.cloud-files.catalog', 'sulla-cloud.cloud-files.content']) {
+    assert.equal(isTrustedFilesCloudCall({ ...request('/files-sync/v1/usage'), operation }), true, operation);
+  }
+  assert.equal(isTrustedFilesCloudCall({ ...request('/calls'), operation: 'sulla-cloud.api' }), false);
+  assert.equal(isTrustedFilesCloudCall({ ...request('/files-sync/v1/usage'), claims: { sub: 'user', agent_id: 'coding-agent', pod_id: 'sulla-files' } }), false);
+  assert.equal(isTrustedFilesCloudCall({ ...request('/files-sync/v1/usage'), claims: { sub: 'user', agent_id: 'sulla-files', pod_id: 'agent-pod' } }), false);
+  assert.equal(isTrustedFilesCloudCall({ ...request('/files-sync/v1/usage'), ref: { integrationId: 'github', accountId: 'default' } }), false);
 });
