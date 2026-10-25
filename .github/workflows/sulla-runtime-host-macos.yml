@@ -1,0 +1,58 @@
+name: Sulla runtime host (macOS)
+
+on:
+  push:
+    paths:
+      - src/runtime-host/macos/**
+      - .github/workflows/sulla-runtime-host-macos.yml
+  pull_request:
+    paths:
+      - src/runtime-host/macos/**
+      - .github/workflows/sulla-runtime-host-macos.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            architecture: arm64
+          # macos-13 was retired by GitHub; this is the current standard Intel runner.
+          # Package.swift keeps the produced binary's deployment target at macOS 13.
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: src/runtime-host/macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release binary
+        shell: bash
+        run: |
+          set +e
+          output=$(swift build -c release --arch "${{ matrix.architecture }}" 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if (( status != 0 )); then
+            while IFS= read -r diagnostic; do
+              diagnostic=${diagnostic//'%'/'%25'}
+              diagnostic=${diagnostic//$'\r'/'%0D'}
+              echo "::error title=Swift build failed::$diagnostic"
+            done < <(grep -E '(^|: )(error|fatal error):' <<<"$output" | tail -n 30)
+            exit "$status"
+          fi
+      - name: Sign with Virtualization entitlement
+        run: codesign --force --sign - --entitlements sulla-runtime.entitlements ".build/${{ matrix.architecture }}-apple-macosx/release/sulla-runtime"
+      - name: Verify signature
+        run: codesign --verify --verbose=2 ".build/${{ matrix.architecture }}-apple-macosx/release/sulla-runtime"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sulla-runtime-macos-${{ matrix.architecture }}
+          path: src/runtime-host/macos/.build/${{ matrix.architecture }}-apple-macosx/release/sulla-runtime
+          if-no-files-found: error
