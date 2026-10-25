@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
 export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
@@ -66,18 +67,23 @@ export function runGuestSync(args: string[], input?: string | Buffer): string {
   return String(result.stdout ?? '').trim();
 }
 
-let guestIdentity: GuestRuntimeIdentity | undefined;
+let guestIdentity: { user: string; identity: GuestRuntimeIdentity } | undefined;
 
 /** The container runs as the actual Lima login identity, never a host-derived or guessed UID. */
 export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
-  if (guestIdentity) return guestIdentity;
-  const output = runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
+  // Guest commands run as root on the Sulla runtime; there the login account
+  // is the one the runtime created for this Mac user, looked up by name.
+  const runtimeUser = sullaRuntimeGuestUser()?.name ?? '';
+  if (guestIdentity?.user === runtimeUser) return guestIdentity.identity;
+  const output = runtimeUser
+    ? runGuestSync(['sh', '-c', 'set -eu; id -u "$1"; id -g "$1"', 'sulla-guest-id', runtimeUser])
+    : runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
   const [uid, gid] = output.split(/\s+/).map(Number);
   if (![uid, gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error('Could not resolve the Lima guest runtime identity');
   }
-  guestIdentity = { uid, gid };
-  return guestIdentity;
+  guestIdentity = { user: runtimeUser, identity: { uid, gid } };
+  return guestIdentity.identity;
 }
 
 function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): string {

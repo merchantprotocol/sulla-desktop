@@ -41,6 +41,12 @@ import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import { ensureLimactlShim, findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
+import { bootSullaRuntimeOrFallBack, planSullaRuntimeBoot } from './sullaRuntime/bootPlan';
+import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
+import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
+import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
+import { assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaRuntimeActive } from './sullaRuntime/state';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
@@ -344,6 +350,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #lastFilesGuestMountFailure?: string;
   #sullaCredentialsReady = false;
   #sullaCredentialsWaiters = new Set<() => void>();
+  /** The native Sulla runtime, while experimental.sullaRuntime booted it instead of Lima. */
+  #sullaRuntime?: NativeRuntime;
+  #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
+  /** Lima's own `paths.limactl`, restored when the runtime stops. */
+  #limaLimactl?: string;
 
   /** Opened by the first-run coordinator after credential setup is complete. */
   setSullaCredentialsReady(): void {
@@ -1280,8 +1291,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
   }
 
+  /** Set while the native Sulla runtime is active: its `limactl` shim answers instead of Lima. */
+  protected static limactlOverride: string | undefined;
+
   protected static get limactl() {
-    return path.join(paths.resources, os.platform(), 'lima', 'bin', 'limactl');
+    return LimaBackend.limactlOverride ?? path.join(paths.resources, os.platform(), 'lima', 'bin', 'limactl');
   }
 
   protected static get qemuImg() {
@@ -2470,6 +2484,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       port:  3000,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
+    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.lima.internal\n`;
+
+    if (isSullaRuntimeActive()) {
+      // The runtime guest has no Node.js for the CLI or daemon. Compose
+      // services still read the token from /etc/sulla-env.
+      await this.writeFile('/etc/sulla-env', sullaEnv, 0o644);
+      console.log('[sulla-runtime] wrote /etc/sulla-env; skipped the in-guest sulla CLI and daemon (no Node.js in the guest)');
+
+      return;
+    }
 
     // --- Install CLI + inject token into VM ---
     try {
@@ -2480,7 +2504,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.execCommand({ root: true }, 'chmod', '755', `/usr/local/bin/${ name }`);
       }
 
-      await this.writeFile('/etc/sulla-env', `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.lima.internal\n`, 0o644);
+      await this.writeFile('/etc/sulla-env', sullaEnv, 0o644);
 
       // Kill any existing daemon, then start fresh in the background
       await this.execCommand({ root: false }, 'sh', '-c', 'pkill -f sulla-daemon || true');
@@ -3093,6 +3117,9 @@ start_pre() {
       try {
         this.progressTracker.numeric('Starting Backend', 0, 100);
         this.ensureArchitectureMatch();
+        if (await this.startOnSullaRuntime(config, managedServicesGeneration, backendStartTotal)) {
+          return;
+        }
         let t = Date.now();
 
         await Promise.all([
@@ -3364,29 +3391,7 @@ start_pre() {
                 .catch(error => console.warn(
                   `[startup-phase] ${ new Date().toISOString() } phase=deferred-host-revalidation status=degraded`, error));
             }
-            // Transient failures (Compose pull, credentials not yet available)
-            // are retried; a persistent one must surface as ERROR instead of
-            // leaving the UI showing a healthy backend with no services.
-            const retryDelaysMs = [5_000, 15_000, 30_000];
-
-            for (let attempt = 0; ; attempt++) {
-              try {
-                await this.reconcileManagedServices(managedServicesGeneration, config);
-                break;
-              } catch (error) {
-                if (error instanceof ManagedServicesReconciliationCancelled ||
-                    managedServicesGeneration !== this.#managedServicesGeneration) {
-                  throw error;
-                }
-                if (attempt >= retryDelaysMs.length) {
-                  console.error('[startup-phase] phase=sulla-services status=failed after retries', error);
-                  await this.setState(State.ERROR);
-                  throw error;
-                }
-                console.warn(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=retrying attempt=${ attempt + 1 }`, error);
-                await new Promise(resolve => setTimeout(resolve, retryDelaysMs[attempt]));
-              }
-            }
+            await this.reconcileManagedServicesWithRetries(managedServicesGeneration, config);
             logStartupPhase('sulla-services', dockerReadyAt, 'status=ready');
             await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
           })();
@@ -3437,6 +3442,188 @@ start_pre() {
 
     if (!managedServicesReady) return;
     await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
+  }
+
+  /**
+   * Boot on the native Sulla runtime instead of Lima when
+   * experimental.sullaRuntime is on (macOS only). Returns false when this
+   * launch should boot Lima: the setting is off, or the runtime failed before
+   * Docker was ready and was stopped again.
+   */
+  protected async startOnSullaRuntime(config: BackendSettings, generation: number, backendStartTotal: number): Promise<boolean> {
+    const plan = planSullaRuntimeBoot({
+      requested:         !!config.experimental.sullaRuntime,
+      platform:          os.platform(),
+      kubernetesEnabled: config.kubernetes.enabled,
+    });
+
+    if (plan.runtime === 'lima') {
+      if (plan.reason) console.warn(`[sulla-runtime] ${ plan.reason }; booting Lima`);
+
+      return false;
+    }
+    const shares = this.sullaRuntimeShares();
+    const result = await bootSullaRuntimeOrFallBack({
+      startThroughDockerReady: () => this.startSullaRuntimeThroughDockerReady(config, shares),
+      stopAndRestoreLima:      () => this.stopSullaRuntime(),
+      log:                     console,
+    });
+
+    if (!result.booted) return false;
+    await this.finishSullaRuntimeBoot(generation, backendStartTotal, shares);
+
+    return true;
+  }
+
+  /** The folders Lima mounts today, shared with the runtime under short virtio-fs tags. */
+  protected sullaRuntimeShares(): SullaRuntimeShare[] {
+    return this.getMounts().map((mount, index) => ({
+      tag:      `sulla${ index }`,
+      hostPath: mount.location,
+      readOnly: !mount.writable,
+    }));
+  }
+
+  protected async startSullaRuntimeThroughDockerReady(config: BackendSettings, shares: SullaRuntimeShare[]): Promise<void> {
+    const artifacts = await findSullaRuntimeArtifacts();
+
+    // `this.status` still asks the real limactl here. The runtime takes over
+    // Lima's data, so the two never run at once.
+    if ((await this.status)?.status === 'Running') {
+      console.log('[sulla-runtime] stopping the Lima VM before the runtime takes over its data');
+      await this.lima('stop', MACHINE_NAME);
+    }
+    const dataDisk = await ensureSullaRuntimeDataDisk(async() => (await this.status)?.status === 'Running');
+
+    console.log(`[sulla-runtime] data disk ${ dataDisk.path } (${ dataDisk.source })`);
+    const shim = await ensureLimactlShim(artifacts.binary);
+    const { username, uid } = os.userInfo();
+    const guestUser = guestUserFor(username, uid);
+
+    if (!guestUser) console.warn('[sulla-runtime] the login name cannot be passed to the guest; guest paths stay root-owned');
+    const runtime = this.#sullaRuntime = new NativeRuntime(artifacts);
+    const spawnedAt = Date.now();
+
+    await runtime.start({
+      dataDisk:         dataDisk.path,
+      cpus:             config.virtualMachine.numberCPUs,
+      memoryMiB:        config.virtualMachine.memoryInGB * 1024,
+      shares,
+      guestUser,
+      onMilestone:      (name, elapsedMs) => console.log(`[startup-perf] sulla-runtime ${ name }: ${ elapsedMs }ms after spawn`),
+      onUnexpectedExit: (reason) => {
+        console.error(`[sulla-runtime] the runtime stopped unexpectedly (${ reason })`);
+        void this.stopSullaRuntime().finally(() => this.setState(State.ERROR));
+      },
+    });
+    console.log(`[startup-perf] sulla-runtime spawn -> docker-ready: ${ Date.now() - spawnedAt }ms`);
+
+    // Every `paths.limactl` / `LimaBackend.limactl` caller now reaches the runtime.
+    this.#limaLimactl ??= paths.limactl;
+    LimaBackend.limactlOverride = shim;
+    paths.limactl = shim;
+    setSullaRuntimeActive(true, guestUser);
+  }
+
+  /**
+   * Everything after Docker-ready on the runtime. Only Sulla's own steps run:
+   * Lima's provisioning (OpenRC services, apk installs, OpenResty, logrotate,
+   * buildkitd, Trivy, socket_vmnet) needs tools the runtime guest does not
+   * have and is not needed by the managed services.
+   */
+  protected async finishSullaRuntimeBoot(generation: number, backendStartTotal: number, shares: SullaRuntimeShare[]): Promise<void> {
+    let t = Date.now();
+
+    await this.mountSullaRuntimeShares(shares);
+    console.log(`[startup-perf] sulla-runtime shares mounted: ${ Date.now() - t }ms`);
+
+    const dockerSocket = sullaRuntimeSockets.docker;
+
+    this.#containerEngineClient = new MobyClient(this, `unix://${ dockerSocket }`);
+    await this.progressTracker.action('Setting docker context', 50,
+      dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
+    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest);
+    this.#sullaRuntimeForwarder.start();
+
+    await this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli());
+    await this.progressTracker.action('Waiting for container engine client to be ready', 50,
+      this.#containerEngineClient.waitForReady());
+    logStartupPhase('docker-api-ready', backendStartTotal, 'status=ready runtime=sulla');
+
+    await this.setState(State.DISABLED);
+    mainEvents.emit('first-run-backend-booted');
+    t = Date.now();
+    void (async() => {
+      await this.reconcileManagedServicesWithRetries(generation, this.cfg!);
+      console.log(`[startup-perf] sulla-runtime managed services ready: ${ Date.now() - t }ms`);
+      logStartupPhase('sulla-services', t, 'status=ready runtime=sulla');
+      await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
+    })().catch((error) => {
+      if (!(error instanceof ManagedServicesReconciliationCancelled)) {
+        console.warn(`[startup-phase] ${ new Date().toISOString() } phase=background-startup status=degraded runtime=sulla`, error);
+      }
+    });
+    logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming runtime=sulla');
+  }
+
+  /** Mount each share in the guest at the same path Lima used, before anything else uses it. */
+  protected async mountSullaRuntimeShares(shares: SullaRuntimeShare[]): Promise<void> {
+    for (const share of shares) {
+      try {
+        await this.execCommand({ root: true }, 'sh', '-c',
+          'mkdir -p "$2" && { mountpoint -q "$2" || mount -t virtiofs "$1" "$2"; }', 'sh', share.tag, share.hostPath);
+      } catch (error) {
+        console.error(`[sulla-runtime] could not mount ${ share.hostPath } in the guest:`, error);
+      }
+    }
+  }
+
+  /** Stop the runtime and put Lima's limactl and Docker client back. Safe to call when it is not running. */
+  protected async stopSullaRuntime(): Promise<void> {
+    const runtime = this.#sullaRuntime;
+    const wasActive = isSullaRuntimeActive();
+
+    this.#sullaRuntimeForwarder?.stop();
+    this.#sullaRuntimeForwarder = undefined;
+    this.#sullaRuntime = undefined;
+    LimaBackend.limactlOverride = undefined;
+    if (this.#limaLimactl) paths.limactl = this.#limaLimactl;
+    setSullaRuntimeActive(false);
+    this.#containerEngineClient = undefined;
+    try {
+      await runtime?.stop();
+    } finally {
+      if (wasActive) await dockerDirManager.clearDockerContext();
+    }
+  }
+
+  /**
+   * Transient failures (Compose pull, credentials not yet available) are
+   * retried; a persistent one must surface as ERROR instead of leaving the UI
+   * showing a healthy backend with no services.
+   */
+  private async reconcileManagedServicesWithRetries(generation: number, config: BackendSettings): Promise<void> {
+    const retryDelaysMs = [5_000, 15_000, 30_000];
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.reconcileManagedServices(generation, config);
+
+        return;
+      } catch (error) {
+        if (error instanceof ManagedServicesReconciliationCancelled ||
+            generation !== this.#managedServicesGeneration) {
+          throw error;
+        }
+        if (attempt >= retryDelaysMs.length) {
+          console.error('[startup-phase] phase=sulla-services status=failed after retries', error);
+          await this.setState(State.ERROR);
+          throw error;
+        }
+        console.warn(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=retrying attempt=${ attempt + 1 }`, error);
+        await new Promise(resolve => setTimeout(resolve, retryDelaysMs[attempt]));
+      }
+    }
   }
 
   private async reconcileManagedServices(generation: number, config: BackendSettings): Promise<void> {
@@ -3564,10 +3751,31 @@ start_pre() {
     };
   }
 
+  /**
+   * Run a TLS identity script (stdout is the public certificate). The Sulla
+   * runtime guest may lack openssl; there the same script runs in a throwaway
+   * Alpine container that sees only Sulla's guest state directories, so the
+   * private key still never leaves the guest disk.
+   */
+  private async provisionGuestTlsIdentity(script: string, ...args: string[]): Promise<string> {
+    if (isSullaRuntimeActive() &&
+        !await this.execCommand({ root: true, expectFailure: true }, 'sh', '-c', 'command -v openssl').then(() => true, () => false)) {
+      console.log('[sulla-runtime] no openssl in the guest; provisioning the TLS identity in a container');
+
+      return await this.execCommand(
+        { capture: true, root: true }, 'docker', 'run', '--rm',
+        '--volume', '/mnt/data/var/lib/sulla:/mnt/data/var/lib/sulla',
+        '--volume', '/var/lib/sulla:/var/lib/sulla',
+        'alpine:3.22', 'sh', '-c', 'apk add --no-cache --quiet openssl >&2 && exec sh -c "$0" "$@"', script, '--', ...args,
+      );
+    }
+
+    return await this.execCommand({ capture: true, root: true }, 'sh', '-c', script, '--', ...args);
+  }
+
   private async prepareVaultTlsIdentity(): Promise<{ fingerprint: string }> {
-    const certificate = await this.execCommand(
-      { capture: true, root: true }, 'sh', '-c',
-      PROVISION_VAULT_TLS, '--', VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
+    const certificate = await this.provisionGuestTlsIdentity(
+      PROVISION_VAULT_TLS, VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
     );
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
     // The identity directory is 0700 and contains a private key. Publish only
@@ -3718,9 +3926,7 @@ start_pre() {
 
   private async prepareFilesTlsIdentity():Promise<{ fingerprint:string }> {
     const { uid, gid } = os.userInfo();
-    const certificate = await this.execCommand(
-      { capture: true, root: true }, 'sh', '-c', PROVISION_FILES_TLS, '--', FILES_TLS_DIRECTORY, String(uid), String(gid),
-    );
+    const certificate = await this.provisionGuestTlsIdentity(PROVISION_FILES_TLS, FILES_TLS_DIRECTORY, String(uid), String(gid));
     const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
     await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
     await this.writeFile('/etc/sulla-console/files.crt', certificate, 0o644);
@@ -4195,6 +4401,20 @@ start_pre() {
 
     // /mnt/data is root-owned, so creating /mnt/data/sulla needs root.
     await this.execCommand({ root: true }, 'install', '-d', '-m', '0700', sullaFunctionsDir, sullaRuntimeTempDir);
+
+    if (isSullaRuntimeActive()) {
+      // On the runtime the Mac's loopback is the SLIRP host gateway from every
+      // container; host-gateway would resolve to the guest itself.
+      for (const service of Object.values<any>(compose.services ?? {})) {
+        const hosts = Array.isArray(service.extra_hosts) ? service.extra_hosts : [];
+
+        service.extra_hosts = [
+          ...hosts.filter((entry: string) => !/^host\.(docker|lima)\.internal:/.test(entry)),
+          `host.docker.internal:${ SLIRP.HOST_GATEWAY }`,
+          `host.lima.internal:${ SLIRP.HOST_GATEWAY }`,
+        ];
+      }
+    }
 
     // The VM cannot see host directories; a host bind would leave a service
     // permanently unable to start. Fail generation instead of shipping one.
@@ -4727,6 +4947,13 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
       try {
         await this.setState(State.STOPPING);
 
+        if (this.#sullaRuntime) {
+          await this.stopSullaRuntime();
+          await this.setState(State.STOPPED);
+
+          return;
+        }
+
         const status = await this.status;
 
         if (defined(status) && status.status === 'Running') {
@@ -4767,6 +4994,7 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
   }
 
   async del(): Promise<void> {
+    assertSupportedOnSullaRuntime('Deleting the virtual machine');
     try {
       if (await this.isRegistered) {
         await this.progressTracker.action(
@@ -4783,6 +5011,7 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
   }
 
   async reset(config: BackendSettings): Promise<void> {
+    assertSupportedOnSullaRuntime('Kubernetes');
     await this.progressTracker.action('Resetting Kubernetes', 5, async() => {
       await this.stop();
       // Start the VM, so that we can delete files.
@@ -4813,6 +5042,8 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
       'virtualMachine.useRosetta':                            undefined,
       // Changing host access changes the extra LAN bridge on macOS.
       'application.hostAccess':                              os.platform() === 'darwin' ? undefined : () => false,
+      // Switching between Lima and the Sulla runtime happens at boot.
+      'experimental.sullaRuntime':                           os.platform() === 'darwin' ? undefined : () => false,
     }));
     if (limaConfig) {
       Object.assign(reasons, await this.kubeBackend.requiresRestartReasons(this.cfg, cfg, {

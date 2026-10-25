@@ -15,6 +15,7 @@ import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService'
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
+import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -537,9 +538,10 @@ export class BackendGraphWebSocketService {
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       // Front-door repair channels stay in the VM during the staged rollout,
       // even if an old client sends a container override or its bound agent row changes.
-      const runLocation = VM_OPERATOR_CHANNELS.has(channelId)
+      // Nothing can run in the guest on the Sulla runtime; there every agent runs in a container.
+      const runLocation = effectiveAgentRunLocation(VM_OPERATOR_CHANNELS.has(channelId)
         ? 'vm'
-        : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION;
+        : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();

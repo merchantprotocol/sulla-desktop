@@ -42,6 +42,7 @@ import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
@@ -68,6 +69,8 @@ const HOST_RELAY_NAME = 'sulla-host-relay';
 const HOST_RELAY_PORT = 30124;
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
 const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
+// The Mac's loopback as seen from containers on the Sulla runtime.
+const SULLA_RUNTIME_HOST_GATEWAY = '192.168.5.2';
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
@@ -210,6 +213,14 @@ export function agentContainerRelayUrl(value: string): string {
  * host IP addresses and host networking out of every container invocation.
  */
 async function ensureHostRelay(image: string): Promise<void> {
+  // The Sulla runtime guest has no Python for the VM-side relay. There the
+  // container dials the Mac's loopback directly at the SLIRP host gateway,
+  // which the runtime forwards to 127.0.0.1 on the Mac.
+  const nativeRuntime = isSullaRuntimeActive();
+  const upstream = nativeRuntime
+    ? `n.connect(Number(m[2]), '${ SULLA_RUNTIME_HOST_GATEWAY }')`
+    : `n.connect('${ HOST_RELAY_SOCKET }')`;
+  const portLine = nativeRuntime ? '' : `    u.write(m[2] + '\\n');\n`;
   const vmRelay = String.raw`import os,socket,threading
 p='${ HOST_RELAY_SOCKET }'
 os.makedirs(os.path.dirname(p),exist_ok=True)
@@ -261,9 +272,8 @@ n.createServer(c => {
     // connecting socket queue in order, but writes made in the connect
     // callback would land behind body chunks that arrived in the meantime,
     // which truncates every request bigger than one read.
-    const u = n.connect('${ HOST_RELAY_SOCKET }');
-    u.write(m[2] + '\n');
-    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
+    const u = ${ upstream };
+${ portLine }    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
     u.on('data', x => c.write(x));
     u.on('end', () => c.end());
     u.on('error', () => c.destroy());
@@ -306,7 +316,7 @@ if [ "$need_restart" = "1" ]; then
 fi
 for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
-  await limactl(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
+  if (!nativeRuntime) await limactl(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
   await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
   // Same versioning as the VM relay: a container left by an older build keeps
   // running its old script, so replace it when the script changes.
@@ -318,7 +328,7 @@ exit 1`;
     if (runningVersion !== null) await limactl(['docker', 'rm', '--force', HOST_RELAY_NAME]);
     await limactl(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
       '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
-      '--network', AGENT_NETWORK, '--volume', '/run/sulla-host-relay:/run/sulla-host-relay',
+      '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   }
 }

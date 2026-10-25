@@ -201,6 +201,52 @@ class Builder {
     // await this.flipFuses(context);
     await this.writeLinuxDesktopFile(context);
     await this.buildMacNativeExtensions(context);
+    await this.embedSullaRuntime(context);
+  }
+
+  /**
+   * Places the native Sulla runtime (experimental.sullaRuntime) in
+   * resources/darwin/sulla-runtime/ and signs the host binary with the
+   * Virtualization entitlement it needs. The files come from
+   * SULLA_RUNTIME_ARTIFACTS_DIR (CI artifacts) or from resources/ (built by
+   * scripts/build-sulla-runtime.sh). electron-builder skips the binary (via
+   * signIgnore) so this signature survives; the app seal covers it. A build
+   * without the runtime still works: Desktop logs why and boots Lima.
+   */
+  protected async embedSullaRuntime(context:AfterPackContext):Promise<void> {
+    const { MacPackager } = await import('app-builder-lib/out/macPackager');
+
+    if (context.electronPlatformName !== 'darwin' || !(context.packager instanceof MacPackager)) return;
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const target = path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin', 'sulla-runtime');
+    const source = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
+
+    if (source) {
+      await fs.promises.rm(target, { recursive: true, force: true });
+      await fs.promises.cp(source, target, { recursive: true });
+    }
+    const binary = path.join(target, 'sulla-runtime');
+    const required = [binary, path.join(target, 'guest', 'vmlinuz'), path.join(target, 'guest', 'initramfs.img')];
+    const missing: string[] = [];
+
+    for (const file of required) {
+      if (!await fs.promises.access(file).then(() => true, () => false)) missing.push(path.relative(appPath, file));
+    }
+    if (missing.length) {
+      log.warn({ missing }, 'Sulla runtime not embedded; experimental.sullaRuntime will fall back to Lima. Run scripts/build-sulla-runtime.sh or set SULLA_RUNTIME_ARTIFACTS_DIR.');
+
+      return;
+    }
+    await fs.promises.chmod(binary, 0o755);
+    const { keychainFile } = await context.packager.codeSigningInfo.value;
+    const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
+    const entitlements = path.join(process.cwd(), 'src', 'runtime-host', 'macos', 'sulla-runtime.entitlements');
+    const args = identity
+      ? ['--force', '--options', 'runtime', '--timestamp', '--sign', identity.hash!, ...(keychainFile ? ['--keychain', keychainFile] : [])]
+      : ['--force', '--sign', '-'];
+
+    if (!identity) log.warn('No Developer ID identity; the Sulla runtime is ad-hoc signed and only runs on this Mac.');
+    await spawnFile('codesign', [...args, '--entitlements', entitlements, binary], { stdio: 'inherit' });
   }
 
   /**
@@ -253,7 +299,7 @@ class Builder {
   protected async configureMacProvisioning(config:ReadWrite<Configuration>):Promise<void> {
     const mac = (config.mac ??= {}) as ReadWrite<NonNullable<Configuration['mac']>>;
     const ignored = mac.signIgnore ? [mac.signIgnore].flat() : [];
-    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$'];
+    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$', '/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime$'];
     const profile = process.env.SULLA_MAC_PROVISIONING_PROFILE_APP?.trim();
     if (!profile) return;
     const { stdout } = await spawnFile('/usr/bin/security', ['cms', '-D', '-i', profile], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -316,6 +362,10 @@ class Builder {
     // before packaging (tag pushes → clean semver; non-tag builds →
     // `<last-tag>-dev.<short-sha>`). Local dev builds use whatever is
     // committed in package.json.
+    if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
+      // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
+      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [buildUtils.arch === 'x64' ? 'x86_64' : 'arm64'], { stdio: 'inherit' });
+    }
     const consoleRuntime = await this.prepareSullaConsoleRuntime();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];

@@ -154,6 +154,7 @@ export default class SettingsValidator {
         sullaServicePassword:      this.checkString,
         sullaN8nEncryptionKey:     this.checkString,
         sullaVaultV2Enabled:       this.checkBoolean,
+        sullaRuntime:              this.checkPlatform('darwin', this.checkBoolean),
         sullaApiToken:             this.checkString,
         sullaServiceAccountUserId: this.checkString,
         sullaSubscribeToUpdates:   this.checkBoolean,

@@ -11,7 +11,7 @@ ARG ALPINE_VERSION
 ARG TARGETARCH
 COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx \
-      blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables runc tini linux-lts cpio gzip \
+      blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables openssl runc tini linux-lts cpio gzip \
     && for dir in dev proc sys run tmp var/lib var/log var/tmp mnt/data mnt/worktrees; do mkdir -p "/image/rootfs/$dir"; done \
     && ln -s ../run /image/rootfs/var/run \
     && chmod 1777 /image/rootfs/tmp \
