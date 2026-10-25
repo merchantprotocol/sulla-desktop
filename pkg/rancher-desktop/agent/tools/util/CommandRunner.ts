@@ -139,7 +139,7 @@ export async function runCommand(
   // An agent-local runtime is the security boundary. Legacy callers still
   // say runInLimaShell because that used to mean "not the Electron host";
   // once a graph is container-bound it must never punch back into the VM.
-  if (commandExecutionTarget(Boolean(runtime), options.runInLimaShell) === 'container') {
+  if (runtime && commandExecutionTarget(true, options.runInLimaShell) === 'container') {
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
