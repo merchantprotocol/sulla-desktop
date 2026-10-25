@@ -429,6 +429,16 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         } catch {
             return "{\"error\":\"save/restore unsupported: \(error.localizedDescription)\"}\n"
         }
+        // The saved state can be as large as the guest's memory. Running the
+        // Mac's disk out of space mid-save is worse than a normal shutdown, so
+        // the caller falls back to one unless there is room with headroom.
+        let headroom: Int64 = 4 * Int64(gib)
+        let values = try? stateFile.deletingLastPathComponent()
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        let available = values?.volumeAvailableCapacityForImportantUsage ?? 0
+        guard available >= Int64(options.memoryBytes) + headroom else {
+            return "{\"error\":\"not enough free disk space to save the VM state\"}\n"
+        }
         prepareGuestForSuspend()
         let done = DispatchSemaphore(value: 0)
         var reply = "{\"ok\":true}"
