@@ -60,6 +60,22 @@ const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
 const LEASE_MS = 15 * 60_000;
+
+/** Boot brings sulla-tools up after Desktop is usable, so agents wait for it instead of failing. */
+const TOOLS_READY_TIMEOUT_MS = 180_000;
+
+async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+      .then(response => response.ok).catch(() => false);
+
+    if (healthy) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
 const RENEW_MS = 5 * 60_000;
 const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
@@ -770,8 +786,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
-      .then(response => response.ok).catch(() => false);
+    const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
 
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
@@ -1096,8 +1111,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
-      .then(response => response.ok).catch(() => false);
+    const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
     const configuration = containerEnvironment(
       run, issueLease(), session.id, 'http://sulla_tools:3000',

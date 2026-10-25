@@ -358,7 +358,11 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
   lifecycle.registerOnce('accounts', [],
     async() => {
-      const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
+      const { getSullaAccountsClient, waitForSullaAccountsService } = await import('@pkg/main/sullaAccountsClient');
+
+      // Boot starts the accounts container after Desktop is usable; wait for it
+      // instead of failing and backing off.
+      await waitForSullaAccountsService();
       await getSullaAccountsClient().initialize();
       console.log('[Background] Local Accounts broker session initialized');
     },
