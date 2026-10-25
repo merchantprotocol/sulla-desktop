@@ -204,6 +204,16 @@ private func connectUnix(path: String) throws -> Int32 {
 
 func connectUnixSocket(path: String) throws -> Int32 { try connectUnix(path: path) }
 
+/// Runs a blocking socket loop on its own thread. On a dispatch queue each idle
+/// connection pins a worker for as long as it lives, and libdispatch stops creating
+/// workers near 64: after that every new accept, relay and control command waits
+/// forever, and a caller blocked on `limactl` hangs with it.
+private func runOnThread(_ body: @escaping @Sendable () -> Void) {
+    let thread = Thread(block: body)
+    thread.stackSize = 256 * 1024
+    thread.start()
+}
+
 private func writeAll(_ descriptor: Int32, _ data: Data) {
     data.withUnsafeBytes { raw in
         guard var pointer = raw.baseAddress else { return }
@@ -402,7 +412,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             socketDevice.connect(toPort: 1024) { result in
                 guard case .success(let connection) = result else { done.signal(); return }
                 let descriptor = dup(connection.fileDescriptor)
-                self.workers.async {
+                runOnThread {
                     defer { close(descriptor); done.signal() }
                     writeAll(descriptor, Data("{\"id\":7,\"method\":\"prepare-suspend\"}\n".utf8))
                     var buffer = [UInt8](repeating: 0, count: 4096)
@@ -519,7 +529,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func readGuestControl(_ descriptor: Int32) {
-        workers.async { [weak self] in
+        runOnThread { [weak self] in
             guard let self else { return }
             defer {
                 self.controlLock.lock()
@@ -562,11 +572,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func acceptControlConnections() {
-        workers.async { [weak self] in
+        runOnThread { [weak self] in
             guard let self else { return }
             while self.controlListener >= 0 {
                 let client = accept(self.controlListener, nil, nil)
-                if client >= 0 { self.workers.async { self.handleControl(client) } }
+                if client >= 0 { runOnThread { self.handleControl(client) } }
             }
         }
     }
@@ -622,7 +632,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func acceptDockerConnections() {
-        workers.async { [weak self] in
+        runOnThread { [weak self] in
             guard let self else { return }
             while self.dockerListener >= 0 {
                 let client = accept(self.dockerListener, nil, nil)
@@ -658,11 +668,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func acceptGuestStreamConnections() {
-        workers.async { [weak self] in
+        runOnThread { [weak self] in
             guard let self else { return }
             while self.guestListener >= 0 {
                 let client = accept(self.guestListener, nil, nil)
-                if client >= 0 { self.workers.async { self.openGuestStream(client) } }
+                if client >= 0 { runOnThread { self.openGuestStream(client) } }
             }
         }
     }
@@ -699,7 +709,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     fileprivate func acceptLoopbackStream(_ connection: VZVirtioSocketConnection) {
         let guest = dup(connection.fileDescriptor)
         guard guest >= 0 else { return }
-        workers.async { [weak self] in
+        runOnThread { [weak self] in
             guard let self else { close(guest); return }
             var line = [UInt8]()
             var byte: UInt8 = 0
@@ -728,7 +738,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 
     private func relay(from source: Int32, to destination: Int32, group: DispatchGroup) {
         group.enter()
-        workers.async {
+        runOnThread {
             defer { group.leave() }
             var buffer = [UInt8](repeating: 0, count: 65_536)
             while true {
