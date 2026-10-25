@@ -343,7 +343,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             return "\(url.path):\(size):\(Int64(modified))"
         }
         let shares = options.shares.map { "\($0.tag)=\($0.path.path):\($0.readOnly)" }.joined(separator: ",")
-        return [stamp(options.kernel), stamp(options.initrd), options.dataDisk.path, "\(options.cpus)",
+        // The data disk's stamp is taken after the VM stopped: if anything wrote
+        // the disk since, the saved memory no longer matches it.
+        return [stamp(options.kernel), stamp(options.initrd), stamp(options.dataDisk), "\(options.cpus)",
                 "\(options.memoryBytes)", shares, options.kernelArguments.joined(separator: " ")].joined(separator: "|")
     }
 
@@ -352,6 +354,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     /// Restores the saved state when it matches this configuration. Runs on
     /// the VM queue; returns false to fall through to a cold boot.
     private func restoreSavedState() -> Bool {
+#if arch(arm64)
         guard #available(macOS 14.0, *), let stateFile = options.stateFile, let fingerprintURL = stateFingerprintURL,
               FileManager.default.fileExists(atPath: stateFile.path) else { return false }
         let saved = try? String(contentsOf: fingerprintURL, encoding: .utf8)
@@ -384,6 +387,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             }
         }
         return true
+#else
+        // Virtualization.framework saves and restores machine state on Apple
+        // silicon only.
+        return false
+#endif
     }
 
     /// Asks the guest to drop clean caches, waiting at most five seconds.
@@ -412,6 +420,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 
     /// Pauses the VM, saves its state for the next start and stops it.
     private func suspend() -> String {
+#if arch(arm64)
         guard #available(macOS 14.0, *), let stateFile = options.stateFile, let fingerprintURL = stateFingerprintURL else {
             return "{\"error\":\"suspend needs macOS 14 and --state\"}"
         }
@@ -437,14 +446,20 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                         self.machine.resume { _ in self.sendGuestShutdown() }
                         done.signal(); return
                     }
-                    try? self.stateFingerprint().write(to: fingerprintURL, atomically: true, encoding: .utf8)
-                    self.machine.stop { _ in self.stopped.signal() }
-                    done.signal()
+                    self.machine.stop { _ in
+                        try? self.stateFingerprint().write(to: fingerprintURL, atomically: true, encoding: .utf8)
+                        done.signal()
+                        // Let the control reply reach the caller before the daemon exits.
+                        self.queue.asyncAfter(deadline: .now() + 0.2) { self.stopped.signal() }
+                    }
                 }
             }
         }
         done.wait()
         return reply + "\n"
+#else
+        return "{\"error\":\"suspend needs Apple silicon\"}\n"
+#endif
     }
 
     private func findSocketDeviceAndConnectControl() {
