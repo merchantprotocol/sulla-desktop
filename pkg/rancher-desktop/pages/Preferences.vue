@@ -392,6 +392,8 @@ function reload() {
     font: inherit;
     color: inherit;
     cursor: pointer;
+    // The app's global .btn/button rule sets a 40px min-height.
+    min-height: 0;
   }
   input, textarea, select {
     font: inherit;
