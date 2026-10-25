@@ -265,6 +265,13 @@ interface SudoCommand {
 
 const console = Logging.lima;
 const DEFAULT_DOCKER_SOCK_LOCATION = '/var/run/docker.sock';
+const HOST_PREPARATION_STAMP = 'host-preparation-v1.json';
+
+function logStartupPhase(phase: string, startedAt: number, details = ''): void {
+  const suffix = details ? ` ${ details }` : '';
+
+  console.log(`[startup-phase] ${ new Date().toISOString() } phase=${ phase } elapsedMs=${ Date.now() - startedAt }${ suffix }`);
+}
 
 export const MACHINE_NAME = '0';
 const IMAGE_VERSION = DEPENDENCY_VERSIONS.alpineLimaISO.isoVersion;
@@ -327,6 +334,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
   #managedServicesReconciliation?: Promise<void>;
+  #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
   /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
@@ -1247,7 +1255,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         return await fn();
       } catch (ex: any) {
         if (attempt < maxRetries && LimaBackend.isTransientSSHError(ex)) {
-          const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+          const delayMs = Math.min(250 * Math.pow(2, attempt), 2_000);
 
           console.warn(`[ssh-retry] ${ label } attempt ${ attempt + 1 }/${ maxRetries } failed (transient SSH error), retrying in ${ delayMs }ms`);
           await new Promise(r => setTimeout(r, delayMs));
@@ -1496,6 +1504,56 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    *          if no privileged access was required.
    * @note This may request the root password.
    */
+  private hostPreparationStampValue(): Record<string, unknown> {
+    return {
+      version:         Electron.app.getVersion(),
+      arch:            this.arch,
+      adminAccess:     this.#adminAccess,
+      hostAccess:      this.cfg?.application.hostAccess ?? false,
+      containerEngine: this.cfg?.containerEngine.name,
+      vmType:          this.cfg?.virtualMachine.type,
+    };
+  }
+
+  /**
+   * Fast repeat-launch guard for host tools. The stamp is only trusted while
+   * the critical installed paths still exist and the Docker socket points at
+   * this installation. A full reconciliation runs after Docker-ready so a
+   * changed network interface or damaged optional file repairs itself without
+   * holding the boot critical path.
+   */
+  private async hostPreparationIsCurrent(): Promise<boolean> {
+    if (os.platform() !== 'darwin') return false;
+    try {
+      const stampPath = path.join(paths.appHome, HOST_PREPARATION_STAMP);
+      const stamp = JSON.parse(await fs.promises.readFile(stampPath, 'utf8'));
+
+      if (JSON.stringify(stamp) !== JSON.stringify(this.hostPreparationStampValue())) return false;
+      await Promise.all([
+        fs.promises.access(path.join(VMNET_DIR, 'bin', 'socket_vmnet')),
+        fs.promises.access(NETWORKS_CONFIG.paths.varRun),
+        fs.promises.access(LIMA_SUDOERS_LOCATION),
+      ]);
+      if (this.cfg?.containerEngine.name === ContainerEngine.MOBY &&
+          await this.evalSymlink(DEFAULT_DOCKER_SOCK_LOCATION) !== path.join(paths.altAppHome, 'docker.sock')) {
+        return false;
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async writeHostPreparationStamp(): Promise<void> {
+    await fs.promises.mkdir(paths.appHome, { recursive: true });
+    const stampPath = path.join(paths.appHome, HOST_PREPARATION_STAMP);
+    const temporary = `${ stampPath }.${ process.pid }.tmp`;
+
+    await fs.promises.writeFile(temporary, `${ JSON.stringify(this.hostPreparationStampValue()) }\n`, { mode: 0o600 });
+    await fs.promises.rename(temporary, stampPath);
+  }
+
   protected async installToolsWithSudo(): Promise<boolean> {
     const randomTag = LimaBackend.calcRandomTag(8);
     const commands: string[] = [];
@@ -1522,6 +1580,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     });
 
     if (commands.length === 0) {
+      await this.writeHostPreparationStamp();
+
       return true;
     }
 
@@ -1561,6 +1621,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       }
       throw err;
     }
+
+    await this.writeHostPreparationStamp();
 
     return true;
   }
@@ -2741,8 +2803,13 @@ start_pre() {
     // access; but if it's denied, we need to regenerate both again to account for the change.
     let t = Date.now();
 
-    allowRoot &&= await this.progressTracker.action('Asking for permission to run tasks as administrator', 100, this.installToolsWithSudo());
-    console.log(`[startup-perf] installToolsWithSudo: ${ Date.now() - t }ms`);
+    if (allowRoot && await this.hostPreparationIsCurrent()) {
+      this.#hostPreparationDeferred = true;
+      logStartupPhase('host-preparation', t, 'result=cached deferredRevalidation=true');
+    } else {
+      allowRoot &&= await this.progressTracker.action('Asking for permission to run tasks as administrator', 100, this.installToolsWithSudo());
+      logStartupPhase('host-preparation', t, `result=${ allowRoot ? 'reconciled' : 'unprivileged' }`);
+    }
 
     if (!allowRoot) {
       // sudo access was denied; re-generate the config.
@@ -2797,7 +2864,7 @@ start_pre() {
         env.LIMA_SSH_PORT_FORWARDER = this.cfg?.experimental.virtualMachine.sshPortForwarder ? 'true' : 'false';
         t = Date.now();
         await this.lima('start', '--tty=false', '0');
-        console.log(`[startup-perf] limactl start: ${ Date.now() - t }ms`);
+        logStartupPhase('lima-start-handshake', t);
 
         // A disconnect while the VM was stopped leaves a durable host marker;
         // reconcile it before any managed service or interactive CLI can reuse
@@ -3024,10 +3091,22 @@ start_pre() {
         }
 
         t = Date.now();
+        const deferredToolSetup = async() => {
+          const results = await Promise.allSettled([
+            this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
+            this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
+            this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
+          ]);
+
+          results.forEach((result, index) => {
+            if (result.status === 'rejected') {
+              const names = ['Buildkit', 'image scanner', 'credential helper'];
+
+              console.warn(`[startup-phase] ${ new Date().toISOString() } phase=deferred-build-tools component=${ names[index] } status=degraded`, result.reason);
+            }
+          });
+        };
         const tasks = [
-          this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
-          this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
-          this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
           // Chained, not parallel: both slow paths run `npm install -g` into
           // the same /mnt/data/npm-global prefix, and concurrent global
@@ -3043,7 +3122,7 @@ start_pre() {
         }
 
         await Promise.all(tasks);
-        console.log(`[startup-perf] Buildkit + Trivy + CredHelper (+ kubeInstall): ${ Date.now() - t }ms`);
+        logStartupPhase('boot-critical-components', t, `kubernetes=${ Boolean(kubernetesVersion) }`);
 
         this.progressTracker.numeric('Components installed', 70, 100);
 
@@ -3107,6 +3186,48 @@ start_pre() {
 
             throw new Error('Kubernetes API did not become ready after 10 minutes');
           });
+        }
+
+        const dockerReadyAt = Date.now();
+
+        logStartupPhase('docker-api-ready', backendStartTotal, 'status=ready');
+        if (!config.kubernetes.enabled) {
+          // Docker API availability is the backend readiness contract. Sulla's
+          // Compose stack and optional tooling report their own readiness and
+          // repair in the background; neither can make a healthy engine look
+          // unavailable. Failures are logged and retried by the existing
+          // managed-service reconciliation path.
+          await this.setState(State.DISABLED);
+          managedServicesReady = true;
+          console.log(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=starting-after-docker-ready`);
+          mainEvents.emit('first-run-backend-booted');
+
+          const backgroundStartup = (async() => {
+            const toolsStartedAt = Date.now();
+
+            await deferredToolSetup();
+            logStartupPhase('deferred-build-tools', toolsStartedAt, 'status=ready');
+            if (this.#hostPreparationDeferred) {
+              this.#hostPreparationDeferred = false;
+              const hostStartedAt = Date.now();
+
+              void this.installToolsWithSudo()
+                .then(() => logStartupPhase('deferred-host-revalidation', hostStartedAt, 'status=complete'))
+                .catch(error => console.warn(
+                  `[startup-phase] ${ new Date().toISOString() } phase=deferred-host-revalidation status=degraded`, error));
+            }
+            await this.reconcileManagedServices(managedServicesGeneration, config);
+            logStartupPhase('sulla-services', dockerReadyAt, 'status=ready');
+          })();
+
+          void backgroundStartup.catch(error => {
+            if (!(error instanceof ManagedServicesReconciliationCancelled)) {
+              console.warn(`[startup-phase] ${ new Date().toISOString() } phase=background-startup status=degraded`, error);
+            }
+          });
+          logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming');
+
+          return;
         }
 
         // Publish backend readiness before waiting for first-install credentials;
