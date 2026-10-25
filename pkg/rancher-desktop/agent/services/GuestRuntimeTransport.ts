@@ -35,8 +35,8 @@ function assertGuestPath(candidate: string, roots = GUEST_PATH_ROOTS): string {
   return resolved;
 }
 
-function limaEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' };
+function guestEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, TERM: 'dumb' };
 }
 
 function boundedAppend(current: string, chunk: unknown): string {
@@ -52,8 +52,8 @@ function safeErrorText(value: string): string {
 }
 
 export function runGuestSync(args: string[], input?: string | Buffer): string {
-  const result = childProcess.spawnSync(paths.limactl, ['shell', '0', '--', ...args], {
-    env:      limaEnvironment(),
+  const result = childProcess.spawnSync(paths.sullaRuntime, ['exec', '--', ...args], {
+    env:      guestEnvironment(),
     input,
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,
@@ -241,8 +241,8 @@ async function pipeToGuest(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const source = childProcess.spawn(sourceCommand, sourceArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const guest = childProcess.spawn(paths.limactl, ['shell', '0', '--', ...guestArgs], {
-      env:   limaEnvironment(),
+    const guest = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...guestArgs], {
+      env:   guestEnvironment(),
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     let sourceError = '';

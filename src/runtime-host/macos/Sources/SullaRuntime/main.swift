@@ -796,10 +796,11 @@ signal(SIGPIPE, SIG_IGN)
 
 do {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|exec") }
+    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|exec|copy") }
     switch arguments[1] {
     case "start": try RuntimeDaemon(options: parseStartOptions(arguments.dropFirst(2))).run()
     case "exec": exit(runExecCommand(socketPath: guestSocketURL.path, arguments.dropFirst(2)))
+    case "copy": exit(runCopyCommand(socketPath: guestSocketURL.path, Array(arguments.dropFirst(2))))
     case "status": try runClientCommand("status")
     case "stop": try runClientCommand("stop")
     case "suspend": try runClientCommand("suspend")

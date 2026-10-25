@@ -58,24 +58,3 @@ export async function findSullaRuntimeArtifacts(): Promise<SullaRuntimeArtifacts
     initrd: await requireFile(path.join(guestDir, 'initramfs.img')),
   };
 }
-
-/**
- * Create (or repoint) the `limactl` symlink to the host binary in a
- * Desktop-owned directory. Invoked under that name, the binary answers
- * `limactl shell/copy/list` from the runtime, so every existing
- * `paths.limactl` call site keeps working.
- */
-export async function ensureLimactlShim(binary: string): Promise<string> {
-  const binDir = path.join(paths.appHome, 'sulla-runtime', 'bin');
-  const shim = path.join(binDir, 'limactl');
-
-  await fs.promises.mkdir(binDir, { recursive: true, mode: 0o700 });
-  const current = await fs.promises.readlink(shim).catch(() => undefined);
-
-  if (current !== binary) {
-    await fs.promises.rm(shim, { force: true });
-    await fs.promises.symlink(binary, shim);
-  }
-
-  return shim;
-}

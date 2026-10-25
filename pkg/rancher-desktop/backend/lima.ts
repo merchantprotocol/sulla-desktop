@@ -42,7 +42,7 @@ import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsIn
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import { reconcileComposeService } from './sullaServiceReconcile';
 import {
-  ensureLimactlShim, findSullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets,
+  findSullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets,
 } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
@@ -356,8 +356,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   /** The native Sulla runtime, which runs Docker on macOS instead of Lima. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
-  /** Lima's own `paths.limactl`, restored when the runtime stops. */
-  #limaLimactl?: string;
 
   /** Opened by the first-run coordinator after credential setup is complete. */
   setSullaCredentialsReady(): void {
@@ -3496,7 +3494,6 @@ start_pre() {
     for (const share of shares.filter(share => !share.readOnly)) {
       await fs.promises.mkdir(share.hostPath, { recursive: true });
     }
-    const shim = await ensureLimactlShim(artifacts.binary);
     const { username, uid } = os.userInfo();
     const guestUser = guestUserFor(username, uid);
 
@@ -3520,10 +3517,7 @@ start_pre() {
     });
     console.log(`[startup-perf] sulla-runtime spawn -> docker-ready (cold boot or restore): ${ Date.now() - spawnedAt }ms`);
 
-    // Every `paths.limactl` / `LimaBackend.limactl` caller now reaches the runtime.
-    this.#limaLimactl ??= paths.limactl;
-    LimaBackend.limactlOverride = shim;
-    paths.limactl = shim;
+    // Guest commands go through `paths.sullaRuntime`, which already points at the host binary.
     setSullaRuntimeActive(true, guestUser);
   }
 
@@ -3590,8 +3584,6 @@ start_pre() {
     this.#sullaRuntimeForwarder?.stop();
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
-    LimaBackend.limactlOverride = undefined;
-    if (this.#limaLimactl) paths.limactl = this.#limaLimactl;
     setSullaRuntimeActive(false);
     this.#containerEngineClient = undefined;
     try {

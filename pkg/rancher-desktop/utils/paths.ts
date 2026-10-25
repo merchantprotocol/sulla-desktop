@@ -10,7 +10,7 @@
  * Resolution order for the SSOT itself:
  *   1. `rdctl paths` Go binary (canonical — see `src/go/rdctl/pkg/directories/`).
  *   2. `getDefaultPaths()` TypeScript fallback for the cold-path / renderer case.
- *   3. `augmentPaths()` fills derived fields (`limactl`, `sullaHome`, `sullaConfig`)
+ *   3. `augmentPaths()` fills derived fields (`sullaRuntime`, `sullaHome`, `sullaConfig`)
  *      that aren't yet returned by rdctl.
  *
  * If a new path needs to be added, add it here and (ideally) to the Go
@@ -38,8 +38,8 @@ export interface Paths {
   resources:                  string;
   /** Directory holding Lima state (Unix-specific). */
   lima:                       string;
-  /** Full path to the bundled `limactl` binary (Unix-specific). */
-  limactl:                    string;
+  /** Full path to the `sulla-runtime` host binary that boots the VM and runs guest commands (macOS). */
+  sullaRuntime:               string;
   /** Sulla user home — `~/sulla`. Houses workflows, functions, captures, logs. */
   sullaHome:                  string;
   /** Sulla config dir — `~/.sulla`. Houses MCP configs, vault key, device id. */
@@ -74,7 +74,7 @@ export class UnixPaths implements Paths {
   cache = '';
   resources = '';
   lima = '';
-  limactl = '';
+  sullaRuntime = '';
   sullaHome = '';
   sullaConfig = '';
   sullaDesktopCodebase = '';
@@ -123,8 +123,8 @@ export class WindowsPaths implements Paths {
     throw new Error('lima not available for Windows');
   }
 
-  get limactl(): string {
-    throw new Error('limactl not available for Windows');
+  get sullaRuntime(): string {
+    throw new Error('sulla-runtime not available for Windows');
   }
 
   get integration(): string {
@@ -199,7 +199,7 @@ function getDefaultPaths(): Partial<Paths> {
       // ~/.rd/lima — must stay short to avoid UNIX_PATH_MAX (104 chars)
       // for the Lima socket files (ssh.sock, ha.sock, etc.). Don't put this
       // under appHome (~/Library/Application Support/rancher-desktop/lima) —
-      // long usernames blow past the limit on `limactl create`.
+      // long usernames blow past the limit on `sulla-runtime create`.
       lima:                       path.join(home, '.rd', 'lima'),
       integration:                path.join(home, '.rd', 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
@@ -259,9 +259,9 @@ function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
   if (!pathsData.sullaDesktopCodebase) {
     pathsData.sullaDesktopCodebase = path.join(home, '.sulla-desktop');
   }
-  if (!pathsData.limactl && pathsData.resources && process.platform !== 'win32') {
-    const platformDir = process.platform === 'darwin' ? 'darwin' : 'linux';
-    pathsData.limactl = path.join(pathsData.resources, platformDir, 'lima', 'bin', 'limactl');
+  if (!pathsData.sullaRuntime && pathsData.resources && process.platform !== 'win32') {
+    pathsData.sullaRuntime = process.env.SULLA_RUNTIME_BIN ||
+      path.join(pathsData.resources, process.platform === 'darwin' ? 'darwin' : 'linux', 'sulla-runtime', 'sulla-runtime');
   }
 
   return pathsData;

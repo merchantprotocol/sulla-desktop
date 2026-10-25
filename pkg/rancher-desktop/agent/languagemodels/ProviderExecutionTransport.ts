@@ -70,7 +70,7 @@ export interface ProviderProcessLaunch {
   /** Canonical provider command. A container transport executes this form. */
   providerCommand: ProviderCommand;
   /** Existing Desktop/Lima launch. Omitted entirely for container requests. */
-  limaCommand?:    ProviderCommand;
+  guestCommand?:    ProviderCommand;
   stdio?:          childProcess.StdioOptions;
 }
 
@@ -166,7 +166,7 @@ class LimaProviderExecutionTransport implements ProviderExecutionTransport {
   }
 
   spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams {
-    const command = request.limaCommand;
+    const command = request.guestCommand;
     if (!command) throw new Error('Lima provider transport requires a Lima launch command');
 
     return childProcess.spawn(command.executable, command.args, {
@@ -195,8 +195,8 @@ class LimaProviderExecutionTransport implements ProviderExecutionTransport {
         resolve();
       };
       try {
-        const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', remoteCommand], {
-          env:      { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+        const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
+          env:      { ...process.env, TERM: 'dumb' },
           stdio:    'ignore',
           detached: true,
         });

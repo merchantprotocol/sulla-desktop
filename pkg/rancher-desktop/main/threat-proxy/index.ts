@@ -89,7 +89,7 @@ function getBlocklistHostPath(): string {
 /** Path to the in-VM log file, surfaced via mount so we can tail without execing into the VM. */
 function getVmLogHostHint(): string {
   // Lima mounts /Users + paths.logs; the in-VM /var/log/sulla-threat-proxy.log
-  // isn't directly reachable from the host. The service reads it via limactl shell.
+  // isn't directly reachable from the host. The service reads it via sulla-runtime exec.
   return '/var/log/sulla-threat-proxy.log';
 }
 

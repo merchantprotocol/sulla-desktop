@@ -22,6 +22,7 @@ import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -60,10 +61,7 @@ const isDockerDaemonRunning = (): boolean => {
 
 const checkDockerMode = async() => {
   try {
-    const output = execSync(`LIMA_HOME="${ paths.lima }" "${ paths.limactl }" list --json`, { encoding: 'utf8' });
-    const instances = JSON.parse(output);
-    const instance = instances.find((i: any) => i.name === '0');
-    const vmRunning = instance?.status === 'Running';
+    const vmRunning = isSullaRuntimeActive();
 
     // Check if Kubernetes is enabled
     const k8sEnabled = await SullaSettingsModel.get('kubernetes.enabled', false);
@@ -1695,7 +1693,7 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
 export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   const lifecycle = getServiceLifecycleManager();
 
-  // Stop the terminal WebSocket server (kills any live limactl shell PTYs).
+  // Stop the terminal WebSocket server (kills any live sulla-runtime exec PTYs).
   try {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 

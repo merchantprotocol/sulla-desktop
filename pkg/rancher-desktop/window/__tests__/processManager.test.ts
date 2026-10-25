@@ -19,7 +19,7 @@ jest.unstable_mockModule('electron', () => ({
   dialog:  { showMessageBox: confirm },
   ipcMain: { handle: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler) },
 }));
-jest.unstable_mockModule('@pkg/utils/paths', () => ({ default: { limactl: '/lima/bin/limactl', lima: '/vm-home' } }));
+jest.unstable_mockModule('@pkg/utils/paths', () => ({ default: { sullaRuntime: '/runtime/sulla-runtime' } }));
 jest.unstable_mockModule('@pkg/window', () => ({
   createWindow: () => window, getWindow: () => currentWindow, webRoot: 'app://.',
 }));
@@ -61,15 +61,15 @@ test('protected or stale selections never open confirmation', async() => {
   expect(confirm).not.toHaveBeenCalled();
 });
 
-test('confirmed force quit uses only fixed limactl arguments and validated identity', async() => {
+test('confirmed force quit uses only fixed sulla-runtime arguments and validated identity', async() => {
   confirm.mockResolvedValue({ response: 1 });
   execute.mockResolvedValueOnce({ stdout: JSON.stringify(snapshot) }).mockResolvedValueOnce({ stdout: '{"sent":true}' });
   expect(await terminate(event, { ...target, signal: 'KILL' })).toEqual({ sent: true });
-  const [binary, args, options] = execute.mock.calls[1] as [string, string[], { env: { LIMA_HOME: string } }];
-  expect(binary).toBe('/lima/bin/limactl');
-  expect(args.slice(0, 6)).toEqual(['shell', '0', '--', 'python3', '-c', expect.any(String)]);
-  expect(JSON.parse(args[6])).toEqual({ ...target, signal: 'KILL', action: 'terminate' });
-  expect(options.env.LIMA_HOME).toBe('/vm-home');
+  const [binary, args, options] = execute.mock.calls[1] as [string, string[], unknown];
+  expect(binary).toBe('/runtime/sulla-runtime');
+  expect(args.slice(0, 5)).toEqual(['exec', '--', 'python3', '-c', expect.any(String)]);
+  expect(JSON.parse(args[5])).toEqual({ ...target, signal: 'KILL', action: 'terminate' });
+  expect(options).toBeDefined();
 });
 
 test('VM failure never falls back to a host shell', async() => {

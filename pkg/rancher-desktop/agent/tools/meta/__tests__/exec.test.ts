@@ -33,7 +33,7 @@ describe('exec security guardrails', () => {
     runCommandMock.mockResolvedValueOnce({
       exitCode: 1,
       stdout:   '',
-      stderr:   'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `limactl create 0` to create a new instance"\n',
+      stderr:   'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `create 0` to create a new instance"\n',
     });
 
     const worker = configureWorker(new ExecWorker(), execRegistration);

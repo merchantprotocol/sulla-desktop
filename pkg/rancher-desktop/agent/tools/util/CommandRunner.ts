@@ -9,11 +9,8 @@ export interface CommandRunnerOptions {
   maxOutputChars?: number;
   stdin?:          string;
   runInLimaShell?: boolean;
-  limaInstance?:   string;
-  /** Override the canonical `paths.lima` (rarely needed; tests/migrations only). */
-  limaHome?:       string;
-  /** Override the canonical `paths.limactl` (rarely needed; tests/migrations only). */
-  limactlPath?:    string;
+  /** Override the canonical `paths.sullaRuntime` (rarely needed; tests/migrations only). */
+  runtimePath?:    string;
 }
 
 export function commandExecutionTarget(hasContainerRuntime: boolean, runInLimaShell = false): 'container' | 'vm' | 'host' {
@@ -29,19 +26,11 @@ function quoteShellArg(value: string): string {
 }
 
 /**
- * Resolve LIMA_HOME. Prefers explicit override, then the canonical
- * `paths.lima` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
+ * Resolve the sulla-runtime binary. Prefers explicit override, then the
+ * canonical `paths.sullaRuntime` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
  */
-export function resolveLimaHome(options: CommandRunnerOptions = {}): string {
-  return options.limaHome || process.env.LIMA_HOME || paths.lima;
-}
-
-/**
- * Resolve the limactl binary. Prefers explicit override, then the canonical
- * `paths.limactl` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
- */
-export function resolveLimactlPath(options: CommandRunnerOptions = {}): string {
-  return options.limactlPath || process.env.LIMACTL_PATH || paths.limactl;
+export function resolveRuntimePath(options: CommandRunnerOptions = {}): string {
+  return options.runtimePath || paths.sullaRuntime;
 }
 
 function executeSpawn(
@@ -143,50 +132,31 @@ export async function runCommand(
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
-    const limaHome = resolveLimaHome(options);
-    const limactlPath = resolveLimactlPath(options);
-    const dockerArgs = ['shell', options.limaInstance || '0', '--', 'docker', 'exec', '-i', runtime.podId, '/bin/bash', '-lc', rawScript];
+    const dockerArgs = ['exec', '--', 'docker', 'exec', '-i', runtime.podId, '/bin/bash', '-lc', rawScript];
 
-    let result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, limactlPath, ...dockerArgs], options);
-
-    if (result.exitCode === 127) {
-      result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, 'limactl', ...dockerArgs], options);
-    }
-
-    return result;
+    return executeSpawn(resolveRuntimePath(options), dockerArgs, options);
   }
 
   if (commandExecutionTarget(false, options.runInLimaShell) === 'vm') {
-    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
-    // Windows. Fail with a clear message instead of crashing the caller.
+    // The Sulla runtime only exists on macOS; paths.sullaRuntime is a throwing
+    // getter on Windows. Fail with a clear message instead of crashing the caller.
     if (process.platform === 'win32') {
       return {
         stdout:   '',
-        stderr:   'VM command execution requires the Lima VM, which is not available on Windows. This feature currently supports macOS and Linux only.',
+        stderr:   'VM command execution requires the Sulla runtime, which is not available on Windows. This feature currently supports macOS only.',
         exitCode: 127,
       };
     }
-    const limaHome = resolveLimaHome(options);
-    const limactlPath = resolveLimactlPath(options);
-    const limaInstance = options.limaInstance || '0';
-
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
 
-    // Keep Lima's guest-owned HOME. User-selected host content is reachable
+    // Keep the guest-owned HOME. User-selected host content is reachable
     // only through Files; a failed VM lookup must never become host execution.
-    const limaPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-    const script = `export PATH=${ quoteShellArg(limaPath) }; ${ rawScript }`;
+    const guestPath = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+    const script = `export PATH=${ quoteShellArg(guestPath) }; ${ rawScript }`;
 
-    const limactlArgs = ['shell', limaInstance, '--', 'sh', '-lc', script];
-    let result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, limactlPath, ...limactlArgs], options);
-
-    if (result.exitCode === 127) {
-      result = await executeSpawn('env', [`LIMA_HOME=${ limaHome }`, 'limactl', ...limactlArgs], options);
-    }
-
-    return result;
+    return executeSpawn(resolveRuntimePath(options), ['exec', '--', 'sh', '-lc', script], options);
   }
 
   // Special handling for sh/bash -c full scripts

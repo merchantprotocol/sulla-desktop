@@ -41,7 +41,7 @@ function busyboxGuest(lines: string[], options: { catFailures?: number } = {}) {
       commands.push(args);
       const joined = args.join(' ');
 
-      if (args[0] === 'findmnt' || args[0] === 'fusermount3') return Promise.reject(new Error('limactl exited with code 1'));
+      if (args[0] === 'findmnt' || args[0] === 'fusermount3') return Promise.reject(new Error('sulla-runtime exited with code 1'));
       if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
         if (catFailures > 0) {
           catFailures--;

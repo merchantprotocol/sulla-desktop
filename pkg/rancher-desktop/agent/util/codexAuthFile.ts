@@ -29,7 +29,7 @@ async function removeGuestCodexAuthFile(): Promise<void> {
   const { execFile } = await import('child_process');
 
   await new Promise<void>((resolve, reject) => {
-    execFile(paths.limactl, ['shell', '0', '--', 'sh', '-c', [
+    execFile(paths.sullaRuntime, ['exec', '--', 'sh', '-c', [
       'set -eu',
       'd="$HOME/.codex"',
       // Old releases created this exact guest-side link. Remove the link
@@ -39,7 +39,7 @@ async function removeGuestCodexAuthFile(): Promise<void> {
       '[ ! -e "$d" ] || [ -d "$d" ]',
       'rm -f -- "$d/auth.json"',
     ].join('\n')], {
-      env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
+      env: { ...process.env }, timeout: 30_000,
     }, err => (err ? reject(err) : resolve()));
   });
 }
@@ -143,16 +143,16 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
   try {
     const { default: paths } = await import('@pkg/utils/paths');
     const { execFile } = await import('child_process');
-    const env = { ...process.env, LIMA_HOME: paths.lima };
+    const env = { ...process.env };
     const lima = (args: string[]) => new Promise<string>((resolve, reject) => {
-      execFile(paths.limactl, args, { env, timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+      execFile(paths.sullaRuntime, args, { env, timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
     });
     if (fs.existsSync(codexRevocationPath())) {
       await removeGuestCodexAuthFile();
       return false;
     }
     staged = (await lima([
-      'shell', '0', '--', 'sh', '-c',
+      'exec', '--', 'sh', '-c',
       'set -eu; umask 077; mktemp -d /tmp/sulla-codex-auth.XXXXXXXX',
     ])).trim();
     if (!/^\/tmp\/sulla-codex-auth\.[A-Za-z0-9]+$/.test(staged)) {
@@ -187,12 +187,12 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
       'tmp=""',
     ].join('\n');
     await new Promise<void>((resolve, reject) => {
-      execFile(paths.limactl, ['copy', target, `0:${ incoming }`], {
+      execFile(paths.sullaRuntime, ['copy', target, `guest:${ incoming }`], {
         env,
         timeout: 30_000,
       }, err => (err ? reject(err) : resolve()));
     });
-    await lima(['shell', '0', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
+    await lima(['exec', '--', 'sh', '-c', script, 'sh', staged, incoming, String(hostAuthMtime)]);
     console.log('[codexAuthFile] VM ~/.codex/auth.json synchronized');
     return true;
   } catch (err) {
@@ -201,8 +201,8 @@ export async function linkCodexHomeIntoVm(): Promise<boolean> {
         const { default: paths } = await import('@pkg/utils/paths');
         const { execFile } = await import('child_process');
         await new Promise<void>((resolve) => {
-          execFile(paths.limactl, ['shell', '0', '--', 'rm', '-rf', '--', staged!], {
-            env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 30_000,
+          execFile(paths.sullaRuntime, ['exec', '--', 'rm', '-rf', '--', staged!], {
+            env: { ...process.env }, timeout: 30_000,
           }, () => resolve());
         });
       } catch { /* VM may have stopped during cleanup */ }

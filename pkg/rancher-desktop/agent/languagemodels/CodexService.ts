@@ -78,7 +78,7 @@ interface CodexPrewarmRecord {
  *
  * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
  * scheduled token refresh. The host home is mounted into the Lima VM, and
- * every spawn exports CODEX_HOME/HOME to that host path — limactl shell
+ * every spawn exports CODEX_HOME/HOME to that host path — sulla-runtime exec
  * otherwise sets HOME to the guest path (/home/<user>.linux), which would
  * hide the auth file and 401 every request. The CLI also self-refreshes
  * tokens in place. With ChatGPT sign-in, usage draws from the user's
@@ -176,7 +176,7 @@ export class CodexService extends BaseLanguageModel {
   }
 
   /**
-   * Build the `limactl shell` argv that launches `codex exec` in the VM.
+   * Build the `sulla-runtime exec` argv that launches `codex exec` in the VM.
    * Shared by runCodex (fresh spawn) and prewarm (speculative boot) so both
    * stay identical. The prompt is never baked into this argv — `codex
    * exec`'s positional PROMPT arg is always omitted (trailing `-`) so the
@@ -236,7 +236,7 @@ export class CodexService extends BaseLanguageModel {
 
     // `exec` replaces the inner sh with codex so there's no shell layer
     // between the SSH session and the CLI — best chance of signal
-    // propagation when we kill limactl on the host side.
+    // propagation when we kill sulla-runtime on the host side.
     const mcpTokenExport = p.mcpSession
       ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) } SULLA_TOOL_SESSION=${ shq(p.mcpSession.id) }`
       : '';
@@ -251,7 +251,7 @@ export class CodexService extends BaseLanguageModel {
       `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
       `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
     const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }export CODEX_HOME="$HOME/.codex"${ mcpTokenExport }; echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
-    return ['shell', '0', '--', 'sh', '-c', innerCmd];
+    return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
   /** Canonical argv used by non-Lima transports; JSONL parsing stays here. */
@@ -318,8 +318,7 @@ export class CodexService extends BaseLanguageModel {
         : undefined;
       if (transportContext.runtime === 'lima' && !await ensureCodexAuthFile()) return;
 
-      const limactlPath = paths.limactl;
-      const limaHome = paths.lima;
+      const runtimePath = paths.sullaRuntime;
       const readOnly = !!(state.metadata as any)?.verifierReadOnly;
       const pidFile = newRemotePidFile('sulla-codex');
       const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
@@ -350,7 +349,7 @@ export class CodexService extends BaseLanguageModel {
           providerCommand,
           ...(transportContext.runtime === 'lima'
             ? {
-              limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+              guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
             }
             : {}),
         });
@@ -825,14 +824,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     log.log(`[CodexService] runCodex: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } runtime=${ initialTransportContext.runtime }`);
 
-    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
+    // Lima only exists on macOS/Linux; paths.sullaRuntime is a throwing getter on
     // Windows. Surface a clear, user-readable error instead of an opaque crash.
     if (transport.runtime === 'lima' && process.platform === 'win32') {
       throw new Error('Codex execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
     }
 
-    const limactlPath = paths.limactl;
-    const limaHome = paths.lima;
+    const runtimePath = paths.sullaRuntime;
 
     // Speculative boot: adopt a process pre-warmed for this conversation
     // during the accumulator phase; otherwise spawn fresh below. Flag off →
@@ -843,7 +841,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // read-only sandbox and cannot mutate a checkout even through native shell.
     // The
     // prompt is fed via stdin (`-` positional), NOT as an argv element — a
-    // large transcript on the command line overflows limactl's SSH
+    // large transcript on the command line overflows sulla-runtime's SSH
     // multiplexing channel (same failure mode ClaudeCodeService hit).
     const speculative = await this.speculativeBootEnabled();
     const readOnly = !!(options.state?.metadata as any)?.verifierReadOnly;
@@ -940,7 +938,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           providerCommand,
           ...(transportContext.runtime === 'lima'
             ? {
-              limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+              guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
             }
             : {}),
         });
@@ -1447,7 +1445,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // the `exec resume` subcommand) — drop the cached id and retry once
         // with a fresh session so the user doesn't see a dead end. The match
         // deliberately omits generic words like 'session'/'not found':
-        // limactl's SSH-mux noise ("mux_client_request_session ... Broken
+        // sulla-runtime's SSH-mux noise ("mux_client_request_session ... Broken
         // pipe") lands in stderr and must not wipe a valid thread.
         const resumeFailed = existingSession && !retryWithoutSession && !sawToolExecution &&
           (errored || code !== 0) &&

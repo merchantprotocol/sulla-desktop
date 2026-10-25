@@ -96,7 +96,7 @@ function busyboxGuest(initial: string, options: { catFails?: boolean } = {}) {
     execCommand: (...args: any[]) => {
       if (typeof args[0] === 'object') args.shift();
       commands.push(args);
-      if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
+      if (args[0] === 'findmnt') return Promise.reject(new Error('sulla-runtime exited with code 1'));
       if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
         return options.catFails ? Promise.reject(new Error('cat: can\'t open \'/proc/self/mountinfo\'')) : Promise.resolve(`${ table }\n`);
       }

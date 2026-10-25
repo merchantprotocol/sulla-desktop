@@ -92,7 +92,7 @@ function fakeBackend() {
     commands.push({ command: args, options });
 
     if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
-    if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
+    if (args[0] === 'findmnt') return Promise.reject(new Error('sulla-runtime exited with code 1'));
     if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
       return guest.catFails ? Promise.reject(new Error('cat failed')) : Promise.resolve(guest.mountinfo);
     }

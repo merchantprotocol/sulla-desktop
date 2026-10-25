@@ -4,7 +4,7 @@
  * Exposes an IPC handler `claude-code:test` that:
  *   1. Spawns `claude -p PROMPT --output-format stream-json --verbose
  *      --include-partial-messages --dangerously-skip-permissions` in the VM
- *      via `limactl shell`.
+ *      via `sulla-runtime exec`.
  *   2. Parses each NDJSON line and logs the event type + interesting fields.
  *   3. Streams progress back to the renderer via `claude-code:test:event`.
  *   4. Resolves with { events, sessionId, text } when `message_stop` is seen
@@ -65,11 +65,10 @@ export function initClaudeCodeTestEvents(): void {
     prompt: string,
     sessionId?: string,
   ): Promise<TestResult> => {
-    const limactlPath = paths.limactl;
-    const limaHome = paths.lima;
+    const runtimePath = paths.sullaRuntime;
 
     // Pull Claude auth token from settings so we can set CLAUDE_CODE_OAUTH_TOKEN
-    // inside the VM. `limactl shell --` runs non-interactive so /etc/claude-env
+    // inside the VM. `sulla-runtime exec --` runs non-interactive so /etc/claude-env
     // isn't sourced by .profile; we inject the env var explicitly via sh -c.
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
     const oauthToken = await SullaSettingsModel.get('claudeOAuthToken', '') ?? '';
@@ -105,7 +104,7 @@ export function initClaudeCodeTestEvents(): void {
 
     // Redirect stdin to /dev/null to silence "no stdin data received" warning
     const innerCmd = `${ envAssignments.join(' ') } ${ claudeArgs.join(' ') } < /dev/null`;
-    const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
+    const args = ['exec', '--', 'sh', '-c', innerCmd];
 
     // Redacted log: don't write the OAuth token to disk.
     const redactedArgs = args.map((a) => a.replace(/CLAUDE_CODE_OAUTH_TOKEN="[^"]+"/g, 'CLAUDE_CODE_OAUTH_TOKEN=***')
@@ -113,10 +112,10 @@ export function initClaudeCodeTestEvents(): void {
     console.log('[ClaudeTest] Spawning:', redactedArgs.join(' '));
 
     return await new Promise((resolve) => {
-      const proc = childProcess.spawn(limactlPath, args, {
+      const proc = childProcess.spawn(runtimePath, args, {
         env: {
           ...process.env,
-          LIMA_HOME: limaHome,
+          
           TERM:      'dumb',
         },
       });

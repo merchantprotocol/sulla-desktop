@@ -303,8 +303,8 @@ export class CliAgentService extends BaseLanguageModel {
     }).join(' ');
     const pidFile = newRemotePidFile(`sulla-${ this.spec.id }`);
     const innerCommand = `${ buildRemotePidRecordCommand(pidFile) }; export ${ envAssignments }; exec ${ args }`;
-    const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', innerCommand], {
-      env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+    const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', innerCommand], {
+      env: { ...process.env, TERM: 'dumb' },
     });
 
     return await new Promise((resolve, reject) => {
@@ -338,8 +338,8 @@ export class CliAgentService extends BaseLanguageModel {
         if (watchdog) clearInterval(watchdog);
       };
       const remoteKill = async(signal: 'TERM' | 'KILL') => {
-        const killer = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)], {
-          env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' }, stdio: 'ignore', detached: true,
+        const killer = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', buildRemoteKillCommand(pidFile, signal)], {
+          env: { ...process.env, TERM: 'dumb' }, stdio: 'ignore', detached: true,
         });
         killer.unref();
         await waitForKillHelper(killer);

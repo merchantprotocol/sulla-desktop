@@ -361,7 +361,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Build the `limactl shell` argv that launches `claude -p` in the VM. Shared
+   * Build the `sulla-runtime exec` argv that launches `claude -p` in the VM. Shared
    * by runClaude (fresh spawn) and prewarm (speculative boot) so both stay
    * identical. `streamJsonInput` adds --input-format stream-json so the process
    * can boot before the prompt is written to stdin.
@@ -441,14 +441,14 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.systemPromptPath) claudeArgs.push('--append-system-prompt-file', shq(p.systemPromptPath));
 
     // Claude Code emits newline-delimited JSON, but its stdout is connected
-    // to the limactl/SSH pipe rather than a terminal. Prefer stdbuf when the
+    // to the sulla-runtime/SSH pipe rather than a terminal. Prefer stdbuf when the
     // VM provides it, but never make Claude startup depend on that optional
     // binary: existing installations may not have coreutils installed.
     // A resumed session must have exactly one live process: the launch first
     // stops any other claude still holding it (an orphan from an app restart,
     // or a copy owned elsewhere) so two copies never run the same chat.
     const innerCmd = buildClaudeLaunchCommand(envAssignments, claudeArgs, p.pidFile, p.existingSession);
-    return ['shell', '0', '--', 'sh', '-c', innerCmd];
+    return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
   /** Canonical argv used by non-Lima transports; parsing stays in this service. */
@@ -571,7 +571,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         providerCommand,
         ...(transportContext.runtime === 'lima'
           ? {
-            limaCommand: { executable: paths.limactl, args, env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' } },
+            guestCommand: { executable: paths.sullaRuntime, args, env: { ...process.env, TERM: 'dumb' } },
           }
           : {}),
       });
@@ -1214,8 +1214,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
     }
 
-    const limactlPath = paths.limactl;
-    const limaHome = paths.lima;
+    const runtimePath = paths.sullaRuntime;
 
     // Speculative boot: adopt a process pre-warmed for this conversation during
     // the accumulator phase; otherwise spawn fresh below. Flag off → adopted is
@@ -1286,7 +1285,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     }
 
     // The prompt is fed via stdin (see below), NOT as an argv element. A large
-    // transcript embedded in the command line overflows limactl's SSH
+    // transcript embedded in the command line overflows sulla-runtime's SSH
     // multiplexing channel and the spawn dies with "mux_client_request_session:
     // write packet: Broken pipe", bricking any sufficiently long conversation.
     // Build the launch argv. `exec` replaces the inner sh with claude so there's
@@ -1363,7 +1362,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         providerCommand,
         ...(transportContext.runtime === 'lima'
           ? {
-            limaCommand: { executable: limactlPath, args, env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' } },
+            guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
           }
           : {}),
       });
@@ -1413,7 +1412,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     try {
       return await new Promise((resolve, reject) => {
-        // Feed the prompt through stdin instead of the command line. limactl's
+        // Feed the prompt through stdin instead of the command line. sulla-runtime's
         // SSH mux caps how large a session-request (command line) can be; a long
         // transcript blows past it. stdin is a plain data channel with no such
         // limit. Guard against EPIPE in case claude exits before we finish.
@@ -1597,11 +1596,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
 
         // Kill the spawn on both sides of the SSH boundary:
-        //   1) SIGTERM the host-side limactl process — closes the SSH-style
+        //   1) SIGTERM the host-side sulla-runtime process — closes the SSH-style
         //      session; with `exec` in the inner shell (see above) the remote
         //      claude usually receives SIGHUP and dies.
         //   2) targeted kill inside the VM (see killRemoteClaude).
-        //   3) Escalate to SIGKILL after a grace period — a limactl wedged in
+        //   3) Escalate to SIGKILL after a grace period — a sulla-runtime wedged in
         //      the SSH mux can ignore SIGTERM entirely, which is exactly the
         //      state that strands a hung run.
         const killSpawn = () => {
