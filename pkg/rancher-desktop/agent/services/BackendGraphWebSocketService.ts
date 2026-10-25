@@ -9,6 +9,7 @@ import { RunActivity } from './RunActivity';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
+import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 
@@ -27,6 +28,7 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Responses emitted by the agent land back on this channel; the relay
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
+const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
@@ -47,9 +49,31 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private subscribedChannels = new Set<string>();
+  private conversationContainers = new Map<string, {
+    provider: string;
+    model?: string;
+    lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle;
+    idleTimer: ReturnType<typeof setTimeout>;
+  }>();
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
+  }
+
+  private armConversationIdle(key: string, lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      const current = this.conversationContainers.get(key);
+      if (current?.lifecycle !== lifecycle) return;
+      const [channelId, ...threadParts] = key.split('|');
+      if (this.hasActiveRun(channelId, threadParts.join('|'))) {
+        current.idleTimer = this.armConversationIdle(key, lifecycle);
+        return;
+      }
+      this.conversationContainers.delete(key);
+      lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to reap idle conversation container:', error));
+    }, CONVERSATION_CONTAINER_IDLE_MS);
+    timer.unref();
+    return timer;
   }
 
   /** True while a turn is in flight for this thread (an idle chat is not running). */
@@ -68,7 +92,41 @@ export class BackendGraphWebSocketService {
       abort.abort();
     }
     this.activeAborts.clear();
+    for (const [, record] of this.conversationContainers) {
+      clearTimeout(record.idleTimer);
+      record.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
+    }
+    this.conversationContainers.clear();
     this.subscribedChannels.clear();
+  }
+
+  private async conversationContainer(
+    channelId: string,
+    threadId: string,
+    provider: string,
+    state: AgentGraphState,
+  ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
+    const key = this.abortKey(channelId, threadId);
+    const existing = this.conversationContainers.get(key);
+    const model = state.metadata.agent?.model;
+    if (existing?.provider === provider && existing.model === model) {
+      clearTimeout(existing.idleTimer);
+      return existing.lifecycle;
+    }
+    if (existing) {
+      clearTimeout(existing.idleTimer);
+      await existing.lifecycle.close();
+      this.conversationContainers.delete(key);
+    }
+    const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
+    const lifecycle = await createAgentContainerLifecycle({
+      jobId: `chat-${ threadId }`, taskIndex: 0, provider,
+      model, state,
+      persistenceKey: `conversation:${ channelId }:${ threadId }`,
+    });
+    const idleTimer = this.armConversationIdle(key, lifecycle);
+    this.conversationContainers.set(key, { provider, model, lifecycle, idleTimer });
+    return lifecycle;
   }
 
   /**
@@ -196,6 +254,13 @@ export class BackendGraphWebSocketService {
       const threadId = data?.threadId as string | undefined;
       if (threadId) {
         GraphRegistry.delete(threadId);
+        const key = this.abortKey(channelId, threadId);
+        const container = this.conversationContainers.get(key);
+        if (container) {
+          clearTimeout(container.idleTimer);
+          this.conversationContainers.delete(key);
+          await container.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
+        }
       }
       return;
     }
@@ -457,20 +522,12 @@ export class BackendGraphWebSocketService {
       state.metadata.waitingForUser = false;
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
-      if (state.metadata.agent?.runLocation === 'container') {
-        const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
+      const runLocation = state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION;
+      if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
-        const CONTAINER_PROVIDERS = ['claude-code', 'codex'];
-        if (!CONTAINER_PROVIDERS.includes(provider)) {
-          throw new Error(`Provider "${ provider }" cannot run in a container. Supported: ${ CONTAINER_PROVIDERS.join(', ') }. Change the agent's provider or set run_location to "vm".`);
-        }
-        const lifecycle = await createAgentContainerLifecycle({
-          jobId: `chat-${ threadId }`, taskIndex: 0,
-          provider,
-          model: state.metadata.agent?.model, state, signal: runAbort.signal,
-        });
-        try { await lifecycle.execute(() => graph.execute(state, startNode)) } finally { await lifecycle.close() }
+        const lifecycle = await this.conversationContainer(channelId, threadId, provider, state);
+        await lifecycle.execute(() => graph.execute(state, startNode));
       } else {
         await graph.execute(state, startNode);
       }
