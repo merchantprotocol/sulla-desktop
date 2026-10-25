@@ -529,7 +529,7 @@
                   </td>
                   <td>
                     <div class="name">
-                      <button v-if="entry.folder" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
+                      <button v-if="entry.folder && !entry.rootCollectionId" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
                       <span
                         class="fi"
                         :class="entry.kindClass"
@@ -579,7 +579,7 @@
                     />
                   </td>
                   <td @dblclick.stop>
-                    <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
+                    <button v-if="!entry.rootCollectionId && (section !== 'trash' || !entry.folder)" class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
                     <button v-if="!entry.folder && ['failed', 'unsupported'].includes(entry.indexStatus)" class="btn sm" type="button" :disabled="busy" :title="entry.indexReason" @click.stop="reindex(entry)">Re-index</button>
                     <div
                       v-if="entrySync(entry) === 'conflict' && !entry.folder"
@@ -683,7 +683,7 @@
                 v-html="syncIcon(entry)"
               />
             </div>
-            <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
+            <button v-if="!entry.rootCollectionId && (section !== 'trash' || !entry.folder)" class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
             <div class="bd">
               <input
                 v-if="editingKey === entry.key"
@@ -1175,7 +1175,7 @@ function compareEntries(a:DisplayEntry, b:DisplayEntry) {
 // The first collection loaded is the person's home; other collections appear as
 // top-level folders there, mirroring the single tree agents see at /mnt/sulla-files.
 function collectionRootEntry(collection:{ id:string; name:string }, index:number):DisplayEntry {
-  return { id: `collection:${ collection.id }`, key: `collection:${ collection.id }`, path: collection.name, name: collection.name, rootCollectionId: collection.id, folder: true, agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder, subtitle: index === 0 ? 'Files on this desktop' : 'Synced folder', mime: 'inode/directory', size: 0, updatedAt: '', sortTimestamp: index, currentVersionId: '', versionCount: 0, createdByType: 'user', createdById: '', syncState: 'synced', indexStatus: 'indexed', indexReason: 'Collection root.' };
+  return { id: `collection:${ collection.id }`, key: `collection:${ collection.id }`, path: collection.name, name: collection.name, rootCollectionId: collection.id, folder: true, agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder, subtitle: index === 0 ? 'Files on this desktop' : 'Synced folder', mime: 'inode/directory', size: 0, updatedAt: '', sortTimestamp: index, currentVersionId: '', versionCount: 0, createdByType: 'user', createdById: '', ownerDisplayName: accountName.value, syncState: 'synced', indexStatus: 'indexed', indexReason: 'Collection root.' };
 }
 const visibleEntries = computed<DisplayEntry[]>(() => {
   if (atRoots.value && !query.value.trim()) return userCollections.value.map(collectionRootEntry);
