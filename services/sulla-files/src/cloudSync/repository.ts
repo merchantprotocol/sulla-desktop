@@ -134,6 +134,19 @@ export class PgCloudSyncRepository implements PullRepository {
     return new Set(rows.map(row => String(row.id)));
   }
 
+  /** Per-file Finder badge: in the encrypted Cloud backup, or only indexed by Sulla, or still being processed. */
+  async finderBadges(collectionId:string):Promise<Array<{ path:string; state:'backed-up' | 'indexed' | 'processing' | 'not-indexed' }>> {
+    return (await this.db.query(`SELECT f.path,
+        CASE WHEN s.enabled AND cv.version_id IS NOT NULL THEN 'backed-up'
+             WHEN f.extraction_status='indexed' THEN 'indexed'
+             WHEN f.extraction_status IN ('failed','unsupported') THEN 'not-indexed'
+             ELSE 'processing' END AS state
+      FROM files f
+      LEFT JOIN files_cloud_sync s ON s.collection_id=f.collection_id
+      LEFT JOIN files_cloud_versions cv ON cv.version_id=f.current_version_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL`, [collectionId])).rows;
+  }
+
   async sync(collectionId:string):Promise<SyncRow | null> {
     const row = (await this.db.query('SELECT * FROM files_cloud_sync WHERE collection_id=$1', [collectionId])).rows[0];
     return row ? syncRow(row) : null;
