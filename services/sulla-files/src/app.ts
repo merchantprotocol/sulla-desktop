@@ -749,13 +749,14 @@ export function createApp(
   // lookups now pay for a scalar revision read and receive 304, rather than
   // rebuilding and transferring the complete multi-megabyte tree every second.
   const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
-  let fuseTreeSnapshotRequest:Promise<{ body:Buffer; revision:string }> | undefined;
+  // In-flight builds are per area: sharing one let a Logs refresh answer the home mount.
+  const fuseTreeSnapshotRequests=new Map<string,Promise<{ body:Buffer; revision:string }>>();
   const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
     const revision=await fuseTreeRevision();
     const cached=fuseTreeSnapshots.get(area); if (cached?.revision===revision) return cached;
-    if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
-    fuseTreeSnapshotRequest=(async()=>{
+    const pending=fuseTreeSnapshotRequests.get(area); if (pending) return pending;
+    const request=(async()=>{
       // One consistent database snapshot avoids retry starvation during active
       // ingestion and labels the tree with precisely the revision it represents.
       const client=await db.connect();
@@ -780,21 +781,23 @@ export function createApp(
         await client.query('COMMIT');
         const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-    })().finally(()=>{fuseTreeSnapshotRequest=undefined});
-    return fuseTreeSnapshotRequest;
+    })().finally(()=>{fuseTreeSnapshotRequests.delete(area)});
+    fuseTreeSnapshotRequests.set(area,request);
+    return request;
   };
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
     const currentRevision=await fuseTreeRevision();
-    const etag=`"${ currentRevision }"`;
+    const area=String(request.query.systemArea??'');
+    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
+    // The ETag names the area, so a mount never accepts another area's tree as unchanged.
+    const etag=`"${ area || 'home' }:${ currentRevision }"`;
     response.setHeader('Cache-Control', 'private, no-cache');
     response.setHeader('ETag', etag);
     if (request.header('if-none-match')===etag) return response.status(304).end();
-    const area=String(request.query.systemArea??'');
-    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
     const snapshot=await loadFuseTreeSnapshot(area);
-    response.setHeader('ETag', `"${ snapshot.revision }"`);
+    response.setHeader('ETag', `"${ area || 'home' }:${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
