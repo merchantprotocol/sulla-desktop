@@ -249,13 +249,17 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 
     private func connectGuestControl(attempt: Int) {
         guard let socketDevice else { return }
-        socketDevice.connect(toPort: 1024) { [weak self] connection, error in
+        socketDevice.connect(toPort: 1024) { [weak self] result in
             guard let self else { return }
-            if let connection { self.readGuestControl(connection.fileDescriptor); return }
+            if case .success(let connection) = result {
+                self.readGuestControl(connection.fileDescriptor); return
+            }
             if attempt < 200 {
                 self.queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.connectGuestControl(attempt: attempt + 1) }
             } else {
-                fputs("guest control unavailable: \(error?.localizedDescription ?? "unknown error")\n", stderr)
+                if case .failure(let error) = result {
+                    fputs("guest control unavailable: \(error.localizedDescription)\n", stderr)
+                }
             }
         }
     }
@@ -318,9 +322,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 
     private func requestShutdown() {
         guard let socketDevice else { forceStop(); return }
-        socketDevice.connect(toPort: 1024) { [weak self] connection, _ in
+        socketDevice.connect(toPort: 1024) { [weak self] result in
             guard let self else { return }
-            if let connection {
+            if case .success(let connection) = result {
                 writeAll(connection.fileDescriptor, Data("{\"id\":1,\"method\":\"shutdown\"}\n".utf8))
             }
             self.queue.asyncAfter(deadline: .now() + 10) { [weak self] in
@@ -351,9 +355,10 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 
     private func connectDockerClient(_ client: Int32) {
         guard let socketDevice else { close(client); return }
-        socketDevice.connect(toPort: 2375) { [weak self] connection, _ in
+        socketDevice.connect(toPort: 2375) { [weak self] result in
             guard let self else { close(client); return }
-            guard let guest = connection?.fileDescriptor else { close(client); return }
+            guard case .success(let connection) = result else { close(client); return }
+            let guest = connection.fileDescriptor
             self.relay(from: client, to: guest)
             self.relay(from: guest, to: client)
         }
