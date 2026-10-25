@@ -7,7 +7,7 @@ import https from 'node:https';
 
 import { installAuditContext } from './auditContext.js';
 import { ensureSystemAreas } from './systemAreas.js';
-import { migrateSullaCollection } from './sullaCollectionMigration.js';
+import { migrateSullaCollection, trashStrayDocs } from './sullaCollectionMigration.js';
 import { createApp } from './app.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
@@ -113,6 +113,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
       await adoptVaultPrincipal(db, config, principalId);
     }
     await migrateSullaCollection(db, config);
+    await trashStrayDocs(db, config).catch(error => console.warn('[SullaFiles] stray Docs cleanup failed:', error));
     await ensureSystemAreas(db, config);
     if (manager) {
       reportStage('manager-initialization');
