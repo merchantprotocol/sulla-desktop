@@ -40,6 +40,7 @@ asarUnpack:
 electronLanguages: [ en-US ]
 extraResources:
   - resources/
+  - '!resources/sulla-console/**'
   - '!resources/darwin/lima*.tgz'
   - '!resources/darwin/qemu*.tgz'
   - '!resources/linux/lima*.tgz'

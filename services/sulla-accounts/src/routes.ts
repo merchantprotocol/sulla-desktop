@@ -42,7 +42,14 @@ import {
   revokeAuthoritySession,
   type Authority,
 } from './oidc.js';
-import { beginWebLogin, clearWebCookies, completeWebLogin, revokeWebSession, webIdentity } from './webAuth.js';
+import {
+  beginWebLogin,
+  clearWebCookies,
+  completeWebLogin,
+  revokeWebSession,
+  webIdentity,
+  webLogoutUrl,
+} from './webAuth.js';
 import { seatLimitReached } from './seatLimit.js';
 
 import type { AccountsConfig } from './config.js';
@@ -861,14 +868,20 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
   router.post(
     '/logout',
     route(async (request, response) => {
+      let identity;
       try {
-        await webIdentity(db, config, request, true);
+        identity = await webIdentity(db, config, request, true);
       } catch {
         throw new HttpError(403, 'invalid_csrf');
       }
-      await revokeWebSession(db, request);
-      clearWebCookies(response, config);
-      response.status(204).end();
+      let logoutUrl: string | undefined;
+      try {
+        logoutUrl = await webLogoutUrl(db, config, identity).catch(() => undefined);
+      } finally {
+        await revokeWebSession(db, request);
+        clearWebCookies(response, config);
+      }
+      response.json({ logoutUrl });
     }),
   );
 

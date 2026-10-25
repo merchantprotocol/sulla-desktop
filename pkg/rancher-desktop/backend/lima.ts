@@ -2654,18 +2654,26 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   protected async installSullaConsole(): Promise<void> {
     const packagedRoot = path.join(paths.resources, 'sulla-console');
     const consoleRoot = '/opt/sulla-console';
+    const tempRoot = `/tmp/sulla-console-${ Date.now() }`;
     try {
-      await this.execCommand({ root: true }, 'sh', '-c', `mkdir -p ${ consoleRoot }/public; getent group sulla-console >/dev/null || addgroup -S sulla-console; id sulla-console >/dev/null 2>&1 || adduser -S -D -H -G sulla-console -s /sbin/nologin sulla-console`);
-      for (const name of ['server.mjs', 'public/index.html', 'public/shell.js', 'public/shell.css']) {
-        await this.copyFileIn(path.join(packagedRoot, name), `${ consoleRoot }/${ name }`);
-      }
+      await fs.promises.access(path.join(packagedRoot, 'dist', 'index.js'));
+      await fs.promises.access(path.join(packagedRoot, 'public', 'index.html'));
+      await fs.promises.access(path.join(packagedRoot, 'node_modules', 'express', 'package.json'));
+      await this.lima('copy', packagedRoot, `${ MACHINE_NAME }:${ tempRoot }`);
+      await this.execCommand({ root: true }, 'sh', '-c',
+        `rm -rf ${ consoleRoot }.previous; ` +
+        `if test -d ${ consoleRoot }; then mv ${ consoleRoot } ${ consoleRoot }.previous; fi; ` +
+        `mv ${ tempRoot } ${ consoleRoot }`);
+      await this.execCommand({ root: true }, 'sh', '-c',
+        'getent group sulla-console >/dev/null || addgroup -S sulla-console; ' +
+        'id sulla-console >/dev/null 2>&1 || adduser -S -D -H -G sulla-console -s /sbin/nologin sulla-console');
       await this.execCommand({ root: true }, 'chown', '-R', 'sulla-console:sulla-console', consoleRoot);
       await this.execCommand({ root: true }, 'chmod', '-R', 'u=rwX,go=rX', consoleRoot);
-    const initScript = `#!/sbin/openrc-run
+      const initScript = `#!/sbin/openrc-run
 name="sulla-console"
 description="Sulla main server console"
 command="/usr/bin/node"
-command_args="${ consoleRoot }/server.mjs"
+command_args="${ consoleRoot }/dist/index.js"
 command_background="yes"
 pidfile="/run/sulla-console.pid"
 output_log="/var/log/sulla-console.log"
@@ -2673,7 +2681,7 @@ error_log="/var/log/sulla-console.error.log"
 command_user="sulla-console:sulla-console"
 export SULLA_CONSOLE_HOST="0.0.0.0"
 export SULLA_CONSOLE_PORT="30121"
-export SULLA_CONSOLE_ROOT="${ consoleRoot }/public"
+export SULLA_CONSOLE_PUBLIC_DIR="${ consoleRoot }/public"
 export SULLA_CONSOLE_ACCOUNTS_URL="http://127.0.0.1:3020"
 export SULLA_CONSOLE_VAULT_URL="https://127.0.0.1:30135"
 export SULLA_CONSOLE_VAULT_CA_FILE="/etc/sulla-console/vault.crt"
@@ -2683,22 +2691,31 @@ export SULLA_CONSOLE_PROJECTS_URL="http://127.0.0.1:30138"
 export SULLA_CONSOLE_WORKFLOWS_URL="http://127.0.0.1:30122"
 depend() { need net; after logger; }
 start_pre() {
-  test -r "${ consoleRoot }/server.mjs" || return 1
+  test -r "${ consoleRoot }/dist/index.js" || return 1
   test -r "${ consoleRoot }/public/index.html" || return 1
   touch /var/log/sulla-console.log /var/log/sulla-console.error.log
   chown sulla-console:sulla-console /var/log/sulla-console.log /var/log/sulla-console.error.log
 }
 `;
 
-    await this.writeFile('/etc/init.d/sulla-console', initScript, 0o755);
-    await this.execCommand({ root: true }, 'rc-update', 'add', 'sulla-console', 'default');
-    try {
-      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'restart');
-    } catch {
-      await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'start');
-    }
+      await this.writeFile('/etc/init.d/sulla-console', initScript, 0o755);
+      await this.execCommand({ root: true }, 'rc-update', 'add', 'sulla-console', 'default');
+      try {
+        await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'restart');
+      } catch {
+        await this.execCommand({ root: true }, 'rc-service', 'sulla-console', 'start');
+      }
+      await this.execCommand({ root: true }, 'rm', '-rf', `${ consoleRoot }.previous`);
     } catch (error) {
       console.warn('[sulla-console] install failed (non-fatal):', error);
+      try {
+        await this.execCommand({ root: true }, 'sh', '-c',
+          `rm -rf ${ tempRoot }; ` +
+          `if test -d ${ consoleRoot }.previous; then ` +
+          `rm -rf ${ consoleRoot }; mv ${ consoleRoot }.previous ${ consoleRoot }; fi`);
+      } catch {
+        // Best-effort rollback only; console installation remains non-fatal.
+      }
     }
   }
 

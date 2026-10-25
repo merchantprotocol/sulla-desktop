@@ -85,7 +85,7 @@ export function buildKeycloakConfig(environment) {
       directAccessGrantsEnabled: false,
       redirectUris: environment.webRedirectUris.split(',').map(value => value.trim()).filter(Boolean),
       webOrigins: [environment.publicUrl],
-      attributes: clientAttributes,
+      attributes: { ...clientAttributes, 'post.logout.redirect.uris': new URL(environment.publicUrl).origin },
       defaultClientScopes,
       optionalClientScopes,
     },
