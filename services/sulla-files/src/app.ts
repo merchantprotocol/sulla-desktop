@@ -150,10 +150,10 @@ export function createApp(
   cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
-  app.locals.catalogSync = new CatalogSyncService(db, config);
+  const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
+  app.locals.catalogSync = new CatalogSyncService(db, config, ready);
   app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
   const bootstrapJsonParser = express.json({ limit: '32kb' });
-  const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
   if (config.mode === 'server' || config.fuseExperiment) app.use('/ui', serverUi());
   if (config.mode === 'server') app.get('/files', (_request, response) => response.redirect(308, '/ui/'));
