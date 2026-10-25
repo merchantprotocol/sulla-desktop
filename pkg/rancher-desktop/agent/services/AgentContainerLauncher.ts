@@ -67,6 +67,7 @@ const AGENT_NETWORK = 'sulla-agents';
 const HOST_RELAY_NAME = 'sulla-host-relay';
 const HOST_RELAY_PORT = 30124;
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
+const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
@@ -232,7 +233,43 @@ def serve(c):
   threading.Thread(target=copy,args=(c,u),daemon=True).start();copy(u,c)
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
-  const bridge = String.raw`const n=require('net');n.createServer(c=>{let b=Buffer.alloc(0),done=false;c.on('data',d=>{if(done)return;b=Buffer.concat([b,d]);const i=b.indexOf('\r\n\r\n');if(i<0)return;const m=b.toString('latin1',0,i).match(/^(\S+)\s+\/_sulla\/(\d+)(\/[^\s]*)\s+(HTTP\/\d\.\d)/);if(!m){c.destroy();return}done=true;const u=n.connect('${ HOST_RELAY_SOCKET }',()=>{u.write(m[2]+'\n');u.write(Buffer.from(b.toString('latin1').replace(m[0],m[1]+' '+m[3]+' '+m[4]),'latin1'))});u.on('data',x=>c.write(x));u.on('end',()=>c.end());u.on('error',()=>c.destroy());c.on('data',x=>u.write(x));c.on('end',()=>u.end())})}).listen(${ HOST_RELAY_PORT },'0.0.0.0');`;
+  // The relay rewrites only the request line it parses, so a reused keep-alive
+  // connection would reach the host with the /_sulla/<port> prefix still on (the
+  // host replies 404 without reading the body, which Codex reports as "stream
+  // disconnected before completion: error sending request"). Force one request
+  // per connection instead of parsing every request on it.
+  const bridge = String.raw`const n = require('net');
+n.createServer(c => {
+  let b = Buffer.alloc(0);
+  const onHead = d => {
+    b = Buffer.concat([b, d]);
+    const i = b.indexOf('\r\n\r\n');
+    if (i < 0) {
+      if (b.length > 65536) c.destroy();
+      return;
+    }
+    c.removeListener('data', onHead);
+    const lines = b.toString('latin1', 0, i).split('\r\n');
+    const m = lines[0].match(/^(\S+)\s+\/_sulla\/(\d+)(\/\S*)\s+(HTTP\/\d\.\d)$/);
+    if (!m) {
+      c.destroy();
+      return;
+    }
+    const headers = lines.slice(1).filter(l => !/^(connection|keep-alive|proxy-connection)\s*:/i.test(l));
+    const head = [m[1] + ' ' + m[3] + ' ' + m[4], ...headers, 'Connection: close'].join('\r\n');
+    const u = n.connect('${ HOST_RELAY_SOCKET }', () => {
+      u.write(m[2] + '\n');
+      u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
+    });
+    u.on('data', x => c.write(x));
+    u.on('end', () => c.end());
+    u.on('error', () => c.destroy());
+    c.on('data', x => u.write(x));
+    c.on('end', () => u.end());
+  };
+  c.on('data', onHead);
+  c.on('error', () => c.destroy());
+}).listen(${ HOST_RELAY_PORT }, '0.0.0.0');`;
   // 0711 (not 0700): the relay dir is owned by the Lima user, but the sulla-host-relay
   // container binds it as uid 10001 and must still be able to traverse into it to reach
   // relay.sock (0666); only the socket itself needs to stay unreadable to other users.
@@ -268,9 +305,16 @@ for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
   await limactl(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
   await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
-  const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
-  if (!exists) {
+  // Same versioning as the VM relay: a container left by an older build keeps
+  // running its old script, so replace it when the script changes.
+  const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
+  const runningVersion = await limactl(['docker', 'inspect', '--format', `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}}`, HOST_RELAY_NAME])
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => null);
+  if (runningVersion !== bridgeVersion) {
+    if (runningVersion !== null) await limactl(['docker', 'rm', '--force', HOST_RELAY_NAME]);
     await limactl(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
+      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
       '--network', AGENT_NETWORK, '--volume', '/run/sulla-host-relay:/run/sulla-host-relay',
       '--entrypoint', 'node', image, '-e', bridge]);
   }
