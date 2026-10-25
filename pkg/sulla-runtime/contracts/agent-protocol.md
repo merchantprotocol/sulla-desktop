@@ -32,6 +32,12 @@ An unknown method returns `{"id":3,"error":{"code":"unknown_method","message":"u
 
 Port 2375 proxies each accepted vsock stream byte-for-byte to `/run/docker.sock`. Both directions run concurrently and propagate half-close, preserving HTTP upgrades and long-lived attach, logs, and exec streams. The port has no HTTP awareness.
 
+## Clock and suspend
+
+`{"id":4,"method":"set-time","unixMs":1790000000000}` sets the guest clock. The host sends it on every control connection and every minute after, since the guest has no clock of its own and is as old as its saved state after a restore. `{"id":5,"method":"prepare-suspend"}` syncs disks and drops clean caches before the host saves the machine state.
+
+The host's `sulla-runtime start ... --state FILE` restores FILE instead of cold-booting when FILE matches this configuration (kernel, initrd, data disk, CPU, memory, shares, kernel arguments; the machine identifier and MAC address persist in the runtime directory). The state is deleted as soon as a restore begins, so it's never used twice. A failed restore falls back to a cold boot. `sulla-runtime suspend` saves the state and stops the VM (macOS 14+).
+
 ## Guest exec (port 1025)
 
 One command per connection, for Desktop's own setup work. The client sends one JSON line, `{"argv":["sh","-c","..."],"workdir":"/","env":["K=V"]}`, then both directions carry binary frames: 1-byte stream, 4-byte big-endian length, payload (at most 1 MiB). Stream 0 is stdin (client to guest; an empty frame closes it), 1 stdout, 2 stderr, and 3 the exit code as a big-endian int32, which ends the session. 255 means the command could not be started. Commands run as root in their own process group; if the connection drops before the command exits, the agent kills that group.

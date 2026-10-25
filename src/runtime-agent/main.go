@@ -449,6 +449,7 @@ func (a *agent) control(c net.Conn) {
 		var req struct {
 			ID     int64  `json:"id"`
 			Method string `json:"method"`
+			UnixMS int64  `json:"unixMs"`
 		}
 		if readFrame(r, &req) != nil {
 			return
@@ -456,6 +457,25 @@ func (a *agent) control(c net.Conn) {
 		switch req.Method {
 		case "status":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": a.status()})
+		case "set-time":
+			// The guest has no clock of its own: the host sets it after a
+			// restore from a saved state, and periodically against drift.
+			if req.UnixMS <= 0 {
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "invalid_time", "message": "unixMs is required"}})
+				continue
+			}
+			tv := syscall.NsecToTimeval(req.UnixMS * int64(time.Millisecond))
+			if err := syscall.Settimeofday(&tv); err != nil {
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "set_time_failed", "message": err.Error()}})
+				continue
+			}
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
+		case "prepare-suspend":
+			// Clean page cache is the bulk of a saved state; dropping it first
+			// makes saving and restoring proportionally faster.
+			syscall.Sync()
+			_ = os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0)
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 		case "shutdown":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 			go a.shutdown()
