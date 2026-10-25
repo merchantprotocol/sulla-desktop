@@ -129,6 +129,12 @@ export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
    */
   authorize(identity: Readonly<ProviderCliBridgeIdentity>):
     boolean | ToolExecutionContext | Promise<boolean | ToolExecutionContext>;
+  /**
+   * Optional credential upkeep run once per request before the upstream call
+   * (e.g. refreshing an expiring OAuth session inside the vault). It must not
+   * return or expose credential material; failures should be handled inside.
+   */
+  beforeUpstream?(identity: Readonly<ProviderCliBridgeIdentity>): Promise<void>;
   /** Abort owned by the job/process lifecycle. Aborting it revokes the lease and active stream. */
   signal?:         AbortSignal;
   broker?:         Pick<LocalVaultBrokerClient, 'executeStream' | 'requestFor'>;
@@ -362,6 +368,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         headers['session-id'] = context.thread_id!;
         headers['thread-id'] = context.thread_id!;
       }
+      await options.beforeUpstream?.(identity);
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
         ref:          { integrationId: definition.integration, accountId: options.accountId },

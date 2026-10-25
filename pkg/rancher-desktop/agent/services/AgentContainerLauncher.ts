@@ -933,6 +933,14 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
             return context;
           },
+          // Codex runs on a ChatGPT OAuth session; refresh it in the vault
+          // before it expires instead of letting the upstream call 401.
+          beforeUpstream: integrationId === 'codex'
+            ? async() => {
+              const { getOAuthService } = await import('./OAuthService');
+              await getOAuthService().ensureVaultTokenFresh(integrationId, accountId);
+            }
+            : undefined,
         });
         providerBridgeRefs.add(bridge.config.opaqueConfigRef);
         return bridge;
