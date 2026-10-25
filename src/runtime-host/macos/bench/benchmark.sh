@@ -49,7 +49,7 @@ RESULTS="$SCRATCH/results.tsv"
 touch "$RESULTS"
 
 run_once() {
-  local class=$1 iteration=$2 log="$SCRATCH/${class}-${iteration}.log"
+  local class=$1 iteration=$2; local log="$SCRATCH/${class}-${iteration}.log"
   local args=(start --kernel "$KERNEL" --initrd "$INITRD" --data-disk "$DATA")
   [[ -f "$ROOTFS" ]] && args+=(--rootfs "$ROOTFS")
   [[ "$class" == cold ]] && rm -f "$DATA"
