@@ -43,6 +43,9 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_ACCOUNTS_VAULT_TOKEN_FILE:?missing Vault Accounts token file}"
 : "${SULLA_ACCOUNTS_FILES_TOKEN_FILE:?missing Files Accounts token file}"
 : "${SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE:?missing Console Accounts token file}"
+: "${SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE:?missing Vault providers service token file}"
+: "${SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE:?missing Agents broker private key file}"
+: "${SULLA_AGENTS_BROKER_PUBLIC_KEY:?missing Agents broker public key}"
 : "${SULLA_ACCOUNTS_AGENTS_TOKEN_FILE:?missing Agents Accounts token file}"
 : "${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE:?missing Workflows Accounts token file}"
 : "${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE:?missing Agents/Workflows service token file}"
@@ -122,9 +125,15 @@ done
   --from-literal=desktop-executor-url="${SULLA_DESKTOP_EXECUTOR_URL:-}" \
   --from-literal=desktop-executor-token="${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" \
   --from-literal=server-id="$SULLA_SERVER_ID" \
+  --from-literal=console-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_console" \
+  --from-literal=vault-providers-token="$(cat "$SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE")" \
+  --from-literal=agents-broker-private-key="$(cat "$SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE")" \
+  --from-literal=agents-broker-public-key="$SULLA_AGENTS_BROKER_PUBLIC_KEY" \
   --from-literal=relay-device-token-secret="$SULLA_RELAY_DEVICE_TOKEN_SECRET" \
   --from-literal=relay-internal-token="$SULLA_RELAY_INTERNAL_TOKEN" \
   --from-literal=vault-host="$SULLA_VAULT_HOST" \
+  --from-literal=vault-url="$SULLA_VAULT_URL" \
+  --from-literal=public-url="$SULLA_PUBLIC_URL" \
   --from-literal=public-scheme="$SULLA_PUBLIC_SCHEME" \
   --from-literal=workflows-runner-image="${SULLA_WORKFLOW_RUNNER_IMAGE:-ghcr.io/merchantprotocol/sulla-workflows:sha-${SULLA_SOURCE_SHA:0:12}}" \
   --dry-run=client -o yaml | \

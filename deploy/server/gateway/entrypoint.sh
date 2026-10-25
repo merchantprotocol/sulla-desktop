@@ -39,4 +39,12 @@ EOF
 sed -i "s|__SULLA_PUBLIC_SCHEME__|${SULLA_PUBLIC_SCHEME}|" /tmp/sulla-proxy-params.conf
 
 envsubst '${TLS_DIRECTIVES} ${DNS_RESOLVER} ${SULLA_CONSOLE_UPSTREAM} ${SULLA_PUBLIC_SCHEME} ${SULLA_VAULT_HOST} ${SULLA_RELAY_UPSTREAM} ${SULLA_VAULT_UPSTREAM}' </etc/sulla/nginx.conf.template >/tmp/nginx.conf
+if [ -n "${SULLA_TLS_CERT_CONTAINER_PATH:-}" ]; then
+  # Pick up renewed certificates without a restart.
+  (
+    while sleep 21600; do
+      nginx -c /tmp/nginx.conf -s reload || true
+    done
+  ) &
+fi
 exec nginx -c /tmp/nginx.conf -g 'daemon off;'
