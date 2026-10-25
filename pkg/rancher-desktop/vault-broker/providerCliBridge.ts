@@ -379,6 +379,11 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         injections:   [...definition.injections],
         responseType: 'stream',
       }), requestAbort.signal);
+      if (upstream.status >= 400) {
+        // The CLI often reports these as a bare stream/send failure, so record the
+        // status here. Status and route only: never headers or body.
+        console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
+      }
       response.writeHead(upstream.status, responseHeaders(upstream.headers));
       if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
       else response.end();
