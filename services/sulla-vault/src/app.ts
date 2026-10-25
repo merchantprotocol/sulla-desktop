@@ -675,6 +675,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const kdf = requiredObject(request.body.kdf, 'kdf');
     const encryptedOrgName = requiredObject(request.body.encryptedOrgName, 'encryptedOrgName');
     const wrappedOrgKey = requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey');
+    const organizationId = request.body.organizationId === undefined
+      ? undefined
+      : requiredUuid(request.body.organizationId, 'organizationId');
     const status = await bootstrapFirstOwner(db, {
       email,
       displayName,
@@ -685,6 +688,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       kdf,
       encryptedOrgName,
       wrappedOrgKey,
+      organizationId,
     });
     return response.status(status === 'created' ? 201 : 200).json({ status });
   });

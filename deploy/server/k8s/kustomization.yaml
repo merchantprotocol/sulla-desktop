@@ -6,6 +6,7 @@ resources:
   - storage.yaml
   - postgres.yaml
   - redis.yaml
+  - relay.yaml
   - db-init.yaml
   - sulla-accounts.yaml
   - sulla-console.yaml
