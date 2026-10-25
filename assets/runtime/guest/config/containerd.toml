@@ -1,0 +1,6 @@
+version = 2
+root = "/var/lib/docker/containerd/daemon"
+state = "/run/containerd"
+
+[grpc]
+  address = "/run/containerd/containerd.sock"
