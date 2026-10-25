@@ -12,7 +12,7 @@ const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-runtime-compose-'))
 const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-desktop/assets/sulla-docker-compose.yaml'), 'utf8'));
 // All '@pkg/assets/*' imports resolve to one stub, so the stub carries the
 // compose definition plus the dependency versions sullaRuntimeBackend.ts reads at load.
-const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
+const assetStub: any = {};
 const flags = { vaultV2: false, fuse: false };
 // The guest's /proc/self/mountinfo; BusyBox Alpine has no usable findmnt.
 const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false };
@@ -154,7 +154,7 @@ afterAll(() => { fs.rmSync(appHome, { recursive: true, force: true }) });
 beforeEach(() => {
   const fresh = structuredClone(assetCompose);
 
-  for (const key of Object.keys(assetStub)) if (key !== 'alpineLimaISO') delete assetStub[key];
+  for (const key of Object.keys(assetStub)) delete assetStub[key];
   Object.assign(assetStub, fresh);
   guest.mountinfo = '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n';
   guest.catFails = false;

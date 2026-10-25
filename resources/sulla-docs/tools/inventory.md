@@ -14,7 +14,7 @@ sulla meta/browse_tools '{"category":"<category>"}'
 ## meta (11 tools)
 - `sulla meta/spawn_agent` — The one way to delegate.
 - `sulla meta/exec` — Run any shell command inside a fully isolated sandboxed Linux VM with root access.
-- `sulla meta/exechost` — LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Lima VM.
+- `sulla meta/exechost` — LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Sulla VM.
 - `sulla meta/ask_user_question` — Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min).
 - `sulla meta/execute_workflow` — Execute a pre-registered workflow by its EXACT slug.
 - `sulla meta/validate_sulla_workflow` — Validate a Sulla workflow YAML file for structural correctness before it goes live.
@@ -356,14 +356,6 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla docker/run` — Run a Docker container.
 - `sulla docker/stop` — Stop a running Docker container.
 
-## lima (6 tools)
-- `sulla lima/create` — Create a Lima virtual machine instance.
-- `sulla lima/delete` — Delete a Lima virtual machine instance.
-- `sulla lima/list` — List Lima virtual machine instances.
-- `sulla lima/shell` — Execute a command in a Lima virtual machine instance.
-- `sulla lima/start` — Start a Lima virtual machine instance.
-- `sulla lima/stop` — Stop a Lima virtual machine instance.
-
 ## kubectl (3 tools)
 - `sulla kubectl/apply` — Apply a Kubernetes manifest file.
 - `sulla kubectl/delete` — Delete Kubernetes resources.
@@ -445,7 +437,7 @@ Account IDs are discoverable via `sulla vault/list_accounts '{"account_type":"<s
 | github | 58 | | bookmarks | 7 |
 | project | 34 | | reflex | 7 |
 | browser | 24 | | pg | 6 |
-| capture | 19 | | lima | 6 |
+| capture | 19 | |
 | chat | 18 | | mobile | 5 |
 | observation | 12 | | applescript | 5 |
 | redis | 12 | | gdrive | 4 |

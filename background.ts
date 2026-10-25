@@ -504,8 +504,8 @@ Electron.app.whenReady().then(async() => {
     setupProtocolHandlers();
 
     // Gatekeeper App Translocation runs the app from a randomized read-only
-    // mount, which breaks lima provisioning (limactl copy/scp into the VM
-    // fails with opaque errors). Bail out with instructions before any
+    // mount, which breaks the VM's host shares and resource lookups
+    // with opaque errors. Bail out with instructions before any
     // backend work starts.
     if (await checkForAppTranslocation()) {
       return;
@@ -840,8 +840,8 @@ async function doFirstRunDialog() {
  * Detect macOS Gatekeeper App Translocation. When a quarantined app is
  * launched without being moved via Finder (e.g. run straight from the DMG or
  * ~/Downloads), macOS executes it from a randomized read-only mount under
- * /private/var/.../AppTranslocation/. Lima cannot provision the VM from
- * there, so startup fails deep inside limactl with unhelpful scp errors.
+ * /private/var/.../AppTranslocation/. The VM cannot be provisioned from
+ * there, so startup fails with unhelpful errors.
  * Catch it up front and tell the user how to fix it.
  *
  * @returns true if the app is translocated (a fatal dialog was shown and the

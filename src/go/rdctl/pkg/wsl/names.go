@@ -17,8 +17,8 @@ limitations under the License.
 package wsl
 
 const (
-	// The name of the WSL distribution (when not using lima).
+	// The name of the WSL distribution.
 	DistributionName = "rancher-desktop"
-	// The name of the WSL data distribution (when not using lima).
+	// The name of the WSL data distribution.
 	DataDistributionName = DistributionName + "-data"
 )

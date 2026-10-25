@@ -2,7 +2,7 @@
 
 ## Overview
 
-Sulla uses PostgreSQL as its primary data store and Redis as a caching/pub-sub layer. Both run as Docker containers inside the Lima VM, managed by the Docker Compose file at `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`.
+Sulla uses PostgreSQL as its primary data store and Redis as a caching/pub-sub layer. Both run as Docker containers inside the Sulla VM, managed by the Docker Compose file at `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`.
 
 ## Infrastructure
 

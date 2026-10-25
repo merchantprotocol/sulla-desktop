@@ -21,9 +21,7 @@ clean:
     rm -rf ~/.rd
     rm -rf ~/.kube/config
     rm -rf resources/cert-manager*
-    rm -rf resources/darwin/lima
     rm -rf resources/darwin/_output
-    rm -f resources/darwin/alpine-lima-*.iso
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
@@ -33,7 +31,6 @@ clean:
     @echo "Cleanup complete. Run 'just build' for a fresh install."
 
 # Clean all caches and generated files for a fresh install (WIPES VM AND IMAGES)
-#rm -rf ~/.lima # This wipes the images too
 clean-hard:
     @echo "Cleaning up for fresh install (this will wipe VM and cached images)..."
     rm -rf node_modules
@@ -44,14 +41,11 @@ clean-hard:
     rm -rf ~/Library/Application\ Support/sulla-desktop
     rm -rf ~/Library/Preferences/rancher-desktop
     rm -rf ~/Library/Caches/rancher-desktop
-    rm -rf ~/Library/Caches/lima
     rm -rf ~/Library/Logs/rancher-desktop
     rm -rf ~/.rd
     rm -rf ~/.kube/config
     rm -rf resources/cert-manager*
-    rm -rf resources/darwin/lima
     rm -rf resources/darwin/_output
-    rm -f  resources/darwin/alpine-lima-*.iso
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
@@ -251,19 +245,16 @@ restart hard="":
     just start
 
 pods:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl get pods -n sulla
 
 apply-yaml:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl apply -f /Users/jonathonbyrdziak/Sites/sulla/sulla-desktop/pkg/rancher-desktop/assets/sulla-deployments.yaml -n sulla
 
 ping-memory:
     @echo "Pinging memory health endpoint..."
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     curl -s -m 5 http://localhost:30115/api/v2/heartbeat || echo "memory unreachable (timeout or 410)"
 
 # Port-forward PostgreSQL to localhost:5432 for external access (e.g., pgAdmin, DBeaver)
@@ -272,8 +263,7 @@ pg-forward:
     @echo "Port-forwarding PostgreSQL to localhost:5432..."
     @echo "Connect with: host=localhost, port=5432, user=sulla, password=sulla_dev_password, database=sulla"
     @echo "Press Ctrl+C to stop"
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl port-forward -n sulla svc/postgres 30116:30116 --address=0.0.0.0
 
 pg-connect:
@@ -292,14 +282,12 @@ pg-conn:
 redis:
     @echo "Port-forwarding Redis to localhost:6379..."
     @echo "Press Ctrl+C to stop"
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl port-forward -n sulla svc/redis 6379:6379 --address=0.0.0.0
 
 # Query PostgreSQL conversations table (summary)
 pg-conversations:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl exec -n sulla deploy/postgres -- \
     psql -U sulla -c "SELECT thread_id, jsonb_array_length(messages) as msg_count, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 10;"
 
@@ -311,8 +299,7 @@ pg-messages thread_id="":
         echo "Get thread IDs with: just pg-conversations"
         exit 1
     fi
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl exec -n sulla deploy/postgres -- \
     psql -U sulla -c "SELECT jsonb_pretty(messages) FROM conversations WHERE thread_id = '{{thread_id}}';"
 
@@ -320,80 +307,52 @@ pg-messages thread_id="":
 docker-login:
     @echo "Logging into Docker Hub inside the VM..."
     @echo "This will store credentials in the VM and bypass Docker Hub rate limits."
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- docker login
+    resources/darwin/sulla-runtime/sulla-runtime exec -- docker login
 
 # Check Docker login status inside the VM
 docker-status:
     @echo "Checking Docker login status..."
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- docker info 2>/dev/null | grep -E "Username|Registry" || echo "Not logged in"
+    resources/darwin/sulla-runtime/sulla-runtime exec -- docker info 2>/dev/null | grep -E "Username|Registry" || echo "Not logged in"
 
 # Query PostgreSQL calendar_events table
 pg-events:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl exec -n sulla deploy/postgres -- \
     psql -U sulla -c "SELECT id, title, start_time, end_time, location, description FROM calendar_events ORDER BY start_time;"
 
-get-lima-config:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl list --json 2>/dev/null || echo '[]' | jq -c 'if . == [] then "No instances found" else .[] | {name, status, dir, sshLocalPort} end'
-
-lima-logs:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 sudo cat /var/log/messages | tail -50
-
-check-ws:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 sudo nerdctl --address /var/run/docker/containerd/containerd.sock ps | grep rd-ws-server
-
 logs image:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl logs -n sulla deployment/{{image}} -f
 
 kill-pod image:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl delete pod -n sulla -l app={{image}} --force --grace-period=0
 
 watch-pod image:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl get pods -n sulla -l app={{image}} -w
 
 describe image:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl describe pod -n sulla {{image}}
 
 describe-default image:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl describe pod -n kube-system {{image}}
 
 monitor:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    resources/darwin/lima/bin/limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo k3s kubectl get pods -n kube-system -w
 
 nerd:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- bash ./wait-k8s-ready.sh
+    resources/darwin/sulla-runtime/sulla-runtime exec -- bash ./wait-k8s-ready.sh
 
 k3s-health:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- curl -kfsS --unix-socket /run/k3s/server.sock https://localhost:6444/healthz
+    resources/darwin/sulla-runtime/sulla-runtime exec -- curl -kfsS --unix-socket /run/k3s/server.sock https://localhost:6444/healthz
 
 pull-ollama:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- \
+    resources/darwin/sulla-runtime/sulla-runtime exec -- \
     sudo nerdctl --address /var/run/docker/containerd/containerd.sock --namespace k8s.io pull ollama/ollama:latest
-
-stop-k8s:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl stop 0 
 
 chat-ping:
     curl http://localhost:3000/health
@@ -510,64 +469,38 @@ test-nodes:
     npx jest pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
 
 # ============================================================================
-# KUBERNETES & LIMA COMMANDS
+# KUBERNETES COMMANDS (legacy; the Sulla runtime guest has no k3s)
 # ============================================================================
 
-limactl:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl list
-
 nodes:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo k3s kubectl get nodes
-
-kubectl:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    sudo k3s kubectl help
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get nodes
 
 # Watch pod events in real time (shows scheduling, image pulls, crashes)
 watch-events:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo k3s kubectl get events -A --watch
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get events -A --watch
 
 # Quick check: is API server responding?
 k3s-ready:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo k3s kubectl get --raw=/readyz || echo "API not ready"
-
-fix-flannel:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo rm -rf /run/flannel /var/lib/cni/flannel
-    limactl shell 0 -- sudo /etc/init.d/k3s restart
-    echo "Watching k3s logs for flannel..."
-    limactl shell 0 -- sudo tail -f /var/log/k3s.log | grep -i flannel
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get --raw=/readyz || echo "API not ready"
 
 k3s-restart:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo systemctl restart k3s
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo systemctl restart k3s
 
-flannel-logs:
-    limactl shell 0 -- sudo tail -f /var/log/k3s.log | grep -i flannel
-
-# Tail live k3s server logs inside Lima VM (most useful for startup hangs)
+# Tail live k3s server logs inside the VM (most useful for startup hangs)
 k3s-logs:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo tail -f /var/log/k3s.log
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo tail -f /var/log/k3s.log
 
 # Tail k3s agent logs (if using agent mode, less common in single-node)
 k3s-agent-logs:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo journalctl -u k3s-agent -f
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo journalctl -u k3s-agent -f
 
 # Show last 100 lines of k3s logs + follow
 k3s-tail:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo journalctl -u k3s -n 100 -f
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo journalctl -u k3s -n 100 -f
 
 # Check if k3s process is even running inside VM
 k3s-status:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo systemctl status k3s
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo systemctl status k3s
 
 
 # Build whisper-cli from source (requires cmake). Builds a static binary with Metal acceleration.
@@ -627,5 +560,4 @@ app:
 
 # Watch pod events in real time (shows scheduling, image pulls, crashes)
 show-compose-yaml:
-    LIMA_HOME=~/Library/Application\ Support/rancher-desktop/lima \
-    limactl shell 0 -- sudo cat /tmp/sulla-docker-compose.yml
+    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo cat /tmp/sulla-docker-compose.yml
