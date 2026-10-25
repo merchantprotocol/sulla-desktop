@@ -22,6 +22,25 @@ class FilesSyncV1Impl {
   async status():Promise<FilesSyncStatus> { return FilesSyncContainer.status() }
   async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
   async deleteCloudCopy(collectionId:string,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.deleteCloudCopy(collectionId); this.wake(); return this.status() }
+  // Profile › Files off with "delete the Cloud copy": hide every collection
+  // from Cloud Files, stop and crypto-shred each backup, and forget the
+  // enrolment so switching Files back on enrolls everything again.
+  async deleteAllCloudCopies(caller:FilesSyncCaller):Promise<FilesSyncStatus> {
+    requireHumanFilesSync(caller);
+    const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null}>>('/v1/collections');
+    for(const collection of collections){
+      if(collection.system_area)continue;
+      await getSullaFilesClient().json(`/v1/collections/${encodeURIComponent(collection.id)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:false})});
+    }
+    for(const collection of (await this.status()).collections){
+      if(collection.enabled)await FilesSyncContainer.enable(collection.collectionId,false);
+      try { await FilesSyncContainer.deleteCloudCopy(collection.collectionId) }
+      catch(error) { if(!(error instanceof FilesSyncClientError)||error.status!==409)throw error }
+    }
+    await SullaSettingsModel.set(ENROLLED_KEY,'[]','string');
+    await this.drainDeletes();
+    return this.status();
+  }
   async cloudCollections(caller:FilesSyncCaller):Promise<CloudFilesCollection[]> { requireHumanFilesSync(caller); return (await FilesSyncContainer.cloudCollections()).collections.filter(collection=>collection.local===false) }
   async restore(collectionId:string,name:string,caller:FilesSyncCaller):Promise<{restored:true;collectionId:string}> {
     requireHumanFilesSync(caller);
@@ -57,6 +76,22 @@ class FilesSyncV1Impl {
     const request=await FilesSyncContainer.escrowRequest();
     const wrapped=await FilesSyncContainer.vaultEscrowKey(request);
     await FilesSyncContainer.escrowKey({requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch});
+  }
+  // The driver only runs while Files is on, so queued deletes are sent here.
+  private async drainDeletes():Promise<void> {
+    for(let i=0;this.running&&i<100;i++)await new Promise(resolve=>setTimeout(resolve,100));
+    if(this.running)return;
+    const who=await this.identity(); if(!who)return;
+    this.running=true;
+    try {
+      for(let i=0;i<100;i++){
+        const prepared=await FilesSyncContainer.prepare(); if(!prepared||prepared.op!=='delete')return;
+        const wait=Math.max(0,MIN_SIGNATURE_MS-(Date.now()-this.lastSignatureAt)); if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
+        const proof=signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
+        const sent=await FilesSyncContainer.send(prepared.handle,who.deviceId,proof.ts,proof.signature);
+        if(sent.status!=='sent')throw new FilesSyncClientError(`delete_${sent.status}`,502);
+      }
+    } finally { this.running=false }
   }
   private async tick():Promise<void> {
     if(this.running||this.stopped)return; this.running=true;
