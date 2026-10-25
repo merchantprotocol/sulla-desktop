@@ -41,7 +41,7 @@
       </template>
       <template v-if="trackedCollections.length">
         <div class="grp">Tracked folders</div>
-        <a v-for="collection in trackedCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
+        <a v-for="collection in trackedCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' && !atRoots }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
       </template>
       <template v-if="sharedFolders.length">
         <div class="grp">
@@ -146,15 +146,22 @@
     >
       <div class="top">
         <div class="crumbs">
-          <template v-if="crumbs.length">
+          <template v-if="crumbs.length || collectionCrumb">
             <a
+              v-if="collectionCrumb"
+              class="c"
+              href="#"
+              @click.prevent="openHome"
+            >{{ rootLabel }}</a>
+            <span v-if="collectionCrumb">›</span><b v-if="collectionCrumb && !crumbs.length">{{ collectionCrumb }}</b><a
+              v-else
               class="c"
               href="#"
               data-drop-path=""
               @dragover.prevent="onNavigationDragOver('', $event)"
               @drop.prevent="onNavigationDrop('', $event)"
               @click.prevent="openRoot"
-            >{{ rootLabel }}</a>
+            >{{ collectionCrumb || rootLabel }}</a>
             <template
               v-for="(crumb, index) in crumbs"
               :key="crumb.path"
@@ -522,7 +529,7 @@
                   </td>
                   <td>
                     <div class="name">
-                      <button v-if="entry.folder" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
+                      <button v-if="entry.folder && !entry.rootCollectionId" class="disclosure" type="button" :aria-label="`${expandedFolders.has(entry.path) ? 'Collapse' : 'Expand'} ${entry.name}`" :aria-expanded="expandedFolders.has(entry.path)" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" @click.stop="toggleFolderExpansion(entry)" @dblclick.stop>{{ expandedFolders.has(entry.path) ? '▾' : '›' }}</button><span v-else class="disclosure-spacer" :style="{ marginLeft: `${(entry.depth ?? 0) * 18}px` }" />
                       <span
                         class="fi"
                         :class="entry.kindClass"
@@ -572,7 +579,7 @@
                     />
                   </td>
                   <td @dblclick.stop>
-                    <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
+                    <button v-if="!entry.rootCollectionId && (section !== 'trash' || !entry.folder)" class="btn sm details-action" type="button" @click.stop="showDetails(entry)">Details</button>
                     <button v-if="!entry.folder && ['failed', 'unsupported'].includes(entry.indexStatus)" class="btn sm" type="button" :disabled="busy" :title="entry.indexReason" @click.stop="reindex(entry)">Re-index</button>
                     <div
                       v-if="entrySync(entry) === 'conflict' && !entry.folder"
@@ -676,7 +683,7 @@
                 v-html="syncIcon(entry)"
               />
             </div>
-            <button v-if="section !== 'trash' || !entry.folder" class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
+            <button v-if="!entry.rootCollectionId && (section !== 'trash' || !entry.folder)" class="btn sm details-action" type="button" @click.stop="showDetails(entry)" @dblclick.stop>Details</button>
             <div class="bd">
               <input
                 v-if="editingKey === entry.key"
@@ -896,7 +903,7 @@ async function continueCloudRestore(){ if(pendingCloudRestore)await restoreCloud
 const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem, collectionId?:string] }>();
 type Section = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';
 type ViewMode = 'list' | 'grid';
-interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
+interface DisplayEntry extends FilesItem { key: string; name: string; folder: boolean; sortTimestamp:number; folderState?:FilesFolderState; trashItem?:FilesTrashItem; rootCollectionId?:string; agent: boolean; childCount: number; kindClass: string; icon: string; subtitle: string; depth?:number }
 interface OperationItem { fileId?:string; folderPath?:string; expectedFolder?:FilesFolderState; sourceSubtreeSignature?:string; targetPath:string; expectedVersionId?:string; expectedRevision?:string }
 interface DragSnapshot { sourceIdentity:string; preparationSignature:string; target:ExplorerTarget }
 interface DragPreparation { collectionId:string; signature:string; generation:number; anchorKey:string }
@@ -1035,8 +1042,14 @@ const folderFavorites = computed(() => {
 });
 const moreExpanded = ref(false);
 const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
-const trackedCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea && collection.id !== (snapshot.value?.availableCollections ?? []).find(item=>!item.systemArea)?.id));
-const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
+const trackedCollections = computed(() => userCollections.value.slice(1));
+const systemReadOnly = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
+// My Files opens on one folder per collection (this desktop's Files plus each synced folder), the same tree Sulla Cloud and Mobile show.
+const userCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea));
+const collectionsRoot = ref(true);
+const atRoots = computed(() => collectionsRoot.value && section.value === 'files' && userCollections.value.length > 1);
+const collectionCrumb = computed(() => section.value === 'files' && !atRoots.value && userCollections.value.length > 1 && !snapshot.value?.collection.systemArea ? snapshot.value?.collection.name ?? '' : '');
+const readOnlyArea = computed(() => systemReadOnly.value || atRoots.value);
 const cloudBackup = computed(() => snapshot.value?.collection.cloudBackup);
 const cloudBackupTitle = computed(() => { const backup=cloudBackup.value; if(!backup)return 'Encrypted Files backup is unavailable'; if(backup.status==='needs-vault')return 'Turn on Passwords sync first. Passwords holds the encryption keys for Files backup.'; return backup.lastError || `Encrypted with ${backup.cryptoModule.provider} ${backup.cryptoModule.version}${backup.cryptoModule.fips?' (FIPS mode)':''}` });
 const cloudBackupLine = computed(() => { const backup=cloudBackup.value; if(!backup)return ''; if(backup.status==='needs-vault')return 'Needs Passwords sync'; const pending=backup.pendingBytes?`${formatBytes(backup.pendingBytes)} pending`:'Nothing pending'; const conflicts=backup.conflicts?` · ${backup.conflicts} conflict${backup.conflicts===1?'':'s'}`:''; const last=backup.lastSyncAt?` · Last backup ${timeAgo(backup.lastSyncAt)}`:''; return `${pending}${conflicts}${last} · ${backup.cryptoModule.provider}` });
@@ -1059,7 +1072,7 @@ const syncLine = computed(() => {
 });
 const syncTooltip = computed(() => syncState.value === 'paused' ? 'Resume Files sync' : 'Pause Files sync');
 const rootLabel = computed(() => ({ files: 'My Files', shared: 'Shared with me', sharedByMe: 'Shared by me', recent: 'Recent', starred: 'Starred', agent: 'Agent files', trash: 'Trash' }[section.value]));
-const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : rootLabel.value);
+const pageTitle = computed(() => section.value === 'files' && currentPath.value ? currentPath.value.split('/').at(-1) : collectionCrumb.value || rootLabel.value);
 const parentFolderLabel = computed(() => currentPath.value.split('/').filter(Boolean).at(-2) ?? rootLabel.value);
 const parentPath = computed(() => currentPath.value.split('/').filter(Boolean).slice(0, -1).join('/'));
 const crumbs = computed(() => section.value === 'files' ? currentPath.value.split('/').filter(Boolean).map((label, index, parts) => ({ label, path: parts.slice(0, index + 1).join('/') })) : []);
@@ -1161,7 +1174,11 @@ function compareEntries(a:DisplayEntry, b:DisplayEntry) {
 }
 // The first collection loaded is the person's home; other collections appear as
 // top-level folders there, mirroring the single tree agents see at /mnt/sulla-files.
+function collectionRootEntry(collection:{ id:string; name:string }, index:number):DisplayEntry {
+  return { id: `collection:${ collection.id }`, key: `collection:${ collection.id }`, path: collection.name, name: collection.name, rootCollectionId: collection.id, folder: true, agent: false, childCount: 0, kindClass: 'folder', icon: icons.folder, subtitle: index === 0 ? 'Files on this desktop' : 'Synced folder', mime: 'inode/directory', size: 0, updatedAt: '', sortTimestamp: index, currentVersionId: '', versionCount: 0, createdByType: 'user', createdById: '', ownerDisplayName: accountName.value, syncState: 'synced', indexStatus: 'indexed', indexReason: 'Collection root.' };
+}
 const visibleEntries = computed<DisplayEntry[]>(() => {
+  if (atRoots.value && !query.value.trim()) return userCollections.value.map(collectionRootEntry);
   if (section.value === 'trash') {
     const search = query.value.trim().toLowerCase();
     return trashItems.value.filter(item => item.path.split('/').at(-1) !== '_folder-metadata.yaml' && (!search || item.path.toLowerCase().includes(search))).map(toTrashDisplay).sort(compareEntries);
@@ -1219,7 +1236,7 @@ function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
   const sorted = entries.sort((a, b) => a.folder === b.folder ? fileNameCollator.compare(a.name, b.name) : a.folder ? -1 : 1);
   return sorted.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [entry, ...childrenForFolder(entry, depth + 1)] : [entry]);
 }
-const displayedEntries = computed(() => visibleEntries.value.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [{ ...entry, depth:0 }, ...childrenForFolder(entry, 1)] : [{ ...entry, depth:0 }]));
+const displayedEntries = computed(() => visibleEntries.value.flatMap(entry => entry.folder && !entry.rootCollectionId && expandedFolders.value.has(entry.path) ? [{ ...entry, depth:0 }, ...childrenForFolder(entry, 1)] : [{ ...entry, depth:0 }]));
 const groups = computed(() => [{ label: currentPath.value ? 'Contents' : 'Files and folders', entries:displayedEntries.value }].filter(group => group.entries.length));
 const listWindow = computed(() => { const start=Math.max(0,Math.floor(virtualScrollTop.value/LIST_ROW_HEIGHT)-VIRTUAL_OVERSCAN); const count=Math.ceil(virtualViewportHeight.value/LIST_ROW_HEIGHT)+VIRTUAL_OVERSCAN*2; return { start, end:Math.min(displayedEntries.value.length,start+count) } });
 const virtualListEntries = computed(() => displayedEntries.value.slice(listWindow.value.start,listWindow.value.end));
@@ -1270,7 +1287,7 @@ async function refresh(silent = false, afterMutation = false) {
   finally { if (isCurrent()) loading.value = false }
 }
 async function runMutation(operation:() => Promise<void>, reload = true) {
-  if (readOnlyArea.value && reload) return false;
+  if (systemReadOnly.value && reload) return false;
   if (busy.value || loading.value || error.value || !snapshot.value) return false;
   busy.value = true; refreshGeneration++; operationError.value = ''; stopPointerGesture?.();
   try { await operation(); return true }
@@ -1278,11 +1295,12 @@ async function runMutation(operation:() => Promise<void>, reload = true) {
   finally { if (reload && mounted) await refresh(true, true); busy.value = false }
 }
 async function selectCollection(collectionId:string) {
+  if (collectionId === snapshot.value?.collection.id && collectionsRoot.value && section.value === 'files') { navigate({ ...currentLocation(), section: 'files', path: '' }); return }
   if (busy.value || loading.value || !props.dataSource.selectCollection || collectionId === snapshot.value?.collection.id) return;
   if (!dragTargets.value.length) clearInternalDrag();
   cancelRename(); closeQuickLook();
   stopPointerGesture?.(); closeActions(false); closeBackgroundActions(); query.value = ''; searchGeneration++;
-  props.dataSource.selectCollection(collectionId); section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
+  props.dataSource.selectCollection(collectionId); collectionsRoot.value = false; section.value = 'files'; currentPath.value = ''; selected.value = null; searchResults.value = null; searchCoverage.value = null; selectedKeys.value = new Set();
   await refresh();
   explorer.clearForCollection(collectionId); loadFolderPreferences();
 }
@@ -1360,14 +1378,17 @@ function applyLocation(location:ExplorerLocation) {
   if (busy.value || loading.value) return;
   stopPointerGesture?.(); cancelRename(); closeQuickLook();
   if (location.collectionId && location.collectionId !== snapshot.value?.collection.id && props.dataSource.selectCollection) props.dataSource.selectCollection(location.collectionId);
-  closeActions(false); closeBackgroundActions(); selectionAnchor.value = null; section.value = location.section as Section; currentPath.value = location.path; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set(); loadFolderPreferences();
+  closeActions(false); closeBackgroundActions(); selectionAnchor.value = null; collectionsRoot.value = false; section.value = location.section as Section; currentPath.value = location.path; query.value = ''; searchResults.value = null; selected.value = null; selectedKeys.value = new Set(); loadFolderPreferences();
 }
 function navigate(location:ExplorerLocation, track = true) { if (busy.value || loading.value) return; const current = currentLocation(); if (track) explorer.visit(current, location); applyLocation(location) }
 function selectSection(next:Section) { navigate({ ...currentLocation(), section: next, path: '' }) }
 function openRoot() { navigate({ ...currentLocation(), section: 'files', path: '' }) }
-function openHome() { const home=(snapshot.value?.availableCollections ?? []).find(collection => !collection.systemArea); if(home && snapshot.value?.collection.id!==home.id) void selectCollection(home.id); else selectSection('files') }
+function openHome() {
+  if (userCollections.value.length > 1) { if (busy.value || loading.value) return; selectSection('files'); collectionsRoot.value = true; return }
+  const home=userCollections.value[0]; if(home && snapshot.value?.collection.id!==home.id) void selectCollection(home.id); else selectSection('files')
+}
 function openPath(next:string) { navigate({ ...currentLocation(), section: 'files', path: next }) }
-function openParent() { openPath(parentPath.value) }
+function openParent() { if (!currentPath.value && collectionCrumb.value) openHome(); else openPath(parentPath.value) }
 function goBack() { if (busy.value || loading.value) return; const location = explorer.back(currentLocation()); if (location) applyLocation(location) }
 function goForward() { if (busy.value || loading.value) return; const location = explorer.forward(currentLocation()); if (location) applyLocation(location) }
 function onMouseNavigation(event:MouseEvent) { if (event.button === 3) { event.preventDefault(); goBack() } else if (event.button === 4) { event.preventDefault(); goForward() } }
@@ -1409,15 +1430,15 @@ function onEntryKeydown(entry:DisplayEntry, event:KeyboardEvent) {
   else if (event.key === 'Escape') { event.preventDefault(); clearSelection() }
   else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); openActions(entry, event) }
 }
-async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; folderDescription.value=entry.folderState?.description??''; folderNamingHint.value=entry.folderState?.namingHint??''; await nextTick(); folderDialog.value?.showModal() }
+async function showDetails(entry:DisplayEntry) { if (busy.value || loading.value || entry.rootCollectionId) return; closeActions(false); if (!entry.folder) { selectEntry(entry); return } folderDetails.value = entry; folderDescription.value=entry.folderState?.description??''; folderNamingHint.value=entry.folderState?.namingHint??''; await nextTick(); folderDialog.value?.showModal() }
 async function saveFolderGuidance(){const details=folderDetails.value;const state=details?.folderState;if(!details||!state||!props.dataSource.updateFolderDescription||!folderDescription.value.trim())return;const saved=await runMutation(()=>props.dataSource.updateFolderDescription!(state.folderId,folderDescription.value.trim(),folderNamingHint.value.trim()||undefined));if(saved){folderDialog.value?.close();folderDetails.value=null}}
 function onFolderBackdrop(event:MouseEvent) { const dialog = folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } }
 function canShareEntry(entry:DisplayEntry) { return entry.folder ? Boolean(snapshot.value?.collection.orgId && props.dataSource.capabilities.orgSharing && props.dataSource.shareFolder && props.dataSource.listMembers) : props.dataSource.capabilities.publicLinks }
 
-function activate(entry:DisplayEntry) { if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else if (supportsDocumentEditor(entry.path)) emit('open-editor', entry, snapshot.value?.collection.id); else selectEntry(entry) }
+function activate(entry:DisplayEntry) { if (entry.rootCollectionId) { void selectCollection(entry.rootCollectionId); return } if (section.value === 'trash') { selectedKeys.value = new Set([entry.key]); if (!entry.folder) selectEntry(entry); return } if (entry.folder) openPath(entry.path); else if (supportsDocumentEditor(entry.path)) emit('open-editor', entry, snapshot.value?.collection.id); else selectEntry(entry) }
 function toggleFolderExpansion(entry:DisplayEntry) { const next = new Set(expandedFolders.value); next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path); expandedFolders.value = next }
 function resolveConflict(entry:DisplayEntry) { selectedKeys.value = new Set([entry.key]); selectEntry(entry) }
-function selectEntry(entry:DisplayEntry) { if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
+function selectEntry(entry:DisplayEntry) { if (entry.rootCollectionId) { void selectCollection(entry.rootCollectionId); return } if (busy.value || loading.value) return; stopPointerGesture?.(); cancelRename(); if (entry.folder) { openPath(entry.path); return } selected.value = entry; detailTab.value = entrySync(entry) === 'conflict' ? 'versions' : 'details' }
 function openDisplayEntry(entry:DisplayEntry) { if (supportsDocumentEditor(entry.path)) emit('open-editor', entry, snapshot.value?.collection.id); else selectEntry(entry) }
 function openDetail() { if (selected.value) openDisplayEntry(selected.value) }
 function openQuickLookSelection() { const entry=quickLookEntry.value;if(!entry)return;closeQuickLook();openDisplayEntry(entry) }
@@ -1625,9 +1646,10 @@ function syncText(entry:FilesItem) { return ({ synced: snapshot.value?.status.lo
 function clearFilters() { activeFilters.value = { type: '', person: '', date: '', folder: '' } }
 function toggleSelected(key:string) { selectionAnchor.value = key; const next = new Set(selectedKeys.value); next.has(key) ? next.delete(key) : next.add(key); selectedKeys.value = next }
 function toggleAll() { selectedKeys.value = allVisibleSelected.value ? new Set() : new Set(displayedEntries.value.map(entry => entry.key)) }
-async function toggleStar(id:string) { if (!snapshot.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
+async function toggleStar(id:string) { if (!snapshot.value || atRoots.value) return; const collectionId = snapshot.value.collection.id; const entry = visibleEntries.value.find(item => item.id === id); if (!entry) return; const next = !starred.value.has(id); await runMutation(async() => { await props.dataSource.setStar(collectionId, entry.folder ? { folderPath: entry.path } : { fileId: entry.id }, next); const changed = new Set(starred.value); next ? changed.add(id) : changed.delete(id); starred.value = changed }, false) }
 function closeActions(restoreFocus = true) { actionTarget.value = null; if (restoreFocus) menuTrigger?.focus() }
 async function openActions(entry:DisplayEntry, event:MouseEvent | KeyboardEvent) {
+  if (entry.rootCollectionId) return;
 
   closeBackgroundActions();
   if (!selectedKeys.value.has(entry.key)) selectedKeys.value = new Set([entry.key]);
@@ -2021,6 +2043,7 @@ function onKeydown(event:KeyboardEvent) {
   if (event.key === ' ' && selectedEntries.value.some(entry => !entry.folder)) { event.preventDefault(); openQuickLook(); return }
 }
 async function navigateTo(detail:FilesNavigationPayload) {
+  collectionsRoot.value = false;
   if (detail.collectionId && detail.collectionId !== snapshot.value?.collection.id) { await selectCollection(detail.collectionId) }
   if (detail.section === 'shared-by-me') { selectSection('sharedByMe'); return }
   const file = snapshot.value?.files.find(item => item.id === detail.fileId) ?? snapshot.value?.files.find(item => item.path === detail.path);

@@ -28,7 +28,7 @@ const PREPARE_WAIT_MS = 5_000;
 const MAX_ATTEMPTS = 5;
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 
-export type SendStatus = 'sent' | 'conflict' | 'retry' | 'failed';
+export type SendStatus = 'sent' | 'conflict' | 'retry' | 'failed' | 'skipped';
 
 class HttpStatusError extends Error {
   constructor(readonly status:number, message:string) { super(message) }
@@ -146,6 +146,8 @@ export class CloudSyncService {
   }
 
   // ---- §5.1 desktop-control API ----
+
+  finderBadges(collectionId:string) { return this.repository.finderBadges(collectionId) }
 
   async status() {
     const rows = await this.repository.statusRows();
@@ -436,6 +438,21 @@ export class CloudSyncService {
 
   private async failed(operation:QueuedOperation, message:string, detail:unknown):Promise<{ status:SendStatus; detail:unknown }> {
     const attempts = await this.repository.failOperation(operation.handle, message);
+    const status = Number((detail as { status?:unknown } | null)?.status);
+    // Cloud refusing this file's upload or commit (a 4xx it will repeat) parks that one file;
+    // the rest of the collection keeps backing up instead of stalling behind it.
+    const refused = status >= 400 && status < 500 && ![401, 403, 408, 429].includes(status);
+    if ((operation.op === 'upload-open' || operation.op === 'commit') && (refused || attempts >= MAX_ATTEMPTS)) {
+      const session = (await this.repository.sync(operation.collectionId))?.uploadSession;
+      if (session) {
+        await this.repository.skipVersion(operation.collectionId, session.fileId, session.versionId, message);
+        await this.dropSession(operation.collectionId);
+        await this.repository.completeOperation(operation.handle);
+        await this.repository.setStatus(operation.collectionId, 'syncing', null);
+        this.nudge();
+        return { status: 'skipped', detail: detail ?? { error: 'cloud_sync_skipped' } };
+      }
+    }
     if (attempts < MAX_ATTEMPTS) {
       await this.repository.setStatus(operation.collectionId, 'syncing', message);
       return { status: 'retry', detail: detail ?? { error: 'cloud_sync_retry' } };
@@ -509,7 +526,19 @@ export class CloudSyncService {
         this.lastPullAt.set(collectionId, Date.now());
         current = (await this.repository.sync(collectionId)) ?? sync;
       }
-      const session = await this.pusher.stage(current, root);
+      let session;
+      try {
+        session = await this.pusher.stage(current, root);
+      } catch (error) {
+        // A file that can't be read or sealed locally is parked; the next pass moves on.
+        const candidate = this.pusher.lastCandidate;
+        if (!candidate) throw error;
+        await this.staging.clear(collectionId);
+        await this.repository.skipVersion(collectionId, candidate.fileId, candidate.versionId, safeError(error));
+        await this.repository.setStatus(collectionId, 'syncing', null);
+        this.nudge();
+        return;
+      }
       if (!session) {
         await this.repository.setStatus(collectionId, 'idle');
         return;

@@ -257,10 +257,13 @@ n.createServer(c => {
     }
     const headers = lines.slice(1).filter(l => !/^(connection|keep-alive|proxy-connection)\s*:/i.test(l));
     const head = [m[1] + ' ' + m[3] + ' ' + m[4], ...headers, 'Connection: close'].join('\r\n');
-    const u = n.connect('${ HOST_RELAY_SOCKET }', () => {
-      u.write(m[2] + '\n');
-      u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
-    });
+    // Write the port line and head before any body bytes: writes to a
+    // connecting socket queue in order, but writes made in the connect
+    // callback would land behind body chunks that arrived in the meantime,
+    // which truncates every request bigger than one read.
+    const u = n.connect('${ HOST_RELAY_SOCKET }');
+    u.write(m[2] + '\n');
+    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
     u.on('data', x => c.write(x));
     u.on('end', () => c.end());
     u.on('error', () => c.destroy());
