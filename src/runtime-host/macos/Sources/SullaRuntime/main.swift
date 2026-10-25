@@ -322,9 +322,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 if descriptor >= 0 { self.readGuestControl(descriptor) }
                 return
             }
-            // The agent listens only after the kernel unpacks the initramfs and
-            // loads the vsock modules, which takes several seconds; retry for 30s.
-            if attempt < 1200 {
+            // The agent listens only after the kernel unpacks the initramfs,
+            // loads the vsock modules and mounts the data disk. A disk that
+            // wasn't shut down cleanly replays its journal first, which can
+            // take a minute, so keep trying for five.
+            if attempt < 12_000 {
                 self.queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.connectGuestControl(attempt: attempt + 1) }
             } else {
                 if case .failure(let error) = result {

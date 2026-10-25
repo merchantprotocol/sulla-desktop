@@ -24,10 +24,11 @@ COPY --from=agent /sulla-runtime-agent /image/rootfs/init
 # Everything in the guest already runs as root; Desktop's setup commands
 # still prefix some steps with sudo.
 COPY assets/runtime/guest/sudo.sh /image/rootfs/usr/bin/sudo
+COPY assets/runtime/guest/docker-credential-none.sh /image/rootfs/usr/bin/docker-credential-rancher-desktop
 COPY assets/runtime/guest/config/daemon.json /image/rootfs/etc/docker/daemon.json
 COPY assets/runtime/guest/config/containerd.toml /image/rootfs/etc/containerd/config.toml
 COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
-RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /usr/local/bin/make-artifact \
+RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-rancher-desktop /usr/local/bin/make-artifact \
     && /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img \
     && printf 'sulla-runtime-guest=0.1.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION \
     && cd /image && sha256sum vmlinuz initramfs.img VERSION > SHA256SUMS
