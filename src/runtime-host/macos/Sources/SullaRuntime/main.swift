@@ -252,7 +252,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         socketDevice.connect(toPort: 1024) { [weak self] result in
             guard let self else { return }
             if case .success(let connection) = result {
-                self.readGuestControl(connection.fileDescriptor); return
+                let descriptor = dup(connection.fileDescriptor)
+                if descriptor >= 0 { self.readGuestControl(descriptor) }
+                return
             }
             if attempt < 200 {
                 self.queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.connectGuestControl(attempt: attempt + 1) }
@@ -358,14 +360,21 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         socketDevice.connect(toPort: 2375) { [weak self] result in
             guard let self else { close(client); return }
             guard case .success(let connection) = result else { close(client); return }
-            let guest = connection.fileDescriptor
-            self.relay(from: client, to: guest)
-            self.relay(from: guest, to: client)
+            let guest = dup(connection.fileDescriptor)
+            guard guest >= 0 else { close(client); return }
+            let transfers = DispatchGroup()
+            self.relay(from: client, to: guest, group: transfers)
+            self.relay(from: guest, to: client, group: transfers)
+            transfers.notify(queue: self.workers) {
+                close(client); close(guest)
+            }
         }
     }
 
-    private func relay(from source: Int32, to destination: Int32) {
+    private func relay(from source: Int32, to destination: Int32, group: DispatchGroup) {
+        group.enter()
         workers.async {
+            defer { group.leave() }
             var buffer = [UInt8](repeating: 0, count: 65_536)
             while true {
                 let count = read(source, &buffer, buffer.count)
