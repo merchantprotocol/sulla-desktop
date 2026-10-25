@@ -799,6 +799,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Creation and activation are detached from lima-init: even an already
     // formatted file took 34 seconds to activate on a measured cold boot.
     // Swap is an optimisation, so neither I/O nor failure may hold readiness.
+    // Size comes from stat: busybox `wc -c < file` reads all 8GiB, and that
+    // read was the 34-second stall, not swapon.
     const swapScript = [
       '#!/bin/sh',
       'SWAPFILE=/mnt/data/swapfile',
@@ -809,7 +811,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       '[ -d /mnt/data ] || exit 0',
       '# Check space synchronously, but do all file I/O and swapon work detached.',
       'if [ -f "$SWAPFILE" ]; then',
-      '  cur_mb=$(( $(wc -c < "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
+      '  cur_mb=$(( $(stat -c %s "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
       'else',
       '  cur_mb=0',
       'fi',
@@ -828,7 +830,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'LOG=/var/log/boot-perf.log',
       'started=$(cut -d\' \' -f1 /proc/uptime)',
       'cur_mb=0',
-      '[ -f "$SWAPFILE" ] && cur_mb=$(( $(wc -c < "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
+      '[ -f "$SWAPFILE" ] && cur_mb=$(( $(stat -c %s "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
       'if [ "$cur_mb" -ne "$SIZE_MB" ]; then',
       '  candidate="${SWAPFILE}.creating"',
       '  rm -f "$candidate"',
@@ -999,7 +1001,24 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
       return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash') &&
         !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm') &&
-        !s.includes('/usr/local/sbin/sulla-bridged-firewall');
+        !s.includes('/usr/local/sbin/sulla-bridged-firewall') && !s.includes('sulla-transport-mountpoint');
+    });
+
+    // Lima's persistent-volume boot step binds /tmp to /mnt/data/tmp and then
+    // re-mounts the host shares; it aborts when /tmp/rancher-desktop is missing
+    // there, leaving that share detached. Create it for the next boot and
+    // re-attach it now using Lima's own mount line.
+    config.provision.push({
+      mode:   'system',
+      script: [
+        '#!/bin/sh',
+        '# sulla-transport-mountpoint',
+        'mkdir -p /tmp/rancher-desktop',
+        'mountpoint -q /tmp/rancher-desktop && exit 0',
+        'line=$(grep -E \'^mount .*[ "]/tmp/rancher-desktop"?$\' /mnt.sh 2>/dev/null | head -n 1)',
+        '[ -n "$line" ] && eval "$line"',
+        'exit 0',
+      ].join('\n'),
     });
 
     // Enable swap before anything else provisions — the npm installs below are
