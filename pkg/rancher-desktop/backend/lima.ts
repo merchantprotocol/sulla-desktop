@@ -775,8 +775,64 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     // Install docker compose v2 plugin if using MOBY
     config.provision = config.provision || [];
-    const dockerComposeScript = '#!/bin/sh\nset -o errexit\napk info -e docker-cli-compose >/dev/null 2>&1 || { apk update && apk add --no-cache docker-cli-compose; }';
-    const pythonNodeScript = '#!/bin/sh\nset -o errexit\napk info -e python3 nodejs npm >/dev/null 2>&1 || apk add --no-cache python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim';
+    // Alpine's root filesystem is tmpfs. /etc/apk remembers packages across
+    // boots, but their files under /bin, /sbin, /lib and /usr disappear; that
+    // mismatch made apk reinstall the whole 133-package world on every boot.
+    // Keep those trees on the data disk and bind them back before package
+    // checks. Version the snapshot with the bundled image so an app upgrade
+    // seeds fresh system files instead of carrying an old libc forward.
+    const persistentSystemScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      `IMAGE_VERSION=${ IMAGE_VERSION }`,
+      'ROOT=/mnt/data/system-root',
+      'CURRENT="$ROOT/current"',
+      'MARKER="$CURRENT/.image-version"',
+      'LOG=/var/log/boot-perf.log',
+      'started=$(cut -d\' \' -f1 /proc/uptime)',
+      'if [ "$(cat "$MARKER" 2>/dev/null || true)" != "$IMAGE_VERSION" ]; then',
+      '  STAGE="$ROOT/staging-$IMAGE_VERSION"',
+      '  rm -rf "$STAGE"',
+      '  mkdir -p "$STAGE"',
+      '  for tree in bin sbin lib; do',
+      '    tar -C / -cf - "$tree" | tar -C "$STAGE" -xf -',
+      '  done',
+      '  mkdir -p "$STAGE/usr"',
+      '  tar -C /usr --exclude=./local -cf - . | tar -C "$STAGE/usr" -xf -',
+      `  printf '%s\\n' "$IMAGE_VERSION" > "$STAGE/.image-version"`,
+      '  rm -rf "$ROOT/previous"',
+      '  [ ! -d "$CURRENT" ] || mv "$CURRENT" "$ROOT/previous"',
+      '  mv "$STAGE" "$CURRENT"',
+      'fi',
+      'for tree in bin sbin lib usr; do',
+      '  mountpoint -q "/$tree" || mount --bind "$CURRENT/$tree" "/$tree"',
+      'done',
+      '# Preserve /usr/local as Lima already stores it separately.',
+      'mountpoint -q /usr/local || mount --bind /mnt/data/usr/local /usr/local',
+      '# Keep downloaded packages for offline repair after an interrupted upgrade.',
+      'mkdir -p /mnt/data/apk-cache',
+      'rm -rf /etc/apk/cache',
+      'ln -s /mnt/data/apk-cache /etc/apk/cache',
+      'finished=$(cut -d\' \' -f1 /proc/uptime)',
+      'echo "[boot-perf] persistent-system: ${started}s -> ${finished}s image=${IMAGE_VERSION}" >> "$LOG"',
+    ].join('\n');
+
+    const dockerComposeScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      'docker compose version >/dev/null 2>&1 && exit 0',
+      '# Prefer the persistent cache; only refresh repositories when offline repair cannot satisfy it.',
+      'apk fix --no-network docker-cli-compose >/dev/null 2>&1 || { apk update && apk fix docker-cli-compose; }',
+      'docker compose version >/dev/null',
+    ].join('\n');
+    const pythonNodeScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      'command -v python3 >/dev/null 2>&1 && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && exit 0',
+      'PACKAGES="python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim"',
+      'apk fix --no-network $PACKAGES >/dev/null 2>&1 || { apk update && apk fix $PACKAGES; }',
+      'command -v python3 >/dev/null && command -v node >/dev/null && command -v npm >/dev/null',
+    ].join('\n');
 
     // Swap. The VM ships with none, and `/` is tmpfs — so page cache, /tmp and
     // /var/log all compete for the same finite RAM with no relief valve. Under
@@ -1001,7 +1057,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
       return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash') &&
         !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm') &&
-        !s.includes('/usr/local/sbin/sulla-bridged-firewall') && !s.includes('sulla-transport-mountpoint');
+        !s.includes('/usr/local/sbin/sulla-bridged-firewall') && !s.includes('sulla-transport-mountpoint') &&
+        !s.includes('/mnt/data/system-root');
     });
 
     // Lima's persistent-volume boot step binds /tmp to /mnt/data/tmp and then
@@ -1019,6 +1076,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         '[ -n "$line" ] && eval "$line"',
         'exit 0',
       ].join('\n'),
+    });
+
+    // Restore persistent package files before any package-dependent provision.
+    config.provision.push({
+      mode:   'system',
+      script: persistentSystemScript,
     });
 
     // Enable swap before anything else provisions — the npm installs below are
