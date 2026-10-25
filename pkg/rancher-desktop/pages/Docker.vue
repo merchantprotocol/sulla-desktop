@@ -769,7 +769,8 @@ async function saveKubernetesPorts() {
   });
 }
 function openDockerPreferences() {
-  ipcRenderer.send('preferences-open');
+  // Lands on Preferences › Docker once the new Preferences window (#1493) is in.
+  ipcRenderer.send('preferences-open', 'docker');
 }
 async function deleteSnapshot(n: string) {
   const result = await store.dispatch('snapshots/delete', n);
