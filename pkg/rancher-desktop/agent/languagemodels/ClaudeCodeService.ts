@@ -22,7 +22,7 @@ import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchComman
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
-import { bindLeaseToProcess, createLimaClaudeAuth, releaseLease } from './limaClaudeBridge';
+import { bindLeaseToProcess, createGuestClaudeAuth, releaseLease } from './guestClaudeBridge';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
@@ -42,7 +42,7 @@ const log = Logging.background;
 const perf = Logging.perf;
 
 /**
- * ClaudeCodeService — runs `claude -p` inside the Lima VM and streams the
+ * ClaudeCodeService — runs `claude -p` inside the Sulla VM and streams the
  * stream-json NDJSON output back into Sulla's agent loop.
  *
  * Unlike Anthropic/Grok/OpenAI peers, Claude Code already owns its own agent
@@ -253,7 +253,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     convId: string,
     state?: BaseThreadState,
   ): Promise<{ oauthToken: string; apiKey: string; baseUrl?: string; lease?: ProviderCliBridgeLease }> {
-    const bridged = await createLimaClaudeAuth({ conversationId: convId, state });
+    const bridged = await createGuestClaudeAuth({ conversationId: convId, state });
     if (bridged) return bridged;
 
     let oauthToken = '';
@@ -451,7 +451,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
-  /** Canonical argv used by non-Lima transports; parsing stays in this service. */
+  /** Canonical argv used by container transports; parsing stays in this service. */
   private buildProviderCommand(p: {
     existingSession?:  string;
     mcpConfigPath:     string | null;
@@ -491,7 +491,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     let prewarmLease: ProviderCliBridgeLease | undefined;
     try {
       const transport = getProviderExecutionTransport();
-      if (transport.runtime === 'lima' && process.platform === 'win32') return;
+      if (transport.runtime === 'guest' && process.platform === 'win32') return;
       if (!await this.speculativeBootEnabled()) return;
       await this.refreshPoolLimits();
 
@@ -526,11 +526,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
         toolSessionId:     mcpSession?.id,
       });
       const providerConfig = requireBrokeredContainerAuth(transportContext);
-      const { oauthToken, apiKey, baseUrl, lease } = transportContext.runtime === 'lima'
+      const { oauthToken, apiKey, baseUrl, lease } = transportContext.runtime === 'guest'
         ? await this.resolveClaudeCreds(convId, state)
         : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
       prewarmLease = lease;
-      if (transportContext.runtime === 'lima' && !oauthToken && !apiKey) return;
+      if (transportContext.runtime === 'guest' && !oauthToken && !apiKey) return;
       const toolConfig = mcpSession && transportContext.runtime === 'container'
         ? requireContainerToolConfig(transportContext)
         : undefined;
@@ -569,7 +569,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const proc = transport.spawn({
         context: transportContext,
         providerCommand,
-        ...(transportContext.runtime === 'lima'
+        ...(transportContext.runtime === 'guest'
           ? {
             guestCommand: { executable: paths.sullaRuntime, args, env: { ...process.env, TERM: 'dumb' } },
           }
@@ -1209,9 +1209,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
     const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
 
-    // Lima only exists on macOS/Linux; container transports do not depend on it.
-    if (transport.runtime === 'lima' && process.platform === 'win32') {
-      throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
+    // The Sulla runtime only exists on macOS; container transports do not depend on it.
+    if (transport.runtime === 'guest' && process.platform === 'win32') {
+      throw new Error('Claude Code execution requires the Sulla VM, which is not available on Windows yet. This feature currently supports macOS only.');
     }
 
     const runtimePath = paths.sullaRuntime;
@@ -1246,7 +1246,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const host = getMCPServerHost();
         if (host.running) {
           mcpSession = host.registerSession(options.state, PROC_MCP_SESSION_TTL_MS);
-          if (transport.runtime === 'lima') {
+          if (transport.runtime === 'guest') {
             mcpConfigFile = this.writeMcpConfig(mcpSession, initialTransportContext);
             mcpConfigPath = mcpConfigFile.path;
           }
@@ -1268,11 +1268,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       : initialTransportContext);
     const providerConfig = requireBrokeredContainerAuth(transportContext);
     // An adopted process already carries its own auth; only a fresh spawn needs one.
-    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'lima' && !adopted
+    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest' && !adopted
       ? await this.resolveClaudeCreds(convId, options.state)
       : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
-    if (transportContext.runtime === 'lima' && !adopted && !oauthToken && !apiKey) {
+    if (transportContext.runtime === 'guest' && !adopted && !oauthToken && !apiKey) {
       releaseLease(authLease);
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
@@ -1360,7 +1360,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       proc = transport.spawn({
         context: transportContext,
         providerCommand,
-        ...(transportContext.runtime === 'lima'
+        ...(transportContext.runtime === 'guest'
           ? {
             guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
           }

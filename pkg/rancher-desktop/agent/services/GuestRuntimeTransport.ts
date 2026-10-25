@@ -69,7 +69,7 @@ export function runGuestSync(args: string[], input?: string | Buffer): string {
 
 let guestIdentity: { user: string; identity: GuestRuntimeIdentity } | undefined;
 
-/** The container runs as the actual Lima login identity, never a host-derived or guessed UID. */
+/** The container runs as the actual guest login identity, never a host-derived or guessed UID. */
 export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
   // Guest commands run as root on the Sulla runtime; there the login account
   // is the one the runtime created for this Mac user, looked up by name.
@@ -80,7 +80,7 @@ export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
     : runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
   const [uid, gid] = output.split(/\s+/).map(Number);
   if (![uid, gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
-    throw new Error('Could not resolve the Lima guest runtime identity');
+    throw new Error('Could not resolve the Sulla guest runtime identity');
   }
   guestIdentity = { user: runtimeUser, identity: { uid, gid } };
   return guestIdentity.identity;

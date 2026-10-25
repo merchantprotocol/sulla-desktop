@@ -94,7 +94,7 @@ export function stopRelayToolTunnel(): void {
 }
 
 /**
- * Connect Desktop out to the relay running beside sulla-tools in Lima. This
+ * Connect Desktop out to the relay running beside sulla-tools in the Sulla VM. This
  * preserves the real Desktop/controller owner without requiring an inbound
  * container-to-host address or a static host mapping.
  */

@@ -109,7 +109,7 @@ function busyboxGuest(initial: string, options: { catFails?: boolean } = {}) {
   return { exec, commands, mounts: () => commands.filter(command => command[0] === 'mount').map(command => command.join(' ')) };
 }
 
-// Captured from the user's live Lima VM (read-only): the adapter's mount has the
+// Captured from the user's live Sulla VM (read-only): the adapter's mount has the
 // plain `fuse` filesystem type, NOT `fuse.sulla-files`.
 const LIVE_ANCHOR = '390 923 0:26 /mnt/sulla-files /mnt/sulla-files rw,relatime shared:1 - tmpfs tmpfs rw,mode=755,inode64';
 const LIVE_ADAPTER = '928 390 0:225 / /mnt/sulla-files rw,nosuid,nodev,relatime shared:35 - fuse sulla-files rw,user_id=0,group_id=0,allow_other';

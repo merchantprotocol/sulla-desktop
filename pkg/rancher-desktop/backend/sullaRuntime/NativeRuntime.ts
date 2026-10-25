@@ -9,7 +9,7 @@ import { SullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets } fro
 import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 
-const console = Logging.lima;
+const console = Logging.sullaRuntime;
 
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 70_000;
@@ -30,7 +30,7 @@ export interface SullaRuntimeStartOptions {
   cpus:            number;
   memoryMiB:       number;
   shares:          SullaRuntimeShare[];
-  /** From guestUserFor(); the guest creates this account like Lima did. */
+  /** From guestUserFor(); the guest creates this account . */
   guestUser?:      { name: string; uid: number };
   readyTimeoutMs?: number;
   /** Boot milestones, in milliseconds since spawn: hello, restored, docker-ready and agent events. */

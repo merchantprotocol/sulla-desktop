@@ -128,7 +128,7 @@ export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'ins
   persistenceKey?: string;
 };
 
-/** True when `path` can be listed from the Lima guest; a dead FUSE adapter fails ENOTCONN here. */
+/** True when `path` can be listed from the Sulla guest; a dead FUSE adapter fails ENOTCONN here. */
 async function guestPathUsable(path: string): Promise<boolean> {
   try {
     await guestExec(['sudo', 'ls', '-A', path]);
@@ -178,8 +178,8 @@ function guestExec(args: string[], input?: string): Promise<{ stdout: string; st
   });
 }
 
-/** Docker runtime adapter for Electron, whose Docker daemon lives in Lima. */
-class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
+/** Docker runtime adapter for Electron, whose Docker daemon lives in the Sulla VM. */
+class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   async create(spec: ContainerSpec): Promise<string> {
     const args = ['docker', 'create'];
     if (spec.autoRemove) args.push('--rm');
@@ -225,7 +225,7 @@ export function agentContainerRelayUrl(value: string): string {
 
 /**
  * The named Docker endpoint only bridges TCP to a Unix socket.  The process
- * that resolves and reaches host.lima.internal runs in the Lima VM, keeping
+ * that resolves and reaches host.lima.internal runs in the Sulla VM, keeping
  * host IP addresses and host networking out of every container invocation.
  */
 async function ensureHostRelay(image: string): Promise<void> {
@@ -299,7 +299,7 @@ ${ portLine }    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(
   c.on('data', onHead);
   c.on('error', () => c.destroy());
 }).listen(${ HOST_RELAY_PORT }, '0.0.0.0');`;
-  // 0711 (not 0700): the relay dir is owned by the Lima user, but the sulla-host-relay
+  // 0711 (not 0700): the relay dir is owned by the guest user, but the sulla-host-relay
   // container binds it as uid 10001 and must still be able to traverse into it to reach
   // relay.sock (0666); only the socket itself needs to stay unreadable to other users.
   //
@@ -741,7 +741,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   log.info('[AgentContainer] Image ready');
   await ensureHostRelay(image);
   log.info('[AgentContainer] Host relay ready');
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
   const lifecycleAbort = new AbortController();
@@ -1077,7 +1077,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
   const image = await ensureAgentImage();
   await ensureHostRelay(image);
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
@@ -1358,7 +1358,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
 
 /** Remove agent containers left behind by a Desktop crash/restart. */
 export async function reapOrphanAgentContainers(): Promise<void> {
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   let containers: any[];
   try {
     containers = await runtime.list('com.sulla.workload=agent');

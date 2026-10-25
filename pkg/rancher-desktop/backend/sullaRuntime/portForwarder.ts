@@ -3,7 +3,7 @@ import net from 'net';
 
 import Logging from '@pkg/utils/logging';
 
-const console = Logging.lima;
+const console = Logging.sullaRuntime;
 
 // guest.sock stream selector for published-port forwarding (see the runtime's
 // guest agent protocol); the guest dials 127.0.0.1:<port> where dockerd's

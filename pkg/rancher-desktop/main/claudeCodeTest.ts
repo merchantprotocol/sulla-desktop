@@ -1,5 +1,5 @@
 /**
- * Minimal test harness for driving Claude Code headlessly inside the Lima VM.
+ * Minimal test harness for driving Claude Code headlessly inside the Sulla VM.
  *
  * Exposes an IPC handler `claude-code:test` that:
  *   1. Spawns `claude -p PROMPT --output-format stream-json --verbose

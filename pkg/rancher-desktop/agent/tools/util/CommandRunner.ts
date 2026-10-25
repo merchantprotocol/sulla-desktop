@@ -8,14 +8,14 @@ export interface CommandRunnerOptions {
   timeoutMs?:      number;
   maxOutputChars?: number;
   stdin?:          string;
-  runInLimaShell?: boolean;
+  runInGuest?: boolean;
   /** Override the canonical `paths.sullaRuntime` (rarely needed; tests/migrations only). */
   runtimePath?:    string;
 }
 
-export function commandExecutionTarget(hasContainerRuntime: boolean, runInLimaShell = false): 'container' | 'vm' | 'host' {
+export function commandExecutionTarget(hasContainerRuntime: boolean, runInGuest = false): 'container' | 'vm' | 'host' {
   if (hasContainerRuntime) return 'container';
-  return runInLimaShell ? 'vm' : 'host';
+  return runInGuest ? 'vm' : 'host';
 }
 
 function quoteShellArg(value: string): string {
@@ -126,9 +126,9 @@ export async function runCommand(
   const runtime = currentAgentContainerRuntime();
 
   // An agent-local runtime is the security boundary. Legacy callers still
-  // say runInLimaShell because that used to mean "not the Electron host";
+  // say runInGuest because that used to mean "not the Electron host";
   // once a graph is container-bound it must never punch back into the VM.
-  if (runtime && commandExecutionTarget(true, options.runInLimaShell) === 'container') {
+  if (runtime && commandExecutionTarget(true, options.runInGuest) === 'container') {
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
@@ -137,7 +137,7 @@ export async function runCommand(
     return executeSpawn(resolveRuntimePath(options), dockerArgs, options);
   }
 
-  if (commandExecutionTarget(false, options.runInLimaShell) === 'vm') {
+  if (commandExecutionTarget(false, options.runInGuest) === 'vm') {
     // The Sulla runtime only exists on macOS; paths.sullaRuntime is a throwing
     // getter on Windows. Fail with a clear message instead of crashing the caller.
     if (process.platform === 'win32') {

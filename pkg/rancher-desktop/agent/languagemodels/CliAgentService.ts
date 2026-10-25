@@ -259,7 +259,7 @@ export class CliAgentService extends BaseLanguageModel {
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
     if (process.platform === 'win32') {
-      throw new Error(`${ this.spec.name } requires the Lima VM, which is not available on Windows yet.`);
+      throw new Error(`${ this.spec.name } requires the Sulla VM, which is not available on Windows yet.`);
     }
 
     const conversationId = options.conversationId ?? '__default__';

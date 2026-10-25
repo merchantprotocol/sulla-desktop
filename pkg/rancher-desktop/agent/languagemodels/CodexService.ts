@@ -66,7 +66,7 @@ interface CodexPrewarmRecord {
 }
 
 /**
- * CodexService — runs `codex exec` inside the Lima VM and streams the
+ * CodexService — runs `codex exec` inside the Sulla VM and streams the
  * --json JSONL output back into Sulla's agent loop.
  *
  * The codex sibling of ClaudeCodeService: codex already owns its own agent
@@ -77,7 +77,7 @@ interface CodexPrewarmRecord {
  * same short-lived, graph-bound MCP bridge used by Claude Code.
  *
  * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
- * scheduled token refresh. The host home is mounted into the Lima VM, and
+ * scheduled token refresh. The host home is mounted into the Sulla VM, and
  * every spawn exports CODEX_HOME/HOME to that host path — sulla-runtime exec
  * otherwise sets HOME to the guest path (/home/<user>.linux), which would
  * hide the auth file and 401 every request. The CLI also self-refreshes
@@ -254,7 +254,7 @@ export class CodexService extends BaseLanguageModel {
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
-  /** Canonical argv used by non-Lima transports; JSONL parsing stays here. */
+  /** Canonical argv used by container transports; JSONL parsing stays here. */
   private buildProviderCommand(p: {
     existingSession?:  string;
     readOnly?:         boolean;
@@ -286,7 +286,7 @@ export class CodexService extends BaseLanguageModel {
   async prewarm(state: BaseThreadState): Promise<void> {
     try {
       const transport = getProviderExecutionTransport();
-      if (transport.runtime === 'lima' && process.platform === 'win32') return;
+      if (transport.runtime === 'guest' && process.platform === 'win32') return;
       if (!await this.speculativeBootEnabled()) return;
 
       const convId = typeof (state.metadata as any)?.threadId === 'string'
@@ -316,7 +316,7 @@ export class CodexService extends BaseLanguageModel {
       const toolConfig = transportContext.runtime === 'container' && mcpSession
         ? requireContainerToolConfig(transportContext)
         : undefined;
-      if (transportContext.runtime === 'lima' && !await ensureCodexAuthFile()) return;
+      if (transportContext.runtime === 'guest' && !await ensureCodexAuthFile()) return;
 
       const runtimePath = paths.sullaRuntime;
       const readOnly = !!(state.metadata as any)?.verifierReadOnly;
@@ -330,7 +330,7 @@ export class CodexService extends BaseLanguageModel {
       });
       const args = this.buildSpawnArgs({
         existingSession,
-        mcpSession: transportContext.runtime === 'lima' ? mcpSession : null,
+        mcpSession: transportContext.runtime === 'guest' ? mcpSession : null,
         readOnly,
         instructionsPath: instructionsFile.path,
         pidFile,
@@ -347,7 +347,7 @@ export class CodexService extends BaseLanguageModel {
         proc = transport.spawn({
           context: transportContext,
           providerCommand,
-          ...(transportContext.runtime === 'lima'
+          ...(transportContext.runtime === 'guest'
             ? {
               guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
             }
@@ -797,7 +797,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       providerSessionId: existingSession,
     });
     requireBrokeredContainerAuth(initialTransportContext);
-    if (initialTransportContext.runtime === 'lima' && !await ensureCodexAuthFile()) {
+    if (initialTransportContext.runtime === 'guest' && !await ensureCodexAuthFile()) {
       throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
     }
     const attachmentRefs: ProviderFileRef[] = [];
@@ -824,10 +824,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     log.log(`[CodexService] runCodex: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } runtime=${ initialTransportContext.runtime }`);
 
-    // Lima only exists on macOS/Linux; paths.sullaRuntime is a throwing getter on
+    // The Sulla runtime only exists on macOS; paths.sullaRuntime is a throwing getter on
     // Windows. Surface a clear, user-readable error instead of an opaque crash.
-    if (transport.runtime === 'lima' && process.platform === 'win32') {
-      throw new Error('Codex execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
+    if (transport.runtime === 'guest' && process.platform === 'win32') {
+      throw new Error('Codex execution requires the Sulla VM, which is not available on Windows yet. This feature currently supports macOS only.');
     }
 
     const runtimePath = paths.sullaRuntime;
@@ -836,7 +836,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // during the accumulator phase; otherwise spawn fresh below. Flag off →
     // adopted is always null and the legacy path runs byte-for-byte as
     // before. Normal actor runs use --dangerously-bypass-approvals-and-sandbox:
-    // codex runs inside the Lima VM, which IS the sandbox. Verifier runs are
+    // codex runs inside the Sulla VM, which IS the sandbox. Verifier runs are
     // different: their graph state carries verifierReadOnly, so Codex uses its
     // read-only sandbox and cannot mutate a checkout even through native shell.
     // The
@@ -890,7 +890,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const pidFile = adopted ? adopted.pidFile : newRemotePidFile('sulla-codex');
     const args = this.buildSpawnArgs({
       existingSession,
-      mcpSession: transportContext.runtime === 'lima' ? mcpSession : null,
+      mcpSession: transportContext.runtime === 'guest' ? mcpSession : null,
       readOnly,
       instructionsPath,
       pidFile,
@@ -936,7 +936,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         proc = transport.spawn({
           context: transportContext,
           providerCommand,
-          ...(transportContext.runtime === 'lima'
+          ...(transportContext.runtime === 'guest'
             ? {
               guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
             }

@@ -4,7 +4,7 @@ import { claimWarningsForChangedFiles } from './fileClaims';
 
 /**
  * Git Status Tool - Show working tree status.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitStatusWorker extends BaseTool {
   name = '';
@@ -18,7 +18,7 @@ export class GitStatusWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -31,7 +31,7 @@ export class GitStatusWorker extends BaseTool {
       const branchResult = await runCommand(
         `git -C "${ repoRoot }" rev-parse --abbrev-ref HEAD`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
       const currentBranch = branchResult.stdout.trim() || '(unknown)';
 
@@ -39,7 +39,7 @@ export class GitStatusWorker extends BaseTool {
       const statusResult = await runCommand(
         `git -C "${ repoRoot }" status --porcelain`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       const lines = statusResult.stdout.trim().split('\n').filter(Boolean);

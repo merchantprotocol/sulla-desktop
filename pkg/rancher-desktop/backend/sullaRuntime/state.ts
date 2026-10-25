@@ -1,6 +1,6 @@
 /**
  * Process-wide record of whether Desktop booted on the native Sulla runtime
- * instead of Lima. Main-process code that behaves differently on the runtime
+ * Main-process code that behaves differently on the runtime
  * (agent run location, snapshots, factory reset) reads it from here.
  */
 

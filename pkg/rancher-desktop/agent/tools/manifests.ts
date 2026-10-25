@@ -20,7 +20,6 @@ import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
-import { limaToolManifests } from './lima/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { mobileToolManifests } from './mobile/manifests';
@@ -57,7 +56,6 @@ toolRegistry.registerManifests([
   ...githubToolManifests,
   ...integrationsToolManifests,
   ...kubectlToolManifests,
-  ...limaToolManifests,
   ...marketplaceToolManifests,
   ...metaToolManifests,
   ...mobileToolManifests,

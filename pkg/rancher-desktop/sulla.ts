@@ -342,7 +342,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
-  // In-process MCP server that Claude Code (running in the Lima VM) can call
+  // In-process MCP server that Claude Code (running in the Sulla VM) can call
   // back into. No external deps — pure main-process HTTP server. Must start
   // before any graph execution that invokes Claude Code, which in practice
   // means before the chat server accepts requests.
@@ -530,7 +530,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
 
-  // Start the terminal WebSocket server early (PTY into Lima VM).
+  // Start the terminal WebSocket server early (PTY into Sulla VM).
   // It has no DB/Redis dependencies and binds to 127.0.0.1 only.
   // Shutdown is handled in sullaEnd().
   try {
@@ -549,7 +549,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // Register ModelProviderService IPC handlers before any window loads.
   // Lifecycle-gated state loading happens later, but the UI needs to query
-  // state immediately — and instantiateSullaStart() only runs after Lima boots,
+  // state immediately — and instantiateSullaStart() only runs after the VM boots,
   // which may be blocked on container readiness.
   try {
     const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
@@ -1716,7 +1716,7 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   await lifecycle.stopAll(mode);
 
   // Force-close connection clients if they're still alive.
-  // Lifecycle may think they never started (e.g. slow Docker/Lima boot
+  // Lifecycle may think they never started (e.g. slow Docker boot
   // caused waitForReady to fail), but the clients may have connected
   // independently via lazy-init or retry loops.
   if (mode === 'full') {

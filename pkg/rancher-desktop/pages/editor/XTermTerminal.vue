@@ -102,7 +102,7 @@ export default defineComponent({
       socket = new WebSocket(props.wsUrl);
 
       socket.onopen = () => {
-        // Send start message to create/join a PTY session in the Lima VM
+        // Send start message to create/join a PTY session in the Sulla VM
         const dims = fitAddon!.proposeDimensions();
         socket!.send(JSON.stringify({
           type:      'start',
