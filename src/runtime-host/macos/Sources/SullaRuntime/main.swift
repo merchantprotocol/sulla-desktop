@@ -3,10 +3,19 @@ import Foundation
 import Virtualization
 
 private let gib = 1_073_741_824
-private let runtimeDirectory = FileManager.default.homeDirectoryForCurrentUser
+// SULLA_RUNTIME_DIR lets a test VM run beside the real one with its own sockets.
+private let runtimeDirectory = ProcessInfo.processInfo.environment["SULLA_RUNTIME_DIR"]
+    .map { URL(fileURLWithPath: $0, isDirectory: true) }
+    ?? FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/Sulla/runtime", isDirectory: true)
 private let dockerSocketURL = runtimeDirectory.appendingPathComponent("docker.sock")
 private let controlSocketURL = runtimeDirectory.appendingPathComponent("control.sock")
+// One stream per connection to an allowlisted guest vsock port: 1025 guest
+// exec, 2376 published-port forwarding. The client writes "<port>\n" first.
+private let guestSocketURL = runtimeDirectory.appendingPathComponent("guest.sock")
+private let guestStreamPorts: Set<UInt32> = [1025, 2376]
+// Guest-initiated streams that reach the Mac's 127.0.0.1 (host.lima.internal).
+private let hostLoopbackVsockPort: UInt32 = 1100
 private let serialLogURL = runtimeDirectory.appendingPathComponent("console.log")
 
 private struct StartOptions {
@@ -16,6 +25,14 @@ private struct StartOptions {
     let dataDisk: URL
     let cpus: Int
     let memoryBytes: UInt64
+    let kernelArguments: [String]
+    let shares: [DirectoryShare]
+}
+
+private struct DirectoryShare {
+    let tag: String
+    let path: URL
+    let readOnly: Bool
 }
 
 private enum RuntimeError: LocalizedError {
@@ -56,6 +73,8 @@ private func defaultMemoryBytes() -> UInt64 {
 
 private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartOptions {
     var values: [String: String] = [:]
+    var kernelArguments: [String] = []
+    var shares: [DirectoryShare] = []
     var index = arguments.startIndex
     while index < arguments.endIndex {
         let key = arguments[index]
@@ -63,7 +82,34 @@ private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartO
             throw RuntimeError.usage("invalid start argument: \(key)")
         }
         let valueIndex = arguments.index(after: index)
-        values[key] = arguments[valueIndex]
+        if key == "--kernel-arg" {
+            // Only agent options (sulla.<name>=<value>) may be added; the host
+            // owns everything else on the command line.
+            let value = arguments[valueIndex]
+            guard value.range(of: "^sulla\\.[a-z]+=[A-Za-z0-9._-]+$", options: .regularExpression) != nil else {
+                throw RuntimeError.usage("--kernel-arg accepts only sulla.<name>=<value>")
+            }
+            kernelArguments.append(value)
+        } else if key == "--share" {
+            // tag=/host/path[:ro]. The guest mounts the tag where it wants it.
+            let value = arguments[valueIndex]
+            guard let separator = value.firstIndex(of: "=") else {
+                throw RuntimeError.usage("--share expects tag=/host/path[:ro]")
+            }
+            let tag = String(value[..<separator])
+            var path = String(value[value.index(after: separator)...])
+            let readOnly = path.hasSuffix(":ro")
+            if readOnly { path.removeLast(3) }
+            do {
+                try VZVirtioFileSystemDeviceConfiguration.validateTag(tag)
+            } catch {
+                throw RuntimeError.usage("invalid share tag: \(tag)")
+            }
+            guard path.hasPrefix("/") else { throw RuntimeError.usage("share path must be absolute: \(path)") }
+            shares.append(DirectoryShare(tag: tag, path: URL(fileURLWithPath: path, isDirectory: true), readOnly: readOnly))
+        } else {
+            values[key] = arguments[valueIndex]
+        }
         index = arguments.index(after: valueIndex)
     }
     guard let kernel = values["--kernel"], let initrd = values["--initrd"],
@@ -82,7 +128,8 @@ private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartO
     return StartOptions(
         kernel: URL(fileURLWithPath: kernel), initrd: URL(fileURLWithPath: initrd),
         rootfs: values["--rootfs"].map(URL.init(fileURLWithPath:)),
-        dataDisk: URL(fileURLWithPath: dataDisk), cpus: cpus, memoryBytes: memoryBytes
+        dataDisk: URL(fileURLWithPath: dataDisk), cpus: cpus, memoryBytes: memoryBytes,
+        kernelArguments: kernelArguments, shares: shares
     )
 }
 
@@ -152,6 +199,8 @@ private func connectUnix(path: String) throws -> Int32 {
     return descriptor
 }
 
+func connectUnixSocket(path: String) throws -> Int32 { try connectUnix(path: path) }
+
 private func writeAll(_ descriptor: Int32, _ data: Data) {
     data.withUnsafeBytes { raw in
         guard var pointer = raw.baseAddress else { return }
@@ -173,6 +222,8 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private var socketDevice: VZVirtioSocketDevice?
     private var dockerListener: Int32 = -1
     private var controlListener: Int32 = -1
+    private var guestListener: Int32 = -1
+    private let loopbackListener = VZVirtioSocketListener()
     private let stopped = DispatchSemaphore(value: 0)
     private var helloSeen = false
     private var dockerReady = false
@@ -188,8 +239,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         machine.delegate = self
         dockerListener = try makeUnixListener(path: dockerSocketURL.path)
         controlListener = try makeUnixListener(path: controlSocketURL.path)
+        guestListener = try makeUnixListener(path: guestSocketURL.path)
+        loopbackListener.delegate = self
         acceptControlConnections()
         acceptDockerConnections()
+        acceptGuestStreamConnections()
         queue.async { [self] in
             machine.start { result in
                 switch result {
@@ -223,10 +277,17 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         config.storageDevices = storage
         // The guest has no clock source of its own, and TLS fails at 1970.
         loader.commandLine += " sulla.time=\(Int(Date().timeIntervalSince1970))"
+        for argument in options.kernelArguments { loader.commandLine += " \(argument)" }
         let network = VZVirtioNetworkDeviceConfiguration()
         network.attachment = VZNATNetworkDeviceAttachment()
         config.networkDevices = [network]
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()]
+        var directories: [VZDirectorySharingDeviceConfiguration] = []
+        for share in options.shares {
+            let device = VZVirtioFileSystemDeviceConfiguration(tag: share.tag)
+            device.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: share.path, readOnly: share.readOnly))
+            directories.append(device)
+        }
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
         config.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         let console = VZVirtioConsoleDeviceSerialPortConfiguration()
@@ -239,14 +300,16 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         if #available(macOS 13.0, *), VZLinuxRosettaDirectoryShare.availability == .installed {
             let fileSystem = VZVirtioFileSystemDeviceConfiguration(tag: "rosetta")
             fileSystem.share = try VZLinuxRosettaDirectoryShare()
-            config.directorySharingDevices = [fileSystem]
+            directories.append(fileSystem)
         }
 #endif
+        config.directorySharingDevices = directories
         return config
     }
 
     private func findSocketDeviceAndConnectControl() {
         socketDevice = machine.socketDevices.compactMap { $0 as? VZVirtioSocketDevice }.first
+        socketDevice?.setSocketListener(loopbackListener, forPort: hostLoopbackVsockPort)
         connectGuestControl(attempt: 0)
     }
 
@@ -349,7 +412,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             if case .success(let connection) = result {
                 writeAll(connection.fileDescriptor, Data("{\"id\":1,\"method\":\"shutdown\"}\n".utf8))
             }
-            self.queue.asyncAfter(deadline: .now() + 10) { [weak self] in
+            // The guest stops dockerd (up to 45 s, it stops containers first)
+            // and then containerd (up to 10 s) before it powers off.
+            self.queue.asyncAfter(deadline: .now() + 60) { [weak self] in
                 guard let self, self.machine.state != .stopped else { return }
                 self.forceStop()
             }
@@ -401,6 +466,75 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         }
     }
 
+    private func acceptGuestStreamConnections() {
+        workers.async { [weak self] in
+            guard let self else { return }
+            while self.guestListener >= 0 {
+                let client = accept(self.guestListener, nil, nil)
+                if client >= 0 { self.workers.async { self.openGuestStream(client) } }
+            }
+        }
+    }
+
+    /// Reads "<port>\n" one byte at a time, so nothing after it is consumed,
+    /// then splices the client with that guest vsock port.
+    private func openGuestStream(_ client: Int32) {
+        var line = [UInt8]()
+        var byte: UInt8 = 0
+        while line.count < 8, read(client, &byte, 1) == 1, byte != 0x0a { line.append(byte) }
+        guard byte == 0x0a, let port = UInt32(String(decoding: line, as: UTF8.self)), guestStreamPorts.contains(port) else {
+            close(client); return
+        }
+        queue.async { [weak self] in
+            guard let self, let socketDevice = self.socketDevice else { close(client); return }
+            socketDevice.connect(toPort: port) { result in
+                guard case .success(let connection) = result else { close(client); return }
+                let guest = dup(connection.fileDescriptor)
+                guard guest >= 0 else { close(client); return }
+                self.splice(client, guest)
+            }
+        }
+    }
+
+    private func splice(_ left: Int32, _ right: Int32) {
+        let transfers = DispatchGroup()
+        relay(from: left, to: right, group: transfers)
+        relay(from: right, to: left, group: transfers)
+        transfers.notify(queue: workers) { close(left); close(right) }
+    }
+
+    /// A guest stream to the Mac's loopback: one {"port":N} line, then bytes.
+    /// The host dials only 127.0.0.1, never anything the guest names.
+    fileprivate func acceptLoopbackStream(_ connection: VZVirtioSocketConnection) {
+        let guest = dup(connection.fileDescriptor)
+        guard guest >= 0 else { return }
+        workers.async { [weak self] in
+            guard let self else { close(guest); return }
+            var line = [UInt8]()
+            var byte: UInt8 = 0
+            while line.count < 64, read(guest, &byte, 1) == 1, byte != 0x0a { line.append(byte) }
+            guard byte == 0x0a,
+                  let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let port = object["port"] as? Int, (1...65535).contains(port) else {
+                close(guest); return
+            }
+            let local = socket(AF_INET, SOCK_STREAM, 0)
+            guard local >= 0 else { close(guest); return }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = in_port_t(UInt16(port).bigEndian)
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(local, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else { close(local); close(guest); return }
+            self.splice(guest, local)
+        }
+    }
+
     private func relay(from source: Int32, to destination: Int32, group: DispatchGroup) {
         group.enter()
         workers.async {
@@ -424,12 +558,21 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private func cleanup() {
         if dockerListener >= 0 { close(dockerListener); dockerListener = -1 }
         if controlListener >= 0 { close(controlListener); controlListener = -1 }
-        unlink(dockerSocketURL.path); unlink(controlSocketURL.path)
+        if guestListener >= 0 { close(guestListener); guestListener = -1 }
+        unlink(dockerSocketURL.path); unlink(controlSocketURL.path); unlink(guestSocketURL.path)
     }
 
     func guestDidStop(_ virtualMachine: VZVirtualMachine) { stopped.signal() }
     func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
         fputs("VM stopped with error: \(error)\n", stderr); stopped.signal()
+    }
+}
+
+extension RuntimeDaemon: VZVirtioSocketListenerDelegate {
+    func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
+                  from socketDevice: VZVirtioSocketDevice) -> Bool {
+        acceptLoopbackStream(connection)
+        return true
     }
 }
 
@@ -442,11 +585,16 @@ private func runClientCommand(_ command: String) throws {
     if count > 0 { print(String(decoding: buffer.prefix(count), as: UTF8.self), terminator: "") }
 }
 
+if URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent == "limactl" {
+    exit(runLimaShim(socketPath: guestSocketURL.path, controlPath: controlSocketURL.path, Array(CommandLine.arguments.dropFirst())))
+}
+
 do {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop") }
+    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|exec") }
     switch arguments[1] {
     case "start": try RuntimeDaemon(options: parseStartOptions(arguments.dropFirst(2))).run()
+    case "exec": exit(runExecCommand(socketPath: guestSocketURL.path, arguments.dropFirst(2)))
     case "status": try runClientCommand("status")
     case "stop": try runClientCommand("stop")
     default: throw RuntimeError.usage("unknown command: \(arguments[1])")

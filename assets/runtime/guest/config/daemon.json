@@ -1,6 +1,7 @@
 {
+  "min-api-version": "1.41",
   "features": { "containerd-snapshotter": true },
   "iptables": true,
   "storage-driver": "overlayfs",
-  "userland-proxy": false
+  "userland-proxy": true
 }

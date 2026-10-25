@@ -36,9 +36,11 @@ Port 2375 proxies each accepted vsock stream byte-for-byte to `/run/docker.sock`
 
 1. Agent entered (`bootUptimeMs` origin).
 2. proc, sysfs, cgroup v2, and `/run` tmpfs mounted.
-3. `/dev/vdb` formatted as ext4 with label `sulla-data` only when blank, then mounted at `/var/lib/sulla-data`; its `docker` directory is bind-mounted at `/var/lib/docker`.
+3. The data disk (`sulla.data=`) is mounted at `/mnt/data`: the whole disk if it is ext4, otherwise its first ext4 partition, which is how a Lima data disk is laid out. Only a provably blank disk (no filesystem and an all-zero first MiB, so no partition table) is formatted, as ext4 with label `sulla-data`. `/mnt/data/var/lib` is bind-mounted at `/var/lib` (Docker at `/var/lib/docker`) and `/mnt/data/worktrees` at `/mnt/worktrees`.
 4. Control and Docker vsock listeners started; network configuration proceeds independently.
 5. containerd and dockerd launched as supervised units in parallel. `unit-ready` means the process successfully started, not API readiness.
 6. `docker-ready` fires exactly once, immediately after the first `GET /_ping` response with HTTP 200 on `/run/docker.sock`. No debounce, package install, download, SSH, time synchronization, or unrelated service gates it.
 
-The immutable boot disk is `/dev/vda`; the mutable ext4 data disk is `/dev/vdb`. Agent logs are duplicated to `/dev/hvc0` and `/var/lib/sulla-data/logs/sulla-agent.log`.
+The immutable boot disk is `/dev/vda`; the mutable ext4 data disk is `/dev/vdb`. Agent logs are duplicated to `/dev/hvc0` and `/var/lib/sulla-runtime/logs/sulla-agent.log`.
+
+On shutdown the agent stops dockerd first (up to 45 s, while it stops containers), then containerd (up to 10 s), syncs, unmounts the data disk and powers off. The host waits up to 60 s before forcing the VM off.
