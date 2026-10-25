@@ -780,6 +780,10 @@ if URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent == "limactl"
     exit(runLimaShim(socketPath: guestSocketURL.path, controlPath: controlSocketURL.path, Array(CommandLine.arguments.dropFirst())))
 }
 
+// A client closing a docker or forwarded connection mid-write must fail that
+// write with EPIPE, not kill the process and the VM with it.
+signal(SIGPIPE, SIG_IGN)
+
 do {
     let arguments = CommandLine.arguments
     guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|exec") }
