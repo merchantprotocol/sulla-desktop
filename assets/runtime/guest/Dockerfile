@@ -16,6 +16,7 @@ RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker doc
     && chmod 1777 /image/rootfs/tmp \
     && for dir in bin sbin lib usr etc; do cp -a "/$dir" /image/rootfs/; done \
     && rm -rf /image/rootfs/etc/apk /image/rootfs/lib/firmware /image/rootfs/sbin/apk \
+      /image/rootfs/etc/resolv.conf /image/rootfs/etc/hostname \
       /image/rootfs/var/cache/apk /image/rootfs/usr/share/man /image/rootfs/boot \
     && /usr/local/bin/unzboot /boot/vmlinuz-lts /image/vmlinuz
 COPY --from=agent /sulla-runtime-agent /image/rootfs/init
