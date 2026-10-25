@@ -2,7 +2,7 @@
 
 `build.sh arm64` (or `amd64`) creates a reproducible kernel and initramfs in `dist/<arch>/`. Alpine packages are resolved only while the artifact is built; the resulting guest contains no boot-time provisioning or package download.
 
-The kernel is Alpine's LTS distribution kernel. Its shipped configuration enables the Virtualization.framework requirements, built in where Alpine provides them and with the matching immutable modules otherwise: virtio block/net/console, AF_VSOCK and virtio-vsock, overlayfs, cgroup v2, nftables, BPF, ext4, and binfmt_misc. The initramfs contains the static Sulla PID 1 agent plus BusyBox, Moby dockerd/containerd/runc/docker-init, buildx, iproute2, iptables/nftables, CA certificates, and ext4 tools.
+The kernel is Alpine's LTS distribution kernel. Its shipped configuration enables the Virtualization.framework requirements, built in where Alpine provides them and with the matching immutable modules otherwise: virtio block/net/console, AF_VSOCK and virtio-vsock, overlayfs, cgroup v2, nftables, BPF, ext4, and binfmt_misc. The initramfs contains the static Sulla PID 1 agent plus BusyBox, Moby dockerd/containerd/runc/docker-init, buildx, compose, iproute2, iptables/nftables, CA certificates, and ext4 tools.
 
 On arm64, `vmlinuz` is the raw kernel `Image` unwrapped from Alpine's EFI zboot file, because Virtualization.framework's Linux boot loader cannot boot the compressed form.
 
