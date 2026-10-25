@@ -128,7 +128,7 @@ export async function initiateWindowContext(): Promise<void> {
       console.log('[WindowContext] Settings backends still starting; bootstrapping when ready');
       backendsReady
         .then(() => SullaSettingsModel.bootstrap())
-        .catch(error => console.error('[WindowContext] Failed to initialize settings:', error));
+        .catch((error: unknown) => console.error('[WindowContext] Failed to initialize settings:', error));
     }
   } catch (error) {
     console.error('[WindowContext] Failed to initialize settings:', error);
