@@ -387,9 +387,10 @@ class SullaFilesWatcher {
     const storedRoots=await traceAsync('files registry.stored', () => registry.stored());
     await this.configureFinderRoots(storedRoots.map(root=>root.path));
     for (const root of storedRoots) {
-      this.watchRoot(root.id,root.path);
-      this.enrollRoot(root).catch(error=>console.warn(`[SullaFiles] tracked root ${root.id} enrollment failed:`,error));
+      this.watchRoot(root.id, root.path);
     }
+    // Enrollment talks to Files and must not race the locked boot state.
+    // unlockService() enrolls every stored root after secure bootstrap succeeds.
     try {
       const docsRoot = resolveSullaDocsDir();
       this.docsWatcher = fs.watch(docsRoot, { recursive: process.platform !== 'linux', persistent: false }, () => {
@@ -618,7 +619,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();
@@ -649,7 +653,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();
@@ -669,7 +676,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();

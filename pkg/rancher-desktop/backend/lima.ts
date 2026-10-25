@@ -1504,9 +1504,40 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
    *          if no privileged access was required.
    * @note This may request the root password.
    */
-  private hostPreparationStampValue(): Record<string, unknown> {
+  private async hostPreparationStampValue(): Promise<Record<string, unknown>> {
+    let hostFilesSha256 = 'not-applicable';
+
+    if (os.platform() === 'darwin') {
+      const sourceRoot = path.join(paths.resources, os.platform(), 'lima', 'socket_vmnet');
+      const entries: string[] = [];
+      const collect = async(dir: string): Promise<void> => {
+        for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name);
+
+          if (entry.isDirectory()) await collect(full);
+          else if (entry.isFile() || entry.isSymbolicLink()) entries.push(full);
+        }
+      };
+
+      await collect(sourceRoot);
+      entries.sort();
+      const hostFiles = crypto.createHash('sha256');
+
+      for (const file of entries) {
+        hostFiles.update(path.relative(sourceRoot, file));
+        const info = await fs.promises.lstat(file);
+
+        hostFiles.update(String(info.mode));
+        hostFiles.update(info.isSymbolicLink() ? await fs.promises.readlink(file) : await fs.promises.readFile(file));
+      }
+      hostFilesSha256 = hostFiles.digest('hex');
+    }
+
     return {
-      version:         Electron.app.getVersion(),
+      // App rebuilds must not request sudo when the actual privileged payload
+      // is unchanged. Bump the schema only when generated sudoers semantics change.
+      schema:          2,
+      hostFilesSha256,
       arch:            this.arch,
       adminAccess:     this.#adminAccess,
       hostAccess:      this.cfg?.application.hostAccess ?? false,
@@ -1528,7 +1559,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       const stampPath = path.join(paths.appHome, HOST_PREPARATION_STAMP);
       const stamp = JSON.parse(await fs.promises.readFile(stampPath, 'utf8'));
 
-      if (JSON.stringify(stamp) !== JSON.stringify(this.hostPreparationStampValue())) return false;
+      if (JSON.stringify(stamp) !== JSON.stringify(await this.hostPreparationStampValue())) return false;
       await Promise.all([
         fs.promises.access(path.join(VMNET_DIR, 'bin', 'socket_vmnet')),
         fs.promises.access(NETWORKS_CONFIG.paths.varRun),
@@ -1550,7 +1581,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const stampPath = path.join(paths.appHome, HOST_PREPARATION_STAMP);
     const temporary = `${ stampPath }.${ process.pid }.tmp`;
 
-    await fs.promises.writeFile(temporary, `${ JSON.stringify(this.hostPreparationStampValue()) }\n`, { mode: 0o600 });
+    await fs.promises.writeFile(temporary, `${ JSON.stringify(await this.hostPreparationStampValue()) }\n`, { mode: 0o600 });
     await fs.promises.rename(temporary, stampPath);
   }
 
@@ -3111,7 +3142,6 @@ start_pre() {
           this.progressTracker.action('Verifying agent CLI installs', 50,
             this.ensureClaudeBinaryInstalled().then(() => this.ensureCodexBinaryInstalled())),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
-          this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
           this.progressTracker.action('Installing Sulla Console', 50, this.installSullaConsole()),
         ];
         if (kubernetesVersion) {
@@ -3201,6 +3231,13 @@ start_pre() {
           const backgroundStartup = (async() => {
             const toolsStartedAt = Date.now();
 
+            // Threat-proxy setup only affects later agent shell networking; Docker
+            // readiness and managed-service startup do not consume it. Run it after
+            // the Docker API signal and outside the boot-critical component barrier.
+            this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy())
+              .then(() => logStartupPhase('deferred-threat-proxy', toolsStartedAt, 'status=ready'))
+              .catch(error => console.warn(
+                `[startup-phase] ${ new Date().toISOString() } phase=deferred-threat-proxy status=degraded`, error));
             await deferredScannerSetup();
             logStartupPhase('deferred-scanner', toolsStartedAt, 'status=ready');
             if (this.#hostPreparationDeferred) {

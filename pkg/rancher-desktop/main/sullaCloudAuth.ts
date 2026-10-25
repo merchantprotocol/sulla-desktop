@@ -23,6 +23,7 @@
 import { IntegrationValueModel } from '@pkg/agent/database/models/IntegrationValueModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
@@ -918,6 +919,20 @@ export function initSullaCloudAuthEvents(): void {
   // plus generic network failures). Stops on the first successful
   // loadSession() call — whether that returns a session (pair + start
   // services) or null (no signed-in user — nothing to do).
+  const lifecycle = getServiceLifecycleManager();
+  let restoreWakeVersion = 0;
+  let wakeRestore: (() => void) | undefined;
+  const signalRestore = () => {
+    restoreWakeVersion++;
+    wakeRestore?.();
+    wakeRestore = undefined;
+  };
+  const onVaultState = (unlocked: boolean) => { if (unlocked) signalRestore() };
+  const onServiceReady = (name: string) => { if (name === 'vault') signalRestore() };
+
+  lifecycle.on('vault:state', onVaultState);
+  lifecycle.on('service:ready', onServiceReady);
+
   (async() => {
     const RETRY_BASE_MS  = 2_000;
     const RETRY_MAX_MS   = 60_000;
@@ -934,6 +949,7 @@ export function initSullaCloudAuthEvents(): void {
     };
 
     while (true) {
+      const attemptWakeVersion = restoreWakeVersion;
       try {
         const session = await loadSessionIdentityForRestore();
         if (session) {
@@ -959,10 +975,27 @@ export function initSullaCloudAuthEvents(): void {
           console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
           return;
         }
-        console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms or on vault readiness`);
+        if (restoreWakeVersion === attemptWakeVersion) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              if (wakeRestore === wake) wakeRestore = undefined;
+              resolve();
+            }, delay);
+            const wake = () => {
+              clearTimeout(timer);
+              resolve();
+            };
+            wakeRestore = wake;
+            // Close the event/listener registration gap.
+            if (restoreWakeVersion !== attemptWakeVersion) wake();
+          });
+        }
         delay = Math.min(delay * 2, RETRY_MAX_MS);
       }
     }
-  })();
+  })().finally(() => {
+    lifecycle.off('vault:state', onVaultState);
+    lifecycle.off('service:ready', onServiceReady);
+  });
 }

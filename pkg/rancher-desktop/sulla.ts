@@ -111,6 +111,9 @@ export async function initiateWindowContext(): Promise<void> {
     SullaSettingsModel.setFallbackFilePath(fallbackPath);
     console.log('[WindowContext] Fallback path set to:', fallbackPath);
 
+    // Renderer settings share the main-process backends. Wait for the lifecycle
+    // readiness signal instead of racing cold Redis with a short retry budget.
+    await ipcRenderer.invoke('sulla-settings:wait-for-backends');
     await SullaSettingsModel.bootstrap();
   } catch (error) {
     console.error('[WindowContext] Failed to initialize settings:', error);
@@ -245,7 +248,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
   // ── Database layer (depends on postgres connection) ────────────────────
 
-  lifecycle.registerOnce('database-manager', ['postgres'],
+  lifecycle.registerOnce('database-manager', ['postgres', 'redis'],
     async() => { await afterBackgroundLoaded() },
     async() => { await getDatabaseManager().stop() },
   );
