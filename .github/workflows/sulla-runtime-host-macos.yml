@@ -22,7 +22,9 @@ jobs:
         include:
           - runner: macos-14
             architecture: arm64
-          - runner: macos-13
+          # macos-13 was retired by GitHub; this is the current standard Intel runner.
+          # Package.swift keeps the produced binary's deployment target at macOS 13.
+          - runner: macos-15-intel
             architecture: x86_64
     runs-on: ${{ matrix.runner }}
     defaults:
