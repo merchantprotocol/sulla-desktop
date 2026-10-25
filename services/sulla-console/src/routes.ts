@@ -3,6 +3,7 @@
 
 import { Router, type NextFunction, type Request, type Response } from 'express';
 
+import { registerAdminRoutes } from './admin/index.js';
 import { UpstreamError } from './clients/upstream.js';
 import { LicenseError } from './license.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -22,6 +23,7 @@ export type { RouteContext } from './routes/helpers.js';
 /** Route modules register here without changing the app or auth boundary. */
 export function createRouteRegistry(context: RouteContext): Router {
   const router = Router();
+  registerAdminRoutes(router, context);
   registerAuthRoutes(router, context);
   registerTeamRoutes(router, context);
   registerDashboardRoutes(router, context);
