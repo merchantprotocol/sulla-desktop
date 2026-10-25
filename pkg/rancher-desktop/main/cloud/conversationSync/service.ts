@@ -192,6 +192,14 @@ class ConversationSyncServiceImpl {
     }
     return complete;
   }
+  /** Profile › Conversations off with "delete the Cloud copy": unlink every chat and drop its Cloud copy. */
+  async deleteAllCloudCopies(){
+    const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)throw new Error(`Listing linked chats failed (${r.status})`);
+    const payload=await r.json() as any;
+    for(const link of (payload.data?.conversations??[]) as Link[]){await this.unlink(link.id,true);this.linked.delete(link.remote_conversation_id)}
+    this.historyLinked=false;
+    try{this.saveKeys()}catch{/* OS storage unavailable; links are already gone in Cloud */}
+  }
   async unlink(linkId:string,deleteCloudCopy=false){const r=await cloudRequest('DELETE',`/cloud-chat-links/${encodeURIComponent(linkId)}?deleteCloudCopy=${deleteCloudCopy}`);if(!r.ok)throw new Error(`Unlink failed (${r.status})`)}
 
   // ── Sync ─────────────────────────────────────────────────────
