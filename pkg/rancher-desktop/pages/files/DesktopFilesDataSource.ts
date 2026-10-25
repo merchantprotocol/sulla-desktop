@@ -182,7 +182,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     ]);
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
     const availableCollections = collections.map(collection => ({ id: collection.id,
-      name: collection.explorer_path || roots.find(root => root.collectionId === collection.id)?.name || collection.name,
+      name: collection.name || roots.find(root => root.collectionId === collection.id)?.name || collection.explorer_path || '',
       systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
       treePath: collection.explorer_path ?? '' }));
     const collection = collections.find(item => item.id === this.collectionId) ??
