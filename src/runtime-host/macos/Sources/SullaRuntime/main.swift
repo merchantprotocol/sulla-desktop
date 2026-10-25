@@ -210,16 +210,19 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                                 VZVirtualMachineConfiguration.maximumAllowedMemorySize)
         let loader = VZLinuxBootLoader(kernelURL: options.kernel)
         loader.initialRamdiskURL = options.initrd
-        loader.commandLine = "console=hvc0 root=/dev/vda ro"
+        // The agent formats and mounts only the disk named by sulla.data.
+        loader.commandLine = "console=hvc0 root=/dev/vda ro sulla.data=vdb"
         config.bootLoader = loader
         var storage: [VZStorageDeviceConfiguration] = []
         if let rootfs = options.rootfs {
             storage.append(VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: rootfs, readOnly: true)))
         } else {
-            loader.commandLine = "console=hvc0"
+            loader.commandLine = "console=hvc0 sulla.data=vda"
         }
         storage.append(VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: options.dataDisk, readOnly: false)))
         config.storageDevices = storage
+        // The guest has no clock source of its own, and TLS fails at 1970.
+        loader.commandLine += " sulla.time=\(Int(Date().timeIntervalSince1970))"
         let network = VZVirtioNetworkDeviceConfiguration()
         network.attachment = VZNATNetworkDeviceAttachment()
         config.networkDevices = [network]
@@ -256,7 +259,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 if descriptor >= 0 { self.readGuestControl(descriptor) }
                 return
             }
-            if attempt < 200 {
+            // The agent listens only after the kernel unpacks the initramfs and
+            // loads the vsock modules, which takes several seconds; retry for 30s.
+            if attempt < 1200 {
                 self.queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.connectGuestControl(attempt: attempt + 1) }
             } else {
                 if case .failure(let error) = result {
@@ -269,12 +274,15 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private func readGuestControl(_ descriptor: Int32) {
         workers.async { [weak self] in
             guard let self else { return }
-            let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { close(descriptor) }
             var pending = Data()
+            var buffer = [UInt8](repeating: 0, count: 16_384)
             while true {
-                let chunk = file.readData(ofLength: 16_384)
-                if chunk.isEmpty { break }
-                pending.append(chunk)
+                // read(2) returns as soon as any bytes arrive. FileHandle.readData(ofLength:)
+                // waits for the full length or EOF, which held every event until shutdown.
+                let count = read(descriptor, &buffer, buffer.count)
+                if count <= 0 { break }
+                pending.append(contentsOf: buffer[0..<count])
                 while let newline = pending.firstIndex(of: 0x0a) {
                     let line = pending.prefix(upTo: newline); pending.removeSubrange(...newline)
                     guard line.count <= 65_536,
@@ -291,6 +299,12 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                     }
                     fflush(stdout)
                 }
+            }
+            // The guest closed the control stream (agent restart, or a connection
+            // made before it was ready). Reconnect while the VM is still running.
+            self.queue.async {
+                guard self.machine.state == .running else { return }
+                self.connectGuestControl(attempt: 0)
             }
         }
     }
@@ -312,7 +326,9 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         guard count > 0 else { return }
         let command = String(decoding: buffer.prefix(count), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         if command == "status" {
-            let state = machine.state == .running ? (dockerReady ? "docker-ready" : "starting") : "stopped"
+            // VZVirtualMachine may only be touched on its own queue.
+            let running = queue.sync { machine.state == .running }
+            let state = running ? (dockerReady ? "docker-ready" : "starting") : "stopped"
             writeAll(descriptor, Data("{\"state\":\"\(state)\",\"hello\":\(helloSeen),\"uptimeMs\":\(monotonicMilliseconds(since: startedAt))}\n".utf8))
         } else if command == "stop" {
             writeAll(descriptor, Data("{\"ok\":true}\n".utf8))
@@ -323,6 +339,10 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func requestShutdown() {
+        queue.async { [weak self] in self?.sendGuestShutdown() }
+    }
+
+    private func sendGuestShutdown() {
         guard let socketDevice else { forceStop(); return }
         socketDevice.connect(toPort: 1024) { [weak self] result in
             guard let self else { return }
@@ -356,10 +376,20 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func connectDockerClient(_ client: Int32) {
+        queue.async { [weak self] in
+            guard let self else { close(client); return }
+            self.connectDockerGuest(client)
+        }
+    }
+
+    private func connectDockerGuest(_ client: Int32) {
         guard let socketDevice else { close(client); return }
         socketDevice.connect(toPort: 2375) { [weak self] result in
             guard let self else { close(client); return }
-            guard case .success(let connection) = result else { close(client); return }
+            guard case .success(let connection) = result else {
+                if case .failure(let error) = result { fputs("docker vsock connect failed: \(error)\n", stderr) }
+                close(client); return
+            }
             let guest = dup(connection.fileDescriptor)
             guard guest >= 0 else { close(client); return }
             let transfers = DispatchGroup()

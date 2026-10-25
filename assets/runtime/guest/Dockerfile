@@ -7,14 +7,17 @@ COPY src/runtime-agent/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags='-s -w' -o /sulla-runtime-agent .
 
 FROM alpine:${ALPINE_VERSION} AS image
+ARG ALPINE_VERSION
 ARG TARGETARCH
+COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx \
       blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables runc tini linux-lts cpio gzip \
-    && mkdir -p /image/rootfs/{dev,proc,sys,run,tmp,var/lib/docker,var/lib/sulla-data} \
+    && for dir in dev proc sys run tmp var/lib/docker var/lib/sulla-data; do mkdir -p "/image/rootfs/$dir"; done \
+    && chmod 1777 /image/rootfs/tmp \
     && for dir in bin sbin lib usr etc; do cp -a "/$dir" /image/rootfs/; done \
     && rm -rf /image/rootfs/etc/apk /image/rootfs/lib/firmware /image/rootfs/sbin/apk \
       /image/rootfs/var/cache/apk /image/rootfs/usr/share/man /image/rootfs/boot \
-    && cp /boot/vmlinuz-lts /image/vmlinuz
+    && /usr/local/bin/unzboot /boot/vmlinuz-lts /image/vmlinuz
 COPY --from=agent /sulla-runtime-agent /image/rootfs/init
 COPY assets/runtime/guest/config/daemon.json /image/rootfs/etc/docker/daemon.json
 COPY assets/runtime/guest/config/containerd.toml /image/rootfs/etc/containerd/config.toml

@@ -39,7 +39,7 @@ if [[ -z "$GUEST_DIR" ]]; then
 fi
 
 KERNEL=${KERNEL:-$GUEST_DIR/vmlinuz}
-INITRD=${INITRD:-$GUEST_DIR/initramfs}
+INITRD=${INITRD:-$GUEST_DIR/initramfs.img}
 ROOTFS=${ROOTFS:-$GUEST_DIR/rootfs.raw}
 [[ -f "$KERNEL" && -f "$INITRD" ]] || { echo "guest artifact must contain vmlinuz and initramfs" >&2; exit 1; }
 

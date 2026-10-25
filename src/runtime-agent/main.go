@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,33 +72,45 @@ type vsockRawListener struct {
 }
 
 func (l *vsockRawListener) Accept() (net.Conn, error) {
-	fd, _, err := syscall.Accept(l.fd)
-	if err != nil {
-		return nil, err
+	// syscall.Accept decodes the peer address and has no AF_VSOCK case: it
+	// closes the accepted socket and returns EAFNOSUPPORT, so every host
+	// connection would see an immediate EOF. Accept without an address.
+	fd, _, errno := syscall.Syscall6(syscall.SYS_ACCEPT4, uintptr(l.fd), 0, 0, syscall.SOCK_CLOEXEC, 0, 0)
+	if errno != 0 {
+		return nil, errno
 	}
-	return &vsockConn{os.NewFile(uintptr(fd), "vsock-peer")}, nil
+	return &vsockConn{os.NewFile(fd, "vsock-peer")}, nil
 }
 func (l *vsockRawListener) Close() error   { return syscall.Close(l.fd) }
 func (l *vsockRawListener) Addr() net.Addr { return vsockAddr(fmt.Sprintf("any:%d", l.port)) }
 
 func main() {
 	_ = os.Setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	// The root filesystem is the initramfs, which pivot_root cannot leave;
+	// this makes runc enter containers with a move mount and chroot instead.
+	_ = os.Setenv("DOCKER_RAMDISK", "true")
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &agent{ctx: ctx, cancel: cancel, state: newStateStore(), subs: map[chan event]struct{}{}, units: map[string]*exec.Cmd{}}
 	if os.Getpid() == 1 {
 		go a.reapAdopted()
 	}
 	mustMount("proc", "/proc", "proc", 0, "")
+	setClockFromCmdline()
 	mustMount("sysfs", "/sys", "sysfs", 0, "")
-	mustMount("devtmpfs", "/dev", "devtmpfs", 0, "mode=0755,nosuid")
+	// nosuid/nodev are mount flags; passed as option text the kernel rejects
+	// the whole mount with EINVAL and /dev never gets device nodes.
+	mustMount("devtmpfs", "/dev", "devtmpfs", syscall.MS_NOSUID, "mode=0755")
 	ensureDevices()
 	loadKernelModules()
 	mustMount("cgroup2", "/sys/fs/cgroup", "cgroup2", 0, "")
-	mustMount("tmpfs", "/run", "tmpfs", 0, "mode=0755,nosuid,nodev")
+	mustMount("tmpfs", "/run", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
 	_ = os.MkdirAll("/var/lib/sulla-data", 0755)
 	prepareDataDisk()
 	a.log = openLogger()
 	a.log.Printf("sulla-runtime-agent %s booting", version)
+	for _, e := range moduleErrors {
+		a.log.Printf("modprobe %s", e)
+	}
 	_ = os.WriteFile("/proc/sys/kernel/hostname", []byte("sulla-runtime\n"), 0644)
 	go configureNetwork(a.log)
 	go a.controlServer()
@@ -111,6 +124,11 @@ func main() {
 	case <-sigs:
 		a.shutdown()
 	case <-ctx.Done():
+	}
+	// PID 1 must not exit: the kernel panics. Flush disks and power off.
+	if os.Getpid() == 1 {
+		syscall.Sync()
+		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	}
 }
 
@@ -133,13 +151,63 @@ func ensureDevices() {
 }
 
 func loadKernelModules() {
+	// The distribution kernel builds every virtio driver as a module, and
+	// Virtualization.framework exposes all devices over virtio-pci. Without
+	// virtio_pci the guest has no disk, console, network or vsock.
 	for _, module := range []string{
-		"virtio_vsock", "vmw_vsock_virtio_transport_common", "vsock",
+		"virtio_pci", "virtio_blk", "virtio_net", "virtio_console", "virtio_balloon", "virtio-rng",
+		"vmw_vsock_virtio_transport",
 		"overlay", "nf_tables", "nft_chain_nat", "br_netfilter",
 		"x_tables", "ip_tables", "iptable_nat",
 	} {
-		_ = exec.Command("/sbin/modprobe", module).Run()
+		if out, err := exec.Command("/sbin/modprobe", module).CombinedOutput(); err != nil {
+			moduleErrors = append(moduleErrors, fmt.Sprintf("%s: %v %s", module, err, strings.TrimSpace(string(out))))
+		}
 	}
+}
+
+// moduleErrors is filled before the logger exists and reported once it does.
+var moduleErrors []string
+
+// setClockFromCmdline sets the wall clock from sulla.time=<unix seconds>,
+// which the host passes at boot because the guest has no RTC to read.
+func setClockFromCmdline() {
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return
+	}
+	for _, field := range strings.Fields(string(cmdline)) {
+		value, ok := strings.CutPrefix(field, "sulla.time=")
+		if !ok {
+			continue
+		}
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
+			tv := syscall.Timeval{Sec: seconds}
+			_ = syscall.Settimeofday(&tv)
+		}
+	}
+}
+
+// dataDiskPath returns the block device the host marked as the data disk with
+// sulla.data=<name> on the kernel command line, waiting briefly for devtmpfs
+// to create the node after virtio_blk probes.
+func dataDiskPath() string {
+	name := "vdb"
+	if cmdline, err := os.ReadFile("/proc/cmdline"); err == nil {
+		for _, field := range strings.Fields(string(cmdline)) {
+			if value, ok := strings.CutPrefix(field, "sulla.data="); ok && regexp.MustCompile(`^vd[a-z]$`).MatchString(value) {
+				name = value
+			}
+		}
+	}
+	path := "/dev/" + name
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(path); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return path
 }
 
 // diskHeadIsZero reports whether the first MiB of the device is all zeros.
@@ -162,12 +230,13 @@ func diskHeadIsZero(device string) bool {
 }
 
 func prepareDataDisk() {
-	if _, err := os.Stat("/dev/vdb"); err != nil {
+	disk := dataDiskPath()
+	if _, err := os.Stat(disk); err != nil {
 		return
 	}
 	// Format only a provably blank disk. A failed probe (missing binary, I/O
 	// error) must never be read as "empty": that would wipe the Docker store.
-	out, err := exec.Command("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/vdb").Output()
+	out, err := exec.Command("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", disk).Output()
 	fsType := strings.TrimSpace(string(out))
 	probeFoundNothing := false
 	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
@@ -175,8 +244,8 @@ func prepareDataDisk() {
 	}
 	switch {
 	case err == nil && fsType == "ext4":
-	case probeFoundNothing && diskHeadIsZero("/dev/vdb"):
-		if err := exec.Command("/sbin/mkfs.ext4", "-F", "-L", "sulla-data", "/dev/vdb").Run(); err != nil {
+	case probeFoundNothing && diskHeadIsZero(disk):
+		if err := exec.Command("/sbin/mkfs.ext4", "-F", "-L", "sulla-data", disk).Run(); err != nil {
 			log.Printf("data disk format failed: %v", err)
 			return
 		}
@@ -184,7 +253,7 @@ func prepareDataDisk() {
 		log.Printf("data disk not mounted: type=%q probe error=%v", fsType, err)
 		return
 	}
-	mustMount("/dev/vdb", "/var/lib/sulla-data", "ext4", syscall.MS_NOATIME, "")
+	mustMount(disk, "/var/lib/sulla-data", "ext4", syscall.MS_NOATIME, "")
 	for _, d := range []string{"docker", "logs"} {
 		_ = os.MkdirAll(filepath.Join("/var/lib/sulla-data", d), 0755)
 	}
@@ -356,6 +425,7 @@ func (a *agent) controlServer() {
 		return
 	}
 	defer l.Close()
+	a.log.Printf("control listening on vsock port 1024")
 	for {
 		c, e := l.Accept()
 		if e != nil {
@@ -369,6 +439,7 @@ func (a *agent) controlServer() {
 }
 func (a *agent) control(c net.Conn) {
 	defer c.Close()
+	a.log.Printf("control connection accepted")
 	_ = writeFrame(c, map[string]any{"type": "hello", "protocol": 1, "agentVersion": version, "bootUptimeMs": uptime()})
 	for _, e := range a.state.replay() {
 		_ = writeFrame(c, e)
@@ -442,6 +513,7 @@ func (a *agent) dockerProxy() {
 		return
 	}
 	defer l.Close()
+	a.log.Printf("docker proxy listening on vsock port 2375")
 	for {
 		c, e := l.Accept()
 		if e != nil {
