@@ -28,6 +28,7 @@ import { isProtectedPath } from '../protectedFiles.js';
 import type { Config } from '../config.js';
 
 const INTERVAL_MS = 10 * 60_000;
+const READY_RETRY_MS = 15_000;
 const MAX_ITEMS = 5000;
 
 export interface CatalogSyncStatus {
@@ -109,12 +110,15 @@ export function buildCollectionItems(collection: CollectionRow, files: FileRow[]
 
 export class CatalogSyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private readyTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly broker?: FilesCloudBroker;
   private readonly cloudDeviceId?: string;
   private status: CatalogSyncStatus = {};
   private inFlight: Promise<CatalogSyncStatus> | null = null;
 
-  constructor(private readonly db: pg.Pool, private readonly config: Config) {
+  // Until Files is unlocked, config.userId is still the 'desktop-user' placeholder, so a push would
+  // send an empty full snapshot and wipe this device's list in Cloud.
+  constructor(private readonly db: pg.Pool, private readonly config: Config, private readonly isReady: () => boolean = () => true) {
     // The Cloud only accepts a push for a device id it registered; config.deviceId is the hostname.
     this.cloudDeviceId = process.env.SULLA_FILES_CLOUD_DEVICE_ID?.trim() || undefined;
     this.broker = config.mode === 'desktop' && config.vaultBrokerServiceToken && this.cloudDeviceId ? new FilesCloudBroker(config) : undefined;
@@ -124,12 +128,22 @@ export class CatalogSyncService {
     if (this.timer || !this.broker) return;
     this.timer = setInterval(() => { this.syncNow().catch(() => undefined) }, INTERVAL_MS);
     this.timer.unref?.();
-    this.syncNow().catch(() => undefined);
+    this.firstSyncWhenReady();
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    if (this.readyTimer) clearTimeout(this.readyTimer);
     this.timer = null;
+    this.readyTimer = null;
+  }
+
+  private firstSyncWhenReady(): void {
+    this.readyTimer = null;
+    if (!this.timer) return;
+    if (this.isReady()) { this.syncNow().catch(() => undefined); return }
+    this.readyTimer = setTimeout(() => this.firstSyncWhenReady(), READY_RETRY_MS);
+    this.readyTimer.unref?.();
   }
 
   getStatus(): CatalogSyncStatus {
@@ -144,7 +158,7 @@ export class CatalogSyncService {
   }
 
   private async run(): Promise<CatalogSyncStatus> {
-    if (!this.broker) return this.status;
+    if (!this.broker || !this.isReady()) return this.status;
     try {
       const collections = (await this.db.query<CollectionRow>(
         `SELECT id, name FROM collections WHERE ${ CLOUD_VISIBLE_COLLECTION } ORDER BY created_at`,
