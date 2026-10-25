@@ -427,8 +427,13 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         ) as { graph: any; state: any };
         subStateRef = subState;
+        // Cached/saved thread metadata may predate a run-location migration.
+        // The current agent row is canonical; an explicit task override below
+        // remains the only way for a caller to change one run.
+        const currentDefinition = selector ? await agentDefinitionService.findBySlug(selector) : null;
         subState.metadata.agent = {
           ...(subState.metadata.agent ?? {}),
+          ...(currentDefinition ? { runLocation: currentDefinition.run_location } : {}),
           ...(task.model ? { model: task.model.trim() } : {}),
           ...(task.provider ? { provider: task.provider.trim() } : {}),
           ...(task.runLocation ? { runLocation: task.runLocation } : {}),

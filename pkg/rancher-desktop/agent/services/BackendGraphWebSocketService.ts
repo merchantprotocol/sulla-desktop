@@ -4,6 +4,7 @@
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
+import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { RunActivity } from './RunActivity';
 import { getSchedulerService } from './SchedulerService';
@@ -29,6 +30,7 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
+const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
@@ -413,6 +415,17 @@ export class BackendGraphWebSocketService {
         });
       }
 
+      // A saved/cached thread carries a historical copy of its agent config.
+      // Run-location is deployment policy, so resolve it from the canonical row
+      // on every dispatch before applying an explicit per-turn override.
+      const currentDefinition = await agentDefinitionService.findBySlug(agentId);
+      if (currentDefinition) {
+        state.metadata.agent = {
+          ...(state.metadata.agent ?? {}),
+          runLocation: currentDefinition.run_location,
+        };
+      }
+
       // Model choices from the chat picker are scoped to this thread state;
       // they never mutate ModelProviderService or global settings.
       const providerId = typeof metadata?.providerId === 'string' ? metadata.providerId : '';
@@ -522,7 +535,11 @@ export class BackendGraphWebSocketService {
       state.metadata.waitingForUser = false;
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
-      const runLocation = state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION;
+      // Front-door repair channels stay in the VM during the staged rollout,
+      // even if an old client sends a container override or its bound agent row changes.
+      const runLocation = VM_OPERATOR_CHANNELS.has(channelId)
+        ? 'vm'
+        : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION;
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
