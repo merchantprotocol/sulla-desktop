@@ -68,10 +68,14 @@ nvm:
 install:
     yarn install --ignore-platform
 
-build:
+# Download the latest published Sulla runtime (macOS VM) into resources/
+runtime:
+    ./scripts/fetch-sulla-runtime.sh
+
+build: runtime
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
 
-package:
+package: runtime
     yarn package
     
 # Rebuild without wiping VM (preserves cached images)

@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   mac-feed:
+    # The rolling sulla-runtime-latest release carries runtime bundles, not app zips.
+    if: ${{ !startsWith(inputs.tag || github.event.release.tag_name, 'sulla-runtime') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:

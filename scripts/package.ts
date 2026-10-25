@@ -233,7 +233,7 @@ class Builder {
       if (!await fs.promises.access(file).then(() => true, () => false)) missing.push(path.relative(appPath, file));
     }
     if (missing.length) {
-      throw new Error(`Sulla runtime not embedded (missing ${ missing.join(', ') }). Run scripts/build-sulla-runtime.sh or set SULLA_RUNTIME_ARTIFACTS_DIR.`);
+      throw new Error(`Sulla runtime not embedded (missing ${ missing.join(', ') }). Run scripts/fetch-sulla-runtime.sh (the published build), scripts/build-sulla-runtime.sh, or set SULLA_RUNTIME_ARTIFACTS_DIR.`);
     }
     await fs.promises.chmod(binary, 0o755);
     const { keychainFile } = await context.packager.codeSigningInfo.value;

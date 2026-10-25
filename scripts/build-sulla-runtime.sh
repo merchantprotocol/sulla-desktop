@@ -9,7 +9,8 @@
 #
 # The binary is ad-hoc signed with the Virtualization entitlement so a dev build can
 # run it; scripts/package.ts re-signs it with the release identity. CI builds the same
-# artifacts in .github/workflows/sulla-runtime-host-macos.yml and sulla-runtime-guest.yml.
+# artifacts in .github/workflows/sulla-runtime.yml, and `just build` downloads those
+# (scripts/fetch-sulla-runtime.sh) unless this script marked the runtime as a local build.
 set -eu
 
 [ "$(uname -s)" = Darwin ] || { echo "build-sulla-runtime: macOS is required" >&2; exit 1; }
@@ -31,4 +32,6 @@ guest_out=$(mktemp -d)
 trap 'rm -rf "$guest_out"' EXIT
 "$root/assets/runtime/guest/build.sh" "$guest_arch" "$guest_out"
 cp "$guest_out/vmlinuz" "$guest_out/initramfs.img" "$out/guest/"
+touch "$out/.local-build"
+rm -f "$out/.manifest"
 echo "build-sulla-runtime: wrote $out"

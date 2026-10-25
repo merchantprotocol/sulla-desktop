@@ -13,7 +13,16 @@ defaults:
     shell: bash
 
 jobs:
+  # The mac app embeds the native runtime (macOS VM). It is rebuilt from this
+  # commit on every release; win/linux do not wait on its success.
+  runtime:
+    uses: ./.github/workflows/sulla-runtime.yml
+    with:
+      skip_publish: true
+
   package:
+    needs: runtime
+    if: ${{ !cancelled() }}
     strategy:
       # One platform's intermittent electron-extract failure must not cancel
       # the others — without this, a single unlucky runner nukes all four
@@ -87,8 +96,15 @@ jobs:
           echo "::error::Refusing unsigned macOS package; missing required signing configuration: ${missing[*]}"
           exit 1
         fi
+    - name: Download the Sulla runtime bundle
+      if: matrix.platform == 'mac'
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      with:
+        name: sulla-runtime-bundle-${{ matrix.arch == 'aarch64' && 'arm64' || 'x86_64' }}
+        path: ${{ runner.temp }}/sulla-runtime
     - run: yarn package
       env:
+        SULLA_RUNTIME_ARTIFACTS_DIR: ${{ matrix.platform == 'mac' && format('{0}/sulla-runtime', runner.temp) || '' }}
         CSC_LINK: ${{ secrets.CSC_LINK }}
         CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         APPLE_ID: ${{ secrets.APPLE_ID }}
