@@ -1,0 +1,6 @@
+{
+  "features": { "containerd-snapshotter": true },
+  "iptables": true,
+  "storage-driver": "overlay2",
+  "userland-proxy": false
+}
