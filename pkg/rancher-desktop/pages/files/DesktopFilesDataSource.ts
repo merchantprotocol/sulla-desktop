@@ -326,6 +326,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async setCloudBackup(collectionId:string, enabled:boolean):Promise<void> { await ipcRenderer.invoke('files-ui:set-cloud-backup', { collectionId, enabled }) }
   listCloudCollections():Promise<{ collectionId:string; bytes:number; updatedAt:string }[]> { return ipcRenderer.invoke('files-ui:cloud-collections') }
   async restoreCloudCollection(collectionId:string, name:string):Promise<void> { await ipcRenderer.invoke('files-ui:restore-cloud-collection', { collectionId, name }) }
+  restoreAllCloudCollections():Promise<{ restored:string[]; failed:Array<{ collectionId:string; error:string }> }> { return ipcRenderer.invoke('files-ui:restore-all-cloud-collections') }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {

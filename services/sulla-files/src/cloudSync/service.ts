@@ -10,7 +10,7 @@ import type { Store } from '../store.js';
 import { openCloudChunk } from './chunkSource.js';
 import { FilesSyncCloudApi } from './cloudApi.js';
 import { configureCryptoModule, type CryptoModuleStatus } from './cryptoModule.js';
-import { sealEscrowWithKey, signHead, stateHash, verifyHead, type SyncHead, type TransportEnvelope } from './envelope.js';
+import { sealCollectionInfo, sealEscrowWithKey, signHead, stateHash, verifyHead, type SyncHead, type TransportEnvelope } from './envelope.js';
 import { EscrowTransportRequests } from './escrowTransport.js';
 import { CloudRootKeyStore } from './keyStore.js';
 import { CloudPuller } from './pull.js';
@@ -190,7 +190,7 @@ export class CloudSyncService {
       const sync = await this.repository.sync(collectionId);
       if (!sync) throw new HttpStatusError(409, 'cloud backup is not set up for this collection');
       await this.dropSession(collectionId);
-      await this.repository.dropCollectionOperations(collectionId, ['create', 'escrow', 'upload-open', 'commit', 'delete']);
+      await this.repository.dropCollectionOperations(collectionId, ['create', 'escrow', 'upload-open', 'commit', 'delete', 'info']);
       if (!sync.cloudCreated) {
         await this.repository.markCloudDeleted(collectionId);
         return { queued: false };
@@ -306,6 +306,37 @@ export class CloudSyncService {
     }
   }
 
+  /**
+   * New-Desktop recovery: one vault escrow key restores every Cloud collection this
+   * Desktop doesn't have, under its sealed folder name. Each collection is all-or-nothing;
+   * one that fails verification is reported and the rest still restore. Files then
+   * download through the normal pull.
+   */
+  async restoreAll(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number }):Promise<{ restored:string[]; failed:Array<{ collectionId:string; error:string }> }> {
+    if (!isUuid(input?.vaultId) || !isUuid(input.requestId) || !Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) throw new HttpStatusError(400, 'restore request is invalid');
+    const ek = await this.transport.unwrap(input.requestId, input.transport, input.vaultId, input.vaultEpoch);
+    try {
+      const remote = (await this.api.listCollections()).filter(entry => isUuid(entry?.id) && entry.status === 'active');
+      const local = await this.repository.localCollectionIds(remote.map(entry => String(entry.id)));
+      const restored:string[] = [];
+      const failed:Array<{ collectionId:string; error:string }> = [];
+      for (const entry of remote) {
+        if (local.has(entry.id)) continue;
+        try {
+          await this.exclusive(entry.id, () => this.restorer.restoreWithKey(ek, { collectionId: entry.id, name: 'Restored files', vaultId: input.vaultId, vaultEpoch: input.vaultEpoch, info: entry.info }));
+          this.lastPullAt.delete(entry.id);
+          restored.push(entry.id);
+        } catch (error) {
+          failed.push({ collectionId: entry.id, error: error instanceof RestoreError ? error.code : 'restore_failed' });
+        }
+      }
+      if (restored.length) this.nudge();
+      return { restored, failed };
+    } finally {
+      ek.fill(0);
+    }
+  }
+
   // ---- signed responses ----
 
   private async handleResponse(operation:QueuedOperation, status:number, body:any):Promise<{ status:SendStatus; detail:unknown }> {
@@ -360,6 +391,15 @@ export class CloudSyncService {
       }
       case 'commit':
         return this.handleCommitResponse(operation, status, body);
+      case 'info': {
+        // Best effort: a folder name Cloud refuses must never stall the backup itself.
+        if (ok || (status >= 400 && status < 500)) {
+          await this.repository.markInfoSent(collectionId, String(operation.meta.nameSha ?? ''));
+          await this.repository.completeOperation(operation.handle);
+          return { status: ok ? 'sent' : 'skipped', detail: { collectionId } };
+        }
+        break;
+      }
       case 'delete': {
         if (ok || status === 404) {
           await this.staging.clear(collectionId);
@@ -460,7 +500,7 @@ export class CloudSyncService {
     if (operation.op === 'upload-open' || operation.op === 'commit') await this.dropSession(operation.collectionId);
     await this.repository.completeOperation(operation.handle);
     // A failed create/escrow goes back to needs-vault so the next escrow relay queues it again.
-    const next = operation.op === 'create' || operation.op === 'escrow' ? 'needs-vault' : 'error';
+    const next = operation.op === 'create' || operation.op === 'escrow' ? 'needs-vault' : operation.op === 'info' ? 'idle' : 'error';
     await this.repository.setStatus(operation.collectionId, next, message);
     return { status: 'failed', detail: detail ?? { error: 'cloud_sync_failed' } };
   }
@@ -515,6 +555,12 @@ export class CloudSyncService {
     if (await this.repository.hasOperation(collectionId)) return;
     const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
     try {
+      const info = await this.repository.staleInfoName(collectionId);
+      if (info) {
+        const body = JSON.stringify(await sealCollectionInfo(root, collectionId, sync.keyVersion, { v: 1, name: info.name }));
+        await this.repository.queue(collectionId, 'info', `${ BASE }/collections/${ collectionId }/info`, 'PUT', body, sha256Text(body), randomUUID(), { nameSha: info.sha });
+        return;
+      }
       if (sync.uploadSession) {
         await this.continueUpload(sync, sync.uploadSession, root);
         return;

@@ -5,7 +5,7 @@ import { DevicesCloudApi } from '../../devicesCloudApi';
 import { isCloudSignedIn } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
-import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection } from './containerClient';
+import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection, type CloudRestoreAllResult } from './containerClient';
 import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
 import Logging from '@pkg/utils/logging';
 export { requireHumanFilesSync } from './humanGuard';
@@ -42,12 +42,23 @@ class FilesSyncV1Impl {
   async restore(collectionId:string,name:string,caller:FilesSyncCaller):Promise<{restored:true;collectionId:string}> {
     requireHumanFilesSync(caller);
     if(!/^[0-9a-f-]{36}$/i.test(collectionId)||typeof name!=='string'||!name.trim()||name.length>128)throw new FilesSyncClientError('invalid_request',400);
+    const key=await this.restoreKey();
+    const restored=await FilesSyncContainer.restore({collectionId,name:name.trim(),...key});
+    this.wake(); return restored;
+  }
+  // New Desktop: one vault unlock restores every Cloud collection this machine doesn't have yet.
+  async restoreAll(caller:FilesSyncCaller):Promise<CloudRestoreAllResult> {
+    requireHumanFilesSync(caller);
+    const result=await FilesSyncContainer.restoreAll(await this.restoreKey());
+    this.wake(); return result;
+  }
+  // The local vault's escrow key, or the Cloud vault's after the human unlocked it on this Desktop.
+  private async restoreKey():Promise<{requestId:string;transport:unknown;vaultId:string;vaultEpoch:number}> {
     const request=await FilesSyncContainer.escrowRequest();
     let wrapped;
     try { wrapped=await FilesSyncContainer.vaultEscrowKey(request) }
     catch(error) { if(!(error instanceof FilesSyncClientError)||error.code!=='no_cloud_vault')throw error; wrapped=await FilesSyncContainer.vaultRestoreKey(request) }
-    const restored=await FilesSyncContainer.restore({collectionId,name:name.trim(),requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch});
-    this.wake(); return restored;
+    return {requestId:request.requestId,transport:wrapped.transport,vaultId:wrapped.vaultId,vaultEpoch:wrapped.vaultEpoch};
   }
   private schedule(ms:number):void { if(this.stopped)return; if(this.timer)clearTimeout(this.timer); this.timer=setTimeout(()=>{this.timer=null;void this.tick()},ms); this.timer.unref?.() }
   private async identity():Promise<{userId:string;deviceId:string}|null> {

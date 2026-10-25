@@ -10,7 +10,7 @@ import type { ApplyRemoteInput, ForkLocalInput, LocalFileState, PullRepository }
 import { conflictPath, type RemoteVersion } from './validation.js';
 
 export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault';
-export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete';
+export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete' | 'info';
 
 export interface UploadSession {
   journalSeq:number;
@@ -197,8 +197,21 @@ export class PgCloudSyncRepository implements PullRepository {
       [collectionId, status, lastError]);
   }
 
+  /** The collection's folder name when Cloud doesn't hold this exact name yet (first backup or a rename). */
+  async staleInfoName(collectionId:string):Promise<{ name:string; sha:string } | null> {
+    const row = (await this.db.query(`SELECT c.name,s.info_name_sha FROM collections c JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.id=$1`, [collectionId])).rows[0];
+    const name = typeof row?.name === 'string' ? row.name.trim().slice(0, 200) : '';
+    if (!name) return null;
+    const sha = createHash('sha256').update(name, 'utf8').digest('hex');
+    return row.info_name_sha === sha ? null : { name, sha };
+  }
+
+  async markInfoSent(collectionId:string, nameSha:string):Promise<void> {
+    await this.db.query('UPDATE files_cloud_sync SET info_name_sha=$2,updated_at=NOW() WHERE collection_id=$1', [collectionId, nameSha || null]);
+  }
+
   async markCreated(collectionId:string, head:SyncHead, vaultId:string, vaultEpoch:number):Promise<void> {
-    await this.db.query(`UPDATE files_cloud_sync SET cloud_created=TRUE,last_seq=$2,head=$3,escrow_vault_id=$4,escrow_vault_epoch=$5,
+    await this.db.query(`UPDATE files_cloud_sync SET cloud_created=TRUE,info_name_sha=NULL,last_seq=$2,head=$3,escrow_vault_id=$4,escrow_vault_epoch=$5,
         status='idle',last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE collection_id=$1`,
     [collectionId, head.seq, head, vaultId, vaultEpoch]);
   }
@@ -226,7 +239,7 @@ export class PgCloudSyncRepository implements PullRepository {
 
   async markCloudDeleted(collectionId:string):Promise<void> {
     await transaction(this.db, async client => {
-      await client.query(`UPDATE files_cloud_sync SET enabled=FALSE,status='off',wrapped_root=NULL,head=NULL,last_seq=0,cloud_created=FALSE,
+      await client.query(`UPDATE files_cloud_sync SET enabled=FALSE,status='off',wrapped_root=NULL,head=NULL,last_seq=0,cloud_created=FALSE,info_name_sha=NULL,
           escrow_vault_id=NULL,escrow_vault_epoch=NULL,upload_session=NULL,pending_bytes=0,last_error=NULL,updated_at=NOW() WHERE collection_id=$1`, [collectionId]);
       await client.query('DELETE FROM files_cloud_file_heads WHERE collection_id=$1', [collectionId]);
       await client.query('DELETE FROM files_cloud_versions WHERE collection_id=$1', [collectionId]);
