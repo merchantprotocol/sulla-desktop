@@ -147,6 +147,8 @@ export class CloudSyncService {
 
   // ---- §5.1 desktop-control API ----
 
+  finderBadges(collectionId:string) { return this.repository.finderBadges(collectionId) }
+
   async status() {
     const rows = await this.repository.statusRows();
     return {
