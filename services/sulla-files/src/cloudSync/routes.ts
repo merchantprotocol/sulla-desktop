@@ -88,4 +88,8 @@ export function registerCloudSyncRoutes(app:express.Express, config:Pick<Config,
   app.post('/v1/desktop/cloud-sync/restore', route(async(service, request, response) => {
     response.json(await service.restore(request.body));
   }));
+
+  app.post('/v1/desktop/cloud-sync/restore-all', route(async(service, request, response) => {
+    response.json(await service.restoreAll(request.body));
+  }));
 }
