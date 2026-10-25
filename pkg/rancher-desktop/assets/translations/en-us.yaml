@@ -434,10 +434,6 @@ virtualMachine:
   useRosetta:
     legend: VZ Option
     label: Enable Rosetta support
-  sullaRuntime:
-    legend: Experimental
-    label: Use the Sulla runtime
-    description: Uses the new built-in runtime instead of Lima, keeps your containers and data, and needs a restart.
 
 containerEngine:
   label: Container Engine
