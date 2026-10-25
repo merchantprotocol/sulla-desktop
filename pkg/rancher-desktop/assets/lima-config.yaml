@@ -14,6 +14,33 @@ containerd:
   user: false
 # Provisioning scripts run on every boot, not just initial VM provisioning.
 provision:
+- # Alpine runs lima-init after OpenRC's `net` provider. The built-in eth0
+  # (SLIRP) is the only interface required for SSH and host connectivity; rd0
+  # and rd1 are optional socket_vmnet interfaces. Keep their DHCP clients off
+  # the blocking OpenRC networking loop and repair the persisted resolver flag
+  # before Lima's 04-persistent-data-volume.sh copies over it.
+  mode: boot
+  script: |
+    # Runs from lima-init-local, before OpenRC starts networking/lima-init.
+    : > /var/log/boot-perf.log
+    if [ -f /etc/network/interfaces ]; then
+      sed -i -E 's/^auto (rd0|rd1)$/allow-hotplug \1/' /etc/network/interfaces
+      setsid sh -c 'sleep 1; for iface in rd1 rd0; do ifup -i /etc/network/interfaces "$iface" 2>/dev/null || true; done' \
+        </dev/null >>/var/log/sulla-extra-network.log 2>&1 &
+    fi
+
+    # The threat-proxy intentionally makes resolv.conf immutable after boot.
+    # Because /etc is persisted, that attribute survives on the data volume;
+    # Lima's next boot used to abort when plain `cp` tried to replace it.
+    data_device=$(blkid 2>/dev/null | awk -F: '/LABEL="data-volume"/ { print $1; exit }')
+    if [ -n "$data_device" ]; then
+      mkdir -p /run/sulla-data-prep
+      if mount -t ext4 "$data_device" /run/sulla-data-prep 2>/dev/null; then
+        chattr -i /run/sulla-data-prep/etc/resolv.conf 2>/dev/null || true
+        umount /run/sulla-data-prep
+      fi
+      rmdir /run/sulla-data-prep 2>/dev/null || true
+    fi
 - # Boot timing + sshd early start — MUST be first script.
   # Lima hostagent polls SSH every 10s; starting sshd ASAP lets us catch the 2nd poll (~10s)
   # instead of waiting for the 3rd (~20s), saving ~10s of boot time.
@@ -21,7 +48,7 @@ provision:
   script: |
     #!/bin/sh
     LOG=/var/log/boot-perf.log
-    echo "===== Boot started at $(date -u '+%Y-%m-%dT%H:%M:%S') =====" > "$LOG"
+    echo "===== Boot started at $(date -u '+%Y-%m-%dT%H:%M:%S') =====" >> "$LOG"
     echo "[boot-perf] kernel uptime: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
     # --- Ensure sshd starts in OpenRC boot runlevel (before provisioning on future boots) ---
     sed -i -E 's/^#?MaxSessions +[0-9]+/MaxSessions 25/g' /etc/ssh/sshd_config
@@ -39,11 +66,17 @@ provision:
     set -o errexit -o nounset -o xtrace
     mkdir -p /bootfs
     mount --bind / /bootfs
-    # /bootfs/etc is empty on first boot because it has been moved to /mnt/data/etc by lima
+    # /bootfs exposes the ISO/tmpfs root without following the persistent /etc
+    # bind mount. On a failed persistent-volume setup it can instead resolve to
+    # the same files as /etc, so prove that the two release files differ before
+    # treating a symlink as an old-image migration signal.
     if [ -f /bootfs/etc/os-release ]; then
+      active_release=$(stat -Lc '%d:%i' /etc/os-release 2>/dev/null || true)
+      image_release=$(stat -Lc '%d:%i' /bootfs/etc/os-release 2>/dev/null || true)
       # Alpine turned /etc/os-release into a symlink; we dereference it again. If we still have a symlink
       # here, then this is an upgrade from an older version and needs to go through the migration.
-      if [ -L /etc/os-release ] || ! diff -q /etc/os-release /bootfs/etc/os-release; then
+      if [ -n "$active_release" ] && [ -n "$image_release" ] && [ "$active_release" != "$image_release" ] \
+          && { [ -L /etc/os-release ] || ! cmp -s /etc/os-release /bootfs/etc/os-release; }; then
         # When we are upgrading from an ISO we will install new packages during boot.
         # But Lima will restore the old /etc/apk/world file and run `apk fix --no-network`
         # to restore packages from cache that were installed manually. This will however
@@ -54,22 +87,20 @@ provision:
         apk add --no-network --keys-dir /bootfs/etc/apk/keys --repositories-file /bootfs/etc/apk/repositories \
           $(cat /bootfs/etc/apk/world)
 
-        # Using a temp file just in case dereferencing a symlink onto itself has a race condition.
-        cp -L /etc/os-release /etc/os-release.tmp
-        mv /etc/os-release.tmp /etc/os-release
-
-        cp /etc/machine-id /bootfs/etc
-        cp /etc/ssh/ssh_host* /bootfs/etc/ssh/
-        mkdir -p /etc/docker /etc/rancher
-        cp -pr /etc/docker /bootfs/etc
-        cp -pr /etc/rancher /bootfs/etc
-
+        # Build a complete rollback copy before overlaying the new image's
+        # defaults. Never move the live /etc tree out from under OpenRC.
         rm -rf /mnt/data/etc.prev
-        mkdir /mnt/data/etc.prev
-        mv /etc/* /mnt/data/etc.prev
-        cp -L /bootfs/etc/os-release /tmp/os-release
-        mv /bootfs/etc/* /etc
-        mv /tmp/os-release /etc
+        mkdir -p /mnt/data/etc.prev /mnt/data/etc-upgrade-preserve
+        cp -a /etc/. /mnt/data/etc.prev/
+        cp -a /etc/machine-id /mnt/data/etc-upgrade-preserve/machine-id
+        mkdir -p /mnt/data/etc-upgrade-preserve/ssh
+        cp -a /etc/ssh/ssh_host* /mnt/data/etc-upgrade-preserve/ssh/ 2>/dev/null || true
+        cp -a /bootfs/etc/. /etc/
+        cp -a /mnt/data/etc-upgrade-preserve/machine-id /etc/machine-id
+        cp -a /mnt/data/etc-upgrade-preserve/ssh/ssh_host* /etc/ssh/ 2>/dev/null || true
+        cp -L /bootfs/etc/os-release /etc/os-release.tmp
+        mv /etc/os-release.tmp /etc/os-release
+        rm -rf /mnt/data/etc-upgrade-preserve
 
         # install updated files from /usr/local, e.g. nerdctl, buildkit, cni plugins
         cp -pr /bootfs/usr/local /usr
@@ -301,8 +332,9 @@ provision:
     nameserver 1.1.1.2
     options timeout:2 attempts:2
     EOF
-    # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal.
-    # chattr +i is a no-op on tmpfs/overlay; we guard it so the script never fails.
+    # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal. The
+    # early boot repair above clears this persisted flag before Lima refreshes
+    # the file, then this script restores the runtime protection.
     chattr +i /etc/resolv.conf 2>/dev/null || true
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] resolv.conf pinned: $(cat /etc/resolv.conf | tr '\n' ';')" >> "$LOG"
     # Smoke test — resolve a benign domain to confirm DNS actually works.
@@ -337,17 +369,6 @@ provision:
       chmod 644 "$KH"
       echo "[boot-perf] github-known-hosts: pinned github.com host keys into $KH" >> "$LOG"
     fi
-- # Final boot timing — captures end-of-provisioning state
-  mode: system
-  script: |
-    #!/bin/sh
-    LOG=/var/log/boot-perf.log
-    echo "[boot-perf] ===== All provisioning scripts complete at $(date -u '+%H:%M:%S') =====" >> "$LOG"
-    echo "[boot-perf] kernel uptime at completion: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
-    echo "[boot-perf] entropy at completion: $(cat /proc/sys/kernel/random/entropy_avail)" >> "$LOG"
-    echo "[boot-perf] sshd listening: $(ss -tlnp | grep ':22 ' || echo 'NOT LISTENING')" >> "$LOG"
-    echo "[boot-perf] --- Process list ---" >> "$LOG"
-    ps aux >> "$LOG" 2>&1 || true
 portForwards:
 - guestPortRange: [1, 65535]
   guestIPMustBeZero: true

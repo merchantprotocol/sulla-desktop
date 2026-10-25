@@ -796,9 +796,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // cold anonymous pages and the next spike goes straight back to reclaim/OOM.
     // /mnt/data had 78GB free, so the headroom is nearly free.
     //
-    // Deliberately no `set -o errexit` and every failure path exits 0 — swap is
-    // an optimisation, and a full disk or a slow first-boot dd must never be
-    // able to block the VM from starting.
+    // Creation and activation are detached from lima-init: even an already
+    // formatted file took 34 seconds to activate on a measured cold boot.
+    // Swap is an optimisation, so neither I/O nor failure may hold readiness.
     const swapScript = [
       '#!/bin/sh',
       'SWAPFILE=/mnt/data/swapfile',
@@ -807,28 +807,50 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'grep -q "$SWAPFILE" /proc/swaps 2>/dev/null && exit 0',
       '# Persistent data volume must be mounted; / is tmpfs and cannot host swap.',
       '[ -d /mnt/data ] || exit 0',
-      '# Resize an existing swapfile if SIZE_MB changed. Only reachable when swap',
-      '# is not yet active (see the /proc/swaps check above), i.e. early boot, so',
-      '# dropping the file cannot strand pages that are currently swapped out.',
+      '# Check space synchronously, but do all file I/O and swapon work detached.',
       'if [ -f "$SWAPFILE" ]; then',
       '  cur_mb=$(( $(wc -c < "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
-      '  [ "$cur_mb" -ne "$SIZE_MB" ] && rm -f "$SWAPFILE"',
+      'else',
+      '  cur_mb=0',
       'fi',
-      'if [ ! -f "$SWAPFILE" ]; then',
+      'if [ "$cur_mb" -ne "$SIZE_MB" ]; then',
       '  # Leave headroom so we never fill the volume docker/images also share.',
       '  avail_mb=$(df -Pm /mnt/data 2>/dev/null | awk \'NR==2{print $4}\')',
       '  if [ -n "$avail_mb" ] && [ "$avail_mb" -lt $((SIZE_MB + 4096)) ]; then',
       '    echo "[sulla-swap] only ${avail_mb}MB free on /mnt/data; skipping swapfile" >&2',
       '    exit 0',
       '  fi',
-      '  # Must be a real (non-sparse) file — swapon rejects holes.',
-      '  dd if=/dev/zero of="$SWAPFILE" bs=1M count="$SIZE_MB" 2>/dev/null || { rm -f "$SWAPFILE"; exit 0; }',
+      'fi',
+      "cat > /run/sulla-swap-activate <<'SULLA_SWAP_ACTIVATE'",
+      '#!/bin/sh',
+      'SWAPFILE=/mnt/data/swapfile',
+      'SIZE_MB=8192',
+      'LOG=/var/log/boot-perf.log',
+      'started=$(cut -d\' \' -f1 /proc/uptime)',
+      'cur_mb=0',
+      '[ -f "$SWAPFILE" ] && cur_mb=$(( $(wc -c < "$SWAPFILE" 2>/dev/null || echo 0) / 1048576 ))',
+      'if [ "$cur_mb" -ne "$SIZE_MB" ]; then',
+      '  candidate="${SWAPFILE}.creating"',
+      '  rm -f "$candidate"',
+      '  dd if=/dev/zero of="$candidate" bs=1M count="$SIZE_MB" 2>/dev/null || { rm -f "$candidate"; exit 0; }',
+      '  chmod 600 "$candidate"',
+      '  mkswap "$candidate" >/dev/null 2>&1 || { rm -f "$candidate"; exit 0; }',
+      '  mv "$candidate" "$SWAPFILE"',
       'fi',
       'chmod 600 "$SWAPFILE" 2>/dev/null',
-      '# mkswap is idempotent; re-run it if swapon rejects a stale/partial file.',
-      'swapon "$SWAPFILE" 2>/dev/null && exit 0',
-      'mkswap "$SWAPFILE" >/dev/null 2>&1 || { rm -f "$SWAPFILE"; exit 0; }',
-      'swapon "$SWAPFILE" 2>/dev/null || echo "[sulla-swap] swapon failed; continuing without swap" >&2',
+      '# Do not rewrite a valid swap signature on every boot.',
+      'if ! blkid "$SWAPFILE" 2>/dev/null | grep -q \'TYPE="swap"\'; then',
+      '  mkswap "$SWAPFILE" >/dev/null 2>&1 || exit 0',
+      'fi',
+      'if swapon "$SWAPFILE" 2>/dev/null; then result=active; else result=failed; fi',
+      'finished=$(cut -d\' \' -f1 /proc/uptime)',
+      'elapsed=$(awk -v start="$started" -v end="$finished" \'BEGIN { printf "%.2f", end - start }\')',
+      'echo "[boot-perf] swap-activation: ${started}s -> ${finished}s elapsed=${elapsed}s result=${result}" >> "$LOG"',
+      '[ "$result" = active ] || echo "[sulla-swap] swapon failed; continuing without swap" >&2',
+      'exit 0',
+      'SULLA_SWAP_ACTIVATE',
+      'chmod 700 /run/sulla-swap-activate',
+      'setsid /run/sulla-swap-activate </dev/null >/var/log/sulla-swap.log 2>&1 &',
       'exit 0',
     ].join('\n');
 
@@ -929,6 +951,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const bridgedFirewallProvisionScript = [
       '#!/bin/sh',
       'set -o errexit',
+      'mkdir -p /usr/local/sbin',
       "cat > /usr/local/sbin/sulla-bridged-firewall <<'SULLA_BRIDGED_FIREWALL'",
       bridgedFirewallScript,
       'SULLA_BRIDGED_FIREWALL',
@@ -964,6 +987,10 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       '}',
       'SULLA_DOCKER_FIREWALL_HOOK',
       '/usr/local/sbin/sulla-bridged-firewall',
+      '# The default runlevel is already in progress during provisioning, so',
+      '# start the watcher now without waiting for dockerd. It reconnects when',
+      '# Docker appears and OpenRC will manage it normally on later boots.',
+      'rc-service -D -N sulla-bridged-firewall start',
     ].join('\n');
 
     // Remove any previously appended copies (including old unguarded format) to prevent duplication
@@ -1108,6 +1135,38 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision.push({
       mode:   'system',
       script: codexScript,
+    });
+
+    config.provision.push({
+      mode:   'system',
+      script: [
+        '#!/bin/sh',
+        'LOG=/var/log/boot-perf.log',
+        'failures=$(grep -c "WARNING: Failed" /var/log/lima-init.log 2>/dev/null || true)',
+        'finished=$(cut -d\' \' -f1 /proc/uptime)',
+        'echo "[boot-perf] __SUMMARY_LABEL__ end uptime=${finished}s status=0; FINAL provision summary failures=${failures}" >> "$LOG"',
+      ].join('\n'),
+    });
+
+    // Lima names provision files by their array index (including user-mode
+    // entries). Instrument every system provision so the guest log identifies
+    // the exact blocking/failing script on the next boot.
+    config.provision = config.provision.map((provision, index) => {
+      if (provision.mode !== 'system' || !provision.script) return provision;
+      const label = `provision.system/${ index.toString().padStart(8, '0') }`;
+      const lines = provision.script.split('\n');
+      const shebang = lines[0].startsWith('#!') ? lines.shift() : '#!/bin/sh';
+      const isSummary = provision.script.includes('__SUMMARY_LABEL__');
+      const timing = [
+        'BOOT_PERF_LOG=/var/log/boot-perf.log',
+        'SULLA_PROVISION_STARTED=$(cut -d\' \' -f1 /proc/uptime)',
+        `echo "[boot-perf] ${ label } start uptime=\${SULLA_PROVISION_STARTED}s utc=$(date -u '+%H:%M:%S')" >> "$BOOT_PERF_LOG"`,
+      ];
+      if (!isSummary) {
+        timing.push(`trap 'status=$?; finished=$(cut -d" " -f1 /proc/uptime); echo "[boot-perf] ${ label } end uptime=\${finished}s status=\${status}" >> "$BOOT_PERF_LOG"; trap - EXIT; exit "$status"' EXIT`);
+      }
+
+      return { ...provision, script: [shebang, ...timing, ...lines].join('\n').replace('__SUMMARY_LABEL__', label) };
     });
 
     this.updateConfigPortForwards(config);
@@ -2865,6 +2924,22 @@ start_pre() {
         t = Date.now();
         await this.lima('start', '--tty=false', '0');
         logStartupPhase('lima-start-handshake', t);
+
+        // limactl can return after the guest reached readiness even when an
+        // individual boot/provision script failed. Surface those failures in
+        // lima.log instead of leaving them buried in the guest-only log.
+        try {
+          const limaInitLog = await this.execCommand({ capture: true, root: true }, 'cat', '/var/log/lima-init.log');
+          const failures = limaInitLog.split('\n').filter(line => line.includes('WARNING: Failed'));
+          const exitLine = limaInitLog.split('\n').findLast(line => line.includes('Exiting with code'));
+
+          failures.forEach(line => console.warn(`[lima-init] ${ line.trim() }`));
+          if (exitLine && !exitLine.includes('Exiting with code 0')) {
+            console.warn(`[lima-init] ${ exitLine.trim() }`);
+          }
+        } catch (error) {
+          console.warn('[lima-init] Could not inspect /var/log/lima-init.log after boot', error);
+        }
 
         // A disconnect while the VM was stopped leaves a durable host marker;
         // reconcile it before any managed service or interactive CLI can reuse
