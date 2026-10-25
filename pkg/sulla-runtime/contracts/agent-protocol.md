@@ -32,6 +32,22 @@ An unknown method returns `{"id":3,"error":{"code":"unknown_method","message":"u
 
 Port 2375 proxies each accepted vsock stream byte-for-byte to `/run/docker.sock`. Both directions run concurrently and propagate half-close, preserving HTTP upgrades and long-lived attach, logs, and exec streams. The port has no HTTP awareness.
 
+## Guest exec (port 1025)
+
+One command per connection, for Desktop's own setup work. The client sends one JSON line, `{"argv":["sh","-c","..."],"workdir":"/","env":["K=V"]}`, then both directions carry binary frames: 1-byte stream, 4-byte big-endian length, payload (at most 1 MiB). Stream 0 is stdin (client to guest; an empty frame closes it), 1 stdout, 2 stderr, and 3 the exit code as a big-endian int32, which ends the session. 255 means the command could not be started. Commands run as root in their own process group; if the connection drops before the command exits, the agent kills that group.
+
+## Published ports (port 2376)
+
+The host opens one stream per Mac-side connection and sends one JSON line, `{"port":N}`. The agent dials guest `127.0.0.1:N` (dockerd's userland proxy listens there for every published port) and splices the two with half-close. Nothing but guest loopback is reachable this way.
+
+## Mac loopback (port 1100, guest-initiated)
+
+`192.168.5.2` stands for the Mac's loopback, under the names `host.lima.internal`, `host.sulla.internal` and `host.docker.internal` in the guest's `/etc/hosts`. TCP to that address from the guest or any container is redirected (iptables `REDIRECT`) to the agent on guest port 1100, which reads the original port and opens a vsock stream to the host (CID 2) port 1100 with `{"port":N}`. The host dials only `127.0.0.1:N` on the Mac.
+
+## Host sockets
+
+In the runtime directory (`~/Library/Application Support/Sulla/runtime`, or `$SULLA_RUNTIME_DIR`), all mode 0600: `docker.sock` (port 2375), `control.sock` (`status` / `stop`), and `guest.sock`, where a client writes `<port>\n` (1025 or 2376 only) and is then spliced to that guest port. A symlink named `limactl` to the host binary answers `limactl shell 0 ...`, `limactl copy` and `limactl list --json` through guest exec.
+
 ## Boot milestones and readiness
 
 1. Agent entered (`bootUptimeMs` origin).
