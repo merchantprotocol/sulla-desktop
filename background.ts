@@ -14,6 +14,7 @@ import _ from 'lodash';
 import semver from 'semver';
 
 import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
+import { getServiceLifecycleManager } from './pkg/rancher-desktop/agent/services/ServiceLifecycleManager';
 
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { State } from '@pkg/backend/backend';
@@ -1466,24 +1467,14 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
   }
 }
 
-// ── Capture Studio IPC ──────────────────────────────────────────────────
-ipcMainProxy.handle('capture-studio:get-sources', async() => {
-  try {
-    const sources = await Electron.desktopCapturer.getSources({
-      types:            ['screen', 'window'],
-      thumbnailSize:    { width: 320, height: 180 },
-      fetchWindowIcons: false,
-    });
-    return sources.map(s => ({
-      id:               s.id,
-      name:             s.name,
-      thumbnailDataUrl: s.thumbnail.toDataURL(),
-    }));
-  } catch (e: any) {
-    console.warn('[capture-studio:get-sources] Failed:', e?.message || e?.name || String(e));
-    return [];
-  }
+// Renderer settings use their own model instance, but must not bootstrap until
+// the authoritative main-process lifecycle has observed both Postgres and Redis.
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async() => {
+  await getServiceLifecycleManager().waitUntilStarted('database-manager', 3 * 60_000);
 });
+
+// ── Capture Studio IPC ──────────────────────────────────────────────────
+// Source enumeration is registered once by registerCaptureStudioRpc().
 
 ipcMainProxy.handle('capture-studio:check-permissions', () => {
   const result: Record<string, string> = {
