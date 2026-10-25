@@ -41,7 +41,9 @@ import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import { reconcileComposeService } from './sullaServiceReconcile';
-import { ensureLimactlShim, findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
+import {
+  ensureLimactlShim, findSullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets,
+} from './sullaRuntime/artifacts';
 import { bootSullaRuntimeOrFallBack, planSullaRuntimeBoot } from './sullaRuntime/bootPlan';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
@@ -3471,10 +3473,38 @@ start_pre() {
       log:                     console,
     });
 
-    if (!result.booted) return false;
+    if (!result.booted) {
+      void this.warnLimaDataIsOlder(result.reason);
+
+      return false;
+    }
     await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
 
     return true;
+  }
+
+  /**
+   * After the runtime has run on its own copy of the data, Lima's disk is the
+   * older one. Falling back is still right (Sulla keeps working), but the user
+   * has to know: whatever they change now stays on Lima.
+   */
+  protected async warnLimaDataIsOlder(reason: string): Promise<void> {
+    const modified = (file: string) => fs.promises.stat(file).then(stat => stat.mtimeMs, () => undefined);
+    const runtimeData = await modified(path.join(sullaRuntimeDirectory(), 'data.img'));
+    const limaData = await modified(path.join(paths.lima, '0', 'diffdisk'));
+
+    if (runtimeData === undefined || limaData === undefined || runtimeData <= limaData) {
+      return;
+    }
+    console.warn(`[sulla-runtime] fell back to Lima, whose data is older than the runtime's (${ new Date(limaData).toISOString() })`);
+    await Electron.dialog.showMessageBox({
+      type:    'warning',
+      title:   'Sulla runtime',
+      message: 'The Sulla runtime could not start, so Sulla started on Lima instead.',
+      detail:  `Reason: ${ reason }\n\n` +
+        `Your newest data is on the Sulla runtime's disk. Lima has your data as it was on ${ new Date(limaData).toLocaleString() }. ` +
+        'Anything you change now stays on Lima and does not carry over to the runtime. Restart Sulla to try the runtime again.',
+    });
   }
 
   /** The folders Lima mounts today, shared with the runtime under short virtio-fs tags. */
