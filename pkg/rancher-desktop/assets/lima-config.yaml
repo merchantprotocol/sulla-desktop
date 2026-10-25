@@ -118,7 +118,8 @@ provision:
       mv /root /mnt/data/root
     fi
     mkdir -p /root
-    mount --bind /mnt/data/root /root
+    # Lima's 04-persistent-data-volume.sh already binds /root when it succeeds.
+    mountpoint -q /root || mount --bind /mnt/data/root /root
     echo "[boot-perf] persist-root: ${t0}s -> $(T)s" >> "$LOG"
 
     # --- Persist agent Git worktrees ---
@@ -298,6 +299,7 @@ provision:
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] installing Quad9 resolver" >> "$LOG"
     # Write resolv.conf directly. Quad9 primary + secondary, then Cloudflare 1.1.1.2
     # (malware-blocking "for Families" variant) as fallback.
+    chattr -i /etc/resolv.conf 2>/dev/null || true
     cat > /etc/resolv.conf <<'EOF'
     # Managed by Sulla Desktop — threat-blocking resolvers
     nameserver 9.9.9.9
@@ -306,8 +308,13 @@ provision:
     options timeout:2 attempts:2
     EOF
     # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal.
-    # chattr +i is a no-op on tmpfs/overlay; we guard it so the script never fails.
-    chattr +i /etc/resolv.conf 2>/dev/null || true
+    # Never chattr +i: /etc is persisted on the data volume, and an immutable
+    # resolv.conf makes Lima's 04-persistent-data-volume.sh fail its copy on the
+    # next boot, which silently drops /etc, /home, /usr/local and /var/lib back
+    # to RAM. The unlock above clears any lock left by older builds.
+    mkdir -p /etc/udhcpc
+    touch /etc/udhcpc/udhcpc.conf
+    grep -qx 'RESOLV_CONF="no"' /etc/udhcpc/udhcpc.conf || echo 'RESOLV_CONF="no"' >> /etc/udhcpc/udhcpc.conf
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] resolv.conf pinned: $(cat /etc/resolv.conf | tr '\n' ';')" >> "$LOG"
     # Smoke test — resolve a benign domain to confirm DNS actually works.
     if nslookup example.com 9.9.9.9 >/dev/null 2>&1; then
