@@ -1,0 +1,750 @@
+Subject: 09-html-shells: Page shells: server adapter, self-hosted fonts, no mock, relative paths
+
+diff --git a/cloud/404.html b/cloud/404.html
+index 55423edf31c8fe027374868a0e1797d4ec539764..6932c2ad2ce24191c73e82e34eca906520b84484 100644
+--- a/cloud/404.html
++++ b/cloud/404.html
+@@ -3,25 +3,23 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Page not found · Sulla Cloud</title>
++<title>Page not found · Sulla Server</title>
+ <meta name="robots" content="noindex">
+-<base href="/cloud/">
+-<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="/css/cloud/tokens.css">
+-<link rel="stylesheet" href="/css/cloud/shell.css">
+-<link rel="stylesheet" href="/css/cloud/components.css">
+-<script src="/js/cloud/shell/theme-boot.js"></script>
+-<script defer src="/js/sulla-auth.js"></script>
+-<script defer src="/js/cloud/shell/icons.js"></script>
+-<script defer src="/js/cloud/shell/api.js"></script>
+-<script defer src="/js/cloud/shell/states.js"></script>
+-<script defer src="/js/cloud/shell/shell.js"></script>
+-<script defer src="/js/cloud/not-found.js"></script>
++<base href="/console/">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/not-found.js"></script>
+ </head>
+ <body data-route="not-found">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/account.html b/cloud/account.html
+index a32c71460feb7180e434f5ee4413555199af2bf3..13bd1cb914a8d5c8871c6b41f3b14caaa42dfc21 100644
+--- a/cloud/account.html
++++ b/cloud/account.html
+@@ -1,8 +1,11 @@
+ <!DOCTYPE html>
+ <html lang="en" class="theme-noir-light theme-noir">
+ <head>
+-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Account settings · Sulla Cloud</title><meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="stylesheet" href="../css/cloud/tokens.css"><link rel="stylesheet" href="../css/cloud/shell.css"><link rel="stylesheet" href="../css/cloud/components.css"><link rel="stylesheet" href="../css/cloud/account.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script><script defer src="../js/sulla-auth.js"></script><script defer src="../js/cloud/shell/icons.js"></script><script defer src="../js/cloud/shell/api.js"></script><script defer src="../js/cloud/shell/states.js"></script><script defer src="../js/cloud/shell/shell.js"></script><script defer src="../js/cloud/account/account.js"></script>
+-</head><body data-route="account"><noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript></body></html>
++<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Account settings · Sulla Server</title><meta name="robots" content="noindex,nofollow">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="css/cloud/tokens.css"><link rel="stylesheet" href="css/cloud/shell.css"><link rel="stylesheet" href="css/cloud/components.css"><link rel="stylesheet" href="css/cloud/account.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script><script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script><script defer src="js/cloud/shell/icons.js"></script><script defer src="js/cloud/shell/api.js"></script><script defer src="js/cloud/shell/states.js"></script><script defer src="js/cloud/shell/shell.js"></script><script defer src="js/cloud/account/account.js"></script>
++</head><body data-route="account"><noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript></body></html>
+diff --git a/cloud/agents.html b/cloud/agents.html
+index 350dcfd6861f11fa9a07a0b182f36d98fc44f8a6..fcd5b91d7534c46df856a0ff0a694e32dacf97d1 100644
+--- a/cloud/agents.html
++++ b/cloud/agents.html
+@@ -3,26 +3,27 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Agents · Sulla Cloud</title>
++<title>Agents · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/agents.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/secure-channel.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/agents/agents.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/agents.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/secure-channel.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/agents/agents.js"></script>
+ </head>
+ <body data-route="agents">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/chat.html b/cloud/chat.html
+index 218b25c95dc2df2a29b4eacbf6424d355e7d7a82..9ea4bebfa51c98c42fbf6597222f21fc294bb672 100644
+--- a/cloud/chat.html
++++ b/cloud/chat.html
+@@ -3,26 +3,27 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Chat · Sulla Cloud</title>
++<title>Chat · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/chat.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/secure-channel.js"></script>
+-<script defer src="../js/cloud/chat/chat.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/chat.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/secure-channel.js"></script>
++<script defer src="js/cloud/chat/chat.js"></script>
+ </head>
+ <body data-route="chat">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/custom-agents.html b/cloud/custom-agents.html
+index a32ed51720803c9bef126f76109cdf3fdd368ab2..fe636097a3dc8041f1b8c53965bbc10937a2136b 100644
+--- a/cloud/custom-agents.html
++++ b/cloud/custom-agents.html
+@@ -3,25 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Custom Agents · Sulla Cloud</title>
++<title>Custom Agents · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/studio.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/studio/catalog.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/studio.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/studio/catalog.js"></script>
+ </head>
+ <body data-route="custom-agents">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/devices.html b/cloud/devices.html
+index 966b0669f71f925479d7f03dd61934cad86e91d0..2e376d73832f62b1b3f8c9a86e25c01504b6f2e9 100644
+--- a/cloud/devices.html
++++ b/cloud/devices.html
+@@ -1,8 +1,11 @@
+ <!DOCTYPE html>
+ <html lang="en" class="theme-noir-light theme-noir">
+ <head>
+-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Devices · Sulla Cloud</title><meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="stylesheet" href="../css/cloud/tokens.css"><link rel="stylesheet" href="../css/cloud/shell.css"><link rel="stylesheet" href="../css/cloud/components.css"><link rel="stylesheet" href="../css/cloud/home.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script><script defer src="../js/sulla-auth.js"></script><script defer src="../js/cloud/shell/icons.js"></script><script defer src="../js/cloud/shell/api.js"></script><script defer src="../js/cloud/shell/states.js"></script><script defer src="../js/cloud/shell/shell.js"></script><script defer src="../js/cloud/home/devices.js"></script>
+-</head><body data-route="devices"><noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript></body></html>
++<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Devices · Sulla Server</title><meta name="robots" content="noindex,nofollow">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="css/cloud/tokens.css"><link rel="stylesheet" href="css/cloud/shell.css"><link rel="stylesheet" href="css/cloud/components.css"><link rel="stylesheet" href="css/cloud/home.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script><script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script><script defer src="js/cloud/shell/icons.js"></script><script defer src="js/cloud/shell/api.js"></script><script defer src="js/cloud/shell/states.js"></script><script defer src="js/cloud/shell/shell.js"></script><script defer src="js/cloud/home/devices.js"></script>
++</head><body data-route="devices"><noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript></body></html>
+diff --git a/cloud/editor.html b/cloud/editor.html
+index 39e7e0be7b48b2b8975d8a3809b7b906daa23840..07d57cc5c2827831a1a2b2331a8ba95950a6daa2 100644
+--- a/cloud/editor.html
++++ b/cloud/editor.html
+@@ -3,28 +3,29 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Editor · Sulla Cloud</title>
++<title>Editor · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/files.css">
+-<link rel="stylesheet" href="../css/cloud/editor.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/files/api.js"></script>
+-<script defer src="../js/cloud/shared/markdown.js"></script>
+-<script defer src="../js/cloud/editor/view.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/files.css">
++<link rel="stylesheet" href="css/cloud/editor.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/files/api.js"></script>
++<script defer src="js/cloud/shared/markdown.js"></script>
++<script defer src="js/cloud/editor/view.js"></script>
+ </head>
+ <body data-route="editor">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/files.html b/cloud/files.html
+index 9659ff834d8b736884f01612d415be2d677eb23e..1e808b0508a4df95e33015c13b50b0a395e8999e 100644
+--- a/cloud/files.html
++++ b/cloud/files.html
+@@ -3,27 +3,28 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Files · Sulla Cloud</title>
++<title>Files · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/files.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/files/api.js"></script>
+-<script defer src="../js/cloud/passwords/launcher.js"></script>
+-<script defer src="../js/cloud/files/view.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/files.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/files/api.js"></script>
++<script defer src="js/cloud/passwords/launcher.js"></script>
++<script defer src="js/cloud/files/view.js"></script>
+ </head>
+ <body data-route="files">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/index.html b/cloud/index.html
+index ba1a018222428d1bf7c761ae92ac6af685d6aea2..b1b1182398586500627d5f51e6577d96a9f615dc 100644
+--- a/cloud/index.html
++++ b/cloud/index.html
+@@ -1,8 +1,11 @@
+ <!DOCTYPE html>
+ <html lang="en" class="theme-noir-light theme-noir">
+ <head>
+-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Home · Sulla Cloud</title><meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="stylesheet" href="../css/cloud/tokens.css"><link rel="stylesheet" href="../css/cloud/shell.css"><link rel="stylesheet" href="../css/cloud/components.css"><link rel="stylesheet" href="../css/cloud/home.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script><script defer src="../js/sulla-auth.js"></script><script defer src="../js/cloud/shell/icons.js"></script><script defer src="../js/cloud/shell/api.js"></script><script defer src="../js/cloud/shell/states.js"></script><script defer src="../js/cloud/shell/shell.js"></script><script defer src="../js/cloud/home/home.js"></script>
+-</head><body data-route="home"><noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript></body></html>
++<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Home · Sulla Server</title><meta name="robots" content="noindex,nofollow">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="css/cloud/tokens.css"><link rel="stylesheet" href="css/cloud/shell.css"><link rel="stylesheet" href="css/cloud/components.css"><link rel="stylesheet" href="css/cloud/home.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script><script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script><script defer src="js/cloud/shell/icons.js"></script><script defer src="js/cloud/shell/api.js"></script><script defer src="js/cloud/shell/states.js"></script><script defer src="js/cloud/shell/shell.js"></script><script defer src="js/cloud/home/home.js"></script>
++</head><body data-route="home"><noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript></body></html>
+diff --git a/cloud/organization-settings.html b/cloud/organization-settings.html
+index 39592842a3a0bd2a92d797a6ddf388ebf89a5aca..1a96ed9b6043486ec4d6984b832f0b4b90cc8928 100644
+--- a/cloud/organization-settings.html
++++ b/cloud/organization-settings.html
+@@ -2,9 +2,12 @@
+ <html lang="en" class="theme-noir-light theme-noir">
+ <head>
+ <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+-<title>Organization settings · Sulla Cloud</title><meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64">
+-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css"><link rel="stylesheet" href="../css/cloud/shell.css"><link rel="stylesheet" href="../css/cloud/components.css"><link rel="stylesheet" href="../css/cloud/org-settings.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script><script defer src="../js/sulla-auth.js"></script><script defer src="../js/cloud/shell/icons.js"></script><script defer src="../js/cloud/shell/api.js"></script><script defer src="../js/cloud/shell/states.js"></script><script defer src="../js/cloud/shell/shell.js"></script><script defer src="../js/cloud/org-settings/organization-settings.js"></script>
+-</head><body data-route="org-settings"><noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript></body></html>
++<title>Organization settings · Sulla Server</title><meta name="robots" content="noindex,nofollow">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css"><link rel="stylesheet" href="css/cloud/shell.css"><link rel="stylesheet" href="css/cloud/components.css"><link rel="stylesheet" href="css/cloud/org-settings.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script><script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script><script defer src="js/cloud/shell/icons.js"></script><script defer src="js/cloud/shell/api.js"></script><script defer src="js/cloud/shell/states.js"></script><script defer src="js/cloud/shell/shell.js"></script><script defer src="js/cloud/org-settings/organization-settings.js"></script>
++</head><body data-route="org-settings"><noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript></body></html>
+diff --git a/cloud/organizations.html b/cloud/organizations.html
+index 2812f10201605fa1da5996f1079378e7a832033d..2d4b877acf8292196caef7d6592c4796398d23bf 100644
+--- a/cloud/organizations.html
++++ b/cloud/organizations.html
+@@ -1,8 +1,11 @@
+ <!DOCTYPE html>
+ <html lang="en" class="theme-noir-light theme-noir">
+ <head>
+-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Organizations · Sulla Cloud</title><meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="stylesheet" href="../css/cloud/tokens.css"><link rel="stylesheet" href="../css/cloud/shell.css"><link rel="stylesheet" href="../css/cloud/components.css"><link rel="stylesheet" href="../css/cloud/organizations.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script><script defer src="../js/sulla-auth.js"></script><script defer src="../js/cloud/shell/icons.js"></script><script defer src="../js/cloud/shell/api.js"></script><script defer src="../js/cloud/shell/states.js"></script><script defer src="../js/cloud/shell/shell.js"></script><script defer src="../js/cloud/organizations/organizations.js"></script>
+-</head><body data-route="organizations"><noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript></body></html>
++<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Organizations · Sulla Server</title><meta name="robots" content="noindex,nofollow">
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="css/cloud/tokens.css"><link rel="stylesheet" href="css/cloud/shell.css"><link rel="stylesheet" href="css/cloud/components.css"><link rel="stylesheet" href="css/cloud/organizations.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script><script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script><script defer src="js/cloud/shell/icons.js"></script><script defer src="js/cloud/shell/api.js"></script><script defer src="js/cloud/shell/states.js"></script><script defer src="js/cloud/shell/shell.js"></script><script defer src="js/cloud/organizations/organizations.js"></script>
++</head><body data-route="organizations"><noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript></body></html>
+diff --git a/cloud/passwords.html b/cloud/passwords.html
+index f7b1d8fbace4cc568b384ebe1d7dec46ef40a208..f93257cc48836a84ae371cd2d31d187144433d9c 100644
+--- a/cloud/passwords.html
++++ b/cloud/passwords.html
+@@ -3,26 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Passwords · Sulla Cloud</title>
++<title>Passwords · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/passwords.css">
+-<meta name="sulla-vault-origin" content="https://vault.sulladesktop.com">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/passwords/launcher.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/passwords.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/passwords/launcher.js"></script>
+ </head>
+ <body data-route="passwords">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/recipes.html b/cloud/recipes.html
+index 77cfa14f9f27dabd333552f61a509783b22b0dd2..ce579c05998d1de4ace49f63bbb747d928043dd6 100644
+--- a/cloud/recipes.html
++++ b/cloud/recipes.html
+@@ -3,25 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Recipes · Sulla Cloud</title>
++<title>Recipes · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/studio.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/studio/catalog.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/studio.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/studio/catalog.js"></script>
+ </head>
+ <body data-route="recipes">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/skills.html b/cloud/skills.html
+index a118d9de3122904bbce5b8719683c6e8bb2d8c5e..1e6f020d7efbe09e4367dbd47466455334304210 100644
+--- a/cloud/skills.html
++++ b/cloud/skills.html
+@@ -3,25 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Saved Skills · Sulla Cloud</title>
++<title>Saved Skills · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/studio.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/studio/catalog.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/studio.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/studio/catalog.js"></script>
+ </head>
+ <body data-route="skills">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/usage.html b/cloud/usage.html
+index 2605678e4840b36c737a7f24d8fbe7211cfa0811..f3df78668c3f80538986ab01fe828a07d57fcdb8 100644
+--- a/cloud/usage.html
++++ b/cloud/usage.html
+@@ -3,25 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Token Usage · Sulla Cloud</title>
++<title>Token Usage · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/studio.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/studio/catalog.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/studio.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/studio/catalog.js"></script>
+ </head>
+ <body data-route="usage">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/use-cases.html b/cloud/use-cases.html
+index a61dd4dfced3bfc21261025c92dd353f53f875a0..7c6626309ec40f3735ac04daed5879c846c0fbad 100644
+--- a/cloud/use-cases.html
++++ b/cloud/use-cases.html
+@@ -3,26 +3,28 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Use Cases · Sulla Cloud</title>
++<title>Use Cases · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/use-cases.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/use-cases/api.js"></script>
+-<script defer src="../js/cloud/use-cases/screen.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/use-cases.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/use-cases/api.js"></script>
++<script defer src="server/license.js"></script>
++<script defer src="js/cloud/use-cases/screen.js"></script>
+ </head>
+ <body data-route="use-cases">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/workflow-run.html b/cloud/workflow-run.html
+index 23ff0c16c86e29f97f3baa3f0a1f858d05e4f943..95af81c91ac2a90f353c2bc9ff3d0555ef471f7f 100644
+--- a/cloud/workflow-run.html
++++ b/cloud/workflow-run.html
+@@ -3,25 +3,26 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Workflow run · Sulla Cloud</title>
++<title>Workflow run · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/workflows.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/workflows/run.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/workflows.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/workflows/run.js"></script>
+ </head>
+ <body data-route="workflow-run">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
+diff --git a/cloud/workflows.html b/cloud/workflows.html
+index c041d0d0169361148f03546103a6946b71bcf02a..9111fb4b58efd186c1715170df91b728c34d02e5 100644
+--- a/cloud/workflows.html
++++ b/cloud/workflows.html
+@@ -3,26 +3,27 @@
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>Workflows · Sulla Cloud</title>
++<title>Workflows · Sulla Server</title>
+ <meta name="robots" content="noindex,nofollow">
+-<link rel="icon" href="../favicon.svg" type="image/svg+xml"><link rel="icon" href="../favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="../apple-touch-icon.png">
+-<link rel="preconnect" href="https://fonts.googleapis.com">
+-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+-<link rel="stylesheet" href="../css/cloud/tokens.css">
+-<link rel="stylesheet" href="../css/cloud/shell.css">
+-<link rel="stylesheet" href="../css/cloud/components.css">
+-<link rel="stylesheet" href="../css/cloud/workflows.css">
+-<script src="../js/cloud/shell/theme-boot.js"></script>
+-<script defer src="../js/sulla-auth.js"></script>
+-<script defer src="../js/cloud/shell/icons.js"></script>
+-<script defer src="../js/cloud/shell/api.js"></script>
+-<script defer src="../js/secure-channel.js"></script>
+-<script defer src="../js/cloud/shell/states.js"></script>
+-<script defer src="../js/cloud/shell/shell.js"></script>
+-<script defer src="../js/cloud/workflows/workflows.js"></script>
++<link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="icon" href="favicon.png" type="image/png" sizes="64x64"><link rel="apple-touch-icon" href="apple-touch-icon.png">
++<link rel="stylesheet" href="server/fonts/fonts.css">
++<link rel="stylesheet" href="css/cloud/tokens.css">
++<link rel="stylesheet" href="css/cloud/shell.css">
++<link rel="stylesheet" href="css/cloud/components.css">
++<link rel="stylesheet" href="css/cloud/workflows.css">
++<meta name="sulla-server-host" content="">
++<meta name="sulla-vault-origin" content="">
++<script src="js/cloud/shell/theme-boot.js"></script>
++<script defer src="server/server-auth.js"></script>
++<script defer src="server/pages.js"></script>
++<script defer src="js/cloud/shell/icons.js"></script>
++<script defer src="js/cloud/shell/api.js"></script>
++<script defer src="js/secure-channel.js"></script>
++<script defer src="js/cloud/shell/states.js"></script>
++<script defer src="js/cloud/shell/shell.js"></script>
++<script defer src="js/cloud/workflows/workflows.js"></script>
+ </head>
+ <body data-route="workflows">
+-<noscript><p style="padding:24px">Sulla Cloud needs JavaScript turned on.</p></noscript>
++<noscript><p style="padding:24px">Sulla Server needs JavaScript turned on.</p></noscript>
+ </body>
+ </html>
