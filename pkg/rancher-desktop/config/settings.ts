@@ -10,7 +10,7 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 // Import heartbeat prompt from TypeScript file
 
-export const CURRENT_SETTINGS_VERSION = 17 as const;
+export const CURRENT_SETTINGS_VERSION = 18 as const;
 
 export enum VMType {
   QEMU = 'qemu',
@@ -194,8 +194,6 @@ export const defaultSettings = {
     sullaN8nEncryptionKey:     '',
     /** Keep the next-generation vault sidecar opt-in until migration is verified. */
     sullaVaultV2Enabled:       true,
-    /** macOS: boot the built-in Sulla runtime instead of Lima. Needs a restart. */
-    sullaRuntime:              false,
     /** Bearer token for chat completions API authentication */
     sullaApiToken:             '',
     /** Service account user ID created during seeding */

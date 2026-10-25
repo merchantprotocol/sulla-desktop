@@ -205,13 +205,13 @@ class Builder {
   }
 
   /**
-   * Places the native Sulla runtime (experimental.sullaRuntime) in
+   * Places the native Sulla runtime (the macOS VM) in
    * resources/darwin/sulla-runtime/ and signs the host binary with the
    * Virtualization entitlement it needs. The files come from
    * SULLA_RUNTIME_ARTIFACTS_DIR (CI artifacts) or from resources/ (built by
    * scripts/build-sulla-runtime.sh). electron-builder skips the binary (via
-   * signIgnore) so this signature survives; the app seal covers it. A build
-   * without the runtime still works: Desktop logs why and boots Lima.
+   * signIgnore) so this signature survives; the app seal covers it. A Mac
+   * build without the runtime fails: Desktop cannot boot without it.
    */
   protected async embedSullaRuntime(context:AfterPackContext):Promise<void> {
     const { MacPackager } = await import('app-builder-lib/out/macPackager');
@@ -233,9 +233,7 @@ class Builder {
       if (!await fs.promises.access(file).then(() => true, () => false)) missing.push(path.relative(appPath, file));
     }
     if (missing.length) {
-      log.warn({ missing }, 'Sulla runtime not embedded; experimental.sullaRuntime will fall back to Lima. Run scripts/build-sulla-runtime.sh or set SULLA_RUNTIME_ARTIFACTS_DIR.');
-
-      return;
+      throw new Error(`Sulla runtime not embedded (missing ${ missing.join(', ') }). Run scripts/build-sulla-runtime.sh or set SULLA_RUNTIME_ARTIFACTS_DIR.`);
     }
     await fs.promises.chmod(binary, 0o755);
     const { keychainFile } = await context.packager.codeSigningInfo.value;

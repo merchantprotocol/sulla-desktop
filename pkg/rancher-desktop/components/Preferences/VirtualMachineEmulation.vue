@@ -175,23 +175,6 @@ export default defineComponent({
         </rd-fieldset>
       </div>
     </div>
-    <div class="row">
-      <div class="col span-6">
-        <rd-fieldset
-          data-test="sullaRuntime"
-          :legend-text="t('virtualMachine.sullaRuntime.legend')"
-        >
-          <rd-checkbox
-            :label="t('virtualMachine.sullaRuntime.label')"
-            :description="t('virtualMachine.sullaRuntime.description')"
-            :value="preferences.experimental.sullaRuntime"
-            :is-experimental="true"
-            :is-locked="isPreferenceLocked('experimental.sullaRuntime')"
-            @update:value="onChange('experimental.sullaRuntime', $event)"
-          />
-        </rd-fieldset>
-      </div>
-    </div>
   </div>
 </template>
 

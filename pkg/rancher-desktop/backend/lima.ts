@@ -44,7 +44,6 @@ import { reconcileComposeService } from './sullaServiceReconcile';
 import {
   ensureLimactlShim, findSullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets,
 } from './sullaRuntime/artifacts';
-import { bootSullaRuntimeOrFallBack, planSullaRuntimeBoot } from './sullaRuntime/bootPlan';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
@@ -354,7 +353,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   #lastFilesGuestMountFailure?: string;
   #sullaCredentialsReady = false;
   #sullaCredentialsWaiters = new Set<() => void>();
-  /** The native Sulla runtime, while experimental.sullaRuntime booted it instead of Lima. */
+  /** The native Sulla runtime, which runs Docker on macOS instead of Lima. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
   /** Lima's own `paths.limactl`, restored when the runtime stops. */
@@ -3449,62 +3448,26 @@ start_pre() {
   }
 
   /**
-   * Boot on the native Sulla runtime instead of Lima when
-   * experimental.sullaRuntime is on (macOS only). Returns false when this
-   * launch should boot Lima: the setting is off, or the runtime failed before
-   * Docker was ready and was stopped again.
+   * On macOS the native Sulla runtime is the VM: it boots here and Lima is
+   * never started. Returns false on other platforms, which keep Lima (Linux)
+   * or WSL (Windows). A runtime failure fails the backend start.
    */
   protected async startOnSullaRuntime(config: BackendSettings, generation: number, backendStartTotal: number): Promise<boolean> {
-    const plan = planSullaRuntimeBoot({
-      requested:         !!config.experimental.sullaRuntime,
-      platform:          os.platform(),
-      kubernetesEnabled: config.kubernetes.enabled,
-    });
-
-    if (plan.runtime === 'lima') {
-      if (plan.reason) console.warn(`[sulla-runtime] ${ plan.reason }; booting Lima`);
-
-      return false;
+    if (os.platform() !== 'darwin') return false;
+    if (config.kubernetes.enabled) {
+      console.warn('[sulla-runtime] Kubernetes is not available on the Sulla runtime yet; starting without it');
     }
     const shares = this.sullaRuntimeShares();
-    const result = await bootSullaRuntimeOrFallBack({
-      startThroughDockerReady: () => this.startSullaRuntimeThroughDockerReady(config, shares),
-      stopAndRestoreLima:      () => this.stopSullaRuntime(),
-      log:                     console,
-    });
 
-    if (!result.booted) {
-      void this.warnLimaDataIsOlder(result.reason);
-
-      return false;
+    try {
+      await this.startSullaRuntimeThroughDockerReady(config, shares);
+    } catch (error) {
+      await this.stopSullaRuntime().catch(cleanupError => console.error('[sulla-runtime] cleanup after a failed start failed:', cleanupError));
+      throw error;
     }
     await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
 
     return true;
-  }
-
-  /**
-   * After the runtime has run on its own copy of the data, Lima's disk is the
-   * older one. Falling back is still right (Sulla keeps working), but the user
-   * has to know: whatever they change now stays on Lima.
-   */
-  protected async warnLimaDataIsOlder(reason: string): Promise<void> {
-    const modified = (file: string) => fs.promises.stat(file).then(stat => stat.mtimeMs, () => undefined);
-    const runtimeData = await modified(path.join(sullaRuntimeDirectory(), 'data.img'));
-    const limaData = await modified(path.join(paths.lima, '0', 'diffdisk'));
-
-    if (runtimeData === undefined || limaData === undefined || runtimeData <= limaData) {
-      return;
-    }
-    console.warn(`[sulla-runtime] fell back to Lima, whose data is older than the runtime's (${ new Date(limaData).toISOString() })`);
-    await Electron.dialog.showMessageBox({
-      type:    'warning',
-      title:   'Sulla runtime',
-      message: 'The Sulla runtime could not start, so Sulla started on Lima instead.',
-      detail:  `Reason: ${ reason }\n\n` +
-        `Your newest data is on the Sulla runtime's disk. Lima has your data as it was on ${ new Date(limaData).toLocaleString() }. ` +
-        'Anything you change now stays on Lima and does not carry over to the runtime. Restart Sulla to try the runtime again.',
-    });
   }
 
   /** The folders Lima mounts today, shared with the runtime under short virtio-fs tags. */
@@ -3520,13 +3483,13 @@ start_pre() {
     const preparedAt = Date.now();
     const artifacts = await findSullaRuntimeArtifacts();
 
-    // `this.status` still asks the real limactl here. The runtime takes over
-    // Lima's data, so the two never run at once.
+    // `this.status` still asks the real limactl here. A Lima VM left running
+    // by an older Sulla would compete for CPU and memory, so stop it.
     if ((await this.status)?.status === 'Running') {
-      console.log('[sulla-runtime] stopping the Lima VM before the runtime takes over its data');
+      console.log('[sulla-runtime] stopping a running Lima VM');
       await this.lima('stop', MACHINE_NAME);
     }
-    const dataDisk = await ensureSullaRuntimeDataDisk(async() => (await this.status)?.status === 'Running');
+    const dataDisk = await ensureSullaRuntimeDataDisk();
 
     console.log(`[sulla-runtime] data disk ${ dataDisk.path } (${ dataDisk.source })`);
     // A share whose folder is missing fails the VM configuration.
@@ -5083,8 +5046,6 @@ CREDFWD_URL='http://${ SLIRP.HOST_GATEWAY }:${ stateInfo.port }'
       'virtualMachine.useRosetta':                            undefined,
       // Changing host access changes the extra LAN bridge on macOS.
       'application.hostAccess':                              os.platform() === 'darwin' ? undefined : () => false,
-      // Switching between Lima and the Sulla runtime happens at boot.
-      'experimental.sullaRuntime':                           os.platform() === 'darwin' ? undefined : () => false,
     }));
     if (limaConfig) {
       Object.assign(reasons, await this.kubeBackend.requiresRestartReasons(this.cfg, cfg, {
