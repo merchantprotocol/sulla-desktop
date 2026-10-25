@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,8 +103,16 @@ func main() {
 	loadKernelModules()
 	mustMount("cgroup2", "/sys/fs/cgroup", "cgroup2", 0, "")
 	mustMount("tmpfs", "/run", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
-	_ = os.MkdirAll("/var/lib/sulla-data", 0755)
+	// Containers that publish a mount back to the guest (the Files FUSE
+	// adapters use rshared binds) need a shared subtree. It must not be "/":
+	// on the initramfs runc enters containers by moving their rootfs onto
+	// "/", and a shared "/" propagates that move over the guest's own root.
+	// So /mnt gets its own tmpfs, and that whole tree is shared.
+	mustMount("tmpfs", "/mnt", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
 	prepareDataDisk()
+	if err := syscall.Mount("", "/mnt", "", syscall.MS_SHARED|syscall.MS_REC, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "make /mnt rshared: %v\n", err)
+	}
 	a.log = openLogger()
 	a.log.Printf("sulla-runtime-agent %s booting", version)
 	for _, e := range moduleErrors {
@@ -115,9 +122,14 @@ func main() {
 	// Before the daemons start: dockerd reads resolv.conf at startup and only
 	// re-checks it every few seconds, so an early image pull would otherwise
 	// fall back to a resolver on localhost.
+	configureUser(a.log)
 	configureNetwork(a.log)
+	configureHostLoopback(a.log)
 	go a.controlServer()
 	go a.dockerProxy()
+	go a.execServer()
+	go a.forwardServer()
+	go a.hostLoopbackServer()
 	go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
 	go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
 	go a.watchDocker()
@@ -133,6 +145,20 @@ func main() {
 		syscall.Sync()
 		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	}
+}
+
+// kernelArg returns the value of name=<value> on the kernel command line.
+func kernelArg(name string) string {
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return ""
+	}
+	for _, field := range strings.Fields(string(cmdline)) {
+		if value, ok := strings.CutPrefix(field, name+"="); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 func uptime() int64 { return time.Since(boot).Milliseconds() }
@@ -159,9 +185,9 @@ func loadKernelModules() {
 	// virtio_pci the guest has no disk, console, network or vsock.
 	for _, module := range []string{
 		"virtio_pci", "virtio_blk", "virtio_net", "virtio_console", "virtio_balloon", "virtio-rng",
-		"vmw_vsock_virtio_transport",
+		"vmw_vsock_virtio_transport", "fuse", "virtiofs",
 		"overlay", "nf_tables", "nft_chain_nat", "br_netfilter",
-		"x_tables", "ip_tables", "iptable_nat",
+		"x_tables", "ip_tables", "iptable_nat", "nft_compat", "xt_nat", "xt_REDIRECT", "nft_redir",
 	} {
 		if out, err := exec.Command("/sbin/modprobe", module).CombinedOutput(); err != nil {
 			moduleErrors = append(moduleErrors, fmt.Sprintf("%s: %v %s", module, err, strings.TrimSpace(string(out))))
@@ -191,79 +217,6 @@ func setClockFromCmdline() {
 	}
 }
 
-// dataDiskPath returns the block device the host marked as the data disk with
-// sulla.data=<name> on the kernel command line, waiting briefly for devtmpfs
-// to create the node after virtio_blk probes.
-func dataDiskPath() string {
-	name := "vdb"
-	if cmdline, err := os.ReadFile("/proc/cmdline"); err == nil {
-		for _, field := range strings.Fields(string(cmdline)) {
-			if value, ok := strings.CutPrefix(field, "sulla.data="); ok && regexp.MustCompile(`^vd[a-z]$`).MatchString(value) {
-				name = value
-			}
-		}
-	}
-	path := "/dev/" + name
-	for i := 0; i < 100; i++ {
-		if _, err := os.Stat(path); err == nil {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return path
-}
-
-// diskHeadIsZero reports whether the first MiB of the device is all zeros.
-func diskHeadIsZero(device string) bool {
-	f, err := os.Open(device)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	buf := make([]byte, 1<<20)
-	if _, err := io.ReadFull(f, buf); err != nil {
-		return false
-	}
-	for _, b := range buf {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func prepareDataDisk() {
-	disk := dataDiskPath()
-	if _, err := os.Stat(disk); err != nil {
-		return
-	}
-	// Format only a provably blank disk. A failed probe (missing binary, I/O
-	// error) must never be read as "empty": that would wipe the Docker store.
-	out, err := exec.Command("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", disk).Output()
-	fsType := strings.TrimSpace(string(out))
-	probeFoundNothing := false
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
-		probeFoundNothing = true
-	}
-	switch {
-	case err == nil && fsType == "ext4":
-	case probeFoundNothing && diskHeadIsZero(disk):
-		if err := exec.Command("/sbin/mkfs.ext4", "-F", "-L", "sulla-data", disk).Run(); err != nil {
-			log.Printf("data disk format failed: %v", err)
-			return
-		}
-	default:
-		log.Printf("data disk not mounted: type=%q probe error=%v", fsType, err)
-		return
-	}
-	mustMount(disk, "/var/lib/sulla-data", "ext4", syscall.MS_NOATIME, "")
-	for _, d := range []string{"docker", "logs"} {
-		_ = os.MkdirAll(filepath.Join("/var/lib/sulla-data", d), 0755)
-	}
-	_ = os.MkdirAll("/var/lib/docker", 0755)
-	_ = syscall.Mount("/var/lib/sulla-data/docker", "/var/lib/docker", "", syscall.MS_BIND, "")
-}
-
 func openLogger() *log.Logger {
 	var writers []io.Writer
 	if c, err := os.OpenFile("/dev/hvc0", os.O_WRONLY, 0); err == nil {
@@ -271,7 +224,7 @@ func openLogger() *log.Logger {
 	} else {
 		writers = append(writers, os.Stderr)
 	}
-	if f, err := os.OpenFile("/var/lib/sulla-data/logs/sulla-agent.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+	if f, err := os.OpenFile(agentLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
 		writers = append(writers, f)
 	}
 	return log.New(io.MultiWriter(writers...), "", log.LstdFlags|log.Lmicroseconds)
@@ -279,6 +232,10 @@ func openLogger() *log.Logger {
 
 func configureNetwork(l *log.Logger) {
 	_ = exec.Command("/sbin/ip", "link", "set", "lo", "up").Run()
+	if kernelArg("sulla.network") == "off" {
+		l.Printf("network disabled by sulla.network=off")
+		return
+	}
 	if err := exec.Command("/sbin/ip", "link", "set", "eth0", "up").Run(); err != nil {
 		l.Printf("eth0: %v", err)
 		return
@@ -492,6 +449,7 @@ func (a *agent) control(c net.Conn) {
 		var req struct {
 			ID     int64  `json:"id"`
 			Method string `json:"method"`
+			UnixMS int64  `json:"unixMs"`
 		}
 		if readFrame(r, &req) != nil {
 			return
@@ -499,6 +457,25 @@ func (a *agent) control(c net.Conn) {
 		switch req.Method {
 		case "status":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": a.status()})
+		case "set-time":
+			// The guest has no clock of its own: the host sets it after a
+			// restore from a saved state, and periodically against drift.
+			if req.UnixMS <= 0 {
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "invalid_time", "message": "unixMs is required"}})
+				continue
+			}
+			tv := syscall.NsecToTimeval(req.UnixMS * int64(time.Millisecond))
+			if err := syscall.Settimeofday(&tv); err != nil {
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "set_time_failed", "message": err.Error()}})
+				continue
+			}
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
+		case "prepare-suspend":
+			// Clean page cache is the bulk of a saved state; dropping it first
+			// makes saving and restoring proportionally faster.
+			syscall.Sync()
+			_ = os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0)
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 		case "shutdown":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 			go a.shutdown()
@@ -577,6 +554,28 @@ func proxyDocker(host net.Conn) {
 	<-done
 }
 
+// stopUnit sends SIGTERM to a supervised unit and waits for it to exit.
+func (a *agent) stopUnit(name string, timeout time.Duration) {
+	a.unitsMu.Lock()
+	cmd := a.units[name]
+	a.unitsMu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		a.unitsMu.Lock()
+		_, running := a.units[name]
+		a.unitsMu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	a.log.Printf("%s did not stop within %s", name, timeout)
+}
+
 func (a *agent) shutdown() {
 	a.unitsMu.Lock()
 	if a.shutting {
@@ -586,18 +585,14 @@ func (a *agent) shutdown() {
 	a.shutting = true
 	a.unitsMu.Unlock()
 	a.emit("shutting-down", "", "", "")
-	a.unitsMu.Lock()
-	for _, cmd := range a.units {
-		if cmd.Process != nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		}
-	}
-	a.unitsMu.Unlock()
-	time.Sleep(2 * time.Second)
+	// dockerd stops containers before it exits, and those may be databases on
+	// the data disk; containerd must outlive it. Cancelling the context
+	// SIGKILLs whatever is still running, so it comes last.
+	a.stopUnit("dockerd", 45*time.Second)
+	a.stopUnit("containerd", 10*time.Second)
 	a.cancel()
 	syscall.Sync()
-	_ = syscall.Unmount("/var/lib/docker", 0)
-	_ = syscall.Unmount("/var/lib/sulla-data", 0)
+	unmountDataDisk()
 	if os.Getpid() == 1 {
 		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 	}

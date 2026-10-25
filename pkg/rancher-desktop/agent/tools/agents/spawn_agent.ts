@@ -38,6 +38,8 @@ import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 
+import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
+
 import type { AgentJobResult, AgentJobTask, AgentJobVisibility } from './jobRegistry';
 import type { RoutableAgent } from '../../services/ChatAgentRouting';
 
@@ -488,7 +490,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (!active.includes(threadId)) active.push(threadId);
         }
 
-        const runLocation = String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
+        const runLocation = effectiveAgentRunLocation(String(subState.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION));
         if (runLocation === 'container') {
           const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
           const provider = String(subState.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
