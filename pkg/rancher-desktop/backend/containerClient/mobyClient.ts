@@ -65,19 +65,26 @@ export class MobyClient implements ContainerEngineClient {
   }
 
   async waitForReady(): Promise<void> {
+    let successCount = 0;
     let failureCount = 0;
     let lastOutput = { stdout: '', stderr: '' };
     const startTime = Date.now();
 
-    // A successful API call proves the daemon is accepting requests. Service
-    // health is a separate readiness stream and must not debounce Docker itself.
+    // Two consecutive successes (not three) filter out a daemon that answers
+    // once while still restarting. Service health is a separate readiness
+    // stream and must not debounce Docker itself.
     for (;;) {
       try {
         await this.runClient(['system', 'info'], 'pipe');
+        if (++successCount < 2) {
+          await util.promisify(setTimeout)(250);
+          continue;
+        }
         console.log(`[startup-phase] ${ new Date().toISOString() } phase=docker-api-probe elapsedMs=${ Date.now() - startTime } failures=${ failureCount }`);
 
         return;
       } catch (ex) {
+        successCount = 0;
         failureCount++;
         if (failureCount > 10 && ex && typeof ex === 'object') {
           const output = { stdout: '', stderr: '' };

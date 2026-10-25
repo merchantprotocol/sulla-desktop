@@ -3091,22 +3091,19 @@ start_pre() {
         }
 
         t = Date.now();
-        const deferredToolSetup = async() => {
-          const results = await Promise.allSettled([
-            this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
-            this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
-            this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
-          ]);
-
-          results.forEach((result, index) => {
-            if (result.status === 'rejected') {
-              const names = ['Buildkit', 'image scanner', 'credential helper'];
-
-              console.warn(`[startup-phase] ${ new Date().toISOString() } phase=deferred-build-tools component=${ names[index] } status=degraded`, result.reason);
-            }
-          });
+        // The scanner is optional; everything a build or pull needs (Buildkit,
+        // credential helper) stays in the boot tasks below so the first
+        // `docker build`/`docker pull` after Docker-ready cannot race it.
+        const deferredScannerSetup = async() => {
+          try {
+            await this.progressTracker.action('Installing image scanner', 50, this.installTrivy());
+          } catch (error) {
+            console.warn(`[startup-phase] ${ new Date().toISOString() } phase=deferred-scanner status=degraded`, error);
+          }
         };
         const tasks = [
+          this.progressTracker.action('Installing Buildkit', 50, this.writeBuildkitScripts()),
+          this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
           // Chained, not parallel: both slow paths run `npm install -g` into
           // the same /mnt/data/npm-global prefix, and concurrent global
@@ -3198,15 +3195,14 @@ start_pre() {
           // unavailable. Failures are logged and retried by the existing
           // managed-service reconciliation path.
           await this.setState(State.DISABLED);
-          managedServicesReady = true;
           console.log(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=starting-after-docker-ready`);
           mainEvents.emit('first-run-backend-booted');
 
           const backgroundStartup = (async() => {
             const toolsStartedAt = Date.now();
 
-            await deferredToolSetup();
-            logStartupPhase('deferred-build-tools', toolsStartedAt, 'status=ready');
+            await deferredScannerSetup();
+            logStartupPhase('deferred-scanner', toolsStartedAt, 'status=ready');
             if (this.#hostPreparationDeferred) {
               this.#hostPreparationDeferred = false;
               const hostStartedAt = Date.now();
@@ -3216,8 +3212,31 @@ start_pre() {
                 .catch(error => console.warn(
                   `[startup-phase] ${ new Date().toISOString() } phase=deferred-host-revalidation status=degraded`, error));
             }
-            await this.reconcileManagedServices(managedServicesGeneration, config);
+            // Transient failures (Compose pull, credentials not yet available)
+            // are retried; a persistent one must surface as ERROR instead of
+            // leaving the UI showing a healthy backend with no services.
+            const retryDelaysMs = [5_000, 15_000, 30_000];
+
+            for (let attempt = 0; ; attempt++) {
+              try {
+                await this.reconcileManagedServices(managedServicesGeneration, config);
+                break;
+              } catch (error) {
+                if (error instanceof ManagedServicesReconciliationCancelled ||
+                    managedServicesGeneration !== this.#managedServicesGeneration) {
+                  throw error;
+                }
+                if (attempt >= retryDelaysMs.length) {
+                  console.error('[startup-phase] phase=sulla-services status=failed after retries', error);
+                  await this.setState(State.ERROR);
+                  throw error;
+                }
+                console.warn(`[startup-phase] ${ new Date().toISOString() } phase=sulla-services status=retrying attempt=${ attempt + 1 }`, error);
+                await new Promise(resolve => setTimeout(resolve, retryDelaysMs[attempt]));
+              }
+            }
             logStartupPhase('sulla-services', dockerReadyAt, 'status=ready');
+            await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
           })();
 
           void backgroundStartup.catch(error => {
@@ -3229,6 +3248,8 @@ start_pre() {
 
           return;
         }
+
+        void deferredScannerSetup();
 
         // Publish backend readiness before waiting for first-install credentials;
         // the wizard needs the running VM in order to complete that prerequisite.
