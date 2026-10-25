@@ -23,7 +23,8 @@ import type { SharesService } from '../shares.js';
 import type { Store } from '../store.js';
 import type pg from 'pg';
 
-const POLL_INTERVAL_MS = 15_000;
+// Someone is waiting on their phone or in a browser for this answer.
+const POLL_INTERVAL_MS = 4_000;
 const MAX_REQUESTS_PER_TICK = 20;
 export const CONTENT_REQUEST_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -115,7 +116,8 @@ export class DesktopRequestSyncService {
     const fileId = await this.eligibleFile(request.catalogId);
     const created = await this.shares.create(
       { user: this.config.userId, device: this.config.deviceId },
-      { fileId, accessMode: request.accessMode === 'download' ? 'download' : 'view' },
+      // Cloud only attaches, and the relay only serves, a link stamped with this Desktop's Cloud device id.
+      { fileId, accessMode: request.accessMode === 'download' ? 'download' : 'view', deviceId: this.cloudDeviceId },
     );
     const linkId = (created as { id?: string }).id;
     if (!linkId) throw new RequestRefused('Sulla Cloud did not confirm the new link');
