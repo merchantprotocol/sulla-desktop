@@ -23,7 +23,7 @@ import K8sFactory from '@pkg/backend/factory';
 import { getImageProcessor } from '@pkg/backend/images/imageFactory';
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
 import * as K8s from '@pkg/backend/k8s';
-import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
+import { isSullaRuntimeActive, suspendSullaRuntimeOnNextStop } from '@pkg/backend/sullaRuntime/state';
 import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
@@ -1231,8 +1231,9 @@ Electron.app.on('before-quit', async(event) => {
   // Stop all running Docker containers with a 30-second grace period BEFORE
   // shutting down the container engine.  This gives databases (MySQL, Postgres)
   // time to flush InnoDB/WAL buffers instead of being SIGKILL'd when the
-  // Docker daemon or VM is torn down.
-  if (!isRestarting) {
+  // Docker daemon or VM is torn down. The Sulla runtime saves the running VM
+  // instead, and its guest stops containers itself when it has to shut down.
+  if (!isRestarting && !isSullaRuntimeActive()) {
     await withTimeout('docker-containers-stop', 45_000, (async() => {
       try {
         const ids = execFileSync('docker', ['ps', '-q'], { timeout: 5_000 }).toString().trim();
@@ -1255,10 +1256,12 @@ Electron.app.on('before-quit', async(event) => {
   try {
     await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
 
-    // The Sulla runtime is a child of this process, so a restart stops it too.
+    // The Sulla runtime is a child of this process, so a restart stops it too;
+    // quitting saves its state so the next launch resumes it.
     if (isRestarting && !isSullaRuntimeActive()) {
       sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
     } else {
+      if (isSullaRuntimeActive()) suspendSullaRuntimeOnNextStop();
       await withTimeout('k8smanager.stop', 60_000, k8smanager?.stop() ?? Promise.resolve());
     }
 

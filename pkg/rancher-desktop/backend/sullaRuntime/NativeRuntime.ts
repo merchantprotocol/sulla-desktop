@@ -1,5 +1,7 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import readline from 'readline';
 
 import { SullaRuntimeArtifacts, sullaRuntimeDirectory, sullaRuntimeSockets } from './artifacts';
@@ -11,6 +13,8 @@ const console = Logging.lima;
 
 const DEFAULT_READY_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 70_000;
+// Darwin 23 is macOS 14, the first release that can save and restore a VM.
+const SUSPEND_MIN_DARWIN_MAJOR = 23;
 // The host accepts only sulla.<name>=<value> with this value alphabet.
 const KERNEL_ARG_VALUE = /^[A-Za-z0-9._-]+$/;
 
@@ -29,7 +33,7 @@ export interface SullaRuntimeStartOptions {
   /** From guestUserFor(); the guest creates this account like Lima did. */
   guestUser?:      { name: string; uid: number };
   readyTimeoutMs?: number;
-  /** Boot milestones, in milliseconds since spawn: hello, docker-ready and agent events. */
+  /** Boot milestones, in milliseconds since spawn: hello, restored, docker-ready and agent events. */
   onMilestone?:    (name: string, elapsedMs: number) => void;
   /** The VM stopped without Desktop asking it to. */
   onUnexpectedExit?: (reason: string) => void;
@@ -59,7 +63,11 @@ export class NativeRuntime {
   #child: ChildProcess | undefined;
   #exited: Promise<void> | undefined;
   #stopping = false;
-  #killOnExit = () => this.#child?.kill('SIGKILL');
+  // Last resort if Desktop exits without stopping the VM. A stop already in
+  // progress is left to finish so the guest can unmount its disk.
+  #killOnExit = () => {
+    if (!this.#stopping) this.#child?.kill('SIGKILL');
+  };
 
   constructor(private readonly artifacts: SullaRuntimeArtifacts) {}
 
@@ -67,7 +75,11 @@ export class NativeRuntime {
     return !!this.#child?.pid && this.#child.exitCode === null && this.#child.signalCode === null;
   }
 
-  /** Spawn the VM and resolve at docker-ready; reject (after stopping it) on exit, error or timeout. */
+  /**
+   * Spawn the VM and resolve once Docker is up: at docker-ready after a cold
+   * boot, or at restored when the host resumed the state saved at the last
+   * quit. Rejects (after stopping it) on exit, error or timeout.
+   */
   async start(options: SullaRuntimeStartOptions): Promise<void> {
     await this.stopOrphan();
     await fs.promises.mkdir(sullaRuntimeDirectory(), { recursive: true, mode: 0o700 });
@@ -77,6 +89,8 @@ export class NativeRuntime {
       '--kernel', this.artifacts.kernel,
       '--initrd', this.artifacts.initrd,
       '--data-disk', options.dataDisk,
+      // Restored instead of cold-booted when it matches this configuration.
+      '--state', path.join(sullaRuntimeDirectory(), 'vm.state'),
       '--cpus', String(Math.max(1, Math.round(options.cpus))),
       '--memory-mib', String(Math.max(512, Math.round(options.memoryMiB))),
     ];
@@ -108,7 +122,7 @@ export class NativeRuntime {
 
         if (!name) return;
         options.onMilestone?.(name, Date.now() - spawnedAt);
-        if (kind === 'docker-ready') {
+        if (kind === 'docker-ready' || kind === 'restored') {
           dockerReady = true;
           resolve();
         }
@@ -132,8 +146,12 @@ export class NativeRuntime {
     }
   }
 
-  /** Ask the guest to shut down cleanly, then force the process down after 70 s. */
-  async stop(): Promise<void> {
+  /**
+   * Ask the guest to shut down cleanly, then force the process down after
+   * 70 s. With `suspend` (app quit) the host saves the VM state for the next
+   * start instead; when it can't (macOS before 14, or an error) this stops.
+   */
+  async stop(options: { suspend?: boolean } = {}): Promise<void> {
     const child = this.#child;
 
     if (!child || !this.running) {
@@ -142,11 +160,13 @@ export class NativeRuntime {
       return;
     }
     this.#stopping = true;
-    try {
-      await spawnFile(this.artifacts.binary, ['stop'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (error) {
-      console.warn('[sulla-runtime] stop request failed; terminating the runtime process:', error);
-      child.kill('SIGTERM');
+    if (!options.suspend || !await this.requestSuspend()) {
+      try {
+        await spawnFile(this.artifacts.binary, ['stop'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (error) {
+        console.warn('[sulla-runtime] stop request failed; terminating the runtime process:', error);
+        child.kill('SIGTERM');
+      }
     }
 
     let timer: NodeJS.Timeout | undefined;
@@ -164,6 +184,28 @@ export class NativeRuntime {
       await this.#exited;
     }
     this.#release();
+  }
+
+  /** True when the host saved the VM state and is stopping the VM. */
+  protected async requestSuspend(): Promise<boolean> {
+    if (parseInt(os.release(), 10) < SUSPEND_MIN_DARWIN_MAJOR) {
+      return false;
+    }
+    try {
+      const { stdout } = await spawnFile(this.artifacts.binary, ['suspend'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const reply = JSON.parse(stdout);
+
+      if (reply.ok) {
+        console.log('[sulla-runtime] saved the VM state; the next start resumes it');
+
+        return true;
+      }
+      console.warn(`[sulla-runtime] suspend failed (${ reply.error }); shutting the guest down instead`);
+    } catch (error) {
+      console.warn('[sulla-runtime] suspend failed; shutting the guest down instead:', error);
+    }
+
+    return false;
   }
 
   /** The host's own status line, or undefined when no runtime answers. */

@@ -11,6 +11,7 @@ export interface SullaRuntimeGuestUser {
 
 let active = false;
 let guestUser: SullaRuntimeGuestUser | undefined;
+let suspendOnNextStop = false;
 
 export function setSullaRuntimeActive(value: boolean, user?: SullaRuntimeGuestUser): void {
   active = value;
@@ -24,6 +25,23 @@ export function isSullaRuntimeActive(): boolean {
 /** The guest account the runtime created from sulla.user/sulla.uid, when it did. */
 export function sullaRuntimeGuestUser(): SullaRuntimeGuestUser | undefined {
   return guestUser;
+}
+
+/**
+ * App quit: the next runtime stop saves the VM state so the next launch
+ * resumes it. Stops for settings changes and restarts shut the guest down.
+ */
+export function suspendSullaRuntimeOnNextStop(): void {
+  suspendOnNextStop = true;
+}
+
+/** Whether the stop in progress should suspend; clears the request. */
+export function takeSullaRuntimeSuspendRequest(): boolean {
+  const requested = suspendOnNextStop;
+
+  suspendOnNextStop = false;
+
+  return requested;
 }
 
 export class SullaRuntimeUnsupportedError extends Error {

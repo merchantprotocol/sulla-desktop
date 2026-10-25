@@ -46,7 +46,9 @@ import { bootSullaRuntimeOrFallBack, planSullaRuntimeBoot } from './sullaRuntime
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
-import { assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaRuntimeActive } from './sullaRuntime/state';
+import {
+  assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaRuntimeActive, takeSullaRuntimeSuspendRequest,
+} from './sullaRuntime/state';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
@@ -3470,7 +3472,7 @@ start_pre() {
     });
 
     if (!result.booted) return false;
-    await this.finishSullaRuntimeBoot(generation, backendStartTotal, shares);
+    await this.finishSullaRuntimeBoot(config, generation, backendStartTotal, shares);
 
     return true;
   }
@@ -3485,6 +3487,7 @@ start_pre() {
   }
 
   protected async startSullaRuntimeThroughDockerReady(config: BackendSettings, shares: SullaRuntimeShare[]): Promise<void> {
+    const preparedAt = Date.now();
     const artifacts = await findSullaRuntimeArtifacts();
 
     // `this.status` still asks the real limactl here. The runtime takes over
@@ -3496,12 +3499,18 @@ start_pre() {
     const dataDisk = await ensureSullaRuntimeDataDisk(async() => (await this.status)?.status === 'Running');
 
     console.log(`[sulla-runtime] data disk ${ dataDisk.path } (${ dataDisk.source })`);
+    // A share whose folder is missing fails the VM configuration.
+    for (const share of shares.filter(share => !share.readOnly)) {
+      await fs.promises.mkdir(share.hostPath, { recursive: true });
+    }
     const shim = await ensureLimactlShim(artifacts.binary);
     const { username, uid } = os.userInfo();
     const guestUser = guestUserFor(username, uid);
 
     if (!guestUser) console.warn('[sulla-runtime] the login name cannot be passed to the guest; guest paths stay root-owned');
     const runtime = this.#sullaRuntime = new NativeRuntime(artifacts);
+
+    console.log(`[startup-perf] sulla-runtime artifacts + data disk (before spawn): ${ Date.now() - preparedAt }ms`);
     const spawnedAt = Date.now();
 
     await runtime.start({
@@ -3516,7 +3525,7 @@ start_pre() {
         void this.stopSullaRuntime().finally(() => this.setState(State.ERROR));
       },
     });
-    console.log(`[startup-perf] sulla-runtime spawn -> docker-ready: ${ Date.now() - spawnedAt }ms`);
+    console.log(`[startup-perf] sulla-runtime spawn -> docker-ready (cold boot or restore): ${ Date.now() - spawnedAt }ms`);
 
     // Every `paths.limactl` / `LimaBackend.limactl` caller now reaches the runtime.
     this.#limaLimactl ??= paths.limactl;
@@ -3531,7 +3540,9 @@ start_pre() {
    * buildkitd, Trivy, socket_vmnet) needs tools the runtime guest does not
    * have and is not needed by the managed services.
    */
-  protected async finishSullaRuntimeBoot(generation: number, backendStartTotal: number, shares: SullaRuntimeShare[]): Promise<void> {
+  protected async finishSullaRuntimeBoot(
+    config: BackendSettings, generation: number, backendStartTotal: number, shares: SullaRuntimeShare[],
+  ): Promise<void> {
     let t = Date.now();
 
     await this.mountSullaRuntimeShares(shares);
@@ -3554,7 +3565,7 @@ start_pre() {
     mainEvents.emit('first-run-backend-booted');
     t = Date.now();
     void (async() => {
-      await this.reconcileManagedServicesWithRetries(generation, this.cfg!);
+      await this.reconcileManagedServicesWithRetries(generation, config);
       console.log(`[startup-perf] sulla-runtime managed services ready: ${ Date.now() - t }ms`);
       logStartupPhase('sulla-services', t, 'status=ready runtime=sulla');
       await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
@@ -3591,7 +3602,7 @@ start_pre() {
     setSullaRuntimeActive(false);
     this.#containerEngineClient = undefined;
     try {
-      await runtime?.stop();
+      await runtime?.stop({ suspend: takeSullaRuntimeSuspendRequest() });
     } finally {
       if (wasActive) await dockerDirManager.clearDockerContext();
     }
