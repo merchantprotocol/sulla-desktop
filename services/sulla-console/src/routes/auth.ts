@@ -60,8 +60,11 @@ export function registerAuthRoutes(router: Router, { db, clients }: RouteContext
   }));
 
   router.post('/auth/logout', route(async(request, response) => {
-    await clients.accounts.request('/v1/web/logout', webInit(request, 'POST', {}));
-    response.status(204).end();
+    const result = await clients.accounts.request<{ logoutUrl?: string }>(
+      '/v1/web/logout',
+      webInit(request, 'POST', {}),
+    );
+    response.json(result);
   }));
 
   router.get('/auth/sessions', route(async(request, response) => {

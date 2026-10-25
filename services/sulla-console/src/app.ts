@@ -10,7 +10,7 @@ import type { UpstreamClients } from './clients/index.js';
 import type { ServerLicenseManager } from './license.js';
 import { consoleError, createRouteRegistry } from './routes.js';
 
-const CONTENT_SECURITY_POLICY = [
+const API_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "connect-src 'self'",
   "frame-src 'self'",
@@ -23,6 +23,20 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'none'",
 ].join('; ');
 
+const CONSOLE_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join('; ');
+
 export function createApp(
   db: Database,
   config: ConsoleConfig,
@@ -32,10 +46,12 @@ export function createApp(
   const app = express();
   app.disable('x-powered-by');
   if (config.trustedProxy) app.set('trust proxy', 1);
-  app.use((_request, response, next) => {
+  app.use((request, response, next) => {
     response.set({
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+      'Content-Security-Policy': request.path === '/console' || request.path.startsWith('/console/')
+        ? CONSOLE_CONTENT_SECURITY_POLICY
+        : API_CONTENT_SECURITY_POLICY,
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'SAMEORIGIN',
