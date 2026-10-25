@@ -112,7 +112,10 @@ func main() {
 		a.log.Printf("modprobe %s", e)
 	}
 	_ = os.WriteFile("/proc/sys/kernel/hostname", []byte("sulla-runtime\n"), 0644)
-	go configureNetwork(a.log)
+	// Before the daemons start: dockerd reads resolv.conf at startup and only
+	// re-checks it every few seconds, so an early image pull would otherwise
+	// fall back to a resolver on localhost.
+	configureNetwork(a.log)
 	go a.controlServer()
 	go a.dockerProxy()
 	go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
@@ -283,6 +286,34 @@ func configureNetwork(l *log.Logger) {
 	if err := exec.Command("/sbin/udhcpc", "-q", "-n", "-i", "eth0").Run(); err != nil {
 		l.Printf("dhcp: %v", err)
 	}
+	ensureResolver(l)
+	l.Printf("network ready uptime_ms=%d", uptime())
+}
+
+// ensureResolver makes sure the guest has a DNS server. The image ships no
+// resolv.conf (a copied one would point at the build host's DNS), so the
+// server comes from the DHCP lease. If the lease had none, use the default
+// gateway, which is the DNS forwarder on Virtualization.framework's NAT.
+func ensureResolver(l *log.Logger) {
+	if b, err := os.ReadFile("/etc/resolv.conf"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "nameserver ") {
+				l.Printf("dns: %s (from dhcp)", strings.TrimSpace(line))
+				return
+			}
+		}
+	}
+	out, err := exec.Command("/sbin/ip", "-4", "route", "show", "default").Output()
+	fields := strings.Fields(string(out))
+	if err != nil || len(fields) < 3 || fields[1] != "via" || net.ParseIP(fields[2]) == nil {
+		l.Printf("dns: no nameserver from dhcp and no default gateway")
+		return
+	}
+	if err := os.WriteFile("/etc/resolv.conf", []byte("nameserver "+fields[2]+"\n"), 0644); err != nil {
+		l.Printf("dns: write resolv.conf: %v", err)
+		return
+	}
+	l.Printf("dns: nameserver %s (default gateway)", fields[2])
 }
 
 func (a *agent) reapAdopted() {
