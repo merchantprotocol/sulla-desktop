@@ -873,6 +873,8 @@ onBeforeUnmount(() => {
 .nx-segments button {
   font: inherit;
   cursor: pointer;
+  // The app's global .btn/button rule sets a 40px min-height.
+  min-height: 0;
 }
 .nx-button {
   border: 1px solid var(--nx-line);
