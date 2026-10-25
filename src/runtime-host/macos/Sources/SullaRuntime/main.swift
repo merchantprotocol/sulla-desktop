@@ -786,10 +786,6 @@ private func runClientCommand(_ command: String) throws {
     if count > 0 { print(String(decoding: buffer.prefix(count), as: UTF8.self), terminator: "") }
 }
 
-if URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent == "limactl" {
-    exit(runLimaShim(socketPath: guestSocketURL.path, controlPath: controlSocketURL.path, Array(CommandLine.arguments.dropFirst())))
-}
-
 // A client closing a docker or forwarded connection mid-write must fail that
 // write with EPIPE, not kill the process and the VM with it.
 signal(SIGPIPE, SIG_IGN)
