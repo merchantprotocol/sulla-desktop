@@ -1876,7 +1876,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (prepared.item) await this.audit(input, prepared.item, false, null);
       return result;
     } catch (error) {
-      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code);
+      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code === 'invalid_upstream_response' ? `${ error.code }: ${ error.message }` : error.code);
       throw error;
     }
   }
@@ -2059,7 +2059,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         prepared.maxRequestBytes,
       );
       if (result.status < 200 || result.status >= 300) {
-        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
+        // Status and the standard OAuth error code (e.g. invalid_grant) only, so the audit says why without copying response text.
+        const oauthError = (result.body as { error?: unknown } | null)?.error;
+        const code = typeof oauthError === 'string' && /^[a-z_]{1,64}$/.test(oauthError) ? ` ${ oauthError }` : '';
+        throw new LocalVaultError('invalid_upstream_response', 502, `OAuth upstream rejected the request (HTTP ${ result.status }${ code })`);
       }
       return await this.runSecurityOperation(() => this.runTransaction(async(client) => {
         this.requireGeneration(prepared.generation);
