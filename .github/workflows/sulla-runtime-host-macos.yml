@@ -31,7 +31,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build release binary
-        run: swift build -c release --arch "${{ matrix.architecture }}"
+        shell: bash
+        run: |
+          set +e
+          output=$(swift build -c release --arch "${{ matrix.architecture }}" 2>&1)
+          status=$?
+          printf '%s\n' "$output"
+          if (( status != 0 )); then
+            diagnostic=$(tail -n 80 <<<"$output" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=Swift build failed::$diagnostic"
+            exit "$status"
+          fi
       - name: Sign with Virtualization entitlement
         run: codesign --force --sign - --entitlements sulla-runtime.entitlements ".build/${{ matrix.architecture }}-apple-macosx/release/sulla-runtime"
       - name: Verify signature
