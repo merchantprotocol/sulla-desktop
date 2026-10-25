@@ -113,8 +113,23 @@ export async function initiateWindowContext(): Promise<void> {
 
     // Renderer settings share the main-process backends. Wait for the lifecycle
     // readiness signal instead of racing cold Redis with a short retry budget.
-    await ipcRenderer.invoke('sulla-settings:wait-for-backends');
-    await SullaSettingsModel.bootstrap();
+    // Every window awaits this before mounting, so only hold the mount for a
+    // short bound; on a cold boot finish bootstrapping in the background so
+    // the loading overlay can render while Redis/Postgres come up.
+    const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
+    const readyInTime = await Promise.race([
+      backendsReady.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 8_000)),
+    ]);
+
+    if (readyInTime) {
+      await SullaSettingsModel.bootstrap();
+    } else {
+      console.log('[WindowContext] Settings backends still starting; bootstrapping when ready');
+      backendsReady
+        .then(() => SullaSettingsModel.bootstrap())
+        .catch(error => console.error('[WindowContext] Failed to initialize settings:', error));
+    }
   } catch (error) {
     console.error('[WindowContext] Failed to initialize settings:', error);
   }
