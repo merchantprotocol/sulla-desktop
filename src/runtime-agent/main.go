@@ -142,14 +142,47 @@ func loadKernelModules() {
 	}
 }
 
+// diskHeadIsZero reports whether the first MiB of the device is all zeros.
+func diskHeadIsZero(device string) bool {
+	f, err := os.Open(device)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 1<<20)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return false
+	}
+	for _, b := range buf {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func prepareDataDisk() {
 	if _, err := os.Stat("/dev/vdb"); err != nil {
 		return
 	}
-	if out, err := exec.Command("/sbin/blkid", "-o", "value", "-s", "TYPE", "/dev/vdb").Output(); err != nil || strings.TrimSpace(string(out)) == "" {
-		_ = exec.Command("/sbin/mkfs.ext4", "-F", "-L", "sulla-data", "/dev/vdb").Run()
-	} else if strings.TrimSpace(string(out)) == "ext4" {
-		_ = exec.Command("/sbin/e2label", "/dev/vdb", "sulla-data").Run()
+	// Format only a provably blank disk. A failed probe (missing binary, I/O
+	// error) must never be read as "empty": that would wipe the Docker store.
+	out, err := exec.Command("/sbin/blkid", "-p", "-o", "value", "-s", "TYPE", "/dev/vdb").Output()
+	fsType := strings.TrimSpace(string(out))
+	probeFoundNothing := false
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+		probeFoundNothing = true
+	}
+	switch {
+	case err == nil && fsType == "ext4":
+	case probeFoundNothing && diskHeadIsZero("/dev/vdb"):
+		if err := exec.Command("/sbin/mkfs.ext4", "-F", "-L", "sulla-data", "/dev/vdb").Run(); err != nil {
+			log.Printf("data disk format failed: %v", err)
+			return
+		}
+	default:
+		log.Printf("data disk not mounted: type=%q probe error=%v", fsType, err)
+		return
 	}
 	mustMount("/dev/vdb", "/var/lib/sulla-data", "ext4", syscall.MS_NOATIME, "")
 	for _, d := range []string{"docker", "logs"} {

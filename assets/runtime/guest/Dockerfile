@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -trimpath -ldflags='-s 
 FROM alpine:${ALPINE_VERSION} AS image
 ARG TARGETARCH
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx \
-      e2fsprogs e2fsprogs-extra iproute2 iptables nftables runc tini linux-lts cpio gzip \
+      blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables runc tini linux-lts cpio gzip \
     && mkdir -p /image/rootfs/{dev,proc,sys,run,tmp,var/lib/docker,var/lib/sulla-data} \
     && for dir in bin sbin lib usr etc; do cp -a "/$dir" /image/rootfs/; done \
     && rm -rf /image/rootfs/etc/apk /image/rootfs/lib/firmware /image/rootfs/sbin/apk \
