@@ -181,29 +181,6 @@
           placeholder="Search files, folders, transcripts and screenshot text"
         ><kbd>⌘K</kbd></label>
         <div v-if="section !== 'sharedByMe'" class="acts">
-          <button
-            v-if="section === 'files' && !readOnlyArea && dataSource.setCollectionCloudSync"
-            class="btn sm ghost"
-            type="button"
-            :disabled="busy || loading"
-            :title="cloudCatalogSync ? 'Stop listing this collection in the Sulla Cloud web Files screen' : 'List this collection in the Sulla Cloud web Files screen'"
-            @click="toggleCloudCatalogSync"
-          >
-            <span
-              class="bi"
-              v-html="icons.syncOnline"
-            /> {{ cloudCatalogSync ? 'Shown in Sulla Cloud' : 'Show in Sulla Cloud' }}
-          </button>
-          <button
-            v-if="section === 'files' && !readOnlyArea && dataSource.setCloudBackup"
-            class="btn sm ghost"
-            type="button"
-            :disabled="busy || loading"
-            :title="cloudBackupTitle"
-            @click="toggleCloudBackup"
-          >
-            <span class="bi" v-html="icons.syncOnline" /> {{ cloudBackup?.enabled ? 'Backed up to Sulla Cloud' : 'Back up to Sulla Cloud' }}
-          </button>
           <button v-if="dataSource.listCloudCollections && dataSource.restoreCloudCollection" class="btn sm ghost" type="button" :disabled="busy || loading" @click="openCloudRestore">Restore from Sulla Cloud</button>
           <span v-if="cloudBackup?.enabled" class="cloud-backup-status" :title="cloudBackupTitle">{{ cloudBackupLine }}</span>
           <button
@@ -1060,7 +1037,6 @@ const moreExpanded = ref(false);
 const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
 const trackedCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea && collection.id !== (snapshot.value?.availableCollections ?? []).find(item=>!item.systemArea)?.id));
 const readOnlyArea = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
-const cloudCatalogSync = computed(() => Boolean(snapshot.value?.collection.cloudCatalogSync));
 const cloudBackup = computed(() => snapshot.value?.collection.cloudBackup);
 const cloudBackupTitle = computed(() => { const backup=cloudBackup.value; if(!backup)return 'Encrypted Files backup is unavailable'; if(backup.status==='needs-vault')return 'Turn on Passwords sync first. Passwords holds the encryption keys for Files backup.'; return backup.lastError || `Encrypted with ${backup.cryptoModule.provider} ${backup.cryptoModule.version}${backup.cryptoModule.fips?' (FIPS mode)':''}` });
 const cloudBackupLine = computed(() => { const backup=cloudBackup.value; if(!backup)return ''; if(backup.status==='needs-vault')return 'Needs Passwords sync'; const pending=backup.pendingBytes?`${formatBytes(backup.pendingBytes)} pending`:'Nothing pending'; const conflicts=backup.conflicts?` · ${backup.conflicts} conflict${backup.conflicts===1?'':'s'}`:''; const last=backup.lastSyncAt?` · Last backup ${timeAgo(backup.lastSyncAt)}`:''; return `${pending}${conflicts}${last} · ${backup.cryptoModule.provider}` });
@@ -1328,16 +1304,6 @@ async function onCollectionDrop(collectionId:string,event:DragEvent) {
 }
 async function upload() { if (!props.dataSource.capabilities.upload || section.value !== 'files') return; const destination = currentPath.value; await runMutation(async() => { await props.dataSource.chooseUpload(destination) }) }
 async function reindex(entry:FilesItem) { await runMutation(() => props.dataSource.reindex(entry.id)) }
-async function toggleCloudCatalogSync() {
-  const collectionId = snapshot.value?.collection.id;
-  if (!collectionId || !props.dataSource.setCollectionCloudSync) return;
-  await runMutation(() => props.dataSource.setCollectionCloudSync!(collectionId, !cloudCatalogSync.value));
-}
-async function toggleCloudBackup() {
-  const collectionId=snapshot.value?.collection.id;
-  if(!collectionId||!props.dataSource.setCloudBackup)return;
-  await runMutation(()=>props.dataSource.setCloudBackup!(collectionId,!cloudBackup.value?.enabled));
-}
 async function askName(title:string, label:string, confirm:string, value = '', allowEmpty = false) {
   namePrompt.value?.resolve(null);
   const answer = new Promise<string | null>(resolve => { namePrompt.value = { title, label, confirm, value, allowEmpty, resolve } });

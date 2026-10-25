@@ -7,13 +7,12 @@ import { getCloudPreferences } from '../cloudSettings';
 import { signDeviceMessage } from '../deviceKey';
 import { FilesSyncContainer, FilesSyncClientError, type FilesSyncStatus, type CloudFilesCollection } from './containerClient';
 import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import Logging from '@pkg/utils/logging';
 export { requireHumanFilesSync } from './humanGuard';
 import { requireHumanFilesSync, type FilesSyncCaller } from './humanGuard';
 
 const console=Logging.background;
-const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000, ENROLLED_KEY='cloudSyncFilesEnrolled';
+const IDLE_MS=15_000, MIN_SIGNATURE_MS=1_000, MAX_BACKOFF_MS=5*60_000;
 class FilesSyncV1Impl {
   private timer:ReturnType<typeof setTimeout>|null=null; private running=false; private stopped=true; private backoff=1_000; private lastSignatureAt=0;
   start():void { this.stopped=false; this.schedule(0) }
@@ -23,8 +22,7 @@ class FilesSyncV1Impl {
   async setEnabled(collectionId:string,enabled:boolean,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.enable(collectionId,enabled); if(enabled)await this.relayEscrow().catch(error=>{ const code=error instanceof FilesSyncClientError?error.code:''; if(code!=='vault_locked'&&code!=='no_cloud_vault')throw error }); this.wake(); return this.status() }
   async deleteCloudCopy(collectionId:string,caller:FilesSyncCaller):Promise<FilesSyncStatus> { requireHumanFilesSync(caller); await FilesSyncContainer.deleteCloudCopy(collectionId); this.wake(); return this.status() }
   // Profile › Files off with "delete the Cloud copy": hide every collection
-  // from Cloud Files, stop and crypto-shred each backup, and forget the
-  // enrolment so switching Files back on enrolls everything again.
+  // from Cloud Files and stop and crypto-shred each backup.
   async deleteAllCloudCopies(caller:FilesSyncCaller):Promise<FilesSyncStatus> {
     requireHumanFilesSync(caller);
     const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null}>>('/v1/collections');
@@ -37,7 +35,6 @@ class FilesSyncV1Impl {
       try { await FilesSyncContainer.deleteCloudCopy(collection.collectionId) }
       catch(error) { if(!(error instanceof FilesSyncClientError)||error.status!==409)throw error }
     }
-    await SullaSettingsModel.set(ENROLLED_KEY,'[]','string');
     await this.drainDeletes();
     return this.status();
   }
@@ -58,18 +55,16 @@ class FilesSyncV1Impl {
     const state=DevicesCloudApi.getState(); if(!state.registered||state.revoked)return null;
     const userId=await getCurrentUserId().catch(()=>''); return userId?{userId,deviceId:await getDesktopDeviceId()}:null;
   }
-  // Profile › Files on means every user collection syncs. Each one is switched
-  // on once; a later per-collection "off" in the Files screen is respected.
-  // System areas (logs, training data, Sulla) never leave the machine.
+  // Profile › Files on means every collection Desktop Files shows is listed
+  // in Cloud Files and backed up, including folders added later. System
+  // areas (logs, training data, Sulla) never leave the machine.
   private async enrollCollections():Promise<void> {
-    const saved=await SullaSettingsModel.get(ENROLLED_KEY,'[]');
-    const done=new Set<string>(Array.isArray(saved)?saved:JSON.parse(String(saved||'[]')));
-    const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null}>>('/v1/collections');
+    const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null;cloud_catalog_sync?:boolean}>>('/v1/collections');
+    const backup=new Map((await this.status()).collections.map(c=>[c.collectionId,c.enabled]));
     for(const collection of collections){
-      if(collection.system_area||done.has(collection.id))continue;
-      await getSullaFilesClient().json(`/v1/collections/${encodeURIComponent(collection.id)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:true})});
-      await FilesSyncContainer.enable(collection.id,true);
-      done.add(collection.id); await SullaSettingsModel.set(ENROLLED_KEY,JSON.stringify([...done]),'string');
+      if(collection.system_area)continue;
+      if(!collection.cloud_catalog_sync)await getSullaFilesClient().json(`/v1/collections/${encodeURIComponent(collection.id)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:true})});
+      if(backup.get(collection.id)===false)await FilesSyncContainer.enable(collection.id,true);
     }
   }
   private async relayEscrow():Promise<void> {
