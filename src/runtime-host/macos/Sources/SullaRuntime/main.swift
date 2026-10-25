@@ -27,6 +27,8 @@ private struct StartOptions {
     let memoryBytes: UInt64
     let kernelArguments: [String]
     let shares: [DirectoryShare]
+    /// Saved machine state from `suspend`, restored instead of a cold boot.
+    let stateFile: URL?
 }
 
 private struct DirectoryShare {
@@ -129,7 +131,8 @@ private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartO
         kernel: URL(fileURLWithPath: kernel), initrd: URL(fileURLWithPath: initrd),
         rootfs: values["--rootfs"].map(URL.init(fileURLWithPath:)),
         dataDisk: URL(fileURLWithPath: dataDisk), cpus: cpus, memoryBytes: memoryBytes,
-        kernelArguments: kernelArguments, shares: shares
+        kernelArguments: kernelArguments, shares: shares,
+        stateFile: values["--state"].map(URL.init(fileURLWithPath:))
     )
 }
 
@@ -226,6 +229,10 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private let loopbackListener = VZVirtioSocketListener()
     private let stopped = DispatchSemaphore(value: 0)
     private var helloSeen = false
+    private var restored = false
+    private var configuration: VZVirtualMachineConfiguration!
+    private let controlLock = NSLock()
+    private var liveControl: Int32 = -1
     private var dockerReady = false
 
     init(options: StartOptions) { self.options = options }
@@ -235,6 +242,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         try ensureSparseDataDisk(at: options.dataDisk)
         let configuration = try makeConfiguration()
         try configuration.validate()
+        self.configuration = configuration
         machine = VZVirtualMachine(configuration: configuration, queue: queue)
         machine.delegate = self
         dockerListener = try makeUnixListener(path: dockerSocketURL.path)
@@ -245,6 +253,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         acceptDockerConnections()
         acceptGuestStreamConnections()
         queue.async { [self] in
+            if self.restoreSavedState() { return }
             machine.start { result in
                 switch result {
                 case .success: self.findSocketDeviceAndConnectControl()
@@ -262,6 +271,15 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                               VZVirtualMachineConfiguration.maximumAllowedCPUCount)
         config.memorySize = min(max(options.memoryBytes, VZVirtualMachineConfiguration.minimumAllowedMemorySize),
                                 VZVirtualMachineConfiguration.maximumAllowedMemorySize)
+        // A saved state restores only into a machine with the same identity.
+        let platform = VZGenericPlatformConfiguration()
+        let identityURL = runtimeDirectory.appendingPathComponent("machine-identifier")
+        if let data = try? Data(contentsOf: identityURL), let identifier = VZGenericMachineIdentifier(dataRepresentation: data) {
+            platform.machineIdentifier = identifier
+        } else {
+            try? platform.machineIdentifier.dataRepresentation.write(to: identityURL)
+        }
+        config.platform = platform
         let loader = VZLinuxBootLoader(kernelURL: options.kernel)
         loader.initialRamdiskURL = options.initrd
         // The agent formats and mounts only the disk named by sulla.data.
@@ -280,6 +298,14 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         for argument in options.kernelArguments { loader.commandLine += " \(argument)" }
         let network = VZVirtioNetworkDeviceConfiguration()
         network.attachment = VZNATNetworkDeviceAttachment()
+        // A random MAC per launch would also make every saved state unrestorable.
+        let macURL = runtimeDirectory.appendingPathComponent("mac-address")
+        if let text = try? String(contentsOf: macURL, encoding: .utf8),
+           let address = VZMACAddress(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            network.macAddress = address
+        } else {
+            try? network.macAddress.string.write(to: macURL, atomically: true, encoding: .utf8)
+        }
         config.networkDevices = [network]
         config.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         var directories: [VZDirectorySharingDeviceConfiguration] = []
@@ -307,6 +333,120 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         return config
     }
 
+    /// A fingerprint of everything the saved state depends on. A state saved
+    /// with other guest files or another machine shape is never restored.
+    private func stateFingerprint() -> String {
+        func stamp(_ url: URL) -> String {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let size = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+            let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+            return "\(url.path):\(size):\(Int64(modified))"
+        }
+        let shares = options.shares.map { "\($0.tag)=\($0.path.path):\($0.readOnly)" }.joined(separator: ",")
+        return [stamp(options.kernel), stamp(options.initrd), options.dataDisk.path, "\(options.cpus)",
+                "\(options.memoryBytes)", shares, options.kernelArguments.joined(separator: " ")].joined(separator: "|")
+    }
+
+    private var stateFingerprintURL: URL? { options.stateFile?.appendingPathExtension("id") }
+
+    /// Restores the saved state when it matches this configuration. Runs on
+    /// the VM queue; returns false to fall through to a cold boot.
+    private func restoreSavedState() -> Bool {
+        guard #available(macOS 14.0, *), let stateFile = options.stateFile, let fingerprintURL = stateFingerprintURL,
+              FileManager.default.fileExists(atPath: stateFile.path) else { return false }
+        let saved = try? String(contentsOf: fingerprintURL, encoding: .utf8)
+        guard saved == stateFingerprint() else {
+            print("state-discarded configuration changed"); fflush(stdout)
+            try? FileManager.default.removeItem(at: stateFile); try? FileManager.default.removeItem(at: fingerprintURL)
+            return false
+        }
+        machine.restoreMachineStateFrom(url: stateFile) { error in
+            // The state is used once: the guest writes the data disk from here
+            // on, so a second restore of the same state would corrupt it.
+            try? FileManager.default.removeItem(at: stateFile); try? FileManager.default.removeItem(at: fingerprintURL)
+            if let error {
+                print("state-restore-failed \(error.localizedDescription)"); fflush(stdout)
+                self.machine.start { result in
+                    switch result {
+                    case .success: self.findSocketDeviceAndConnectControl()
+                    case .failure(let error): fputs("VM start failed: \(error)\n", stderr); self.stopped.signal()
+                    }
+                }
+                return
+            }
+            self.machine.resume { result in
+                if case .failure(let error) = result {
+                    fputs("VM resume failed: \(error)\n", stderr); self.stopped.signal(); return
+                }
+                self.restored = true
+                print("restored \(monotonicMilliseconds(since: self.startedAt))"); fflush(stdout)
+                self.findSocketDeviceAndConnectControl()
+            }
+        }
+        return true
+    }
+
+    /// Asks the guest to drop clean caches, waiting at most five seconds.
+    private func prepareGuestForSuspend() {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [self] in
+            guard let socketDevice else { done.signal(); return }
+            socketDevice.connect(toPort: 1024) { result in
+                guard case .success(let connection) = result else { done.signal(); return }
+                let descriptor = dup(connection.fileDescriptor)
+                self.workers.async {
+                    defer { close(descriptor); done.signal() }
+                    writeAll(descriptor, Data("{\"id\":7,\"method\":\"prepare-suspend\"}\n".utf8))
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    var seen = Data()
+                    while !seen.contains("\"id\":7".data(using: .utf8)!) {
+                        let count = read(descriptor, &buffer, buffer.count)
+                        if count <= 0 { return }
+                        seen.append(contentsOf: buffer[0..<count])
+                    }
+                }
+            }
+        }
+        _ = done.wait(timeout: .now() + 5)
+    }
+
+    /// Pauses the VM, saves its state for the next start and stops it.
+    private func suspend() -> String {
+        guard #available(macOS 14.0, *), let stateFile = options.stateFile, let fingerprintURL = stateFingerprintURL else {
+            return "{\"error\":\"suspend needs macOS 14 and --state\"}"
+        }
+        do {
+            try configuration.validateSaveRestoreSupport()
+        } catch {
+            return "{\"error\":\"save/restore unsupported: \(error.localizedDescription)\"}\n"
+        }
+        prepareGuestForSuspend()
+        let done = DispatchSemaphore(value: 0)
+        var reply = "{\"ok\":true}"
+        queue.async { [self] in
+            guard machine.state == .running else { reply = "{\"error\":\"not running\"}"; done.signal(); return }
+            machine.pause { result in
+                if case .failure(let error) = result {
+                    reply = "{\"error\":\"pause failed: \(error.localizedDescription)\"}"; done.signal(); return
+                }
+                self.machine.saveMachineStateTo(url: stateFile) { error in
+                    if let error {
+                        try? FileManager.default.removeItem(at: stateFile)
+                        reply = "{\"error\":\"save failed: \(error.localizedDescription)\"}"
+                        // Nothing was saved: let the guest shut down cleanly instead.
+                        self.machine.resume { _ in self.sendGuestShutdown() }
+                        done.signal(); return
+                    }
+                    try? self.stateFingerprint().write(to: fingerprintURL, atomically: true, encoding: .utf8)
+                    self.machine.stop { _ in self.stopped.signal() }
+                    done.signal()
+                }
+            }
+        }
+        done.wait()
+        return reply + "\n"
+    }
+
     private func findSocketDeviceAndConnectControl() {
         socketDevice = machine.socketDevices.compactMap { $0 as? VZVirtioSocketDevice }.first
         socketDevice?.setSocketListener(loopbackListener, forPort: hostLoopbackVsockPort)
@@ -319,12 +459,18 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             guard let self else { return }
             if case .success(let connection) = result {
                 let descriptor = dup(connection.fileDescriptor)
-                if descriptor >= 0 { self.readGuestControl(descriptor) }
+                if descriptor >= 0 {
+                    self.controlLock.lock(); self.liveControl = descriptor; self.controlLock.unlock()
+                    self.syncGuestClock(descriptor)
+                    self.readGuestControl(descriptor)
+                }
                 return
             }
-            // The agent listens only after the kernel unpacks the initramfs and
-            // loads the vsock modules, which takes several seconds; retry for 30s.
-            if attempt < 1200 {
+            // The agent listens only after the kernel unpacks the initramfs,
+            // loads the vsock modules and mounts the data disk. A disk that
+            // wasn't shut down cleanly replays its journal first, which can
+            // take a minute, so keep trying for five.
+            if attempt < 12_000 {
                 self.queue.asyncAfter(deadline: .now() + .milliseconds(25)) { self.connectGuestControl(attempt: attempt + 1) }
             } else {
                 if case .failure(let error) = result {
@@ -334,10 +480,28 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         }
     }
 
+    /// Sets the guest clock now and every minute while the control stream is
+    /// open. It matters most after a restore, when the guest's clock is as
+    /// old as the saved state.
+    private func syncGuestClock(_ descriptor: Int32) {
+        // The descriptor number is reused once the stream closes, so only
+        // write while it is still the live control stream.
+        controlLock.lock(); defer { controlLock.unlock() }
+        guard liveControl == descriptor else { return }
+        let unixMs = Int64(Date().timeIntervalSince1970 * 1000)
+        writeAll(descriptor, Data("{\"id\":0,\"method\":\"set-time\",\"unixMs\":\(unixMs)}\n".utf8))
+        workers.asyncAfter(deadline: .now() + 60) { [weak self] in self?.syncGuestClock(descriptor) }
+    }
+
     private func readGuestControl(_ descriptor: Int32) {
         workers.async { [weak self] in
             guard let self else { return }
-            defer { close(descriptor) }
+            defer {
+                self.controlLock.lock()
+                if self.liveControl == descriptor { self.liveControl = -1 }
+                close(descriptor)
+                self.controlLock.unlock()
+            }
             var pending = Data()
             var buffer = [UInt8](repeating: 0, count: 16_384)
             while true {
@@ -393,6 +557,8 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             let running = queue.sync { machine.state == .running }
             let state = running ? (dockerReady ? "docker-ready" : "starting") : "stopped"
             writeAll(descriptor, Data("{\"state\":\"\(state)\",\"hello\":\(helloSeen),\"uptimeMs\":\(monotonicMilliseconds(since: startedAt))}\n".utf8))
+        } else if command == "suspend" {
+            writeAll(descriptor, Data(suspend().utf8))
         } else if command == "stop" {
             writeAll(descriptor, Data("{\"ok\":true}\n".utf8))
             requestShutdown()
@@ -597,6 +763,7 @@ do {
     case "exec": exit(runExecCommand(socketPath: guestSocketURL.path, arguments.dropFirst(2)))
     case "status": try runClientCommand("status")
     case "stop": try runClientCommand("stop")
+    case "suspend": try runClientCommand("suspend")
     default: throw RuntimeError.usage("unknown command: \(arguments[1])")
     }
 } catch {
