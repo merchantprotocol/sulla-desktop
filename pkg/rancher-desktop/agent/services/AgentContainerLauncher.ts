@@ -12,6 +12,8 @@ import {
   createGuestRuntimeDirectory,
   GUEST_AGENT_DOCS_ROOT,
   GUEST_AGENT_WORKSPACES_ROOT,
+  GUEST_CONVERSATIONS_ROOT,
+  ensureGuestRuntimeDirectory,
   getGuestRuntimeIdentity,
   inspectGuestWorkspaceForCleanup,
   removeGuestPathAtomic,
@@ -101,7 +103,10 @@ export interface AgentContainerLifecycle {
   close(): Promise<AgentContainerCleanupReceipt>;
 }
 
-export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
+export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
+  /** Stable key for long-lived chat state. Workspace and provider homes survive container reaping. */
+  persistenceKey?: string;
+};
 
 /** True when `path` can be listed from the Lima guest; a dead FUSE adapter fails ENOTCONN here. */
 async function guestPathUsable(path: string): Promise<boolean> {
@@ -659,9 +664,6 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
-  if (!['claude-code', 'codex'].includes(run.provider)) {
-    throw new Error(`Provider "${ run.provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
-  }
   const image = await ensureAgentImage();
   log.info('[AgentContainer] Image ready');
   await ensureHostRelay(image);
@@ -718,7 +720,18 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
-    workspacePath = checkout ?? createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    const stableKey = run.persistenceKey
+      ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
+      : undefined;
+    const persistentRoot = stableKey
+      ? ensureGuestRuntimeDirectory(GUEST_CONVERSATIONS_ROOT, stableKey)
+      : undefined;
+    workspacePath = checkout ?? (persistentRoot
+      ? ensureGuestRuntimeDirectory(persistentRoot, 'workspace')
+      : createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`));
+    const providerHome = persistentRoot ? ensureGuestRuntimeDirectory(persistentRoot, 'home') : undefined;
+    const claudeHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'claude') : undefined;
+    const codexHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'codex') : undefined;
     const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
     guestRuntimePaths.push(docsPath);
     chownGuestPath(workspacePath, identity);
@@ -731,8 +744,11 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
+      '/mnt/worktrees:/mnt/worktrees:rw',
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
+      ...(claudeHome ? [`${ claudeHome }:/home/sulla/.claude:rw`] : []),
+      ...(codexHome ? [`${ codexHome }:/home/sulla/.codex:rw`] : []),
       ...await sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
@@ -759,7 +775,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       network:     AGENT_NETWORK,
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
-      tmpfs:       {
+      tmpfs:       providerHome ? undefined : {
         '/home/sulla/.claude': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
         '/home/sulla/.codex':  `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
       },

@@ -9,6 +9,7 @@ export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
 export const GUEST_AGENT_WORKSPACES_ROOT = `${ GUEST_RUNTIME_ROOT }/agents`;
 export const GUEST_PROVIDER_FILES_ROOT = `${ GUEST_RUNTIME_ROOT }/provider-transport`;
 export const GUEST_AGENT_DOCS_ROOT = `${ GUEST_RUNTIME_ROOT }/docs`;
+export const GUEST_CONVERSATIONS_ROOT = `${ GUEST_RUNTIME_ROOT }/conversations`;
 
 const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];
 const CAPTURE_LIMIT = 64 * 1024;
@@ -113,6 +114,27 @@ export function createGuestRuntimeDirectory(parent: string, prefix: string): str
     'sulla-guest-mkdir', boundedParent, safePrefix, String(uid), String(gid), GUEST_RUNTIME_ROOT,
   ]);
   return existingGuestPath(created, [boundedParent]);
+}
+
+/** Create or reopen one stable, guest-owned runtime directory. */
+export function ensureGuestRuntimeDirectory(parent: string, name: string): string {
+  const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
+  if (!/^[a-zA-Z0-9_.-]{1,120}$/.test(name)) throw new Error('Invalid stable guest runtime directory name');
+  const { uid, gid } = getGuestRuntimeIdentity();
+  const target = assertGuestPath(path.posix.join(boundedParent, name), [boundedParent]);
+  runGuestSync([
+    'sh', '-c',
+    [
+      'set -eu', 'umask 077',
+      'sudo install -d -m 0700 -o "$3" -g "$4" "$1"',
+      '[ "$(realpath "$1")" = "$1" ]',
+      'sudo install -d -m 0700 -o "$3" -g "$4" "$2"',
+      '[ "$(realpath "$2")" = "$2" ]',
+      '[ "$(stat -c %u:%g "$2")" = "$3:$4" ]',
+    ].join('; '),
+    'sulla-stable-guest-mkdir', boundedParent, target, String(uid), String(gid),
+  ]);
+  return existingGuestPath(target, [boundedParent]);
 }
 
 export function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): void {

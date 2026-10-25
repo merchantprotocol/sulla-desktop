@@ -16,6 +16,11 @@ export interface CommandRunnerOptions {
   limactlPath?:    string;
 }
 
+export function commandExecutionTarget(hasContainerRuntime: boolean, runInLimaShell = false): 'container' | 'vm' | 'host' {
+  if (hasContainerRuntime) return 'container';
+  return runInLimaShell ? 'vm' : 'host';
+}
+
 function quoteShellArg(value: string): string {
   if (/^[A-Za-z0-9_\-./:=@]+$/.test(value)) {
     return value;
@@ -131,7 +136,10 @@ export async function runCommand(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const runtime = currentAgentContainerRuntime();
 
-  if (runtime && !options.runInLimaShell) {
+  // An agent-local runtime is the security boundary. Legacy callers still
+  // say runInLimaShell because that used to mean "not the Electron host";
+  // once a graph is container-bound it must never punch back into the VM.
+  if (commandExecutionTarget(Boolean(runtime), options.runInLimaShell) === 'container') {
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');
@@ -148,7 +156,7 @@ export async function runCommand(
     return result;
   }
 
-  if (options.runInLimaShell) {
+  if (commandExecutionTarget(false, options.runInLimaShell) === 'vm') {
     // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
     // Windows. Fail with a clear message instead of crashing the caller.
     if (process.platform === 'win32') {

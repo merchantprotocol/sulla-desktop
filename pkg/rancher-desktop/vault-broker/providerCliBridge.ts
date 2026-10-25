@@ -24,6 +24,10 @@ const SAFE_REQUEST_HEADERS = new Set([
 const BLOCKED_RESPONSE_HEADERS = new Set([
   'authorization',
   'connection',
+  // Node fetch transparently decompresses the broker response body but keeps
+  // the upstream content-encoding header. Forwarding it makes provider CLIs
+  // try to decompress plain SSE bytes and terminate the stream.
+  'content-encoding',
   'content-length',
   'keep-alive',
   'proxy-authenticate',
