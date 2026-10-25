@@ -1001,7 +1001,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
       return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash') &&
         !s.includes('/mnt/data/swapfile') && !s.includes('/etc/logrotate.d/sulla-vm') &&
-        !s.includes('/usr/local/sbin/sulla-bridged-firewall') && !s.includes('sulla-transport-mountpoint');
+        !s.includes('/usr/local/sbin/sulla-bridged-firewall') && !s.includes('sulla-transport-mountpoint') &&
+        !s.includes('sulla-apk-offline-cache');
     });
 
     // Lima's persistent-volume boot step binds /tmp to /mnt/data/tmp and then
@@ -1017,6 +1018,26 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         'mountpoint -q /tmp/rancher-desktop && exit 0',
         'line=$(grep -E \'^mount .*[ "]/tmp/rancher-desktop"?$\' /mnt.sh 2>/dev/null | head -n 1)',
         '[ -n "$line" ] && eval "$line"',
+        'exit 0',
+      ].join('\n'),
+    });
+
+    // `/` (and so /usr) is tmpfs, so every boot starts without the packages in
+    // /etc/apk/world. Lima's persistent-volume step reinstalls them with
+    // `apk fix --no-network`, which reads /etc/apk/cache. Without that link the
+    // step fails, lima-init exits 1 and the packages come back over the network
+    // in the provision scripts below. Point the cache at the data disk and fill
+    // it in the background so the next boot reinstalls offline.
+    config.provision.push({
+      mode:   'system',
+      script: [
+        '#!/bin/sh',
+        '# sulla-apk-offline-cache',
+        '[ -d /mnt/data ] || exit 0',
+        'mkdir -p /mnt/data/apk/cache',
+        '[ "$(readlink /etc/apk/cache 2>/dev/null)" = /mnt/data/apk/cache ] || ln -sfn /mnt/data/apk/cache /etc/apk/cache',
+        '# Runs after the installs below finish; sync also drops superseded packages.',
+        'setsid sh -c \'sleep 120; apk cache -q sync\' </dev/null >/var/log/sulla-apk-cache.log 2>&1 &',
         'exit 0',
       ].join('\n'),
     });
