@@ -39,11 +39,17 @@ provision:
     set -o errexit -o nounset -o xtrace
     mkdir -p /bootfs
     mount --bind / /bootfs
-    # /bootfs/etc is empty on first boot because it has been moved to /mnt/data/etc by lima
+    # /bootfs exposes the ISO/tmpfs root without following the persistent /etc
+    # bind mount. On a failed persistent-volume setup it can instead resolve to
+    # the same files as /etc, so prove that the two release files differ before
+    # treating a symlink as an old-image migration signal.
     if [ -f /bootfs/etc/os-release ]; then
+      active_release=$(stat -Lc '%d:%i' /etc/os-release 2>/dev/null || true)
+      image_release=$(stat -Lc '%d:%i' /bootfs/etc/os-release 2>/dev/null || true)
       # Alpine turned /etc/os-release into a symlink; we dereference it again. If we still have a symlink
       # here, then this is an upgrade from an older version and needs to go through the migration.
-      if [ -L /etc/os-release ] || ! diff -q /etc/os-release /bootfs/etc/os-release; then
+      if [ -n "$active_release" ] && [ -n "$image_release" ] && [ "$active_release" != "$image_release" ] \
+          && { [ -L /etc/os-release ] || ! cmp -s /etc/os-release /bootfs/etc/os-release; }; then
         # When we are upgrading from an ISO we will install new packages during boot.
         # But Lima will restore the old /etc/apk/world file and run `apk fix --no-network`
         # to restore packages from cache that were installed manually. This will however
@@ -54,22 +60,20 @@ provision:
         apk add --no-network --keys-dir /bootfs/etc/apk/keys --repositories-file /bootfs/etc/apk/repositories \
           $(cat /bootfs/etc/apk/world)
 
-        # Using a temp file just in case dereferencing a symlink onto itself has a race condition.
-        cp -L /etc/os-release /etc/os-release.tmp
-        mv /etc/os-release.tmp /etc/os-release
-
-        cp /etc/machine-id /bootfs/etc
-        cp /etc/ssh/ssh_host* /bootfs/etc/ssh/
-        mkdir -p /etc/docker /etc/rancher
-        cp -pr /etc/docker /bootfs/etc
-        cp -pr /etc/rancher /bootfs/etc
-
+        # Build a complete rollback copy before overlaying the new image's
+        # defaults. Never move the live /etc tree out from under OpenRC.
         rm -rf /mnt/data/etc.prev
-        mkdir /mnt/data/etc.prev
-        mv /etc/* /mnt/data/etc.prev
-        cp -L /bootfs/etc/os-release /tmp/os-release
-        mv /bootfs/etc/* /etc
-        mv /tmp/os-release /etc
+        mkdir -p /mnt/data/etc.prev /mnt/data/etc-upgrade-preserve
+        cp -a /etc/. /mnt/data/etc.prev/
+        cp -a /etc/machine-id /mnt/data/etc-upgrade-preserve/machine-id
+        mkdir -p /mnt/data/etc-upgrade-preserve/ssh
+        cp -a /etc/ssh/ssh_host* /mnt/data/etc-upgrade-preserve/ssh/ 2>/dev/null || true
+        cp -a /bootfs/etc/. /etc/
+        cp -a /mnt/data/etc-upgrade-preserve/machine-id /etc/machine-id
+        cp -a /mnt/data/etc-upgrade-preserve/ssh/ssh_host* /etc/ssh/ 2>/dev/null || true
+        cp -L /bootfs/etc/os-release /etc/os-release.tmp
+        mv /etc/os-release.tmp /etc/os-release
+        rm -rf /mnt/data/etc-upgrade-preserve
 
         # install updated files from /usr/local, e.g. nerdctl, buildkit, cni plugins
         cp -pr /bootfs/usr/local /usr
@@ -337,17 +341,6 @@ provision:
       chmod 644 "$KH"
       echo "[boot-perf] github-known-hosts: pinned github.com host keys into $KH" >> "$LOG"
     fi
-- # Final boot timing — captures end-of-provisioning state
-  mode: system
-  script: |
-    #!/bin/sh
-    LOG=/var/log/boot-perf.log
-    echo "[boot-perf] ===== All provisioning scripts complete at $(date -u '+%H:%M:%S') =====" >> "$LOG"
-    echo "[boot-perf] kernel uptime at completion: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
-    echo "[boot-perf] entropy at completion: $(cat /proc/sys/kernel/random/entropy_avail)" >> "$LOG"
-    echo "[boot-perf] sshd listening: $(ss -tlnp | grep ':22 ' || echo 'NOT LISTENING')" >> "$LOG"
-    echo "[boot-perf] --- Process list ---" >> "$LOG"
-    ps aux >> "$LOG" 2>&1 || true
 portForwards:
 - guestPortRange: [1, 65535]
   guestIPMustBeZero: true
