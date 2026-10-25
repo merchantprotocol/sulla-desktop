@@ -52,6 +52,7 @@ import type { IndexingQueue } from './indexing.js';
 import type { FileSearch } from './search.js';
 import type { CloudSyncService } from './cloudSync/service.js';
 import { registerCloudSyncRoutes } from './cloudSync/routes.js';
+import { homeQuery } from './sullaCollectionMigration.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
@@ -562,8 +563,7 @@ export function createApp(
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
     // The 'sulla' ingest lane (bundled Docs) now writes into the owner's home collection.
     response.json((await db.query(`SELECT id,system_area AS "systemArea" FROM collections WHERE system_area IN ('logs','training-data')
-      UNION ALL (SELECT id,'sulla' FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE
-      ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1)`,[config.userId])).rows);
+      UNION ALL (SELECT home.id,'sulla' FROM (${ homeQuery }) home)`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
