@@ -14,33 +14,6 @@ containerd:
   user: false
 # Provisioning scripts run on every boot, not just initial VM provisioning.
 provision:
-- # Alpine runs lima-init after OpenRC's `net` provider. The built-in eth0
-  # (SLIRP) is the only interface required for SSH and host connectivity; rd0
-  # and rd1 are optional socket_vmnet interfaces. Keep their DHCP clients off
-  # the blocking OpenRC networking loop and repair the persisted resolver flag
-  # before Lima's 04-persistent-data-volume.sh copies over it.
-  mode: boot
-  script: |
-    # Runs from lima-init-local, before OpenRC starts networking/lima-init.
-    : > /var/log/boot-perf.log
-    if [ -f /etc/network/interfaces ]; then
-      sed -i -E 's/^auto (rd0|rd1)$/allow-hotplug \1/' /etc/network/interfaces
-      setsid sh -c 'sleep 1; for iface in rd1 rd0; do ifup -i /etc/network/interfaces "$iface" 2>/dev/null || true; done' \
-        </dev/null >>/var/log/sulla-extra-network.log 2>&1 &
-    fi
-
-    # The threat-proxy intentionally makes resolv.conf immutable after boot.
-    # Because /etc is persisted, that attribute survives on the data volume;
-    # Lima's next boot used to abort when plain `cp` tried to replace it.
-    data_device=$(blkid 2>/dev/null | awk -F: '/LABEL="data-volume"/ { print $1; exit }')
-    if [ -n "$data_device" ]; then
-      mkdir -p /run/sulla-data-prep
-      if mount -t ext4 "$data_device" /run/sulla-data-prep 2>/dev/null; then
-        chattr -i /run/sulla-data-prep/etc/resolv.conf 2>/dev/null || true
-        umount /run/sulla-data-prep
-      fi
-      rmdir /run/sulla-data-prep 2>/dev/null || true
-    fi
 - # Boot timing + sshd early start — MUST be first script.
   # Lima hostagent polls SSH every 10s; starting sshd ASAP lets us catch the 2nd poll (~10s)
   # instead of waiting for the 3rd (~20s), saving ~10s of boot time.
@@ -48,7 +21,7 @@ provision:
   script: |
     #!/bin/sh
     LOG=/var/log/boot-perf.log
-    echo "===== Boot started at $(date -u '+%Y-%m-%dT%H:%M:%S') =====" >> "$LOG"
+    echo "===== Boot started at $(date -u '+%Y-%m-%dT%H:%M:%S') =====" > "$LOG"
     echo "[boot-perf] kernel uptime: $(cut -d' ' -f1 /proc/uptime)s" >> "$LOG"
     # --- Ensure sshd starts in OpenRC boot runlevel (before provisioning on future boots) ---
     sed -i -E 's/^#?MaxSessions +[0-9]+/MaxSessions 25/g' /etc/ssh/sshd_config
@@ -332,9 +305,8 @@ provision:
     nameserver 1.1.1.2
     options timeout:2 attempts:2
     EOF
-    # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal. The
-    # early boot repair above clears this persisted flag before Lima refreshes
-    # the file, then this script restores the runtime protection.
+    # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal.
+    # chattr +i is a no-op on tmpfs/overlay; we guard it so the script never fails.
     chattr +i /etc/resolv.conf 2>/dev/null || true
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] resolv.conf pinned: $(cat /etc/resolv.conf | tr '\n' ';')" >> "$LOG"
     # Smoke test — resolve a benign domain to confirm DNS actually works.
