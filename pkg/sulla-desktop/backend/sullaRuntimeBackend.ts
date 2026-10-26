@@ -769,16 +769,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    * private key still never leaves the guest disk.
    */
   private async provisionGuestTlsIdentity(script: string, ...args: string[]): Promise<string> {
-    if (isSullaRuntimeActive() &&
-        !await this.execCommand({ root: true, expectFailure: true }, 'sh', '-c', 'command -v openssl').then(() => true, () => false)) {
-      console.log('[sulla-runtime] no openssl in the guest; provisioning the TLS identity in a container');
-
-      return await this.execCommand(
-        { capture: true, root: true }, 'docker', 'run', '--rm',
-        '--volume', '/mnt/data/var/lib/sulla:/mnt/data/var/lib/sulla',
-        '--volume', '/var/lib/sulla:/var/lib/sulla',
-        'alpine:3.22', 'sh', '-c', 'apk add --no-cache --quiet openssl >&2 && exec sh -c "$0" "$@"', script, '--', ...args,
-      );
+    // openssl ships in the runtime guest image; the guest cannot install packages.
+    const hasOpenssl = await this.execCommand({ root: true, expectFailure: true }, 'sh', '-c', 'command -v openssl >/dev/null').then(() => true, () => false);
+    if (!hasOpenssl) {
+      throw new Error('The Sulla runtime guest has no openssl, so it cannot create its TLS identities. Update Sulla Desktop to a runtime that includes it.');
     }
 
     return await this.execCommand({ capture: true, root: true }, 'sh', '-c', script, '--', ...args);
