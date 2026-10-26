@@ -103,21 +103,9 @@ interface MainEventNames {
 
 
   /**
-   * Emitted when an extension is uninstalled via the extension manager.
-   * @param id The ID of the extension that was uninstalled.
-   */
-  'extensions/ui/uninstall'(id: string): void;
-
-  /**
    * Emitted on application quit; this is used to shut down extensions.
    */
   'extensions/shutdown'(): Promise<void>;
-
-  /**
-   * Register the extension protocol handler in the given webContents partition.
-   * @param partition The partition name; likely "persist:rdx-..."
-   */
-  'extensions/register-protocol'(partition: string): Promise<void>;
 
   /**
    * Emitted on application quit, used to shut down any integrations.  This

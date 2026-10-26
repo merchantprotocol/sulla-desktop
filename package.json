@@ -27,7 +27,6 @@
     "lint:go:fix": "node scripts/ts-wrapper.js scripts/lint-go.ts --fix",
     "lint:go:nofix": "node scripts/ts-wrapper.js scripts/lint-go.ts",
     "lint:spelling": "bash scripts/spelling.sh",
-    "generate:extension-data": "node scripts/ts-wrapper.js scripts/extension-data.ts",
     "build:audio-native": "bash scripts/build-audio-native.sh",
     "build": "node scripts/ts-wrapper.js scripts/build.ts",
     "build:mac": "node scripts/ts-wrapper.js scripts/build.ts --mac",

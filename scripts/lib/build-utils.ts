@@ -259,8 +259,7 @@ export default {
     tsLoader.use.options = _.merge({}, tsLoader.use.options, { compilerOptions: { noEmit: false } });
 
     result.entry = {
-      preload:            path.resolve(this.rendererSrcDir, 'preload', 'index.ts'),
-      browserTabPreload:  path.resolve(this.rendererSrcDir, 'window', 'browserTabPreload.ts'),
+      browserTabPreload: path.resolve(this.rendererSrcDir, 'window', 'browserTabPreload.ts'),
     };
 
     return result;

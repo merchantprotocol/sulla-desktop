@@ -14,10 +14,9 @@ import Electron from 'electron';
 import { argon2id } from 'hash-wasm';
 import yaml from 'yaml';
 
-import { ExtensionErrorImpl } from './extensions';
 import { fetchMarketplaceData, MarketplaceEntry } from './marketplaceData';
 import {
-  Extension, ExtensionErrorCode, ExtensionMetadata,
+  Extension, ExtensionErrorCode, ExtensionErrorImpl, ExtensionMetadata,
 } from './types';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -34,8 +33,8 @@ const console = Logging.extensions;
 
 /**
  * RecipeExtensionImpl implements the Extension interface for recipe-based
- * extensions that are driven by a remote installation.yaml file rather than
- * a Docker image with baked-in metadata.
+ * extensions that are driven by a remote installation.yaml file from the
+ * Sulla marketplace (github.com/merchantprotocol/sulla-recipes).
  *
  * Install flow:
  *   1. Fetch installation.yaml from the `installable` URL in the marketplace catalog
@@ -1289,14 +1288,6 @@ export class RecipeExtensionImpl implements Extension {
     } catch {
       return false;
     }
-  }
-
-  async extractFile(_sourcePath: string, _destinationPath: string): Promise<void> {
-    // Recipe extensions don't support extractFile — files are fetched from the recipe repo
-    throw new ExtensionErrorImpl(
-      ExtensionErrorCode.FILE_NOT_FOUND,
-      `extractFile is not supported for recipe extensions (${ this.id })`,
-    );
   }
 
   async shutdown(): Promise<void> {

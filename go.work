@@ -1,6 +1,3 @@
 go 1.25.0
 
-use (
-	./src/go/extension-proxy
-	./src/runtime-agent
-)
+use ./src/runtime-agent

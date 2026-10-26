@@ -254,7 +254,7 @@ export default defineComponent({
     },
     async checkVolumeExists() {
       try {
-        const volumes = await this.ddClient?.docker.rdListVolumes({ namespace: this.selectedNamespace });
+        const volumes = await this.ddClient?.docker.listVolumes({ namespace: this.selectedNamespace });
         this.volumeExists = volumes?.some(v => v.Name === this.volumeName) || false;
 
         if (!this.volumeExists) {

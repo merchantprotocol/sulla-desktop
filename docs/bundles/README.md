@@ -23,8 +23,8 @@ All four are peers. They share the same bundle format, the same import/export/pu
 
 Recipes install into the **existing extension root**, not `~/sulla/recipes/`. This is the directory the current extension manager already watches (`paths.extensionRoot` in [`pkg/rancher-desktop/utils/paths.ts`](../../pkg/rancher-desktop/utils/paths.ts)):
 
-- macOS: `~/Library/Application Support/rancher-desktop/extensions/<manifest.id>/`
-- Linux: `$XDG_DATA_HOME/rancher-desktop/extensions/<manifest.id>/`
+- macOS: `~/Library/Application Support/sulla-desktop/extensions/<manifest.id>/`
+- Linux: `$XDG_DATA_HOME/sulla-desktop/extensions/<manifest.id>/`
 - Windows: analogous via `WindowsPaths`
 
 Directory name = `manifest.id` from the bundle's `manifest.yaml`, NOT the marketplace slug. This matches how GitHub-pulled recipes already land today — a marketplace-installed recipe is indistinguishable on disk from a `sulla-recipes` repo–pulled one, and the existing `RecipeExtensionImpl` install/start pipeline picks it up identically.

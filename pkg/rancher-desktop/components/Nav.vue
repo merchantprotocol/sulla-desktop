@@ -57,22 +57,6 @@
         </RouterLink>
       </li>
     </ul>
-    <hr v-if="extensionsWithUI.length">
-    <div class="nav-extensions">
-      <RouterLink
-        v-for="extension in extensionsWithUI"
-        :key="extension.id"
-        :data-test="`extension-nav-${extension.metadata.ui['dashboard-tab'].title.toLowerCase()}`"
-        :to="extensionRoute(extension)"
-      >
-        <nav-item :id="`extension:${extension.id}`">
-          <template #before>
-            <nav-icon-extension :extension-id="extension.id" />
-          </template>
-          {{ extension.metadata.ui['dashboard-tab'].title }}
-        </nav-item>
-      </RouterLink>
-    </div>
     <div class="nav-button-container">
       <button
         type="button"
@@ -92,23 +76,12 @@ import { BadgeState } from '@rancher/components';
 import { PropType, defineComponent } from 'vue';
 import { RouteRecordPublic } from 'vue-router';
 
-import NavIconExtension from './NavIconExtension.vue';
-import NavItem from './NavItem.vue';
-
 import router from '@pkg/entry/router';
-import type { ExtensionState } from '@pkg/store/extensions';
-import { hexEncode } from '@pkg/utils/string-encode';
-
-type ExtensionWithUI = ExtensionState & {
-  metadata: { ui: { 'dashboard-tab': { title: string } } };
-};
 
 export default defineComponent({
   name:       'Nav',
   components: {
     BadgeState,
-    NavItem,
-    NavIconExtension,
   },
   props: {
     items: {
@@ -132,10 +105,6 @@ export default defineComponent({
         });
       },
     },
-    extensions: {
-      type:     Array as PropType<ExtensionState[]>,
-      required: true,
-    },
   },
   data() {
     return {
@@ -149,15 +118,6 @@ export default defineComponent({
       indicatorStyle: { transform: 'translateY(0px)', height: '40px', opacity: '0' },
       routeLinks:     {} as Record<string, any>,
     };
-  },
-  computed: {
-    extensionsWithUI(): ExtensionWithUI[] {
-      function hasUI(ext: ExtensionState): ext is ExtensionWithUI {
-        return !!ext.metadata.ui?.['dashboard-tab']?.title;
-      }
-
-      return this.extensions.filter<ExtensionWithUI>(hasUI);
-    },
   },
   methods: {
     setRouteLink(route: string, element: any) {
@@ -197,26 +157,8 @@ export default defineComponent({
         };
       });
     },
-    extensionRoute({ id, metadata }: { id: string, metadata: any }) {
-      const { ui: { 'dashboard-tab': { root, src } } } = metadata;
-
-      return {
-        name:   'rdx-root-src-id',
-        params: {
-          root,
-          src,
-          id: hexEncode(id),
-        },
-      };
-    },
     isRouteActive(route: string): boolean {
       // It is needed e.g. for sub-route /images/add not matching /Images
-      // Prevents the parent item "Extensions" to be shown as active if an extension child (e.g. Epinio, Logs Explorer,
-      // ...) is selected.
-      if (this.$route.name === 'rdx-root-src-id') {
-        return false;
-      }
-
       return this.$route.path.toLowerCase().startsWith(route.toLowerCase());
     },
     openPreferences(): void {
@@ -253,11 +195,6 @@ nav {
 
     a {
       text-decoration: none;
-    }
-
-    .nav-extensions {
-      overflow: auto;
-      flex-grow: 1
     }
 }
 
@@ -307,6 +244,7 @@ a {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  margin-top: auto;
 
   .nav-button {
     flex: 1;

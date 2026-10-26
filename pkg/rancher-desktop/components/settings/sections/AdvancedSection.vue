@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
               <input
                 v-model="newAllowed"
                 class="inp wide mono"
-                placeholder="docker/logs-explorer-extension"
+                placeholder="docker.io/merchantprotocol/plane"
                 aria-label="Extension to allow"
                 :disabled="isLocked('application.extensions.allowed.list')"
                 @keydown.enter="addAllowed"

@@ -30,7 +30,7 @@ async function getModules(): Promise<string[]> {
 /**
  * Modules whose version depends on a different module.  The top level key is
  * the directory containing `go.mod`, relative to the top of the source tree;
- * for example, `src/go/extension-proxy`.  The second level is the go module to
+ * for example, `src/runtime-agent`.  The second level is the go module to
  * modify; the value is the go module in the same `go.mod` to refer to.
  */
 const linkedModules: Record<string, Record<string, string>> = {};

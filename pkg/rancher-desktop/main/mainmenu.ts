@@ -822,8 +822,6 @@ async function reloadFocusedSurface(focusedWindow: Electron.BaseWindow | undefin
 
 /**
  * Adjusts the zoom level for the focused window by the desired increment.
- * Also emits an IPC request to the webContents to trigger a resize of the
- * extensions view.
  */
 function adjustZoomLevel(focusedWindow: Electron.BaseWindow | undefined, zoomLevelAdjustment: number) {
   if (!focusedWindow || !(focusedWindow instanceof Electron.BrowserWindow)) {
@@ -835,14 +833,4 @@ function adjustZoomLevel(focusedWindow: Electron.BaseWindow | undefined, zoomLev
   const desiredZoomLevel = zoomLevelAdjustment === 0 ? zoomLevelAdjustment : currentZoomLevel + zoomLevelAdjustment;
 
   webContents.setZoomLevel(desiredZoomLevel);
-
-  // Also sync the zoom level of any child views (e.g. the extensions view in
-  // the main window).
-  for (const child of focusedWindow.contentView.children) {
-    if (child instanceof Electron.WebContentsView) {
-      child.webContents.setZoomLevel(desiredZoomLevel);
-    }
-  }
-  // For the main window, this triggers resizing the extensions view.
-  setImmediate(() => webContents.send('extensions/getContentArea'));
 }

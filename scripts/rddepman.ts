@@ -12,8 +12,6 @@ import { spawnSync } from 'child_process';
 import { Octokit } from 'octokit';
 import semver from 'semver';
 
-import { getExtensions } from './lib/extension-data';
-
 import * as tools from 'scripts/dependencies/tools';
 import {
   getOctokit,
@@ -41,7 +39,6 @@ const dependencies: VersionedDependency[] = [
   new tools.CheckSpelling(),
   new tools.ECRCredHelper(),
   new tools.SpinCLI(),
-  ...getExtensions(true),
 ];
 
 /**
