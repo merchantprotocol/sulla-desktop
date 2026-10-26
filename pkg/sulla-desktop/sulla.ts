@@ -970,6 +970,22 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
   });
 
+  // First OAuth sign-in: the vault creates the empty account it will store
+  // the tokens in. Label only crosses; tokens never leave the vault.
+  ipcMainProxy.handle('vault:integration-oauth-account', async(
+    event: Electron.IpcMainInvokeEvent,
+    input: { integrationId: string; accountId: string; label?: string },
+  ) => {
+    requireTrustedVaultRenderer(event);
+    const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
+    const accountId = vaultMetadataId(input?.accountId, 'accountId');
+    const label = typeof input?.label === 'string' ? input.label.slice(0, 120) : '';
+    const { getConfiguredApprovalClient } = await import('@pkg/vault-broker');
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault service is unavailable');
+    return client.ensureOAuthAccount(integrationId, accountId, label);
+  });
+
   const sanitizeVaultConnectSpec = (raw: unknown) => {
     if (!raw || typeof raw !== 'object') return undefined;
     const spec = raw as Record<string, any>;
