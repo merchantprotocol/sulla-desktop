@@ -43,7 +43,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
-// Dedicated perf-timing log (~/Library/Logs/rancher-desktop/perf.log). All
+// Dedicated perf-timing log (~/Library/Logs/sulla-desktop/perf.log). All
 // latency instrumentation routes here via the Logging facility (NOT console.log,
 // which never lands in a readable file) so timing is greppable in one place.
 const perf = Logging.perf;

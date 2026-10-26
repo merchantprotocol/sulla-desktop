@@ -15,15 +15,14 @@ clean:
     rm -rf .yarn/cache
     rm -rf .yarn/install-state.gz
     rm -rf dist
-    rm -rf ~/Library/Preferences/rancher-desktop
-    rm -rf ~/Library/Caches/rancher-desktop
-    rm -rf ~/Library/Logs/rancher-desktop
-    rm -rf ~/.rd
+    rm -rf ~/Library/Preferences/sulla-desktop
+    rm -rf ~/Library/Caches/sulla-desktop
+    rm -rf ~/Library/Logs/sulla-desktop
+    rm -rf ~/.sulla-desktop-data
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
     rm -rf resources/host/
     rm -rf resources/preload.js*
-    rm -rf resources/rancher-dashboard/
     rm -rf resources/spin-operator*
     @echo "Cleanup complete. Run 'just build' for a fresh install."
 
@@ -34,17 +33,15 @@ clean-hard:
     rm -rf .yarn/cache
     rm -rf .yarn/install-state.gz
     rm -rf dist
-    rm -rf ~/Library/Application\ Support/rancher-desktop
     rm -rf ~/Library/Application\ Support/sulla-desktop
-    rm -rf ~/Library/Preferences/rancher-desktop
-    rm -rf ~/Library/Caches/rancher-desktop
-    rm -rf ~/Library/Logs/rancher-desktop
-    rm -rf ~/.rd
+    rm -rf ~/Library/Preferences/sulla-desktop
+    rm -rf ~/Library/Caches/sulla-desktop
+    rm -rf ~/Library/Logs/sulla-desktop
+    rm -rf ~/.sulla-desktop-data
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
     rm -rf resources/host/
     rm -rf resources/preload.js*
-    rm -rf resources/rancher-dashboard/
     rm -rf resources/spin-operator*
     @echo "Cleanup complete. Run 'just build' for a fresh install."
 

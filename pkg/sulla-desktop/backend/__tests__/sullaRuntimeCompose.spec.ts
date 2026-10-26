@@ -45,7 +45,7 @@ jest.unstable_mockModule('@pkg/agent/database/models/SullaSettingsModel', () => 
   SullaSettingsModel: { getServicePassword: () => Promise.resolve('service-pass$word'), get: () => Promise.resolve('') },
 }));
 jest.unstable_mockModule('@pkg/config/settingsImpl', () => stubs(
-  'SETTING clearSettings createSettings determineLockedFields firstRunDialogNeeded getDefaultMemory getLockedSettings ' +
+  'clearSettings createSettings determineLockedFields firstRunDialogNeeded getDefaultMemory getLockedSettings ' +
   'load merge migrateSpecifiedSettingsToCurrentVersion runInDebugMode save turnFirstRunOff updateLockedFields updateTable',
   { getSettings: () => ({ experimental: { sullaVaultV2Enabled: flags.vaultV2 } }) },
 ));

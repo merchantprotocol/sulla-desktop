@@ -365,10 +365,10 @@ export async function * iterateIterator<T, U>(input: AsyncIterable<T>, fn: (_: T
 export type IssueOrPullRequest = Awaited<ReturnType<Octokit['rest']['search']['issuesAndPullRequests']>>['data']['items'][0];
 
 /**
- * Represents the main Rancher Desktop repo (rancher-sandbox/rancher-desktop
+ * Represents the main Sulla Desktop repo (merchantprotocol/sulla-desktop
  * as of the time of writing) or one of its forks.
  */
-export class RancherDesktopRepository {
+export class SullaDesktopRepository {
   owner: string;
   repo:  string;
 

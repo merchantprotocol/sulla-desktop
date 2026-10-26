@@ -101,7 +101,10 @@ class SullaFilesBackups {
       if(!['cifs','nfs','nfs4'].includes(mounted.fsType) || mounted.source!==source || !['nosuid','nodev','noexec'].every(flag=>mounted.mountOptions.split(',').includes(flag))) throw new Error('Unexpected NAS mount');
       return;
     }
-    await executor.execCommand({root:true,expectFailure:true},'timeout','-s','KILL','90','sh','-c','apk info -e cifs-utils nfs-utils >/dev/null 2>&1 || apk add --no-cache cifs-utils nfs-utils');
+    // cifs-utils and nfs-utils ship in the runtime guest image; nothing can be installed at run time.
+    const helper=protocol==='nfs'?'mount.nfs':'mount.cifs';
+    await executor.execCommand({root:true,expectFailure:true},'sh','-c','command -v "$1" >/dev/null','sh',helper)
+      .catch(()=>{ throw new Error(`The Sulla runtime has no ${ helper }, so ${ protocol==='nfs'?'NFS':'SMB' } backups cannot mount. Update Sulla Desktop to a runtime that includes it.`) });
     await executor.execCommand({root:true},'sh','-c','test ! -L "$1" && mkdir -p "$1" && test "$(readlink -f "$1")" = "$1" && chmod 0700 "$1"','sh',point);
     if(protocol==='nfs') {
       await executor.execCommand({root:true,expectFailure:true},'timeout','-s','KILL','60','mount','-t','nfs','-o','nosuid,nodev,noexec',source,point);

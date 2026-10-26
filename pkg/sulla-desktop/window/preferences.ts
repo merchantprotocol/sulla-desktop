@@ -141,7 +141,7 @@ export function openPreferences(section?: string) {
     });
 
     window.on('close', (event) => {
-      if (!isDirty || (process.env.RD_TEST ?? '').includes('e2e')) {
+      if (!isDirty || (process.env.SULLA_TEST ?? '').includes('e2e')) {
         return;
       }
 

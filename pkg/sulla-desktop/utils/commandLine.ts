@@ -33,7 +33,7 @@ export default function getCommandLineArgs(): string[] {
     return idx > -1 ? process.argv.slice(idx + 1) : [];
   } else if ((process.env.NODE_ENV ?? '').startsWith('dev')) {
     // If we're running in dev mode, look for the injected marker.
-    const idx = process.argv.indexOf('## Rancher Desktop Command Line Marker ##');
+    const idx = process.argv.indexOf('## Sulla Desktop Command Line Marker ##');
 
     return idx >= 0 ? process.argv.slice(idx + 1) : [];
   }

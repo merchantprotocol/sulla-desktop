@@ -64,10 +64,10 @@ class DevRunner extends events.EventEmitter {
 
   /**
    * Gets information about the renderer based on the environment variable
-   * RD_ENV_PLUGINS_DEV. For plugins development.
+   * SULLA_ENV_PLUGINS_DEV. For plugins development.
    */
   rendererEnv(): RendererEnv {
-    if (process.env.RD_ENV_PLUGINS_DEV) {
+    if (process.env.SULLA_ENV_PLUGINS_DEV) {
       return {
         home:  'https://localhost:8888/home',
         agent: new https.Agent({ rejectUnauthorized: false }),
@@ -93,16 +93,16 @@ class DevRunner extends events.EventEmitter {
         ...argv.filter(x => x.startsWith('--inspect')),
         buildUtils.rootDir,
         this.rendererPort.toString(),
-        '## Rancher Desktop Command Line Marker ##',
+        '## Sulla Desktop Command Line Marker ##',
         ...argv.filter(x => !x.startsWith('--inspect')),
       );
       this.#mainProcess.on('exit', (code: number, signal: string) => {
         if (code === 201) {
-          console.log('Another instance of Rancher Desktop is already running');
+          console.log('Another instance of Sulla Desktop is already running');
         } else if (code > 0) {
-          console.log(`Rancher Desktop: main process exited with status ${ code }`);
+          console.log(`Sulla Desktop: main process exited with status ${ code }`);
         } else if (signal) {
-          console.log(`Rancher Desktop: main process exited with signal ${ signal }`);
+          console.log(`Sulla Desktop: main process exited with signal ${ signal }`);
         }
       });
     } catch (err) {

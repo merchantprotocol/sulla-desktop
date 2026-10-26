@@ -13,7 +13,7 @@ import paths from '@pkg/utils/paths';
 const console = Logging['path-management'];
 
 /**
- * RcFilePathManager is for when the user wants Rancher Desktop to
+ * RcFilePathManager is for when the user wants Sulla Desktop to
  * make changes to their PATH by putting lines that change it in their
  * shell .rc files.
  */

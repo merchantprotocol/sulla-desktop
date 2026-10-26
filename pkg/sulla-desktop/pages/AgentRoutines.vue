@@ -2792,7 +2792,7 @@ async function acquireWindowStream(): Promise<MediaStream> {
 
   // Prefer a Sulla window; fall back to the first screen if none match
   // so the user still gets something to look at.
-  const ours = sources.find(s => /sulla|rancher|routines/i.test(s.name));
+  const ours = sources.find(s => /sulla|routines/i.test(s.name));
   const fallback = sources.find(s => /screen/i.test(s.name)) ?? sources[0];
   const sourceId = (ours ?? fallback).id;
 

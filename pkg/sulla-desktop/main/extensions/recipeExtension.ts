@@ -982,11 +982,11 @@ export class RecipeExtensionImpl implements Extension {
    * Build a spawn environment with PATH augmented to include directories where
    * the docker CLI is likely to live.  On macOS, Electron apps launched from
    * the Dock inherit a minimal PATH that often lacks /usr/local/bin and
-   * ~/.rd/bin, causing "command not found" (exit 127) for docker commands.
+   * ~/.sulla-desktop-data/bin, causing "command not found" (exit 127) for docker commands.
    */
   protected get spawnEnv(): Record<string, string> {
     const extraDirs = [
-      paths.integration,                                  // ~/.rd/bin
+      paths.integration,                                  // ~/.sulla-desktop-data/bin
       path.join(paths.resources, process.platform, 'bin'), // bundled binaries
       '/usr/local/bin',                                   // common on macOS
     ];

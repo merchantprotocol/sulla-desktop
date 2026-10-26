@@ -1,11 +1,9 @@
-import { SETTING } from './settings';
-
 export const ANY = 0;
 export const STANDARD = 1;
 export const CUSTOM = 2;
 
-const STANDARD_VENDOR = 'Rancher';
-const STANDARD_PRODUCT = 'Explorer';
+const STANDARD_VENDOR = 'Sulla';
+const STANDARD_PRODUCT = 'Sulla Desktop';
 
 let mode = STANDARD;
 let vendor = STANDARD_VENDOR;
@@ -42,10 +40,6 @@ export function matches(pl) {
 }
 
 export function getVendor() {
-  if ( vendor === SETTING.PL_RANCHER_VALUE ) {
-    return STANDARD_VENDOR;
-  }
-
   return vendor;
 }
 

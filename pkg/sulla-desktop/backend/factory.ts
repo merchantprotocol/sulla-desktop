@@ -7,7 +7,7 @@ import SullaRuntimeBackend from './sullaRuntimeBackend';
 export default function factory(arch: Architecture): VMBackend {
   const platform = os.platform();
 
-  if (process.env.RD_MOCK_BACKEND === '1') {
+  if (process.env.SULLA_MOCK_BACKEND === '1') {
     return new MockBackend();
   }
 

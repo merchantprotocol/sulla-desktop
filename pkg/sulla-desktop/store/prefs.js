@@ -15,7 +15,7 @@ export const create = function(name, def, opt = {}) {
     parseJSON,
     asCookie,
     asUserPreference,
-    mangleRead:  opt.mangleRead, // Alter the value read from the API (to match old Rancher expectations)
+    mangleRead:  opt.mangleRead, // Alter the value read from the API (to match older expectations)
     mangleWrite: opt.mangleWrite, // Alter the value written back to the API (ditto)
   };
 

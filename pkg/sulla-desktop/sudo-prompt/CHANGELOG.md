@@ -10,15 +10,15 @@ The bundled applet did not include support for `aarch64` machines, so needed Ros
 
 The applet source code has been moved to `<repo>/src/sudo-prompt` and is built from source using `osacompile`, so `applet` will be an up-to-date universal binary supporting `x86_64` and `aarch64`.
 
-The applet is placed into `<repo>/resources/darwin/internal/Rancher Desktop.app`. The app name is displayed as part of the dialog: "Rancher Desktop wants to make changes".
+The applet is placed into `<repo>/resources/darwin/internal/Sulla Desktop.app`. The app name is displayed as part of the dialog: "Sulla Desktop wants to make changes".
 
-The `Contents/Info.plist` file has the `CFBundleName` set to "Rancher Desktop Password Prompt".
+The `Contents/Info.plist` file has the `CFBundleName` set to "Sulla Desktop Password Prompt".
 
 A `.icns` format icon has been created (the old `.png` file doesn't seem to work with the new applet) and is stored into `Contents/Resources/applet.icns`.
 
 The `sudo-prompt-script` has been moved from `Contents/MacOS` to `Contents/Resources/Scripts` because it cannot be code-signed.
 
-When the `RD_SUDO_PROMPT_OSASCRIPT` environment variable is set then the `Contents/Resources/Scripts/main.scpt` file (the compiled version of `sudo-prompt.applescript`) is executed via `osascript` instead of the applet. This will show an approval prompt that supports the Apple watch, or a touch id keyboard, but will not use the `Rancher Desktop` name or icon in the dialog.
+When the `SULLA_SUDO_PROMPT_OSASCRIPT` environment variable is set then the `Contents/Resources/Scripts/main.scpt` file (the compiled version of `sudo-prompt.applescript`) is executed via `osascript` instead of the applet. This will show an approval prompt that supports the Apple watch, or a touch id keyboard, but will not use the `Sulla Desktop` name or icon in the dialog.
 
 The `sudo-prompt.applescript` has been modified to locate the `sudo-prompt-script` inside the applet because the working directory will no longer be inside the app.
 

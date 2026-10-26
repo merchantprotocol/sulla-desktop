@@ -81,7 +81,7 @@ Electron.ipcMain.on('update-apply', () => {
  * No-op if the updater isn't configured or updates are force-disabled.
  */
 export function installQueuedUpdate(): void {
-  if (!autoUpdater || process.env.RD_FORCE_UPDATES_ENABLED) {
+  if (!autoUpdater || process.env.SULLA_FORCE_UPDATES_ENABLED) {
     console.warn('[update] installQueuedUpdate: updater not configured or disabled');
 
     return;
@@ -124,9 +124,9 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
 
     options.updateProvider = LonghornProvider;
 
-    if (process.env.RD_UPGRADE_RESPONDER_URL) {
-      console.log(`using custom upgrade responder URL ${ process.env.RD_UPGRADE_RESPONDER_URL }`);
-      options.upgradeServer = process.env.RD_UPGRADE_RESPONDER_URL;
+    if (process.env.SULLA_UPGRADE_RESPONDER_URL) {
+      console.log(`using custom upgrade responder URL ${ process.env.SULLA_UPGRADE_RESPONDER_URL }`);
+      options.upgradeServer = process.env.SULLA_UPGRADE_RESPONDER_URL;
     }
 
     switch (os.platform()) {
@@ -144,7 +144,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     throw e;
   }
 
-  if (process.env.RD_FORCE_UPDATES_ENABLED) {
+  if (process.env.SULLA_FORCE_UPDATES_ENABLED) {
     updater.forceDevUpdateConfig = true;
   }
 
@@ -274,7 +274,7 @@ export default async function setupUpdate(enabled: boolean, doInstall = false): 
  * @returns Whether the update is being installed.
  */
 async function doInitialUpdateCheck(doInstall = false): Promise<boolean> {
-  if (doInstall && await hasQueuedUpdate() && !process.env.RD_FORCE_UPDATES_ENABLED) {
+  if (doInstall && await hasQueuedUpdate() && !process.env.SULLA_FORCE_UPDATES_ENABLED) {
     console.log('Update is cached; forcing re-check to install.');
 
     return await new Promise((resolve) => {

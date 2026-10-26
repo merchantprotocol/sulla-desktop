@@ -146,8 +146,8 @@ export function load(deploymentProfiles: DeploymentProfileType): Settings {
 }
 
 function finishConfiguringSettings(cfg: Settings, deploymentProfiles: DeploymentProfileType): Settings {
-  if (process.env.RD_FORCE_UPDATES_ENABLED) {
-    console.debug('updates enabled via RD_FORCE_UPDATES_ENABLED');
+  if (process.env.SULLA_FORCE_UPDATES_ENABLED) {
+    console.debug('updates enabled via SULLA_FORCE_UPDATES_ENABLED');
     cfg.application.updater.enabled = true;
   } else if (os.platform() === 'linux' && !process.env.APPIMAGE) {
     cfg.application.updater.enabled = false;
@@ -255,7 +255,7 @@ function safeFileTest(path: string, conditions: number) {
 }
 
 export function runInDebugMode(debug: boolean): boolean {
-  return debug || !!process.env.RD_DEBUG_ENABLED;
+  return debug || !!process.env.SULLA_DEBUG_ENABLED;
 }
 
 function fileExists(path: string) {
@@ -547,6 +547,3 @@ export function migrateSpecifiedSettingsToCurrentVersion(settings: Record<string
   return settings;
 }
 
-// Imported from dashboard/config/settings.js
-// Setting IDs
-export const SETTING = { PL_RANCHER_VALUE: 'rancher' };

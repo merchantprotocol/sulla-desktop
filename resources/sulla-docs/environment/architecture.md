@@ -58,7 +58,7 @@ container, use your working directory instead. Delete scratch when done.
 Move only finished work into /mnt/sulla-files.
 
 Sulla VM runs Alpine Linux. `backend/sullaRuntimeBackend.ts:getMounts()` mounts only app-owned
-transport/cache roots: `/tmp/rancher-desktop`, `paths.cache`, `paths.logs`, and
+transport/cache roots: `/tmp/sulla-desktop`, `paths.cache`, `paths.logs`, and
 `paths.resources` (read-only). The host home is not mounted. Selected host
 content is reached through Files, not raw host paths.
 

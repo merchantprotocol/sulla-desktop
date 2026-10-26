@@ -24,7 +24,11 @@ import path from 'path';
 export interface Paths {
   /** appHome: the location of the main appdata directory. */
   appHome:                    string;
-  /** altAppHome is a secondary directory for application data. */
+  /**
+   * altAppHome is a secondary directory for application data (`~/.sulla-desktop-data`).
+   * It is not `~/.sulla-desktop`: that is the installer's git checkout
+   * (`sullaDesktopCodebase`), and factory reset deletes altAppHome.
+   */
   altAppHome:                 string;
   /** Directory which holds configuration. */
   config:                     string;
@@ -32,7 +36,7 @@ export interface Paths {
   logs:                       string;
   /** Directory which holds caches that may be removed. */
   cache:                      string;
-  /** Directory that holds resource files in the RD installation. */
+  /** Directory that holds resource files in the Sulla Desktop installation. */
   resources:                  string;
   /** Full path to the `sulla-runtime` host binary that boots the VM and runs guest commands (macOS). */
   sullaRuntime:               string;
@@ -88,7 +92,7 @@ function getDefaultPaths(): Partial<Paths> {
 
   switch (process.platform) {
   case 'darwin': {
-    const appHome = path.join(home, 'Library', 'Application Support', 'rancher-desktop');
+    const appHome = path.join(home, 'Library', 'Application Support', 'sulla-desktop');
     // In a packaged app, process.resourcesPath points to Contents/Resources;
     // extraResources are nested under a 'resources' subdirectory there.
     // In dev, fall back to the project's resources directory.
@@ -98,12 +102,12 @@ function getDefaultPaths(): Partial<Paths> {
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.rd'),
-      config:                     path.join(home, 'Library', 'Preferences', 'rancher-desktop'),
-      logs:                       path.join(home, 'Library', 'Logs', 'rancher-desktop'),
-      cache:                      path.join(home, 'Library', 'Caches', 'rancher-desktop'),
+      altAppHome:                 path.join(home, '.sulla-desktop-data'),
+      config:                     path.join(home, 'Library', 'Preferences', 'sulla-desktop'),
+      logs:                       path.join(home, 'Library', 'Logs', 'sulla-desktop'),
+      cache:                      path.join(home, 'Library', 'Caches', 'sulla-desktop'),
       resources,
-      integration:                path.join(home, '.rd', 'bin'),
+      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
       deploymentProfileUser:      path.join(home, 'Library', 'Preferences'),
@@ -116,21 +120,21 @@ function getDefaultPaths(): Partial<Paths> {
     const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
     const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
     const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
-    const appHome = path.join(dataHome, 'rancher-desktop');
+    const appHome = path.join(dataHome, 'sulla-desktop');
     const resources = process.resourcesPath
       ? path.join(process.resourcesPath, 'resources')
       : path.join(process.cwd(), 'resources');
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.rd'),
-      config:                     path.join(configHome, 'rancher-desktop'),
-      logs:                       path.join(dataHome, 'rancher-desktop', 'logs'),
-      cache:                      path.join(cacheHome, 'rancher-desktop'),
+      altAppHome:                 path.join(home, '.sulla-desktop-data'),
+      config:                     path.join(configHome, 'sulla-desktop'),
+      logs:                       path.join(dataHome, 'sulla-desktop', 'logs'),
+      cache:                      path.join(cacheHome, 'sulla-desktop'),
       resources,
-      integration:                path.join(home, '.rd', 'bin'),
-      deploymentProfileSystem:    '/etc/rancher-desktop',
-      altDeploymentProfileSystem: '/usr/etc/rancher-desktop',
+      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
+      deploymentProfileSystem:    '/etc/sulla-desktop',
+      altDeploymentProfileSystem: '/usr/etc/sulla-desktop',
       deploymentProfileUser:      configHome,
       extensionRoot:              path.join(dataHome, 'sulla-desktop', 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),

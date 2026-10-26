@@ -27,7 +27,7 @@ interface AuthConfig {
 }
 
 /**
- * The parts of a docker config.json file that concern Rancher Desktop.
+ * The parts of a docker config.json file that concern Sulla Desktop.
  */
 interface PartialDockerConfig {
   auths?:          Record<string, AuthConfig>,
@@ -44,14 +44,14 @@ export class DockerDirManager {
   protected readonly dockerDirPath:        string;
   protected readonly dockerContextDirPath: string;
   /**
-   * Path to the 'rancher-desktop' docker context file.  The parent directory
-   * is the SHA256 hash of the docker context name ('rancher-desktop'), per the
+   * Path to the 'sulla-desktop' docker context file.  The parent directory
+   * is the SHA256 hash of the docker context name ('sulla-desktop'), per the
    * docker convention.
    */
   protected readonly dockerContextPath:    string;
   protected readonly dockerConfigPath:     string;
   protected readonly defaultDockerSockPath = '/var/run/docker.sock';
-  protected readonly contextName = 'rancher-desktop';
+  protected readonly contextName = 'sulla-desktop';
 
   /**
    * @param dockerDirPath The path to the directory containing docker CLI config.
@@ -60,7 +60,7 @@ export class DockerDirManager {
     this.dockerDirPath = dockerDirPath;
     this.dockerContextDirPath = path.join(this.dockerDirPath, 'contexts', 'meta');
     this.dockerContextPath = path.join(this.dockerContextDirPath,
-      'b547d66a5de60e5f0843aba28283a8875c2ad72e99ba076060ef9ec7c09917c8', 'meta.json');
+      '240189d8a21a7781066b9ec0b05e65ef8338d55f736c8e19c5f2452d4be9b176', 'meta.json');
     this.dockerConfigPath = path.join(this.dockerDirPath, 'config.json');
     console.debug(`Created new DockerDirManager to manage dir: ${ this.dockerDirPath }`);
   }
@@ -138,8 +138,8 @@ export class DockerDirManager {
    * 2. Return the passed current context if:
    *    - The current context uses a valid unix socket - the user is probably using it.
    *    - The current context uses a non-unix socket (e.g. tcp) - we can't check if it's valid.
-   * 3. The current context is invalid, so return our context ("rancher-desktop").
-   * @param weOwnDefaultSocket Whether Rancher Desktop has control over the default socket.
+   * 3. The current context is invalid, so return our context ("sulla-desktop").
+   * @param weOwnDefaultSocket Whether Sulla Desktop has control over the default socket.
    * @param currentContext The current context.
    * @returns Undefined for default context; string containing context name for other contexts.
    */
@@ -271,7 +271,7 @@ export class DockerDirManager {
     }
     // When running E2E tests in CI, use "none".  Note that we use the default
     // value when running unit tests in CI.
-    const e2eInCI = process.env.CI && (process.env.RD_TEST ?? '').includes('e2e');
+    const e2eInCI = process.env.CI && (process.env.SULLA_TEST ?? '').includes('e2e');
 
     if (e2eInCI && await this.credHelperWorking('none')) {
       return 'none';
@@ -294,8 +294,8 @@ export class DockerDirManager {
   }
 
   /**
-   * Ensures that the rancher-desktop docker context exists.
-   * @param socketPath Path to the rancher-desktop specific docker socket.
+   * Ensures that the sulla-desktop docker context exists.
+   * @param socketPath Path to the sulla-desktop specific docker socket.
    */
   protected async ensureDockerContextFile(socketPath: string): Promise<void> {
     if (os.platform().startsWith('win')) {
@@ -303,7 +303,7 @@ export class DockerDirManager {
     }
     const contextContents = {
       Name:      this.contextName,
-      Metadata:  { Description: 'Rancher Desktop moby context' },
+      Metadata:  { Description: 'Sulla Desktop moby context' },
       Endpoints: {
         docker: {
           Host:          `unix://${ socketPath }`,
@@ -348,10 +348,10 @@ export class DockerDirManager {
   }
 
   /**
-   * Ensures that the Rancher Desktop context file exists, and that the docker context
+   * Ensures that the Sulla Desktop context file exists, and that the docker context
    * is set in the config file according to our rules.
-   * @param weOwnDefaultSocket Whether Rancher Desktop has control over the default socket.
-   * @param socketPath Path to the rancher-desktop specific docker socket. Darwin/Linux only.
+   * @param weOwnDefaultSocket Whether Sulla Desktop has control over the default socket.
+   * @param socketPath Path to the sulla-desktop specific docker socket. Darwin/Linux only.
    */
   async ensureDockerContextConfigured(weOwnDefaultSocket: boolean, socketPath?: string): Promise<void> {
     // read current config

@@ -585,7 +585,7 @@ export async function openFirstRunDialog() {
       title:          'Sulla Desktop - First Run',
       width:          defaultWidth,
       height:         defaultHeight,
-      resizable:      !process.env.RD_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
+      resizable:      !process.env.SULLA_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       closable:       true,
       webPreferences: {

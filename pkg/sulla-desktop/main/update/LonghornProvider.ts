@@ -52,7 +52,7 @@ export interface LonghornUpdateInfo extends UpdateInfo {
    */
   nextUpdateTime:             number;
   /**
-   * Whether there is an unsupported version of Rancher Desktop that is
+   * Whether there is an unsupported version of Sulla Desktop that is
    * newer than the latest supported version.
    */
   unsupportedUpdateAvailable: boolean;
@@ -128,7 +128,7 @@ interface LonghornCache {
   /** The minimum time (in Unix epoch) we should next check for an update. */
   nextUpdateTime:             number;
   /**
-   * Whether there is an unsupported version of Rancher Desktop that is
+   * Whether there is an unsupported version of Sulla Desktop that is
    * newer than the latest supported version.
    */
   unsupportedUpdateAvailable: boolean;
@@ -230,7 +230,7 @@ function getPlatformVersion(): string {
 }
 
 /**
- * Fetch info on available versions of Rancher Desktop, as well as other
+ * Fetch info on available versions of Sulla Desktop, as well as other
  * things, from the Upgrade Responder server.
  */
 export async function queryUpgradeResponder(url: string, currentVersion: semver.SemVer): Promise<UpgradeResponderQueryResult> {

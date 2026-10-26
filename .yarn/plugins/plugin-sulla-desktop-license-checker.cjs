@@ -15,7 +15,7 @@ limitations under the License.
 */
 // @ts-check
 module.exports = {
-  name: 'plugin-rancher-desktop-license-checker',
+  name: 'plugin-sulla-desktop-license-checker',
   /** @type (_: NodeJS.Require) => any */
   factory: require => {
     const { BaseCommand, WorkspaceRequiredError } = require('@yarnpkg/cli');

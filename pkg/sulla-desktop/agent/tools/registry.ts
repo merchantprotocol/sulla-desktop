@@ -84,7 +84,7 @@ export class ToolRegistry {
     github:             'GitHub repository management tools.',
     kubectl:            'Kubernetes cluster management tools.',
     slack:              'Slack messaging and reaction tools.',
-    workspace:          'Tools for managing workspace folders in the Rancher Desktop data directory.',
+    workspace:          'Tools for managing workspace folders in the Sulla Desktop data directory.',
     redis:              'Redis key/value store operations.',
     pg:                 'PostgreSQL database queries and transactions.',
     agents:             'Sub-agent spawning and job management — run parallel background agents and check their results.',

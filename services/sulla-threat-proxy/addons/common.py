@@ -145,8 +145,7 @@ def is_allowlisted(host: str, extra: Optional[Iterable[str]] = None) -> bool:
     h = host.lower().split(":")[0]  # strip port
     base_allow = {
         "localhost", "127.0.0.1", "::1",
-        "host.sulla.internal", "host.docker.internal", "host.rancher-desktop.internal",
-        "lima-rancher-desktop", "lima-0",
+        "host.sulla.internal", "host.docker.internal",
     }
     if h in base_allow:
         return True

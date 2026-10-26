@@ -1618,14 +1618,6 @@ async function doFactoryReset(keepSystemImages: boolean) {
   const appHomeEntries = await fs.promises.readdir(paths.appHome, { withFileTypes: true }).catch(() => []);
   const removals = [paths.altAppHome, paths.config, paths.logs, paths.extensionRoot];
 
-  if (process.platform === 'darwin') {
-    removals.push(path.join(os.homedir(), 'Library', 'Application Support', 'Rancher Desktop'));
-    removals.push(path.join(os.homedir(), 'Library', 'Caches', 'rancher-desktop-updater'));
-  } else if (process.platform === 'linux') {
-    removals.push(path.join(os.homedir(), '.config', 'Rancher Desktop'));
-    removals.push(path.join(os.homedir(), '.local', 'state', 'rancher-desktop'));
-  }
-
   for (const entry of appHomeEntries) {
     const candidate = path.join(paths.appHome, entry.name);
     if (!preserved.has(candidate)) removals.push(candidate);

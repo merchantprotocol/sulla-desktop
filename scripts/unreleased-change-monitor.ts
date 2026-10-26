@@ -1,14 +1,14 @@
 import { Octokit } from 'octokit';
 
 import * as tools from 'scripts/dependencies/tools';
-import { GitHubDependency, HasUnreleasedChangesResult, getOctokit, RancherDesktopRepository } from 'scripts/lib/dependencies';
+import { GitHubDependency, HasUnreleasedChangesResult, getOctokit, SullaDesktopRepository } from 'scripts/lib/dependencies';
 
-const GITHUB_OWNER = process.env.GITHUB_REPOSITORY?.split('/')[0] || 'rancher-sandbox';
-const GITHUB_REPO = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'rancher-desktop';
+const GITHUB_OWNER = process.env.GITHUB_REPOSITORY?.split('/')[0] || 'merchantprotocol';
+const GITHUB_REPO = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'sulla-desktop';
 // a (hopefully) unique and communicative key that is used to find issues created by
 // this script by filtering them down to the ones that have it in their title
 const UCMONITOR = 'ucmonitor';
-const mainRepo = new RancherDesktopRepository(GITHUB_OWNER, GITHUB_REPO);
+const mainRepo = new SullaDesktopRepository(GITHUB_OWNER, GITHUB_REPO);
 
 type DependencyState = { dependency: GitHubDependency } & HasUnreleasedChangesResult;
 
@@ -57,7 +57,7 @@ export async function hasUnreleasedChanges(dependency: GitHubDependency): Promis
   };
 }
 
-// Creates issues in the main Rancher Desktop repo for external
+// Creates issues in the main Sulla Desktop repo for external
 // dependencies that have changes that have not been released.
 // Also closes issues that were previously created by this script,
 // but that are no longer relevant.
@@ -96,7 +96,7 @@ async function checkForUnreleasedChanges(): Promise<void> {
       if (!issueExists) {
         const title = `${ UCMONITOR }: ${ dependency.name } has changes since ${ dependencyState.latestReleaseTag }`;
         const body = `Unreleased Change Monitor has detected changes to ${ dependency.name } since its last release, ${ dependencyState.latestReleaseTag }.` +
-          `\n\nThis is a reminder to release these changes so they make it into the next Rancher Desktop release.`;
+          `\n\nThis is a reminder to release these changes so they make it into the next Sulla Desktop release.`;
 
         await mainRepo.createIssue(title, body);
       }

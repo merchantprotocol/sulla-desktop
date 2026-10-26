@@ -76,7 +76,7 @@ export class Log {
    * @note This is only used during E2E tests where we do a factory reset.
    */
   protected reopen(mode = 'a') {
-    if ((process.env.RD_TEST ?? '').includes('e2e')) {
+    if ((process.env.SULLA_TEST ?? '').includes('e2e')) {
       // If we're running E2E tests, we may need to create the log directory.
       // We don't do this normally because it's synchronous and slow.
       fs.mkdirSync(path.dirname(this.path), { recursive: true });
@@ -94,7 +94,7 @@ export class Log {
     // If we're running unit tests, output to the console rather than file.
     // However, _don't_ do so for end-to-end tests in Playwright.
     // We detect Playwright via an environment variable we set in scripts/e2e.ts
-    if (process.env.NODE_ENV === 'test' && (process.env.RD_TEST ?? '').includes('e2e')) {
+    if (process.env.NODE_ENV === 'test' && (process.env.SULLA_TEST ?? '').includes('e2e')) {
       this.console = globalThis.console;
     } else {
       this.console = new Console(this.stream);
@@ -160,7 +160,7 @@ export class Log {
    * somewhat expected, but can occasionally be relevant.
    */
   debugE(message: string, exception: any) {
-    if (process.env.RD_TEST || process.env.NODE_ENV !== 'production') {
+    if (process.env.SULLA_TEST || process.env.NODE_ENV !== 'production') {
       this.debug(message, exception);
     } else {
       this.debug(`${ message } ${ exception }`);
@@ -210,10 +210,10 @@ const MAX_LOG_SIZE = 500 * 1024;
  * - Trim active log files that exceed MAX_LOG_SIZE (keep the tail)
  *
  * Should only be run once we are certain that this is the only instance
- * of Rancher Desktop running on the system.
+ * of Sulla Desktop running on the system.
  */
 export function clearLoggingDirectory(): void {
-  if ((process.env.RD_TEST ?? '').includes('e2e') || process.type !== 'browser') {
+  if ((process.env.SULLA_TEST ?? '').includes('e2e') || process.type !== 'browser') {
     return;
   }
 
