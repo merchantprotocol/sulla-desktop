@@ -25,7 +25,7 @@ interface GoDependencyOptions {
 
   /**
    * The Go module path, typically as defined in `go.mod`. This should match the
-   * import path of the module (e.g., `github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper`).
+   * import path of the module (e.g., `github.com/rancher-sandbox/rancher-desktop/src/go/extension-proxy`).
    */
   modulePath?: string;
 }
@@ -89,54 +89,12 @@ export class GoDependency implements Dependency {
   }
 
   outFile(context: DownloadContext): string {
-    const suffix = context.platform === 'win32' ? '.exe' : '';
-    let outputPath = `${ this.options.outputPath }${ suffix }`;
+    let outputPath = this.options.outputPath;
 
     if (!this.options.outputPath.includes('/')) {
-      outputPath = `${ this.options.outputPath }/${ this.name }${ suffix }`;
+      outputPath = `${ this.options.outputPath }/${ this.name }`;
     }
 
     return path.join(context.resourcesDir, context.platform, outputPath);
-  }
-}
-
-export class WSLHelper extends GoDependency {
-  constructor(version: string) {
-    super('wsl-helper', {
-      outputPath: 'internal',
-      env:        { CGO_ENABLED: '0' },
-      modulePath: 'github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper',
-      version,
-    });
-  }
-
-  dependencies(context: DownloadContext): string[] {
-    return ['mobyOpenAPISpec:win32'];
-  }
-}
-
-export class NerdctlStub extends GoDependency {
-  constructor() {
-    super('nerdctl-stub');
-  }
-
-  override outFile(context: DownloadContext) {
-    // nerdctl-stub is the actual nerdctl binary to be run on linux;
-    // there is also a `nerdctl` wrapper in the same directory to make it
-    // easier to handle permissions for Linux-in-WSL.
-    const leafName = context.platform === 'win32' ? 'nerdctl.exe' : 'nerdctl-stub';
-
-    return path.join(context.resourcesDir, context.platform, 'bin', leafName);
-  }
-}
-
-export class SpinStub extends GoDependency {
-  constructor() {
-    super('spin-stub');
-  }
-
-  override outFile(context: DownloadContext) {
-    // spin-stub is only used on Windows
-    return path.join(context.resourcesDir, context.platform, 'bin', 'spin.exe');
   }
 }
