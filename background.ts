@@ -389,6 +389,11 @@ mainEvents.on('sulla-managed-services-ready', async() => {
   await firstRunCoordinator.setCondition('deployCompleted');
 });
 
+// A failed start must not leave the boot screen up: open the app degraded.
+mainEvents.on('sulla-managed-services-failed', async() => {
+  await firstRunCoordinator.setCondition('deployCompleted');
+});
+
 /** Resolve the project root without relying on process.cwd() which throws
  *  ENOENT when the working directory has been removed (e.g. nightly reinstall). */
 function getSullaProjectDir(): string {

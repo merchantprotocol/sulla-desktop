@@ -586,6 +586,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     })().catch((error) => {
       if (!(error instanceof ManagedServicesReconciliationCancelled)) {
         console.warn(`[startup-phase] ${ new Date().toISOString() } phase=background-startup status=degraded runtime=sulla`, error);
+        // Release the boot screen: it waits for the services, and would wait forever.
+        mainEvents.emit('sulla-managed-services-failed');
       }
     });
     logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming runtime=sulla');
