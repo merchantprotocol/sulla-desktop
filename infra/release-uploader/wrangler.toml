@@ -1,0 +1,18 @@
+# Release uploader Worker. Deploy from this folder (see README.md).
+# The account is chosen by your `wrangler login` or CLOUDFLARE_ACCOUNT_ID.
+name = "sulla-release-uploader"
+main = "src/index.mjs"
+compatibility_date = "2026-04-01"
+
+# Reached by CI over HTTPS. Every route requires the UPLOAD_TOKEN bearer secret.
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "sulla-desktop-releases"
+
+# Secret (never committed): UPLOAD_TOKEN. Set with `wrangler secret put UPLOAD_TOKEN`.
