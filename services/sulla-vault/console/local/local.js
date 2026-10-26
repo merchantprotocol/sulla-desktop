@@ -484,6 +484,8 @@
   byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message; } };
   byId('new-item').onclick = () => { void openEditor(null).catch(error => message(error.message, true)); };
   byId('nav-audit').onclick = showAudit;
+  // Desktop intercepts this path and opens its Integrations tab; nothing is served here.
+  byId('nav-integrations').onclick = () => { location.href = '/vault/desktop/integrations'; };
   byId('audit-back').onclick = showBrowser;
   document.querySelectorAll('[data-audit-actor]').forEach(button => button.onclick = () => { auditActor = button.dataset.auditActor; auditOffset = 0; document.querySelectorAll('[data-audit-actor]').forEach(value => value.classList.toggle('on', value === button)); void loadAudit(); });
   byId('audit-time').onchange = () => { auditOffset = 0; void loadAudit(); };
