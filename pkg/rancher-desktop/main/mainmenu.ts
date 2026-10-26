@@ -359,7 +359,7 @@ function getFileMenu(): MenuItem {
       },
       {
         label:   'Troubleshooting',
-        click:   () => navigateDockerDashboard('/Troubleshooting'),
+        click:   () => openPreferences('troubleshooting'),
       },
       { type: 'separator' },
       {

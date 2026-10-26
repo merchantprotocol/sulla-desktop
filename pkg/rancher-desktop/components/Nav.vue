@@ -171,11 +171,12 @@ export default defineComponent({
     routeGlyph(route: string): string {
       return ({
         '/Containers':      '▣',
-        '/Volumes':         '◫',
-        '/Usage':           '◔',
-        '/PortForwarding':  '↗',
         '/Images':          '◇',
+        '/Volumes':         '◫',
+        '/Networks':        '⌘',
+        '/Ports':           '↗',
         '/Snapshots':       '◷',
+        '/DockerOptions':   '⚙',
         '/Diagnostics':     '◎',
       } as Record<string, string>)[route] ?? '·';
     },

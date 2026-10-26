@@ -1,9 +1,9 @@
 export const mainRoutes = [
-  { route: '/Containers', experimental: true },
-  { route: '/Volumes', experimental: true },
-  { route: '/Usage' },
-  { route: '/PortForwarding' },
+  { route: '/Containers' },
   { route: '/Images' },
+  { route: '/Volumes' },
+  { route: '/Networks' },
+  { route: '/Ports' },
   { route: '/Snapshots' },
-  { route: '/Diagnostics' },
+  { route: '/DockerOptions' },
 ];
