@@ -96,4 +96,4 @@ formatters:
       sections:
       - standard
       - default
-      - prefix(github.com/rancher-sandbox/rancher-desktop) # localmodule for go.work
+      - prefix(github.com/merchantprotocol/sulla-desktop) # localmodule for go.work

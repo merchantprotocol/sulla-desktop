@@ -87,7 +87,7 @@ export default class MobyImageProcessor extends imageProcessor.ImageProcessor {
    * Sample output (line-oriented JSON output, as opposed to one JSON document):
    *
    * {"CreatedAt":"2021-10-05 22:04:12 +0000 UTC","CreatedSince":"20 hours ago","ID":"171689e43026","Repository":"","Tag":"","Size":"119.2 MiB"}
-   * {"CreatedAt":"2021-10-05 22:04:20 +0000 UTC","CreatedSince":"20 hours ago","ID":"55fe4b211a51","Repository":"rancher/k3d","Tag":"v0.1.0-beta.7","Size":"46.2 MiB"}
+   * {"CreatedAt":"2021-10-05 22:04:20 +0000 UTC","CreatedSince":"20 hours ago","ID":"55fe4b211a51","Repository":"example/app","Tag":"v0.1.0-beta.7","Size":"46.2 MiB"}
    * ...
    */
 

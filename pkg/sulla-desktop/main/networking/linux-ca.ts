@@ -13,7 +13,7 @@ const console = Logging.networking;
 
 /**
  * Asynchronously enumerate the certificate authorities that should be used to
- * build the Rancher Desktop trust store, in PEM format in undefined order.
+ * build the Sulla Desktop trust store, in PEM format in undefined order.
  */
 export default async function * getLinuxCertificates(): AsyncIterable<string> {
   const tokenURLs = await Array.fromAsync(listTokens());

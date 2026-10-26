@@ -29,7 +29,7 @@ export default defineConfigWithVueTs(
   vueTsConfigs.stylisticTypeChecked,
   includeIgnoreFile(path.resolve('.gitignore')),
   {
-    name:            'rancher-desktop',
+    name:            'sulla-desktop',
     languageOptions: {
       sourceType: 'commonjs',
     },
@@ -90,7 +90,7 @@ export default defineConfigWithVueTs(
     },
   },
   {
-    name:            'rancher-desktop-vue',
+    name:            'sulla-desktop-vue',
     files:           ['**/*.vue'],
     languageOptions: {
       sourceType: 'module',
@@ -98,7 +98,7 @@ export default defineConfigWithVueTs(
   },
   {
     // Disable TypeScript-specific rules in JavaScript files.
-    name:  'rancher-desktop-js',
+    name:  'sulla-desktop-js',
     files: ['**/*.js', '**/*.cjs'],
     rules: {
       '@typescript-eslint/no-require-imports': ['off'],
@@ -106,7 +106,7 @@ export default defineConfigWithVueTs(
   },
   {
     // Disable lints not needed in tests (mostly global imports).
-    name:            'rancher-desktop-spec',
+    name:            'sulla-desktop-spec',
     files:           ['**/*.spec.js', '**/*.spec.ts'],
     languageOptions: {
       globals: globals.jest,
@@ -117,8 +117,8 @@ export default defineConfigWithVueTs(
     },
   },
   {
-    // Files we imported from Rancher Dashboard.
-    name:  'rancher-dashboard-imports',
+    // Files imported from the upstream dashboard.
+    name:  'dashboard-imports',
     files: [
       'pkg/sulla-desktop/plugins/*.js',
       'pkg/sulla-desktop/utils/*.js',
@@ -129,11 +129,11 @@ export default defineConfigWithVueTs(
   },
   {
     // Compatibility: disable lints during the ESLint transition.
-    name:    'rancher-desktop-compatibility',
+    name:    'sulla-desktop-compatibility',
     extends: [
       {
-        // Files we imported from Rancher Dashboard.
-        name:  'rancher-dashboard-imports',
+        // Files imported from the upstream dashboard.
+        name:  'dashboard-imports',
         files: [
           'pkg/sulla-desktop/components/SortableTable/**',
         ],
@@ -143,7 +143,7 @@ export default defineConfigWithVueTs(
       },
       {
         // Files in workflows were previously excluded from linting
-        name:    'rancher-desktop-workflows',
+        name:    'sulla-desktop-workflows',
         ignores: ['.github/workflows/**'],
       },
     ],

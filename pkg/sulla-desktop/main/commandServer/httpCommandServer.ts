@@ -506,7 +506,7 @@ export class HttpCommandServer {
     if (!error) {
       await this.commandWorker.k8sReset(context, mode);
       console.debug(`k8sReset: ${ mode } succeeded`);
-      response.status(200).type('txt').send(`Rancher Desktop ${ mode } reset successful`);
+      response.status(200).type('txt').send(`Sulla Desktop ${ mode } reset successful`);
     } else {
       console.debug(`k8sReset: write back status 400, error: ${ error }`);
       response.status(400).type('txt').send(error);

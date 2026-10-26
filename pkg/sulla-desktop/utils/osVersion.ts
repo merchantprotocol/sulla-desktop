@@ -8,7 +8,7 @@ import { Log } from '@pkg/utils/logging';
 let macOsVersion: semver.SemVer;
 
 export async function fetchMacOsVersion(console?: Log) {
-  let versionString = process.env.RD_MOCK_MACOS_VERSION;
+  let versionString = process.env.SULLA_MOCK_MACOS_VERSION;
 
   if (!versionString) {
     const { stdout } = await spawnFile('/usr/bin/sw_vers', ['-productVersion'], { stdio: ['ignore', 'pipe', console ?? 'ignore'] });

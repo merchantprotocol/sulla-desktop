@@ -3,7 +3,7 @@
  */
 export default ({ route, next, redirect }) => {
   switch (route.path) {
-  case process.env.RD_ENV_PLUGINS_DEV:
+  case process.env.SULLA_ENV_PLUGINS_DEV:
     next();
     break;
   case '/':

@@ -219,6 +219,3 @@ export interface DeploymentProfileType {
   locked:   RecursivePartial<Settings>;
 }
 
-// Imported from dashboard/config/settings.js
-// Setting IDs
-export const SETTING = { PL_RANCHER_VALUE: 'rancher' };

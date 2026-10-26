@@ -36,6 +36,7 @@ import yaml from 'yaml';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { rewriteRecipeCompose, type RecipeVolumeSeed } from '@pkg/main/marketplace/recipeRuntime';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -112,7 +113,7 @@ function withProject(args: string[], slug: string): string[] {
 
 /** Augmented PATH that includes common Docker binary locations. */
 export function dockerEnv(): Record<string, string> {
-  const extra = ['/usr/local/bin', '/usr/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', '~/.rd/bin'].join(path.delimiter);
+  const extra = ['/usr/local/bin', '/usr/bin', '/opt/homebrew/bin', '/opt/homebrew/sbin', paths.integration].join(path.delimiter);
 
   return {
     ...process.env as Record<string, string>,

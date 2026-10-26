@@ -5,7 +5,7 @@ Live-tested against the running Sulla Desktop backend (token + localhost). Notes
 **How to run this verification yourself:**
 ```bash
 export SULLA_HOST=localhost
-export SULLA_API_TOKEN="$(cat ~/Library/Application\ Support/rancher-desktop/chat-api-token.json | jq -r .token)"
+export SULLA_API_TOKEN="$(cat ~/Library/Application\ Support/sulla-desktop/chat-api-token.json | jq -r .token)"
 sulla <category> --help
 sulla <category>/<tool> '{...}'
 ```
@@ -148,7 +148,7 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
 `/v1/tools/internal/<anything>/<tool>/call` resolves by tool **name** alone. `anything` can be literally "asdfqwerty" and it still works. This is why `sulla agents/spawn_agent` works even though the tool is canonically under `meta`. Use canonical names for clarity.
 
 ### Host CLI category whitelist is stale
-`/Users/jonathonbyrdziak/.rd/bin/sulla` has a hardcoded `TOOL_CATEGORIES` list that omits `function`, `workflow`, `observation`. When those are used as the first segment, the CLI thinks it's a proxy call and fails. The **agent inside the desktop doesn't use this CLI** — it calls the registry directly — so agent invocations work. But host-based testing of `function/*` tools may fail from the shell script.
+`~/.sulla-desktop-data/bin/sulla` has a hardcoded `TOOL_CATEGORIES` list that omits `function`, `workflow`, `observation`. When those are used as the first segment, the CLI thinks it's a proxy call and fails. The **agent inside the desktop doesn't use this CLI** — it calls the registry directly — so agent invocations work. But host-based testing of `function/*` tools may fail from the shell script.
 
 **Workaround for host testing:** hit the backend URL directly with curl.
 
@@ -181,7 +181,7 @@ Run this from a shell on the host:
 
 ```bash
 export SULLA_HOST=localhost
-export SULLA_API_TOKEN="$(jq -r .token < ~/Library/Application\ Support/rancher-desktop/chat-api-token.json)"
+export SULLA_API_TOKEN="$(jq -r .token < ~/Library/Application\ Support/sulla-desktop/chat-api-token.json)"
 
 # Enumerate categories
 sulla --help

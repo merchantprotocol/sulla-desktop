@@ -237,8 +237,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // is the user is running under Rosetta. Flag that.
       if (Electron.app.runningUnderARM64Translation) {
         // Using 'aarch64' and 'x86_64' in the error because that's what we use
-        // for the DMG suffix, e.g. "Rancher Desktop.aarch64.dmg"
-        throw new BackendError('Fatal Error', `Rancher Desktop for x86_64 does not work on aarch64.`, true);
+        // for the DMG suffix, e.g. "Sulla Desktop.aarch64.dmg"
+        throw new BackendError('Fatal Error', `Sulla Desktop for x86_64 does not work on aarch64.`, true);
       }
     }
   }
@@ -489,7 +489,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   protected sullaRuntimeShares(): SullaRuntimeShare[] {
     // Only app-owned transport/cache roots cross the VM boundary. User home,
     // external volumes, and Darwin's broad temporary roots are Files-owned.
-    const locations = ['/tmp/rancher-desktop'];
+    const locations = ['/tmp/sulla-desktop'];
 
     for (const extraDir of [paths.cache, paths.logs, paths.resources]) {
       const found = locations.some(loc => !path.relative(path.normalize(loc), path.normalize(extraDir)).startsWith('../'));

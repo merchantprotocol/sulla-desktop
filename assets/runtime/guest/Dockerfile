@@ -28,7 +28,7 @@ COPY --from=agent /sulla-runtime-agent /image/rootfs/init
 # Everything in the guest already runs as root; Desktop's setup commands
 # still prefix some steps with sudo.
 COPY assets/runtime/guest/sudo.sh /image/rootfs/usr/bin/sudo
-COPY assets/runtime/guest/docker-credential-none.sh /image/rootfs/usr/bin/docker-credential-rancher-desktop
+COPY assets/runtime/guest/docker-credential-none.sh /image/rootfs/usr/bin/docker-credential-sulla-desktop
 COPY assets/runtime/guest/config/daemon.json /image/rootfs/etc/docker/daemon.json
 COPY assets/runtime/guest/config/containerd.toml /image/rootfs/etc/containerd/config.toml
 COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
@@ -39,7 +39,7 @@ COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
 # prefix to /usr/local (checked below).
 COPY assets/runtime/guest/config/pip.conf /image/rootfs/usr/pip.conf
 COPY assets/runtime/guest/config/sulla-usr-local.pth /image/rootfs/usr/sulla-usr-local.pth
-RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-rancher-desktop /usr/local/bin/make-artifact \
+RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-sulla-desktop /usr/local/bin/make-artifact \
     && mv /image/rootfs/usr/sulla-usr-local.pth /image/rootfs/usr/lib/python3.*/site-packages/ \
     && grep -qx 'prefix=/usr/local' /image/rootfs/usr/lib/node_modules/npm/npmrc \
     && /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img \

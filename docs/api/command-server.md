@@ -1,6 +1,6 @@
 # HTTP Command Server API
 
-The HTTP Command Server runs on **port 6107** (`127.0.0.1` only) and provides a REST API for controlling the Sulla desktop application. All endpoints require HTTP Basic Authentication using credentials stored in `~/Library/Application Support/rancher-desktop/rd-engine.json`.
+The HTTP Command Server runs on **port 6107** (`127.0.0.1` only) and provides a REST API for controlling the Sulla desktop application. All endpoints require HTTP Basic Authentication using credentials stored in `~/Library/Application Support/sulla-desktop/rd-engine.json`.
 
 ## Authentication
 

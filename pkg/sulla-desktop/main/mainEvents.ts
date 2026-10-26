@@ -122,7 +122,7 @@ interface MainEventNames {
   /**
    * Emitted when the state of the backend lock changes. An empty string indicates
    * a locked state, and a nonempty string indicates a locked state and serves as
-   * an explanation as to why Rancher Desktop is in this state. It disables the UI,
+   * an explanation as to why Sulla Desktop is in this state. It disables the UI,
    * prevents the user from making changes to settings, and possibly prevents other
    * actions that could cause problems with snapshot operations (as of the time of
    * writing snapshots is the sole use for this).

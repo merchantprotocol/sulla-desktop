@@ -13,11 +13,11 @@ import { IntegrationManager } from '@pkg/integrations/integrationManager';
 import Logging from '@pkg/utils/logging';
 
 interface UnixIntegrationManagerOptions {
-  /** Directory containing tools shipped with Rancher Desktop. */
+  /** Directory containing tools shipped with Sulla Desktop. */
   binDir:                string;
   /** Directory to place tools the user can use. */
   integrationDir:        string;
-  /** Directory containing docker CLI plugins shipped with Rancher Desktop. */
+  /** Directory containing docker CLI plugins shipped with Sulla Desktop. */
   dockerCLIPluginSource: string;
   /** Directory to place docker CLI plugins for with the docker CLI. */
   dockerCLIPluginDest:   string;
@@ -27,7 +27,7 @@ const console = Logging.integrations;
 
 /**
  * Manages integrations for Unix-like operating systems. Integrations take
- * the form of symlinks from the Rancher Desktop installation to two separate
+ * the form of symlinks from the Sulla Desktop installation to two separate
  * directories: the "integrations directory", which should be in the user's path
  * somehow, and the "docker CLI plugins directory", which is the directory that
  * docker looks in for CLI plugins.
@@ -83,7 +83,7 @@ export default class UnixIntegrationManager implements IntegrationManager {
    * in case users try to run `docker-compose` instead of `docker compose`.
    */
   protected async ensureIntegrationSymlinks(desiredPresent: boolean): Promise<void> {
-    const RDIntegration = 'rancher-desktop';
+    const appIntegration = 'sulla-desktop';
     const sourceDirs = [this.binDir, this.dockerCLIPluginSource];
     const validIntegrations = Object.fromEntries((await Promise.all(sourceDirs.map(async(d) => {
       return (await fs.promises.readdir(d)).map(f => [f, d] as const);
@@ -93,7 +93,7 @@ export default class UnixIntegrationManager implements IntegrationManager {
     // integration directory may or may not be present; handle error if not
     try {
       currentIntegrationNames = await fs.promises.readdir(this.integrationDir);
-      currentIntegrationNames = currentIntegrationNames.filter(v => v !== RDIntegration);
+      currentIntegrationNames = currentIntegrationNames.filter(v => v !== appIntegration);
     } catch (error: any) {
       if (error.code !== 'ENOENT') {
         throw error;
@@ -119,16 +119,16 @@ export default class UnixIntegrationManager implements IntegrationManager {
       }
     }
 
-    // manage the special rancher-desktop integration; this symlink
+    // manage the special sulla-desktop integration; this symlink
     // exists so management processes can find the AppImage path
-    // that Rancher Desktop is running from
-    const rancherDesktopPath = path.join(this.integrationDir, RDIntegration);
+    // that Sulla Desktop is running from
+    const appImageLinkPath = path.join(this.integrationDir, appIntegration);
     const appImagePath = process.env['APPIMAGE'];
 
     if (desiredPresent && appImagePath) {
-      await ensureSymlink(appImagePath, rancherDesktopPath);
+      await ensureSymlink(appImagePath, appImageLinkPath);
     } else {
-      await fs.promises.rm(rancherDesktopPath, { force: true });
+      await fs.promises.rm(appImageLinkPath, { force: true });
     }
   }
 
@@ -165,7 +165,7 @@ export default class UnixIntegrationManager implements IntegrationManager {
     return Promise.resolve(null);
   }
 
-  // Tells the caller whether Rancher Desktop is allowed to modify/remove
+  // Tells the caller whether Sulla Desktop is allowed to modify/remove
   // a file in the docker CLI plugins directory.
   protected async weOwnDockerCliFile(filePath: string): Promise<boolean> {
     let linkedTo: string;

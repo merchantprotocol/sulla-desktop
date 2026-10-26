@@ -79,7 +79,6 @@ locale:
   none: (None)
 
 nav:
-  backToRancher: Cluster Manager
   clusterTools: Cluster Tools
   kubeconfig: Download KubeConfig
   import: Import YAML
@@ -129,7 +128,6 @@ nav:
 product:
   apps: Apps & Marketplace
   auth: Users & Authentication
-  backup: Rancher Backups
   cis: CIS Benchmark
   ecm: Cluster Manager
   explorer: Cluster Explorer
@@ -417,7 +415,6 @@ virtualMachine:
           description: Exposes the filesystem by using an Apple Virtualization framework shared directory device.
   proxy:
     legend: WSL Proxy
-    label: Enable the proxy used by rancher-desktop
     addressTitle: Proxy address
     address: Address
     port: Port
@@ -469,14 +466,14 @@ allowedImages:
 
 pathManagement:
   label: Configure PATH
-  tooltip: Sulla Desktop ships with tools, such as kubectl, nerdctl, helm and docker. In order to use these tools, <code>$HOME/.rd/bin</code> must be in your PATH.
+  tooltip: Sulla Desktop ships with tools, such as kubectl, nerdctl, helm and docker. In order to use these tools, <code>$HOME/.sulla-desktop-data/bin</code> must be in your PATH.
   options:
     rcFiles:
       label: Automatic
       description: Sulla Desktop edits your shell profile for you. Restart any open shells for changes to take effect.
     manual:
       label: Manual
-      description: 'Sulla Desktop does not change your PATH configuration; add <code>$HOME/.rd/bin</code> to your path manually.'
+      description: 'Sulla Desktop does not change your PATH configuration; add <code>$HOME/.sulla-desktop-data/bin</code> to your path manually.'
   accept: Accept
 
 legacyIntegrations:
@@ -497,7 +494,7 @@ legacyIntegrations:
 sudoPrompt:
   title: Administrative Access Required
   message: 'Sulla Desktop requires administrative access ("sudo access") for the following reasons:'
-  messageSecondPart: The prompt will be displayed once this window is closed. Cancelling the prompt or disabling administrative access requires you to switch the docker context to rancher-desktop in order to continue using Sulla Desktop.
+  messageSecondPart: The prompt will be displayed once this window is closed. Cancelling the prompt or disabling administrative access requires you to switch the docker context to sulla-desktop in order to continue using Sulla Desktop.
   explanation: 'This will modify the following paths:'
   buttonText: OK
 
@@ -619,7 +616,6 @@ authConfig:
           5: 'Upload the downloaded JSON file in the OAuth credentials box.'
       3:
         title: 'Create Service Account credentials'
-        introduction: 'Follow <a href="https://rancher.com/docs/rancher/v2.x/en/admin-settings/authentication/google/#creating-service-account-credentials" target="_blank" rel="noopener noreferrer nofollow">this</a> guide to:'
         body:
           1: Create a service account.
           2: Generate a key for the service account.
@@ -706,7 +702,6 @@ authConfig:
   oidc:
     oidc: Configure an OIDC account
     keycloakoidc: Configure a Keycloak OIDC account
-    rancherUrl: Rancher URL
     clientId: Client ID
     clientSecret: Client Secret
     customEndpoint:
@@ -857,7 +852,6 @@ backupRestoreOperator:
     label: Delete Timeout
     tip: Seconds to wait for a resource delete to succeed before removing finalizers to force deletion.
   deployment:
-    rancherNamespace: Rancher ResourceSet Namespace
     size: Size
     storage:
       label: Default Storage Location
@@ -875,19 +869,16 @@ backupRestoreOperator:
       warning: 'This {type} does not have its reclaim policy set to "Retain".  Your backups may be lost if the volume is changed or becomes unbound.'
   encryption: Encryption
   encryptionConfigName:
-    backuptip: 'Any secret in the <code>cattle-resource-system</code> namespace that has an <code>encryption-provider-config.yaml</code> key. <br/>The contents of this file are necessary to perform a restore from this backup, and are not stored by Rancher Backup.'
     label: Encryption Config Secret
     options:
       none: Store the contents of the backup unencrypted
       secret: 'Encrypt backups using an <a target="_blank" rel="noopener noreferrer nofollow" href="https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#understanding-the-encryption-at-rest-configuration">Encryption Config Secret</a> (Recommended)'
     restoretip: 'If the backup was performed with encryption enabled, a secret containing the same encryption-provider-config should be used during restore.'
-    warning: 'The contents of this file are necessary to perform a restore from this backup, and are not stored by Rancher Backup.'
   lastBackup: Last Backup
   nextBackup: Next Backup
   noResourceSet: You must define a ResourceSet in this namespace to create a backup CR.
   prune:
     label: Prune
-    tip: Delete the resources managed by Rancher that are not present in the backup. (Recommended)
   resourceSetName: Resource Set
   restoreFrom:
     default: The default storage target
@@ -958,7 +949,6 @@ catalog:
     certified:
       other: Other
       partner: Partner
-      rancher: '{vendor}'
     header: Deploy Chart
     noCharts: 'There are no charts available, have you added any repos?'
     noWindows: Your catalogs do not contain any charts capable of being deployed on a Windows cluster.
@@ -1056,17 +1046,12 @@ catalog:
     gitRepo:
       label: Git Repo URL
       placeholder: 'e.g. https://github.com/your-company/charts.git'
-    name:
-      rancher-charts: '{vendor}'
-      rancher-partner-charts: Partners
-      rancher-rke2-charts: RKE2
     target:
       git: Git Repository containing Helm chart definitions
       http: http(s) URL to an index generated by Helm
       label: Target
     url:
       label: Index URL
-      placeholder: 'e.g. https://charts.rancher.io'
   tools:
     header: Cluster Tools
     action:
@@ -1108,10 +1093,6 @@ chartHeading:
 
 cis:
   addTest: Add Test ID
-  alertNeeded: |-
-    Alerting must be enabled within the CIS chart values.yaml.
-    This requires that the <a tabindex="0" href="{link}">{vendor} Monitoring and Alerting app</a> is installed
-    and the Receivers and Routes are <a target="_blank" rel='noopener noreferrer nofollow' href='https://rancher.com/docs/rancher/v2.x/en/monitoring-alerting/v2.5/configuration/#alertmanager-config'> configured to send out alerts.</a>
   alertOnComplete: Alert on scan completion
   alertOnFailure: Alert on scan failure
   benchmarkVersion: Benchmark Version
@@ -1321,7 +1302,6 @@ cluster:
     packet: Packet
     pinganyunecs: Pinganyun ECS
     rackspace: RackSpace
-    rancherkubernetesengine: RKE
     rke2: RKE2
     rke: RKE1
     rkeWindows: Windows
@@ -1468,7 +1448,6 @@ fleet:
       empty: The root of the repo is used by default.  To use one or more different directories, add them here.
     repo:
       label: Repository URL
-      placeholder: 'e.g. https://github.com/rancher/fleet-examples.git'
     ref:
       label: Watch
       branch: A Branch
@@ -1789,7 +1768,6 @@ landing:
       homePage: Take me to the home page
       lastVisited: Take me to the area I last visited
       custom: "Take me to cluster:"
-  welcomeToRancher: 'Welcome to {vendor}'
 
 logging:
   clusterFlow:
@@ -2057,10 +2035,6 @@ monitoring:
         info: Secrets should be mounted at <pre class='inline-block m-0'>/etc/alertmanager/secrets/</pre>
         label: Additional Secrets
       existing: Choose an existing config secret
-      info: |
-        <span class="text-bold">Create default config</span>: A Secret containing your Alertmanager Config will be created in the <pre class='inline-block m-0'>cattle-monitoring-system</pre> namespace on deploying this chart under the name <pre class='inline-block m-0'>alertmanager-rancher-monitoring-alertmanager</pre>. By default, this Secret will never be modified on an uninstall or upgrade of this chart. <br />
-        Once you have deployed this chart, you should edit the Secret via the UI in order to add your custom notification configurations that will be used by Alertmanager to send alerts. <br /> <br />
-        <span class="text-bold">Choose an existing config secret</span>: You must specify a Secret that exists in the <pre class='inline-block m-0'>cattle-monitoring-system</pre> namespace. If the namespace does not exist, you will not be able to select an existing secret.
       label: Alertmanager Secret
       new: Create default config
       radio:
@@ -2078,7 +2052,6 @@ monitoring:
     tip: 'Creates <code>monitoring-admin</code>, <code>monitoring-edit</code>, and <code>monitoring-view</code> ClusterRoles that can be assigned to users to provide permissions to CRDs installed by the Monitoring chart.'
   etcdNodeDirectory:
     label: etcd Node Certificate Directory
-    tooltip: 'For clusters that use RancherOS for the etcd nodes, this option should be set to <pre class=''inline-block m-0''>/opt/rke/etc/kubernetes/ssl</pre>. Hybrid environments that require specifying multiple certificate directories (e.g. an etcd plane composed of both RancherOS and Ubuntu hosts) are not supported.'
   grafana:
     storage:
       annotations: PVC Annotations
@@ -2178,7 +2151,6 @@ monitoring:
       keyFilePath:
         label: Key File Path
         placeholder: e.g. ./key-file.pfx
-      secretsBanner: The file paths below must be referenced in <pre class="inline-block m-0 p-0 vertical-middle">alertmanager.alertmanagerSpec.secrets</pre> when deploying the Monitoring chart. For more information see our <a href="https://rancher.com/docs/rancher/v2.5/en/monitoring-alerting/" target="_blank" rel="noopener noreferrer nofollow">documentation</a>.
 
   route:
     fields:
@@ -2194,7 +2166,6 @@ monitoring:
       stepTitle: Uninstall V1
       stepSubtext: Uninstall Previous Monitoring
       warning1: V1 Monitoring is currently deployed. This needs to be uninstalled before V2 monitoring can be installed.
-      warning2: <a target="blank" href="https://rancher.com/docs/rancher/v2.x/en/monitoring-alerting/v2.5/migrating/#migrating-from-monitoring-v1-to-monitoring-v2" target='_blank' rel='noopener nofollow'>Learn more</a> about migrating to V2 Monitoring.
       success1: V1 monitoring successfully uninstalled.
       success2: Press Next to continue
   tabs:
@@ -2227,13 +2198,10 @@ monitoringReceiver:
   slack:
     label: Slack
     title: Slack Config
-    info: "See additional info on <a href='https://rancher.slack.com/apps/A0F7XDUAZ-incoming-webhooks' target='_blank' rel='noopener noreferrer nofollow'>creating Incoming Webhooks for Slack</a> ."
   webhook:
     label: Webhook
     title: Webhook Config
     urlTooltip: For some webhooks this a url that points to the service DNS
-    modifyNamespace: If <pre class="inline-block m-0 p-0 vertical-middle">rancher-alerting-drivers</pre> default values were changed, please update the url below in the format http://&lt;new_service_name&gt;.&lt;new_namespace&gt.svc.&lt;port&gt/&lt;path&gt
-    banner: To use MS Teams or SMS you will need to have <pre class="inline-block m-0 p-0 vertical-middle">rancher-alerting-drivers</pre> installed first.
     add:
       generic: Generic
       msTeams: MS Teams
@@ -2841,10 +2809,6 @@ promptSaveAsRKETemplate:
   description: Create a new RKE cluster template and initial revision from the current cluster configuration.
   warning: This will modify the cluster, setting it up to use the newly created cluster template and revision.
 
-rancherAlertingDrivers:
-  msTeams: Enable Microsoft Teams
-  sms: Enable SMS
-  selectOne: You must select at least one of the options below.
 
 rbac:
   roleBinding:
@@ -2977,9 +2941,6 @@ rbac:
       nodetemplates-use:
         label: Use Node Templates
         description: Allows the user to deploy new Nodes using any existing Node Templates.
-      view-rancher-metrics:
-        label: 'View {vendor} Metrics'
-        description: Allows the user to view Metrics through the API.
       base:
         label: Login Access
 
@@ -4947,9 +4908,7 @@ integrations:
 
 support:
   community:
-    title: SUSE Rancher provides world-class support
     linksTitle: Community Support
-    learnMore: Find out more about SUSE Rancher Support
     pricing: Contact us for pricing
   subscription:
     haveSupport: Already have support?
@@ -4972,7 +4931,6 @@ support:
       text: We provide tightly defined SLAs, and offer round the clock support options.
     two:
       title: Issue Resolution
-      text: Run SUSE Rancher products with confidence, knowing that the developers who built them are available to quickly resolve issues.
     three:
       title: Troubleshooting
       text: We focus on uncovering the root cause of any issue, whether it is related to Sulla Labs products, Kubernetes, Docker or your underlying infrastructure.
@@ -4987,10 +4945,8 @@ embedding:
 v1ClusterTools:
   monitoring:
     label: Monitoring (Legacy)
-    description: 'Legacy V1 monitoring. V1 Monitoring is deprecated since Rancher 2.5.0. <a target="blank" href="https://rancher.com/docs/rancher/v2.x/en/monitoring-alerting/v2.5/migrating/#migrating-from-monitoring-v1-to-monitoring-v2">Learn more</a> about migrating to V2 Monitoring.'
   logging:
     label: Logging (Legacy)
-    description: 'Legacy V1 logging. V1 Logging is deprecated since Rancher 2.5.0. <a target="blank" href="https://rancher.com/docs/rancher/v2.x/en/logging/v2.5/migrating/">Learn more</a> about migrating to V2 Logging.'
 
 legacy:
   alerts: Alerts
