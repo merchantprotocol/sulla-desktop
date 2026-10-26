@@ -34,7 +34,7 @@ const (
 	soOriginalDst     = 80
 )
 
-var hostAliases = []string{"host.lima.internal", "host.sulla.internal", "host.docker.internal"}
+var hostAliases = []string{"host.sulla.internal", "host.docker.internal"}
 
 type portHeader struct {
 	Port int `json:"port"`

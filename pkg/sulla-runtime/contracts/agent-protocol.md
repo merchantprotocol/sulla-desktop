@@ -48,7 +48,7 @@ The host opens one stream per Mac-side connection and sends one JSON line, `{"po
 
 ## Mac loopback (port 1100, guest-initiated)
 
-`192.168.5.2` stands for the Mac's loopback, under the names `host.lima.internal`, `host.sulla.internal` and `host.docker.internal` in the guest's `/etc/hosts`. TCP to that address from the guest or any container is redirected (iptables `REDIRECT`) to the agent on guest port 1100, which reads the original port and opens a vsock stream to the host (CID 2) port 1100 with `{"port":N}`. The host dials only `127.0.0.1:N` on the Mac.
+`192.168.5.2` stands for the Mac's loopback, under the names `host.sulla.internal` and `host.docker.internal` in the guest's `/etc/hosts`. TCP to that address from the guest or any container is redirected (iptables `REDIRECT`) to the agent on guest port 1100, which reads the original port and opens a vsock stream to the host (CID 2) port 1100 with `{"port":N}`. The host dials only `127.0.0.1:N` on the Mac.
 
 ## Host sockets
 

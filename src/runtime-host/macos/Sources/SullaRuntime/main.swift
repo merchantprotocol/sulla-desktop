@@ -14,7 +14,7 @@ private let controlSocketURL = runtimeDirectory.appendingPathComponent("control.
 // exec, 2376 published-port forwarding. The client writes "<port>\n" first.
 private let guestSocketURL = runtimeDirectory.appendingPathComponent("guest.sock")
 private let guestStreamPorts: Set<UInt32> = [1025, 2376]
-// Guest-initiated streams that reach the Mac's 127.0.0.1 (host.lima.internal).
+// Guest-initiated streams that reach the Mac's 127.0.0.1 (host.sulla.internal).
 private let hostLoopbackVsockPort: UInt32 = 1100
 private let serialLogURL = runtimeDirectory.appendingPathComponent("console.log")
 

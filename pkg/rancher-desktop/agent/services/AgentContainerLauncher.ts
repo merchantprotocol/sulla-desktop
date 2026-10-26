@@ -225,7 +225,7 @@ export function agentContainerRelayUrl(value: string): string {
 
 /**
  * The named Docker endpoint only bridges TCP to a Unix socket.  The process
- * that resolves and reaches host.lima.internal runs in the Sulla VM, keeping
+ * that resolves and reaches host.sulla.internal runs in the Sulla VM, keeping
  * host IP addresses and host networking out of every container invocation.
  */
 async function ensureHostRelay(image: string): Promise<void> {
@@ -256,7 +256,7 @@ def serve(c):
  try:
   line=b''
   while not line.endswith(b'\n') and len(line)<16: line+=c.recv(1)
-  port=int(line.strip());u=socket.create_connection(('host.lima.internal',port),5);u.settimeout(None)
+  port=int(line.strip());u=socket.create_connection(('host.sulla.internal',port),5);u.settimeout(None)
   threading.Thread(target=copy,args=(c,u),daemon=True).start();copy(u,c)
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;

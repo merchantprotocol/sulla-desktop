@@ -416,7 +416,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       port:  3000,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
-    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.lima.internal\n`;
+    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\n`;
 
     await this.writeFile('/etc/sulla-env', sullaEnv, 0o644);
     console.log('[sulla-runtime] wrote /etc/sulla-env');
@@ -1439,9 +1439,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         const hosts = Array.isArray(service.extra_hosts) ? service.extra_hosts : [];
 
         service.extra_hosts = [
-          ...hosts.filter((entry: string) => !/^host\.(docker|lima)\.internal:/.test(entry)),
+          ...hosts.filter((entry: string) => !/^host\.(docker|lima|sulla)\.internal:/.test(entry)),
           `host.docker.internal:${ HOST_GATEWAY }`,
-          `host.lima.internal:${ HOST_GATEWAY }`,
+          `host.sulla.internal:${ HOST_GATEWAY }`,
         ];
       }
     }

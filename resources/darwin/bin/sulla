@@ -34,7 +34,7 @@ if [ -z "$SULLA_TOOL_SESSION" ] && [ -r "/proc/$$/status" ]; then
   done
   unset _p _n _s
 fi
-SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
+SULLA_HOST="${SULLA_HOST:-host.sulla.internal}"
 SULLA_TOOL_API_URL="${SULLA_TOOL_API_URL%/}"
 FIRST="$1"
 BODY="$2"
