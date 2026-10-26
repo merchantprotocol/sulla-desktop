@@ -138,6 +138,30 @@ export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string 
   return probe.state;
 }
 
+/**
+ * prepareSullaFilesGuestAnchor, but a dead FUSE adapter left on `path` cannot wedge it.
+ *
+ * When Files is replaced (an update, a recreate) its adapter loses its backend and the mount
+ * it left behind answers every request with an I/O error, so `install -d` on the path fails.
+ * The anchor could then never be prepared, the stale adapter was never detached (that only
+ * happens once the anchor exists), and the mount manager's recovery retried forever.
+ * On failure, detach any adapter layers stacked on the path and retry once. Anything that is
+ * not our adapter (an unexpected mount) is still refused with the original error.
+ */
+export async function prepareSullaFilesGuestAnchorDraining(
+  exec: GuestExec, path:string = SULLA_FILES_GUEST_MOUNT_PATH,
+): Promise<{ state: 'anchor' | 'adapter'; drained: number }> {
+  try {
+    return { state: await prepareSullaFilesGuestAnchor(exec, path), drained: 0 };
+  } catch (error) {
+    const drained = await drainFilesAdapterLayers(exec, path).catch(() => 0);
+
+    if (drained === 0) throw error;
+
+    return { state: await prepareSullaFilesGuestAnchor(exec, path), drained };
+  }
+}
+
 /** True when `path` can be listed. A dead or snapshot-less FUSE adapter fails with ENOENT/ENOTCONN here. */
 export async function isGuestPathUsable(exec: GuestExec, path: string): Promise<boolean> {
   try {
