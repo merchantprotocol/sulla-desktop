@@ -52,10 +52,14 @@ import { resolveSullaDocsDir } from '../utils/sullaPaths';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
+import {
+  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, egressPolicyCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
+} from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
+import { egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -88,7 +92,6 @@ const RENEW_MS = 5 * 60_000;
 const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
 const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
-const AGENT_NETWORK = 'sulla-agents';
 const HOST_RELAY_NAME = 'sulla-host-relay';
 const HOST_RELAY_PORT = 30124;
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
@@ -341,7 +344,7 @@ fi
 for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
   if (!nativeRuntime) await guestExec(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
-  await guestExec(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => guestExec(['docker', 'network', 'create', AGENT_NETWORK]));
+  await guestExec(ensureAgentNetworkCommand());
   // Same versioning as the VM relay: a container left by an older build keeps
   // running its old script, so replace it when the script changes.
   const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
@@ -355,6 +358,35 @@ exit 1`;
       '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   }
+}
+
+/** How long a launch waits for the threat proxy to publish its CA after a cold boot. */
+const THREAT_PROXY_CA_TIMEOUT_MS = 90_000;
+
+/**
+ * Re-apply the agent egress policy before every launch (a Docker or guest
+ * restart drops nothing permanent, but this keeps the guarantee local to the
+ * launch) and return the CA trust the container needs. With scanning on, a
+ * launch that cannot apply the rules or find the proxy CA fails instead of
+ * starting an agent whose web traffic would not be scanned.
+ */
+async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string> }> {
+  await guestExec(ensureAgentNetworkCommand());
+  const enforce = await egressEnforced();
+
+  await guestExec(egressPolicyCommand(enforce));
+  if (!enforce) return { binds: [], env: {} };
+  const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
+
+  while (!await guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false)) {
+    if (Date.now() >= deadline) {
+      throw new Error('The threat proxy has not started (no CA in its state directory); agent web traffic cannot be scanned');
+    }
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+  const trust = agentCaTrust();
+
+  return { binds: [trust.bind], env: trust.env };
 }
 
 let imageReady: Promise<string> | null = null;
@@ -833,6 +865,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
       SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
     }, identity);
+    const egress = await prepareAgentEgress();
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
@@ -842,6 +875,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...(claudeHome ? [`${ claudeHome }:/home/sulla/.claude:rw`] : []),
       ...(codexHome ? [`${ codexHome }:/home/sulla/.codex:rw`] : []),
       ...await sullaFilesGuestBinds(),
+      ...egress.binds,
     ];
     containerId = await runtime.create({
       name:   containerName,
@@ -862,6 +896,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         SULLA_TOOL_API_URL:   'http://sulla_tools:3000',
         SULLA_AGENT_PROVIDER: run.provider,
         SULLA_AGENT_MODEL:    run.model ?? '',
+        ...egress.env,
       },
       binds,
       network:     AGENT_NETWORK,
@@ -875,7 +910,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       cpuLimit:    CPUS,
     });
     await registerSullaFilesActor(containerId, agentId, run.jobId);
-    await guestExec(['docker', 'network', 'connect', 'sulla_default', containerName]);
+    await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
     await runtime.start(containerId);
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
@@ -1144,11 +1179,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     chownGuestPath(workspacePath, identity);
     chownGuestPath(docsPath, identity);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets, identity);
+    const egress = await prepareAgentEgress();
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       `${ docsPath }:/opt/sulla-docs:ro`,
       ...await sullaFilesGuestBinds(),
+      ...egress.binds,
     ];
     containerId = await runtime.create({
       name:   containerName,
@@ -1163,7 +1200,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       },
       autoRemove:  true,
       stdinOpen:   true,
-      env:         configuration.env,
+      env:         { ...configuration.env, ...egress.env },
       binds,
       network:     AGENT_NETWORK,
       workingDir:  workspacePath,
@@ -1176,7 +1213,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       cpuLimit:    CPUS,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
-    await guestExec(['docker', 'network', 'connect', 'sulla_default', containerName]);
+    await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
       subject,

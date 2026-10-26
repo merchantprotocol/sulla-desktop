@@ -17,6 +17,12 @@ Pipeline (in order, short-circuits on first definitive hit):
 
 Blocked requests get an HTTP 451 with a JSON body describing the threat source.
 All decisions are cached and logged.
+
+The proxy runs in transparent mode: the guest firewall redirects agent TCP
+80/443 here, so a flow can carry three different names for its target — the
+Host header, the TLS SNI and the original destination IP. A flow bypasses the
+scanners only when every one of them is allowlisted, so a spoofed
+`Host: localhost` cannot exempt a request to a public address.
 """
 
 import base64
@@ -26,7 +32,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from mitmproxy import http
 
@@ -38,10 +44,11 @@ from common import (
     FLAG_SUSPICIOUS,
     FLAG_UNKNOWN,
     classify_verdict,
+    ProxyConfig,
     get_cache,
     is_allowlisted,
-    load_env,
     log,
+    split_list,
 )
 
 URLHAUS_FEED_URL = "https://urlhaus.abuse.ch/downloads/hostfile/"
@@ -84,26 +91,17 @@ class _TokenBucket:
 class URLFilter:
     """mitmproxy addon. Runs on every request; decides block/pass."""
 
-    def __init__(self) -> None:
-        self.env = load_env()
-        self.cache = get_cache()
+    def __init__(self, config: Optional[ProxyConfig] = None, cache=None) -> None:
+        self.config = config or ProxyConfig()
+        self.cache = cache or get_cache()
         self.sb_bucket = _TokenBucket(SAFE_BROWSING_BUDGET_PER_MINUTE)
         self.vt_bucket = _TokenBucket(VT_BUDGET_PER_MINUTE)
         self._urlhaus_hosts: Set[str] = set()
         self._urlhaus_loaded_at: float = 0.0
         self._urlhaus_lock = threading.Lock()
+        self._config_generation = -1
 
-        self.sb_key = self.env.get("GOOGLE_SAFE_BROWSING_API_KEY", "").strip()
-        self.vt_key = self.env.get("VT_API_KEY", "").strip()
-        self.user_allowlist = [
-            x.strip() for x in self.env.get("SULLA_PROXY_ALLOWLIST", "").split(",") if x.strip()
-        ]
-        self.block_mode = self.env.get("SULLA_PROXY_BLOCK_MODE", "block").lower()
-        # block_mode options:
-        #   block   — return 451 on threats (default)
-        #   warn    — let through but log + add X-Sulla-Threat header
-        #   off     — pass everything (scanners still log, useful for debugging)
-
+        self._apply_config()
         self._reload_urlhaus()
 
         log(
@@ -116,6 +114,22 @@ class URLFilter:
             allowlist_size=len(self.user_allowlist),
             urlhaus_hosts=len(self._urlhaus_hosts),
         )
+
+    def _apply_config(self) -> None:
+        """Pick up new settings / API keys when Desktop rewrites the config file."""
+        self.config.refresh()
+        if self.config.generation == self._config_generation:
+            return
+        self._config_generation = self.config.generation
+        self.sb_key = str(self.config.get("safeBrowsingApiKey", "")).strip()
+        self.vt_key = str(self.config.get("virusTotalApiKey", "")).strip()
+        self.user_allowlist = split_list(self.config.get("allowlist", ""))
+        # block_mode options:
+        #   block   — return 451 on threats (default)
+        #   warn    — let through but log + add X-Sulla-Threat header
+        #   off     — pass everything (scanners still log, useful for debugging)
+        mode = str(self.config.get("blockMode", "block")).lower()
+        self.block_mode = mode if mode in ("block", "warn", "off") else "block"
 
     # ────────────────────────────────────────────────────────────────
     # URLhaus local blocklist
@@ -161,6 +175,7 @@ class URLFilter:
 
     def _check_urlhaus(self, host: str) -> Tuple[str, str]:
         self._reload_urlhaus()
+        host = host.lower().rstrip(".")
         # Exact match on the FQDN, plus check parent domain (malware often uses subdomains).
         if host in self._urlhaus_hosts:
             return FLAG_BLOCK, "urlhaus:exact"
@@ -253,7 +268,7 @@ class URLFilter:
     # ────────────────────────────────────────────────────────────────
     # Pipeline
     # ────────────────────────────────────────────────────────────────
-    def _scan(self, url: str, host: str) -> Tuple[str, List[str]]:
+    def _scan(self, url: str, host: str, other_names: Iterable[str] = ()) -> Tuple[str, List[str]]:
         """Run scanners in escalation order. Returns (verdict, details).
 
         URLhaus runs before the cache — the blocklist updates every 6h, and a
@@ -262,12 +277,16 @@ class URLFilter:
         """
         details: List[str] = []
 
-        # Layer 1 — URLhaus (zero-cost, local; always authoritative for blocks)
-        flag, detail = self._check_urlhaus(host)
-        details.append(detail or f"urlhaus:{flag}")
-        if flag == FLAG_BLOCK:
-            self.cache.put(url, FLAG_BLOCK, source="urlhaus", detail=detail)
-            return FLAG_BLOCK, details
+        # Layer 1 — URLhaus (zero-cost, local; always authoritative for blocks).
+        # Checked for the URL host and for the SNI / destination IP, so a
+        # mismatched Host header cannot hide a listed target.
+        for name in [host, *[n for n in other_names if n and n != host]]:
+            flag, detail = self._check_urlhaus(name)
+            if flag == FLAG_BLOCK:
+                details.append(detail if name == host else f"{detail}:{name}")
+                self.cache.put(url, FLAG_BLOCK, source="urlhaus", detail=detail)
+                return FLAG_BLOCK, details
+        details.append("urlhaus:unknown")
 
         # Layer 2 — cached verdict from previous SB/VT lookup
         cached = self.cache.get(url)
@@ -304,17 +323,41 @@ class URLFilter:
     # ────────────────────────────────────────────────────────────────
     # mitmproxy hook
     # ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def flow_names(flow: http.HTTPFlow) -> List[str]:
+        """Every name the flow carries for its target: Host header, request host, SNI, destination IP."""
+        names: List[str] = []
+        candidates = [flow.request.pretty_host, flow.request.host]
+        server = getattr(flow, "server_conn", None)
+        client = getattr(flow, "client_conn", None)
+        if client is not None:
+            candidates.append(getattr(client, "sni", None))
+        if server is not None:
+            candidates.append(getattr(server, "sni", None))
+            address = getattr(server, "address", None)
+            if address:
+                candidates.append(address[0])
+        for candidate in candidates:
+            if not candidate:
+                continue
+            name = str(candidate).lower().strip("[]").rstrip(".")
+            if name and name not in names:
+                names.append(name)
+        return names
+
     def request(self, flow: http.HTTPFlow) -> None:
+        self._apply_config()
         if self.block_mode == "off":
             return
         url = flow.request.pretty_url
-        host = flow.request.pretty_host or ""
+        host = (flow.request.pretty_host or "").lower()
+        names = self.flow_names(flow)
 
-        if is_allowlisted(host, self.user_allowlist):
+        if names and all(is_allowlisted(name, self.user_allowlist) for name in names):
             log("url_filter", "debug", "allowlisted", host=host, url=url)
             return
 
-        verdict, details = self._scan(url, host)
+        verdict, details = self._scan(url, host, names)
         log(
             "url_filter",
             "info",
@@ -349,5 +392,7 @@ class URLFilter:
         )
 
 
-# mitmproxy discovers `addons` at module load time.
-addons = [URLFilter()]
+# mitmproxy discovers `addons` at module load time. Tests import the class
+# without constructing the singleton.
+if os.environ.get("SULLA_PROXY_NO_AUTOLOAD") != "1":
+    addons = [URLFilter()]

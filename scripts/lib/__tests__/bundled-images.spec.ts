@@ -26,7 +26,7 @@ describe('bundled image manifest', () => {
     const names = images.map(image => image.name);
 
     for (const name of ['sulla-postgres', 'redis', 'sulla-vault', 'sulla-files', 'sulla-tools', 'sulla-workflows', 'sulla-relay',
-      'sulla-accounts', 'sulla-files-fuse', 'sulla-python-runtime', 'sulla-shell-runtime', 'sulla-node-runtime', 'sulla-agent']) {
+      'sulla-accounts', 'sulla-files-fuse', 'sulla-threat-proxy', 'sulla-python-runtime', 'sulla-shell-runtime', 'sulla-node-runtime', 'sulla-agent']) {
       expect(names).toContain(name);
     }
     expect(images.find(image => image.name === 'sulla-agent')?.onDemand).toBe(true);

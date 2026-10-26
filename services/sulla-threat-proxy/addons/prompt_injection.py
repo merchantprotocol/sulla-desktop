@@ -18,17 +18,18 @@ Actions by severity:
   medium — add header only (logged for review).
   low    — log only.
 
-Configurable via /etc/sulla-proxy.env:
-  SULLA_INJECTION_MODE = warn | redact | off   (default warn)
-  SULLA_INJECTION_SCAN_CONTENT_TYPES          (default text/html,text/plain,application/json,text/markdown)
+Configurable via the Desktop-managed config (config/proxy.json):
+  injectionMode             = warn | redact | off   (default warn)
+  injectionScanContentTypes (default text/html,text/plain,application/json,text/markdown,text/xml,application/xml)
 """
 
+import os
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from mitmproxy import http
 
-from common import is_allowlisted, load_env, log
+from common import ProxyConfig, is_allowlisted, log, split_list
 
 # Patterns sorted by confidence. Each is (regex, severity, label).
 # These target indirect-injection phrases that rarely appear in benign content.
@@ -64,14 +65,10 @@ MAX_SCAN_BYTES = 2 * 1024 * 1024  # 2MB
 
 
 class PromptInjectionScanner:
-    def __init__(self) -> None:
-        self.env = load_env()
-        self.mode = self.env.get("SULLA_INJECTION_MODE", "warn").lower()
-        types_raw = self.env.get("SULLA_INJECTION_SCAN_CONTENT_TYPES", ",".join(DEFAULT_CONTENT_TYPES))
-        self.scan_types = tuple(t.strip().lower() for t in types_raw.split(",") if t.strip())
-        self.user_allowlist = [
-            x.strip() for x in self.env.get("SULLA_PROXY_ALLOWLIST", "").split(",") if x.strip()
-        ]
+    def __init__(self, config: Optional[ProxyConfig] = None) -> None:
+        self.config = config or ProxyConfig()
+        self._config_generation = -1
+        self._apply_config()
         log(
             "prompt_injection",
             "info",
@@ -81,7 +78,20 @@ class PromptInjectionScanner:
             pattern_count=len(PATTERNS),
         )
 
+    def _apply_config(self) -> None:
+        """Pick up new settings when Desktop rewrites the config file."""
+        self.config.refresh()
+        if self.config.generation == self._config_generation:
+            return
+        self._config_generation = self.config.generation
+        mode = str(self.config.get("injectionMode", "warn")).lower()
+        self.mode = mode if mode in ("warn", "redact", "off") else "warn"
+        types = split_list(self.config.get("injectionScanContentTypes", list(DEFAULT_CONTENT_TYPES)))
+        self.scan_types = tuple(t.lower() for t in types) or DEFAULT_CONTENT_TYPES
+        self.user_allowlist = split_list(self.config.get("allowlist", ""))
+
     def _should_scan(self, flow: http.HTTPFlow) -> bool:
+        self._apply_config()
         if self.mode == "off":
             return False
         if not flow.response:
@@ -188,9 +198,10 @@ class PromptInjectionScanner:
                     # Don't corrupt JSON structure; inject via header only.
                     flow.response.headers["X-Sulla-Prompt-Injection-Banner"] = banner.strip()
                 else:
-                    flow.response.content = banner.encode("utf-8") + raw
+                    flow.response.content = banner.encode("utf-8") + (flow.response.content or b"")
         except Exception as ex:
             log("prompt_injection", "error", "scan failed", error=str(ex))
 
 
-addons = [PromptInjectionScanner()]
+if os.environ.get("SULLA_PROXY_NO_AUTOLOAD") != "1":
+    addons = [PromptInjectionScanner()]

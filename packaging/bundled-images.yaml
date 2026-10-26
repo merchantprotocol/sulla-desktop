@@ -23,6 +23,7 @@ images:
   - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:latest }
   - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:latest }
   - { name: sulla-workflows, source: ghcr.io/merchantprotocol/sulla-workflows:latest }
+  - { name: sulla-threat-proxy, source: ghcr.io/merchantprotocol/sulla-threat-proxy:latest }
   - { name: sulla-python-runtime, source: ghcr.io/merchantprotocol/sulla-python-runtime:latest }
   - { name: sulla-shell-runtime, source: ghcr.io/merchantprotocol/sulla-shell-runtime:latest }
   - { name: sulla-node-runtime, source: ghcr.io/merchantprotocol/sulla-node-runtime:latest }
