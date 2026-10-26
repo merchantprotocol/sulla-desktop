@@ -84,6 +84,17 @@ const ROOT_DOCKER_CONFIG_PATH = '/root/.docker/config.json';
 /** The Mac's loopback as seen from the guest. */
 const HOST_GATEWAY = '192.168.5.2';
 
+/**
+ * NODE_OPTIONS for a Node service container. The old-space cap is the heap
+ * the service may grow to; mem_limit is that plus ~100 MB for code, buffers
+ * and native memory. A small young generation (semi-space, MB) keeps idle
+ * services from holding on to tens of MB of nursery after a burst. Only flags
+ * Node accepts in NODE_OPTIONS belong here (e.g. not --single-threaded-gc).
+ */
+function serviceNodeOptions(heapMiB: number, semiSpaceMiB = 2): string {
+  return `--max-old-space-size=${ heapMiB } --max-semi-space-size=${ semiSpaceMiB }`;
+}
+
 function logStartupPhase(phase: string, startedAt: number, details = ''): void {
   const suffix = details ? ` ${ details }` : '';
 
@@ -1106,7 +1117,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         container_name: 'sulla_accounts',
         depends_on:     { postgres: { condition: 'service_healthy' } },
         environment:    {
-          NODE_OPTIONS:                                '--max-old-space-size=384',
+          NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
           SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
@@ -1123,7 +1134,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
-        mem_limit:    '512m',
+        mem_limit:    '256m',
         healthcheck: {
           test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
           interval: '5s',
@@ -1165,7 +1176,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
-          NODE_OPTIONS: '--max-old-space-size=512',
+          // 36 MB JSON bodies in desktop mode; Argon2 (libsodium wasm, up to
+          // 256 MB at moderate cost) lives outside the heap, so the limit stays.
+          NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
           SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
           SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
@@ -1229,7 +1242,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       env_file: ['/etc/sulla-env'],
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=768',
+        NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
@@ -1242,7 +1255,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       ports: ['127.0.0.1:30122:8788'],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
       restart: 'unless-stopped',
-      mem_limit: '1g',
+      mem_limit: '384m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1267,7 +1280,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       container_name: 'sulla_relay',
       depends_on: { redis: { condition: 'service_healthy' } },
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=384',
+        NODE_OPTIONS: serviceNodeOptions(128),
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_DEVICE_TOKEN_SECRET: sullaApiToken,
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
@@ -1275,7 +1288,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       ports: ['127.0.0.1:30126:8790'],
       restart: 'unless-stopped',
-      mem_limit: '512m',
+      mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1310,7 +1323,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       env_file: ['/etc/sulla-env'],
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=768',
+        // The image runs TypeScript through tsx, whose esbuild helper process
+        // also counts against mem_limit.
+        NODE_OPTIONS: serviceNodeOptions(320),
+        // The agent tool code in this image opens its own PostgresClient pool
+        // (default 20) next to the service pool above; one caller needs few.
+        SULLA_DATABASE_POOL_MAX: '5',
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
@@ -1332,7 +1350,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         filesTlsBind(true),
       ],
       restart: 'unless-stopped',
-      mem_limit: '1g',
+      mem_limit: '512m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1359,7 +1377,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
       },
       environment: {
-        NODE_OPTIONS:                      '--max-old-space-size=1536',
+        // The image entrypoint appends --max-old-space-size=512 (#1363), so
+        // 512 is the real heap; the rest of mem_limit covers the Potion table,
+        // chunk buffers and the OCR/Whisper/ffmpeg child processes.
+        NODE_OPTIONS:                      serviceNodeOptions(512, 4),
         SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
@@ -1412,7 +1433,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           : []),
       ],
       restart: 'unless-stopped',
-      mem_limit: '2g',
+      mem_limit: '1g',
       healthcheck: {
         test: [
           'CMD', 'node', '-e',
