@@ -471,7 +471,6 @@ const formatters: Record<string, Formatter> = {
     return { label: 'Kubernetes', summary: 'Describing resource' };
   },
 
-  // ── rdctl ────────────────────────────────────────────────────────────────
   // Fallback handled by prefix matching below
 };
 

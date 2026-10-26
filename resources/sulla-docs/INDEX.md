@@ -50,7 +50,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `docker.md` — Sulla VM vs host Docker, pre-installed containers, docker_* tools
 - `heartbeat.md` — Autonomous heartbeat agent: cadence, tick lifecycle, status, history, time-window config
 - `subconscious.md` — The recall/memory/observation layer around every turn: pre-turn recalls, post-turn observer writers, the observations + identity_observations tables, recall index
-- `kubernetes.md` — k3s built into Sulla VM, kubectl_* and rdctl_* tools, no safety rails
+- `kubernetes.md` — k3s built into Sulla VM, kubectl_* tools, no safety rails
 - `updates.md` — In-app updater (electron-updater + Longhorn provider, release channels, dev-mode config)
 
 ## tools/

@@ -68,12 +68,6 @@ type SyncState =
 /**
  * DiagnosticKey limits the `key` argument of the diagnostic events.
  */
-type DiagnosticKey =
-  'docker-plugins' |
-  'docker-socket' |
-  'kubeconfig' |
-  'spin-cli' |
-  never;
 
 /**
  * WindowsIntegrationManager manages various integrations on Windows, for both
@@ -192,10 +186,8 @@ export default class WindowsIntegrationManager implements IntegrationManager {
 
       try {
         kubeconfigPath = await K3sHelper.findKubeConfigToUpdate('rancher-desktop');
-        this.diagnostic({ key: 'kubeconfig' });
       } catch (error) {
         console.error(`Could not determine kubeconfig: ${ error } - Kubernetes configuration will not be updated.`);
-        this.diagnostic({ key: 'kubeconfig', error });
         kubeconfigPath = undefined;
       }
 
@@ -248,20 +240,6 @@ export default class WindowsIntegrationManager implements IntegrationManager {
     }
   }
 
-  /**
-   * Helper function to trigger a diagnostic report.  If a diagnostic should be
-   * cleared, call this with the error unset.
-   */
-  protected diagnostic(input: { key: DiagnosticKey, distro?: string, error?: unknown }) {
-    const error = input.error instanceof Error ? input.error : input.error ? new Error(`${ input.error }`) : undefined;
-
-    mainEvents.emit('diagnostics-event', {
-      id:     'integrations-windows',
-      key:    input.key,
-      distro: input.distro,
-      error,
-    });
-  }
 
   #wslExe = '';
   /**
@@ -367,9 +345,7 @@ export default class WindowsIntegrationManager implements IntegrationManager {
       } else {
         await this.windowsSocketProxyProcess.stop();
       }
-      this.diagnostic({ key: 'docker-socket' });
     } catch (error) {
-      this.diagnostic({ key: 'docker-socket', error });
     }
   }
 
@@ -432,12 +408,8 @@ export default class WindowsIntegrationManager implements IntegrationManager {
           delete this.distroSocketProxyProcesses[distro];
         }
       }
-      this.diagnostic({ key: 'docker-socket', distro });
     } catch (error) {
       console.error(`Error syncing ${ distro } distro socket proxy: ${ error }`);
-      this.diagnostic({
-        key: 'docker-socket', distro, error,
-      });
     }
   }
 
@@ -453,7 +425,6 @@ export default class WindowsIntegrationManager implements IntegrationManager {
           // If the file does not exist, create it.
         } else {
           console.error(`Could not set up docker plugins:`, error);
-          this.diagnostic({ key: 'docker-plugins', error });
 
           return;
         }
@@ -472,9 +443,7 @@ export default class WindowsIntegrationManager implements IntegrationManager {
 
       await fs.promises.mkdir(path.dirname(configPath), { recursive: true });
       await fs.promises.writeFile(configPath, JSON.stringify(config), 'utf-8');
-      this.diagnostic({ key: 'docker-plugins' });
     } catch (error) {
-      this.diagnostic({ key: 'docker-plugins', error });
     }
   }
 
@@ -499,12 +468,8 @@ export default class WindowsIntegrationManager implements IntegrationManager {
       }
 
       await this.execCommand({ distro }, wslHelper, ...args);
-      this.diagnostic({ key: 'docker-plugins', distro });
     } catch (error) {
       console.error(`Failed to set up ${ distro } docker plugins: ${ error }`.trim());
-      this.diagnostic({
-        key: 'docker-plugins', distro, error,
-      });
     }
   }
 
@@ -547,7 +512,6 @@ export default class WindowsIntegrationManager implements IntegrationManager {
   protected async syncDistroKubeconfig(distro: string, kubeconfigPath: string | undefined, state: boolean) {
     if (!kubeconfigPath) {
       console.debug(`Skipping syncing ${ distro } kubeconfig: no kubeconfig found`);
-      this.diagnostic({ key: 'kubeconfig', distro });
 
       return 'Error setting up integration';
     }
@@ -566,7 +530,6 @@ export default class WindowsIntegrationManager implements IntegrationManager {
         'kubeconfig',
         `--enable=${ state && this.settings.kubernetes?.enabled }`,
       );
-      this.diagnostic({ key: 'kubeconfig', distro });
     } catch (error: any) {
       if (typeof error?.stdout === 'string') {
         error.stdout = error.stdout.replace(/\0/g, '');
@@ -575,9 +538,6 @@ export default class WindowsIntegrationManager implements IntegrationManager {
         error.stderr = error.stderr.replace(/\0/g, '');
       }
       console.error(`Could not set up kubeconfig integration for ${ distro }:`, error);
-      this.diagnostic({
-        key: 'kubeconfig', distro, error,
-      });
 
       return `Error setting up integration`;
     }
@@ -602,11 +562,7 @@ export default class WindowsIntegrationManager implements IntegrationManager {
           },
         }, await this.getLinuxToolPath(distro, executable('setup-spin')));
       }
-      this.diagnostic({ key: 'spin-cli', distro });
     } catch (error) {
-      this.diagnostic({
-        key: 'spin-cli', distro, error,
-      });
     }
   }
 

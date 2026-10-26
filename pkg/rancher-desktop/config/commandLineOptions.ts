@@ -22,7 +22,7 @@ export class FatalCommandLineOptionError extends Error {}
  * * All options start with '--'.
  * * Ignore leading unrecognized options.
  * * Complain about any unrecognized options after a recognized option has been processed.
- * * This calls the same settings-validator as used by `rdctl set` and the API to catch
+ * * This calls the same settings-validator as used by the settings API to catch
  *   any attempts to update a locked field.
  *
  *  * All errors are fatal as this function is like an API for launching the application.

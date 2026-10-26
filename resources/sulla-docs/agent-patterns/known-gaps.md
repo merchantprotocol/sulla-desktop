@@ -124,7 +124,6 @@ The docker category has nine tools: build, exec, images, logs, ps, pull, rm, run
 | Show CPU / memory / disk usage | 🟡 | No stats tool |
 | Inspect a container's config / env | 🟡 | No inspect tool |
 | Clean up unused images | 🟡 | No prune tool |
-| Get pod logs (`kubectl logs`) | 🟡 | No dedicated tool. Workaround: `sulla rdctl/shell '{"command":"kubectl logs ..."}'` |
 | Stream pod logs | 🟢 | No streaming |
 | Manage compose stacks directly | 🟢 | Only through the extensions API |
 
@@ -238,7 +237,6 @@ The docker category has nine tools: build, exec, images, logs, ps, pull, rm, run
 |---------|--------|-------|
 | ✅ Update Sulla Desktop | electron-updater. Runs automatically | No agent tool. The user installs from the Updates UI |
 | 🔴 Backup my whole Sulla setup | — | No backup tool. `~/sulla/`, `~/.sulla/`, and a Postgres dump are manual |
-| 🟡 Why is Sulla slow / what's running? | — | `sulla docker/ps` and `sulla rdctl/info` cover the basics |
 | 🟡 Show me my full conversation history | `sulla browser/search_conversations` | Covers chats, browser visits, and workflow executions |
 | 🟢 Export my memory / observations | — | No export tool |
 | ✅ Tell me when the background job finishes | Claude Code `Bash run_in_background` or `Monitor` *(unverified: harness behavior)* | Sub-agent and workflow-worker runs aren't woken after they return. Wait inside the turn instead |
@@ -253,7 +251,6 @@ The docker category has nine tools: build, exec, images, logs, ps, pull, rm, run
 | **`workflows` table** | 🟢 Populated | Don't assume it's empty or full. Check with `sulla pg/query '{"sql":"SELECT status, count(*) FROM workflows GROUP BY status"}'` |
 | **Heartbeat** | 🟡 Off by default | Change it only through `sulla settings/set`. That goes through SullaSettingsModel. Don't write Redis directly |
 | **Observational memory** | 🟢 No cap | Nothing is auto-pruned. `add_observational_memory` adds a row, or updates a close match instead of adding a duplicate. `remove_observational_memory` archives a row and never hard-deletes it. Only the top 10 active rows are injected into the prompt |
-| **`rdctl/shell` arguments** | 🟡 Limited | Sulla passes the whole `command` as one argument to `rdctl shell`, with `shell:false` (`agent/tools/util/CommandRunner.ts`). Sulla doesn't interpret pipes, redirects, `&&`, or `\|`. Whether the VM side does is *(unverified)*. Keep to one command with its arguments |
 
 ---
 

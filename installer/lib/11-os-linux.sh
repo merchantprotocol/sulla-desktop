@@ -383,19 +383,7 @@ linux::verify_deps() {
 }
 
 linux::verify_platform_binaries() {
-  local rdctl_bin="resources/linux/bin/rdctl"
-  local host_arch
-  host_arch="$(uname -m)"
-
-  log RDCTL "Verifying rdctl: $rdctl_bin (host arch: $host_arch)"
-  if [ -f "$rdctl_bin" ]; then
-    log RDCTL "  file info: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')"
-    log RDCTL "  size: $(wc -c < "$rdctl_bin" 2>/dev/null || echo '?') bytes"
-  else
-    log RDCTL "  rdctl binary NOT FOUND at $rdctl_bin"
-  fi
-  assert_executable_runs "$rdctl_bin" "rdctl (Linux)" "version"
-
+  log VERIFY "No bundled Linux platform binaries to verify"
 }
 
 # ---------------------------------------------------------------------------

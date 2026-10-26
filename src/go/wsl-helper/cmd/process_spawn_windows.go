@@ -24,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/process"
+	"github.com/rancher-sandbox/rancher-desktop/src/go/wsl-helper/pkg/process"
 )
 
 var processSpawnViper = viper.New()
@@ -43,7 +43,7 @@ var processSpawnCmd = &cobra.Command{
 			ppid = uint32(os.Getpid())
 		}
 
-		state, err := process.SpawnProcessInRDJob(ppid, args)
+		state, err := process.SpawnProcessInSullaJob(ppid, args)
 		if err != nil {
 			return fmt.Errorf("failed to spawn process: %w", err)
 		}

@@ -6,7 +6,6 @@ import yaml from 'yaml';
 
 import paths from './paths';
 
-import mainEvents from '@pkg/main/mainEvents';
 import { spawnFile } from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import Logging from '@pkg/utils/logging';
@@ -374,8 +373,6 @@ export class DockerDirManager {
       await this.writeDockerConfig(newConfig);
     }
 
-    // Trigger diagnostics, ignoring results.
-    mainEvents.invoke('diagnostics-trigger', 'DOCKER_CONTEXT').catch(e => console.error(e));
   }
 
   /**

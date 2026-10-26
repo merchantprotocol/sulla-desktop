@@ -361,18 +361,6 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla kubectl/delete` — Delete Kubernetes resources.
 - `sulla kubectl/describe` — Describe Kubernetes resources.
 
-## rdctl (10 tools)
-- `sulla rdctl/extension` — Manage extensions.
-- `sulla rdctl/info` — Return information about Sulla Desktop.
-- `sulla rdctl/list_settings` — Lists the current settings.
-- `sulla rdctl/reset` — Reset Sulla Desktop.
-- `sulla rdctl/set` — Update selected fields in the Rancher Desktop UI and restart the backend.
-- `sulla rdctl/shell` — Run an interactive shell or a command in a Sulla Desktop-managed VM.
-- `sulla rdctl/shutdown` — Shuts down the running Sulla Desktop application.
-- `sulla rdctl/snapshot` — Manage Sulla Desktop snapshots.
-- `sulla rdctl/start` — Start up Sulla Desktop, or update its settings.
-- `sulla rdctl/version` — Shows the CLI version.
-
 ## secretary (3 tools)
 - `sulla secretary/start` — Start Secretary Mode — opens (or focuses) a Secretary tab and auto-begins the listening session.
 - `sulla secretary/stop` — Stop Secretary Mode — ends the active listening session.
@@ -444,7 +432,7 @@ Account IDs are discoverable via `sulla vault/list_accounts '{"account_type":"<s
 | meta | 11 | | skills | 4 |
 | agents | 11 | | rules | 4 |
 | marketplace | 11 | | function | 3 |
-| rdctl | 10 | | models | 3 |
+| models | 3 |
 | files | 14 | | kubectl | 3 |
 | memory | 9 | | secretary | 3 |
 | docker | 9 | | settings | 2 |

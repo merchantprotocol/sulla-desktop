@@ -4846,7 +4846,7 @@ snapshots:
       success: "Deleted '<b>'{snapshot}'</b>'"
       error: 'Delete error: {error}'
     lock:
-      info: "A snapshot lock file has been detected for an unusually long time. If you believe this is an error, you can try to remove the lock file by running <code>rdctl snapshot unlock</code>."
+      info: "A snapshot lock file has been detected for an unusually long time. Restart Sulla Desktop before trying again."
 
 
 ##############################
@@ -4889,20 +4889,6 @@ troubleshooting:
         ok: Factory Reset
         cancel: Cancel
   needHelp: 'Still having problems? Start a discussion in <a href="https://github.com/merchantprotocol/sulla-desktop/discussions">GitHub Discussions</a>.'
-
-##############################
-### Diagnostics Page
-##############################
-diagnostics:
-  results:
-    muted:
-      icon: icon-search
-      heading: No results found
-      body: Try showing muted diagnostics.
-    success:
-      icon: icon-checkmark
-      heading: No problems detected
-      body: Sulla Desktop appears to be functioning correctly.
 
 
 ##############################

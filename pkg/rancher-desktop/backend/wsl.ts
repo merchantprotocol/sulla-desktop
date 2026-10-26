@@ -1242,7 +1242,6 @@ export default class WSLBackend extends events.EventEmitter implements VMBackend
         }
 
         // Clear the diagnostic about not having Kubernetes versions
-        mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available: true });
 
         await this.progressTracker.action('Preparing to start', 0, Promise.all(prepActions));
         if (config.kubernetes.enabled && kubernetesVersion === undefined) {
@@ -1254,7 +1253,6 @@ export default class WSLBackend extends events.EventEmitter implements VMBackend
           }
           // The desired version was unavailable, and we couldn't find a fallback.
           // Notify the user, and turn off Kubernetes.
-          mainEvents.emit('diagnostics-event', { id: 'kube-versions-available', available: false });
           this.writeSetting({ kubernetes: { enabled: false } });
         }
         if (this.currentAction !== Action.STARTING) {

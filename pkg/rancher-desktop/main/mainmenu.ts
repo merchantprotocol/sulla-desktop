@@ -261,30 +261,6 @@ function getExtensionsSubmenu(): MenuItemConstructorOptions[] {
   });
 }
 
-/**
- * Navigate the Docker Dashboard window to a given route path.
- * Opens the Docker Dashboard first if it isn't already visible.
- */
-function navigateDockerDashboard(routePath: string): void {
-  const existing = getWindow('docker-dashboard');
-
-  if (existing) {
-    sendWhenReady(existing, 'route', { path: routePath });
-    existing.show();
-  } else {
-    openDockerDashboard();
-    const poll = setInterval(() => {
-      const window = getWindow('docker-dashboard');
-
-      if (window) {
-        clearInterval(poll);
-        sendWhenReady(window, 'route', { path: routePath });
-      }
-    }, 50);
-    setTimeout(() => clearInterval(poll), 5000);
-  }
-}
-
 // ── Menu builders ──
 
 function getFileMenu(): MenuItem {
@@ -353,10 +329,6 @@ function getFileMenu(): MenuItem {
         enabled: kubernetesState === State.STARTED,
       },
       { type: 'separator' },
-      {
-        label:   'Diagnostics',
-        click:   () => navigateDockerDashboard('/Diagnostics'),
-      },
       {
         label:   'Troubleshooting',
         click:   () => openPreferences('troubleshooting'),

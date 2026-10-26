@@ -417,12 +417,6 @@ export default class BackendHelper {
       // If there is no data in the classic storage, use containerd snapshotter.
       useSnapshotter = !hasClassicData;
     }
-    mainEvents.emit('diagnostics-event', {
-      id: 'moby-storage',
-      hasClassicData,
-      hasSnapshotterData,
-      useSnapshotter,
-    });
 
     let config: Record<string, any>;
 

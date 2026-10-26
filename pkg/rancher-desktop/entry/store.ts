@@ -1,10 +1,9 @@
-import { createStore, mapGetters, mapState, ModuleTree, Plugin } from 'vuex';
+import { createStore, mapGetters, mapState, ModuleTree } from 'vuex';
 
 import * as ActionMenu from '../store/action-menu';
 import * as ApplicationSettings from '../store/applicationSettings';
 import * as ContainerEngine from '../store/container-engine';
 import * as Credentials from '../store/credentials';
-import * as Diagnostics from '../store/diagnostics';
 import * as Extensions from '../store/extensions';
 import * as I18n from '../store/i18n';
 import * as ImageManager from '../store/imageManager';
@@ -21,7 +20,6 @@ const modules = {
   applicationSettings: ApplicationSettings,
   'container-engine':  ContainerEngine,
   credentials:         Credentials,
-  diagnostics:         Diagnostics,
   extensions:          Extensions,
   i18n:                I18n,
   imageManager:        ImageManager,
@@ -36,7 +34,6 @@ const modules = {
 
 export default createStore<any>({
   modules: Object.fromEntries(Object.entries(modules).map(([k, v]) => [k, { namespaced: true, ...v }])),
-  plugins: Object.values(modules).flatMap(v => 'plugins' in v ? v.plugins : []),
 });
 
 export type Modules = typeof modules;

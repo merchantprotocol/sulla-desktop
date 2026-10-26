@@ -20,14 +20,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"unsafe"
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
-
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/directories"
 )
 
 type JOBOBJECT_BASIC_LIMIT_INFORMATION struct {
@@ -59,7 +56,7 @@ type JOBOBJECT_EXTENDED_LIMIT_INFORMATION struct {
 }
 
 const (
-	jobName                              = "RancherDesktopJob"
+	jobName                              = "SullaDesktopJob"
 	JobObjectExtendedLimitInformation    = 9
 	JOB_OBJECT_LIMIT_BREAKAWAY_OK        = uint32(0x00000800)
 	JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE   = uint32(0x00002000)
@@ -257,11 +254,11 @@ func injectHandleInProcess(pid uint32, handle windows.Handle) error {
 	return nil
 }
 
-// Spawn a process in the Rancher Desktop job.  If the job doesn't exist, ensure
+// Spawn a process in the Sulla Desktop job.  If the job doesn't exist, ensure
 // that the given process has a handle to the new job.  Returns the resulting
 // process state after the process exits; the caller may get the process exit
 // code that way.
-func SpawnProcessInRDJob(pid uint32, command []string) (*os.ProcessState, error) {
+func SpawnProcessInSullaJob(pid uint32, command []string) (*os.ProcessState, error) {
 	jobNameBytes, err := windows.UTF16PtrFromString(jobName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert job name: %w", err)
@@ -305,152 +302,4 @@ func SpawnProcessInRDJob(pid uint32, command []string) (*os.ProcessState, error)
 	}
 
 	return state, nil
-}
-
-// Iterate over all processes, calling a callback function for each process
-// found with the process handle and the path to the executable.  If the
-// callback function returns an error, iteration is immediately stopped.
-func iterProcesses(callback func(proc windows.Handle, executable string) error) error {
-	var pids []uint32
-	// Try EnumProcesses until the number of pids returned is less than the
-	// buffer size.
-	err := directories.InvokeWin32WithBuffer(func(size uint32) error {
-		pids = make([]uint32, size)
-		var bytesReturned uint32
-		err := windows.EnumProcesses(pids, &bytesReturned)
-		if err != nil || len(pids) < 1 {
-			return fmt.Errorf("failed to enumerate processes: %w", err)
-		}
-		pidsReturned := uintptr(bytesReturned) / unsafe.Sizeof(pids[0])
-		if pidsReturned < uintptr(len(pids)) {
-			// Remember to truncate the pids to only the valid set.
-			pids = pids[:pidsReturned]
-			return nil
-		}
-		return windows.ERROR_INSUFFICIENT_BUFFER
-	})
-	if err != nil {
-		return fmt.Errorf("could not get process list: %w", err)
-	}
-
-	for _, pid := range pids {
-		// Do each iteration in a function so defer statements run faster.
-		err = (func() error {
-			hProc, err := windows.OpenProcess(
-				windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE,
-				false,
-				pid)
-			if err != nil {
-				logrus.Debugf("Ignoring error opening process %d: %s", pid, err)
-				return nil
-			}
-			defer func() {
-				_ = windows.CloseHandle(hProc)
-			}()
-
-			var executablePath string
-			err = directories.InvokeWin32WithBuffer(func(size uint32) error {
-				nameBuf := make([]uint16, size)
-				charsWritten := size
-				err := windows.QueryFullProcessImageName(hProc, 0, &nameBuf[0], &charsWritten)
-				if err != nil {
-					logrus.Tracef("failed to get image name for pid %d: %s", pid, err)
-					return err
-				}
-				if charsWritten >= size-1 {
-					return windows.ERROR_INSUFFICIENT_BUFFER
-				}
-				executablePath = windows.UTF16ToString(nameBuf)
-				return nil
-			})
-			if err != nil {
-				logrus.Debugf("failed to get process name of pid %d: %s (skipping)", pid, err)
-				return nil
-			}
-
-			if err := callback(hProc, executablePath); err != nil {
-				return err
-			}
-			return nil
-		})()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// Find some pid running the given executable.  If not found, return 0.
-func FindPidOfProcess(executable string) (int, error) {
-	targetInfo, err := os.Stat(executable)
-	if err != nil {
-		return 0, fmt.Errorf("failed to determine %s info: %w", executable, err)
-	}
-
-	var mainPid int
-	// errFound is a sentinel error so we can break out of the loop early.
-	errFound := fmt.Errorf("found Rancher Desktop process")
-	err = iterProcesses(func(proc windows.Handle, executable string) error {
-		pid, err := windows.GetProcessId(proc)
-		if err != nil {
-			return fmt.Errorf("failed to get pid of process %s", executable)
-		}
-		info, err := os.Stat(executable)
-		if err != nil {
-			// Maybe the executable has been deleted since.
-			logrus.Debugf("failed to look up executable for pid %d: %s", pid, err)
-			return nil
-		}
-		if os.SameFile(targetInfo, info) {
-			mainPid = int(pid)
-			return errFound
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, errFound) {
-		return 0, err
-	}
-	return mainPid, nil
-}
-
-// Kill the process group the given process belongs to.  If wait is set, block
-// until the target process exits first before doing so.  On Linux, the process
-// group is only killed if the given pid is its own process group leader.
-func KillProcessGroup(pid int, wait bool) error {
-	return errors.New("KillProcessGroup is not implemented on Windows")
-}
-
-// TerminateProcessInDirectory terminates all processes where the executable
-// resides within the given directory, as gracefully as possible.  The force
-// parameter is unused on Windows.
-func TerminateProcessInDirectory(directory string, force bool) error {
-	return iterProcesses(func(proc windows.Handle, executablePath string) error {
-		pid, err := windows.GetProcessId(proc)
-		if err != nil {
-			pid = 0
-		}
-		//nolint:gosec // pids cannot be negative
-		if pid == uint32(os.Getpid()) {
-			// Skip terminating the current process.
-			return nil
-		}
-		relPath, err := filepath.Rel(directory, executablePath)
-		if err != nil {
-			// This may be because they're on different drives, network shares, etc.
-			logrus.Tracef("failed to make pid %d image %s relative to %s: %s", pid, executablePath, directory, err)
-			return nil
-		}
-		if strings.HasPrefix(relPath, "..") {
-			// Relative path includes "../" prefix, not a child of given directory.
-			logrus.Tracef("skipping pid %d (%s), not in %s", pid, executablePath, directory)
-			return nil
-		}
-
-		logrus.Tracef("will terminate pid %d image %s", pid, executablePath)
-		if err = windows.TerminateProcess(proc, 0); err != nil {
-			logrus.Errorf("failed to terminate pid %d (%s): %s", pid, executablePath, err)
-		}
-		return nil
-	})
 }

@@ -128,7 +128,6 @@ export interface IpcMainEvents {
   'dashboard-open':  () => void;
   'dashboard-close': () => void;
 
-  'diagnostics/run': () => void;
 
   /** Only for the preferences window */
   'preferences/load': () => void;
@@ -1293,7 +1292,6 @@ export interface IpcRendererEvents {
     failureDetails: import('@pkg/backend/k8s').FailureDetails
   ) => void;
   'update-network-status': (status: boolean) => void;
-  'diagnostics/update':    () => void;
 
   // #region Images
   'images-process-cancelled': () => void;

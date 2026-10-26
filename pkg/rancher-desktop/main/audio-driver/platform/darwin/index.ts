@@ -22,7 +22,7 @@ import paths from '@pkg/utils/paths';
 import type { ChildProcess } from 'child_process';
 
 // Native Swift scripts and create-mirror binary live in resources/darwin/audio-driver/
-// Same pattern as all other platform binaries (rdctl, sulla-daemon, etc.)
+// Same pattern as all other platform binaries (sulla-daemon and other helpers)
 const scriptDir = path.join(paths.resources, 'darwin', 'audio-driver');
 log.info('Platform', 'Script directory', { scriptDir });
 

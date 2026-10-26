@@ -46,7 +46,6 @@ INSTALL_LOG="/tmp/sulla-install.log"
 #   log ASSERT "FAIL: Command 'go' not found in PATH"
 #
 # Tags: BOOT, PLATFORM, DEPS, REPO, BUILD, VERIFY, ASSERT, ERROR, FALLBACK,
-#       UI, MACOS, LINUX, WINDOWS, PATH, NODE, GO, GIT, YARN, LIMA, RDCTL,
 #       XCODE, SHORTCUT, LAUNCH, CLEANUP
 # ---------------------------------------------------------------------------
 log() {

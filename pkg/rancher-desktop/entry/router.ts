@@ -3,7 +3,6 @@ import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
 import AgentRoutines from '../pages/AgentRoutines.vue';
 import DenyRoot from '../pages/DenyRoot.vue';
 import Docker from '../pages/Docker.vue';
-import Diagnostics from '../pages/Diagnostics.vue';
 import Dialog from '../pages/Dialog.vue';
 import FirstRun from '../pages/FirstRun.vue';
 import KubernetesError from '../pages/KubernetesError.vue';
@@ -47,9 +46,6 @@ export default createRouter({
     },
     {
       path: '/snapshots/create', component: SnapshotsCreate, name: 'snapshots-create',
-    },
-    {
-      path: '/Diagnostics', component: Diagnostics, name: 'Diagnostics',
     },
     {
       path: '/extensions/:id/:root(.*)/:src', component: ExtensionsItem, name: 'rdx-root-src-id',
