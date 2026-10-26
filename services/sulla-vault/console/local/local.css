@@ -346,3 +346,5 @@ body{font-family:var(--sans);font-size:13px;line-height:1.45;color:var(--text);b
 
 #proxy-presets { flex-wrap: wrap; gap: 6px; }
 .proxy-rule { margin: 12px 0; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+/* Guided "Connect <integration>" create screen. */
+#connect-crumb{color:var(--text);font-weight:600}#connect-fields{margin-top:13px}#connect-fields label .field-help{display:block;margin-top:4px;font-size:11px}#connect-form-guide{margin:0 0 14px;line-height:1.5}.connect-steps{margin:14px 0 0;padding-left:20px;line-height:1.55}.connect-steps li{margin-bottom:10px}.connect-steps b{display:block}.connect-steps span{color:var(--read-3)}.connect-notes{margin:6px 0 0;padding-left:18px;color:var(--read-3);line-height:1.5}#connect-guide-title{margin:2px 0 6px;font:600 16px var(--sans)}
