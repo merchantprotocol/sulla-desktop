@@ -10,7 +10,6 @@ import { URL, pathToFileURL } from 'url';
 
 import Electron from 'electron';
 
-import mainEvents from '@pkg/main/mainEvents';
 import Latch from '@pkg/utils/latch';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -72,19 +71,15 @@ function setupAppProtocolHandler() {
 /**
  * Set up protocol handler for x-rd-extension://
  *
- * This handler is used for extensions; the format is:
+ * This handler serves files from installed extensions; the format is:
  * x-rd-extension://<extension id>/...
- * Where the extension id is the extension image id, hex encoded (to avoid
- * issues with slashes).  Base64 was not available in Vue.
- * @param partition The Electron session partition name; if unset, set it up for
- *                  the default session.
+ * Where the extension id is hex encoded (to avoid issues with slashes).
  */
-function setupExtensionProtocolHandler(partition?: string): Promise<void> {
+function setupExtensionProtocolHandler() {
   const scheme = 'x-rd-extension';
-  const session = partition ? Electron.session.fromPartition(partition) : Electron.session.defaultSession;
 
-  if (!session.protocol.isProtocolHandled(scheme)) {
-    session.protocol.handle(
+  if (!Electron.protocol.isProtocolHandled(scheme)) {
+    Electron.protocol.handle(
       scheme,
       (request) => {
         const url = new URL(request.url);
@@ -97,15 +92,12 @@ function setupExtensionProtocolHandler(partition?: string): Promise<void> {
         return Electron.net.fetch(pathToFileURL(filepath).toString());
       });
   }
-
-  return Promise.resolve();
 }
 
 export function setupProtocolHandlers() {
   try {
     setupAppProtocolHandler();
     setupExtensionProtocolHandler();
-    mainEvents.handle('extensions/register-protocol', setupExtensionProtocolHandler);
 
     protocolsRegistered.resolve();
   } catch (ex) {

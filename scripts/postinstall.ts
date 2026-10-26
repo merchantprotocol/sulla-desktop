@@ -14,7 +14,7 @@ import * as goUtils from 'scripts/dependencies/go-source';
 import { MobyOpenAPISpec } from 'scripts/dependencies/moby-openapi';
 import { PotionRetrievalModel } from 'scripts/dependencies/potion';
 import { SudoPrompt } from 'scripts/dependencies/sudo-prompt';
-import { ExtensionProxyImage, WSLDistroImage } from 'scripts/dependencies/tar-archives';
+import { WSLDistroImage } from 'scripts/dependencies/tar-archives';
 import * as tools from 'scripts/dependencies/tools';
 import { Wix } from 'scripts/dependencies/wix';
 import { WSLDistro, Moproxy } from 'scripts/dependencies/wsl';
@@ -89,8 +89,6 @@ const vmDependencies = [
   new tools.WasmShims(),
   new tools.CertManager(),
   new tools.SpinOperator(),
-  new goUtils.GoDependency('extension-proxy', { outputPath: 'staging', env: { CGO_ENABLED: '0' } }),
-  new ExtensionProxyImage(),
 ];
 
 // Dependencies that are specific to hosts.

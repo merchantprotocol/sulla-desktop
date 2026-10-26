@@ -1547,20 +1547,8 @@ ipcMainProxy.handle('settings-write', (event, arg) => {
 
 mainEvents.on('settings-write', writeSettings);
 
-mainEvents.on('extensions/ui/uninstall', (id) => {
-  window.send('ok:extensions/uninstall', id);
-});
-
 mainEvents.on('dialog-info', (args) => {
   window.getWindow(args.dialog)?.webContents.send('dialog/info', args);
-});
-
-ipcMainProxy.on('extensions/open', (_event, id, path) => {
-  window.openExtension(id, path);
-});
-
-ipcMainProxy.on('extensions/close', () => {
-  window.closeExtension();
 });
 
 ipcMainProxy.handle('transient-settings-fetch', () => {
@@ -2402,16 +2390,20 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
     return await em.getExtensionStatus(id);
   }
 
-  async installExtension(image: string, state: 'install' | 'uninstall', options?: { deleteData?: boolean }): Promise<{ status: number, data?: any }> {
+  async installExtension(id: string, state: 'install' | 'uninstall', options?: { deleteData?: boolean }): Promise<{ status: number, data?: any }> {
     const em = await getExtensionManager();
 
     if (!em) {
       return { status: 503, data: 'Extension manager is not ready yet.' };
     }
-    const extension = await em.getExtension(image, { preferInstalled: state === 'uninstall' });
+    const extension = await em.getExtension(id, { preferInstalled: state === 'uninstall' });
+
+    if (!extension) {
+      return { status: 404, data: `The extension ${ id } is not in the Sulla marketplace` };
+    }
 
     if (state === 'install') {
-      console.debug(`Installing extension ${ image }...`);
+      console.debug(`Installing extension ${ id }...`);
       try {
         const { enabled, list } = cfg.application.extensions.allowed;
 
@@ -2424,11 +2416,11 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
         if (isExtensionError(ex)) {
           switch (ex.code) {
           case ExtensionErrorCode.INVALID_METADATA:
-            return { status: 422, data: `The image ${ image } has invalid extension metadata` };
+            return { status: 422, data: `The extension ${ id } has invalid extension metadata` };
           case ExtensionErrorCode.FILE_NOT_FOUND:
-            return { status: 422, data: `The image ${ image } failed to install: ${ ex.message }` };
+            return { status: 422, data: `The extension ${ id } failed to install: ${ ex.message }` };
           case ExtensionErrorCode.INSTALL_DENIED:
-            return { status: 403, data: `The image ${ image } is not an allowed extension` };
+            return { status: 403, data: `The extension ${ id } is not an allowed extension` };
           }
         }
         throw ex;
@@ -2436,11 +2428,9 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
         window.send('extensions/changed');
       }
     } else {
-      console.debug(`Uninstalling extension ${ image }...`);
+      console.debug(`Uninstalling extension ${ id }...`);
       try {
         if (await extension.uninstall({ deleteData: options?.deleteData })) {
-          window.send('ok:extensions/uninstall', image);
-
           return { status: 201 };
         } else {
           return { status: 204 };
@@ -2449,7 +2439,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
         if (isExtensionError(ex)) {
           switch (ex.code) {
           case ExtensionErrorCode.INVALID_METADATA:
-            return { status: 422, data: `The image ${ image } has invalid extension metadata` };
+            return { status: 422, data: `The extension ${ id } has invalid extension metadata` };
           }
         }
         throw ex;

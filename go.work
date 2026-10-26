@@ -3,7 +3,6 @@ go 1.25.0
 use (
 	./scripts
 	./src/go/docker-credential-none
-	./src/go/extension-proxy
 	./src/go/guestagent
 	./src/go/mock-wsl
 	./src/go/nerdctl-stub
