@@ -46,7 +46,7 @@ RIGHT (for an actual workflow):
 Always resolve from vault. Never put API keys in code or prompts.
 
 ### `exechost` is last resort, not everyday shell
-Default to regular `exec` (Lima VM) for search, edit, install, build, test, and sulla CLI. The host home directory is mounted into the VM at the same path. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons, tools unavailable in the VM, or explicit user request). Prefer VM network access to host services at `192.168.5.2` when that is enough.
+Default to regular `exec` (Sulla VM) for search, edit, install, build, test, and sulla CLI. The host home directory is mounted into the VM at the same path. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons, tools unavailable in the VM, or explicit user request). Prefer VM network access to host services at `192.168.5.2` when that is enough.
 
 ### `browse_tools` returns strings, not executions
 `browse_tools` lists tools — it does not run them. Wrap the returned command in `exec()` to actually invoke it.
@@ -81,7 +81,6 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
 | `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations; update_identity_section | Memory and domain-keyed identity observations |
 
-Categories not listed here (files, chat, memory, secretary, lima, kubectl, rdctl, gdrive, bookmarks, rules, reflex, mobile, ledger, and others) are in [`inventory.md`](inventory.md).
 
 ---
 

@@ -398,12 +398,7 @@ windows::verify_deps() {
 
 windows::verify_platform_binaries() {
   log VERIFY "Verifying Windows platform binaries"
-  local rdctl_bin="resources/win32/bin/rdctl.exe"
-  log VERIFY "Checking rdctl binary: $rdctl_bin"
-  assert_executable_runs "$rdctl_bin" "rdctl (Windows)" "version"
-  log VERIFY "rdctl binary verified successfully"
-  # No limactl on Windows (uses WSL instead)
-  log VERIFY "Skipping limactl check (Windows uses WSL)"
+  log VERIFY "No bundled Windows platform binaries to verify"
 }
 
 # ---------------------------------------------------------------------------

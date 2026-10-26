@@ -8,7 +8,7 @@
 /**
  * Claude Code OAuth handler.
  *
- * Runs `claude setup-token` inside the Lima VM via PTY, opens the OAuth
+ * Runs `claude setup-token` inside the Sulla VM via PTY, opens the OAuth
  * URL in an embedded BrowserWindow, intercepts the callback to extract
  * the authorization code, feeds it back to the CLI, and captures the
  * long-lived OAuth token when Claude CLI prints it.
@@ -25,6 +25,7 @@ import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
@@ -82,38 +83,9 @@ function killActiveSession() {
   }
 }
 
-/**
- * Quick check that the Lima VM is running. Runs `limactl list --json` and
- * looks for instance '0' with status 'Running'. Returns false if we can't
- * reach limactl at all.
- */
+/** Whether the Sulla runtime VM is up; Desktop owns it, so this needs no process spawn. */
 async function isVMRunning(): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const limactlPath = paths.limactl;
-    const limaHome = paths.lima;
-    const proc = childProcess.spawn(limactlPath, ['list', '--json'], {
-      env: { ...process.env, LIMA_HOME: limaHome },
-    });
-    let out = '';
-    proc.stdout.on('data', (d) => { out += d.toString() });
-    proc.on('close', () => {
-      try {
-        // `limactl list --json` outputs one JSON object per line
-        for (const line of out.split('\n')) {
-          if (!line.trim()) continue;
-          const entry = JSON.parse(line) as { name?: string; status?: string };
-          if (entry.name === '0' && entry.status === 'Running') {
-            resolve(true);
-            return;
-          }
-        }
-        resolve(false);
-      } catch {
-        resolve(false);
-      }
-    });
-    proc.on('error', () => resolve(false));
-  });
+  return isSullaRuntimeActive();
 }
 
 /**
@@ -121,29 +93,28 @@ async function isVMRunning(): Promise<boolean> {
  * Claude Code can pick it up without a VM restart.
  */
 async function injectTokenIntoVM(token: string): Promise<void> {
-  const limactlPath = paths.limactl;
-  const limaHome = paths.lima;
-  const env = { ...process.env, LIMA_HOME: limaHome };
+  const runtimePath = paths.sullaRuntime;
+  const env = { ...process.env, };
 
   // Write the token to a temp file on the host, copy into VM, then move to /etc.
   const tmpPath = path.join(os.tmpdir(), `sulla-claude-env-${ Date.now() }`);
   await fs.promises.writeFile(tmpPath, `CLAUDE_CODE_OAUTH_TOKEN=${ token }\n`, { mode: 0o600 });
 
   const run = (args: string[]) => new Promise<void>((resolve, reject) => {
-    const proc = childProcess.spawn(limactlPath, args, { env });
+    const proc = childProcess.spawn(runtimePath, args, { env });
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d.toString() });
     proc.on('close', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`limactl ${ args.join(' ') } exited ${ code }: ${ stderr }`));
+      else reject(new Error(`sulla-runtime ${ args.join(' ') } exited ${ code }: ${ stderr }`));
     });
     proc.on('error', reject);
   });
 
   try {
-    await run(['copy', tmpPath, '0:/tmp/claude-env']);
-    await run(['shell', '0', '--', 'sudo', 'mv', '/tmp/claude-env', '/etc/claude-env']);
-    await run(['shell', '0', '--', 'sudo', 'chmod', '600', '/etc/claude-env']);
+    await run(['copy', tmpPath, 'guest:/tmp/claude-env']);
+    await run(['exec', '--', 'sudo', 'mv', '/tmp/claude-env', '/etc/claude-env']);
+    await run(['exec', '--', 'sudo', 'chmod', '600', '/etc/claude-env']);
     console.log('[ClaudeOAuth] Token injected into VM at /etc/claude-env');
   } finally {
     fs.promises.unlink(tmpPath).catch(() => { /* ignore */ });
@@ -304,20 +275,19 @@ export function initClaudeOAuthEvents(): void {
 
     // Bail out early with a clear message if the VM isn't ready.
     if (!await isVMRunning()) {
-      return { error: 'The Lima VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
+      return { error: 'The Sulla VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
     }
 
     return await new Promise((resolve) => {
-      const limactlPath = paths.limactl;
-      const limaHome = paths.lima;
+      const runtimePath = paths.sullaRuntime;
 
-      const ptyProcess = pty.spawn(limactlPath, ['shell', '0', '--', 'claude', 'setup-token'], {
+      const ptyProcess = pty.spawn(runtimePath, ['exec', '--', 'claude', 'setup-token'], {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
         env:  {
           ...process.env,
-          LIMA_HOME: limaHome,
+          
           TERM:      'xterm-256color',
         } as Record<string, string>,
       });

@@ -118,18 +118,18 @@ type Runner = typeof runCommand;
 
 /**
  * List links for running containers from both the host docker CLI and the
- * Lima VM's daemon. They can be different daemons (e.g. Docker Desktop on the
+ * Sulla VM's daemon. They can be different daemons (e.g. Docker Desktop on the
  * host), so the lists are merged; a container both report appears once.
  */
 export async function listDockerLinks(run: Runner = runCommand): Promise<DockerLinksResult> {
   const args = ['ps', '--format', '{{json .}}'];
   const opts = { timeoutMs: 10_000, maxOutputChars: 500_000 };
   const failed = (err: Error) => ({ exitCode: 1, stdout: '', stderr: err.message });
-  const query = async(runInLimaShell: boolean) => {
+  const query = async(runInGuest: boolean) => {
     let timer: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        run('docker', args, { ...opts, runInLimaShell }).catch(failed),
+        run('docker', args, { ...opts, runInGuest }).catch(failed),
         new Promise<ReturnType<typeof failed>>((resolve) => {
           timer = setTimeout(() => resolve(failed(new Error('docker ps timed out'))), opts.timeoutMs);
         }),

@@ -444,6 +444,8 @@ export interface FilesDataSource {
   setCloudBackup?(collectionId:string, enabled:boolean):Promise<void>;
   listCloudCollections?():Promise<{ collectionId:string; bytes:number; updatedAt:string }[]>;
   restoreCloudCollection?(collectionId:string, name:string):Promise<void>;
+  /** Restores every Cloud collection this Desktop doesn't have, under its original folder name. */
+  restoreAllCloudCollections?():Promise<{ restored:string[]; failed:Array<{ collectionId:string; error:string }> }>;
   createFile?(path:string): Promise<void>;
   deleteFolder?(path:string): Promise<void>;
   onCapabilitiesChanged?(listener:() => void):() => void;

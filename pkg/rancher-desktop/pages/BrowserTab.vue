@@ -219,12 +219,6 @@
       </div>
     </template>
 
-    <template v-else-if="tabMode === 'account'">
-      <div class="flex-1 min-h-0 overflow-hidden">
-        <MyAccount />
-      </div>
-    </template>
-
     <!-- Document mode: raw HTML rendered in Shadow DOM -->
     <template v-else-if="tabMode === 'document'">
       <div class="flex-1 min-h-0 overflow-auto bg-[#0d1117]">
@@ -356,7 +350,7 @@
       </div>
     </template>
 
-    <!-- Terminal: xterm.js PTY into the Lima VM (limactl shell 0) -->
+    <!-- Terminal: xterm.js PTY into the Sulla VM (sulla-runtime exec 0) -->
     <template v-else-if="tabMode === 'terminal'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <TerminalTab :tab-id="props.tabId" />
@@ -379,7 +373,6 @@ import DocumentPage from './DocumentPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
 import HistoryTab from './HistoryTab.vue';
 import LabsPage from './LabsPage.vue';
-import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';

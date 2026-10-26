@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { digest } from './crypto.js';
-import { beginWebLogin, completeWebLogin } from './webAuth.js';
+import { beginWebLogin, buildKeycloakLogoutUrl, completeWebLogin } from './webAuth.js';
 
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
@@ -24,6 +24,7 @@ const config = {
   keycloakAdminUsername: 'synthetic-admin', keycloakAdminPassword: 'synthetic-password',
   keycloakMembershipAudience: 'sulla-membership', keycloakResourceAudiences: new Set(['sulla-files']),
   webCallbackUrl: 'https://console.example/accounts-api/v1/web/callback', consoleMainUrl: 'https://console.example/console',
+  serverId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', serverDisplayName: 'Synthetic Server',
   secureCookies: true, trustedProxy: true,
 } satisfies AccountsConfig;
 
@@ -66,5 +67,21 @@ test('web callback rejects a state replay from a browser without the initiating 
   await assert.rejects(
     completeWebLogin(db, config, 'synthetic-code', 'synthetic-state', request, response),
     /browser binding mismatch/,
+  );
+});
+
+test('Keycloak logout URL uses the trusted endpoint, ID token, and allowlisted console origin', () => {
+  const url = new URL(buildKeycloakLogoutUrl(
+    config,
+    'https://console.example/auth/realms/sulla/protocol/openid-connect/logout',
+    'synthetic-id-token',
+  ));
+
+  assert.equal(url.origin, 'https://console.example');
+  assert.equal(url.searchParams.get('id_token_hint'), 'synthetic-id-token');
+  assert.equal(url.searchParams.get('post_logout_redirect_uri'), 'https://console.example');
+  assert.throws(
+    () => buildKeycloakLogoutUrl(config, 'https://evil.example/logout', 'synthetic-id-token'),
+    /trusted issuer origin/,
   );
 });

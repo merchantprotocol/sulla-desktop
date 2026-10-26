@@ -17,13 +17,13 @@ function shellQuote(value: string): string {
 export async function resolveRepository(absolutePath: string): Promise<{ repoRoot: string; worktreePath: string }> {
   const worktree = await runCommand(
     `git -C ${ shellQuote(absolutePath) } rev-parse --show-toplevel`,
-    [], { runInLimaShell: true, timeoutMs: 30_000 },
+    [], { runInGuest: true, timeoutMs: 30_000 },
   );
   if (worktree.exitCode !== 0) throw new Error(worktree.stderr || worktree.stdout || 'Not a git repository');
 
   const common = await runCommand(
     `git -C ${ shellQuote(absolutePath) } rev-parse --path-format=absolute --git-common-dir`,
-    [], { runInLimaShell: true, timeoutMs: 30_000 },
+    [], { runInGuest: true, timeoutMs: 30_000 },
   );
   if (common.exitCode !== 0) throw new Error(common.stderr || common.stdout || 'Could not resolve git common directory');
 
@@ -76,7 +76,7 @@ export async function changedFiles(worktreePath: string): Promise<string[]> {
   for (const command of commands) {
     const result = await runCommand(
       `git -C ${ shellQuote(worktreePath) } ${ command.slice(4) }`,
-      [], { runInLimaShell: true, timeoutMs: 30_000 },
+      [], { runInGuest: true, timeoutMs: 30_000 },
     );
     if (result.exitCode !== 0) continue;
     result.stdout.split('\n').map(line => line.trim()).filter(Boolean).forEach(file => files.add(file));

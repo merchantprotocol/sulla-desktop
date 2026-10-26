@@ -11,7 +11,7 @@ import { claimWarningsForChangedFiles } from './fileClaims';
 
 /**
  * Git Commit Tool - Stage files and create a commit.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitCommitWorker extends BaseTool {
   name = '';
@@ -25,7 +25,7 @@ export class GitCommitWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -44,7 +44,7 @@ export class GitCommitWorker extends BaseTool {
         addCmd = `git -C "${ repoRoot }" add ${ fileArgs }`;
       }
 
-      const addResult = await runCommand(addCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const addResult = await runCommand(addCmd, [], { runInGuest: true, timeoutMs: 30_000 });
       if (addResult.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git add failed: ${ addResult.stderr || addResult.stdout }` };
       }
@@ -52,7 +52,7 @@ export class GitCommitWorker extends BaseTool {
       // Commit
       const escapedMessage = message.replace(/"/g, '\\"');
       const commitCmd = `git -C "${ repoRoot }" commit -m "${ escapedMessage }"`;
-      const commitResult = await runCommand(commitCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const commitResult = await runCommand(commitCmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (commitResult.exitCode !== 0) {
         const output = commitResult.stderr || commitResult.stdout;
@@ -66,7 +66,7 @@ export class GitCommitWorker extends BaseTool {
       const hashResult = await runCommand(
         `git -C "${ repoRoot }" rev-parse --short HEAD`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
       const hash = hashResult.stdout.trim();
 

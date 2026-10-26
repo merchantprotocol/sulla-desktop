@@ -15,7 +15,6 @@ import { EventEmitter } from 'events';
 import type { VMBackend } from '@pkg/backend/backend';
 import type { Settings } from '@pkg/config/settings';
 import type { TransientSettings } from '@pkg/config/transientSettings';
-import { DiagnosticsCheckerResult } from '@pkg/main/diagnostics/types';
 import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 
 export class NoMainEventsHandlerError extends Error {
@@ -110,21 +109,6 @@ interface MainEventNames {
    */
   'api-get-credentials'(): { user: string, password: string, port: number };
 
-  /**
-   * Force trigger diagnostics with the given id.
-   * This is used when something has changed that might affect whether the given
-   * diagnostic needs to be re-run.
-   * @note This does not update the last run time (since it only runs a single
-   * checker).
-   */
-  'diagnostics-trigger'(id: string): DiagnosticsCheckerResult | DiagnosticsCheckerResult[] | undefined;
-
-  /**
-   * Generically signify that a diagnostic should be updated.
-   * @param id The diagnostic identifier.
-   * @param state The new state for the diagnostic.
-   */
-  'diagnostics-event'(payload: DiagnosticsEventPayload): void;
 
   /**
    * Emitted when an extension is uninstalled via the extension manager.
@@ -174,7 +158,7 @@ interface MainEventNames {
   'dialog-info'(args: Record<string, string>): void;
 
   /**
-   * Emitted when the backend (Lima/K8s/Docker) has finished booting.
+   * Emitted when the backend (VM/K8s/Docker) has finished booting.
    * The FirstRunCoordinator uses this to gate Sulla service deployment.
    */
   'first-run-backend-booted'(): void;
@@ -194,16 +178,6 @@ interface MainEventNames {
   'restarting'(): void;
 }
 
-/**
- * DiagnosticsEventPayload defines the data that will be passed on a
- * 'diagnostics-event' event.
- */
-type DiagnosticsEventPayload =
-  { id: 'integrations-windows', distro?: string, key: string, error?: Error } |
-  { id: 'kube-versions-available', available: boolean } |
-  { id: 'moby-storage', hasClassicData: boolean, hasSnapshotterData: boolean, useSnapshotter: boolean } |
-  { id: 'network-connectivity', connected: boolean } |
-  { id: 'path-management', fileName: string; error: Error | undefined };
 
 /**
  * Helper type definition to check if the given event name is a handler (i.e.

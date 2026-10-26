@@ -40,6 +40,8 @@ export interface AccountsConfig {
   keycloakResourceAudiences: Set<string>;
   webCallbackUrl?: string;
   consoleMainUrl?: string;
+  serverId: string;
+  serverDisplayName: string;
   secureCookies: boolean;
   trustedProxy: boolean;
 }
@@ -116,6 +118,7 @@ export async function loadConfig(): Promise<AccountsConfig> {
   const keycloakAdminPassword = mode === 'server' ? await readTextFile('SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE') : undefined;
   const keycloakMembershipAudience = process.env.SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE;
   const keycloakResourceAudiences = new Set((process.env.SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES ?? '').split(',').map(value => value.trim()).filter(Boolean));
+  if (mode === 'server') { keycloakResourceAudiences.add('sulla-console'); keycloakResourceAudiences.add('sulla-desktop-enrollment'); }
   const webCallbackUrl = mode === 'server' ? assertTrustedUrl(process.env.SULLA_ACCOUNTS_WEB_CALLBACK_URL ?? new URL('/accounts-api/v1/web/callback', publicUrl).href, publicUrl) : undefined;
   const consoleMainUrl = mode === 'server' ? assertTrustedUrl(process.env.SULLA_ACCOUNTS_CONSOLE_MAIN_URL ?? new URL('/console', publicUrl).href, publicUrl) : undefined;
   if (mode === 'server' && (!keycloakIssuer || !keycloakAuthorityId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(keycloakAuthorityId) || !keycloakNativeClientId || !keycloakWebClientId || !keycloakWebClientSecret || !keycloakAdminUsername || !keycloakAdminPassword || !keycloakMembershipAudience || !keycloakResourceAudiences.size)) {
@@ -169,6 +172,8 @@ export async function loadConfig(): Promise<AccountsConfig> {
     keycloakResourceAudiences,
     webCallbackUrl,
     consoleMainUrl,
+    serverId: process.env.SULLA_SERVER_ID ?? keycloakAuthorityId ?? 'local-desktop',
+    serverDisplayName: process.env.SULLA_SERVER_DISPLAY_NAME?.trim() || 'Sulla Server',
     secureCookies: new URL(publicUrl).protocol === 'https:' && process.env.SULLA_ACCOUNTS_INSECURE_COOKIES !== '1',
     trustedProxy: process.env.SULLA_ACCOUNTS_TRUSTED_PROXY === '1',
   };

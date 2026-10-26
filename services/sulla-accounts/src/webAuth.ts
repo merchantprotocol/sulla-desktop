@@ -10,6 +10,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 import { verifyOidcToken } from './auth.js';
+import { assertTrustedUrl } from './config.js';
 import { base64url, decrypt, digest, encrypt } from './crypto.js';
 import { fetchJson, object, string } from './http.js';
 import { getHostedUser } from './keycloakAdmin.js';
@@ -161,6 +162,7 @@ export async function completeWebLogin(
   const stored = encrypt(config.encryptionKey, JSON.stringify({
     accessToken,
     refreshToken: typeof tokens.refresh_token === 'string' ? tokens.refresh_token : undefined,
+    idToken,
   }), `web_sessions:${sessionId}:v1`);
   const accessExpiresAt = new Date(Date.now() + (typeof tokens.expires_in === 'number' ? tokens.expires_in * 1000 : 5 * 60_000));
   const expiresAt = new Date(Date.now() + 8 * 60 * 60_000);
@@ -199,6 +201,52 @@ export async function webIdentity(db: Database, config: AccountsConfig, request:
   if (requireCsrf && (!csrfHeader || !csrfCookie || csrfHeader !== csrfCookie || !sameDigest(csrfHeader, session.csrf_digest))) throw new Error('invalid_csrf');
   const csrfToken = csrfHeader ?? csrfCookie;
   return { id: session.id, issuer: session.issuer, subject: session.subject, csrfToken };
+}
+
+interface WebSessionTokens {
+  accessToken: string;
+  refreshToken?: string;
+  idToken?: string;
+}
+
+export function buildKeycloakLogoutUrl(
+  config: AccountsConfig,
+  endSessionEndpoint: string,
+  idToken: string,
+): string {
+  if (!config.keycloakIssuer || !config.consoleMainUrl) throw new Error('web logout is unavailable');
+  const endpoint = new URL(assertTrustedUrl(endSessionEndpoint, config.keycloakIssuer));
+  const consoleUrl = new URL(config.consoleMainUrl);
+  const publicUrl = new URL(config.publicUrl);
+  if (consoleUrl.origin !== publicUrl.origin) throw new Error('console logout origin is not allowlisted');
+  endpoint.searchParams.set('id_token_hint', idToken);
+  endpoint.searchParams.set('post_logout_redirect_uri', consoleUrl.origin);
+  return endpoint.href;
+}
+
+export async function webLogoutUrl(
+  db: Database,
+  config: AccountsConfig,
+  identity: WebIdentity,
+): Promise<string | undefined> {
+  if (!config.keycloakIssuer) return undefined;
+  const found = await db.query(
+    `SELECT access_ciphertext,access_nonce,access_auth_tag FROM accounts.web_sessions WHERE id=$1`,
+    [identity.id],
+  );
+  const session = found.rows[0];
+  if (!session) return undefined;
+  const tokens = JSON.parse(decrypt(config.encryptionKey, {
+    ciphertext: session.access_ciphertext as Buffer,
+    nonce: session.access_nonce as Buffer,
+    authTag: session.access_auth_tag as Buffer,
+  }, `web_sessions:${identity.id}:v1`)) as WebSessionTokens;
+  if (!tokens.idToken) return undefined;
+  const discovery = object(await fetchJson(
+    `${config.keycloakIssuer}${config.keycloakIssuer.endsWith('/') ? '' : '/'}.well-known/openid-configuration`,
+  ));
+  const endpoint = string(discovery.end_session_endpoint, 'end session endpoint');
+  return buildKeycloakLogoutUrl(config, endpoint, tokens.idToken);
 }
 
 export async function revokeWebSession(db: Database, request: Request): Promise<void> {

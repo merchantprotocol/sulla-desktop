@@ -790,16 +790,13 @@ Use `notify/user` with `targets:["mobile"]`. Check `mobile/list_devices` first w
 
 ## Kubernetes (k3s)
 
-The agent has kubectl and rdctl access. There are no safety rails beyond the ones below, so be careful. See `environment/kubernetes.md`.
 
 ### "What's running in my cluster?"
 ```bash
-sulla rdctl/shell '{"command":"kubectl get pods -A"}'
 ```
 
 ### "Show me logs from pod X"
 ```bash
-sulla rdctl/shell '{"command":"kubectl logs -n <ns> <pod> --tail=200"}'
 ```
 
 ### "Deploy this manifest"
@@ -818,7 +815,6 @@ sulla kubectl/describe '{"resource":"service","name":"X","namespace":"default"}'
 Confirm with the user first. **Never** use `force:true` or `gracePeriod:0` unless the user has explicitly asked for it.
 
 ### "Reset Kubernetes"
-`sulla rdctl/reset` wipes the cluster. Treat it as destructive. Get an explicit yes from the user before you run it.
 
 ### Hard rule
 Never touch `kube-system`, `kube-public`, `kube-node-lease`, or the namespaces Sulla manages (cert-manager, spinkube, traefik) without explicit, repeated confirmation from the user. You can break the desktop app that way.

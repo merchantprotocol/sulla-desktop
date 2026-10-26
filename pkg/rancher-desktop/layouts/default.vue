@@ -27,24 +27,7 @@
       ref="body"
       class="body main-preferences"
     >
-      <header
-        v-if="activeMainTab"
-        class="docker-page-intro"
-      >
-        <div class="docker-page-eyebrow">
-          {{ activePageCopy.eyebrow }}
-        </div>
-        <h1>{{ activePageCopy.headline }}</h1>
-        <p>{{ activePageCopy.lead }}</p>
-      </header>
-      <!-- Main tabs are always mounted, toggled with v-show to preserve state -->
-      <Containers v-show="activeMainTab === '/Containers'" />
-      <Volumes v-show="activeMainTab === '/Volumes'" />
-      <PortForwarding v-show="activeMainTab === '/PortForwarding'" />
-      <Images v-show="activeMainTab === '/Images'" />
-      <Snapshots v-show="activeMainTab === '/Snapshots'" />
-      <Troubleshooting v-show="activeMainTab === '/Troubleshooting'" />
-      <Diagnostics v-show="activeMainTab === '/Diagnostics'" />
+      <Docker v-if="activeMainTab" />
       <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
       <RouterView v-if="!activeMainTab" />
     </main>
@@ -69,14 +52,7 @@ import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
-import { mapTypedState } from '@pkg/entry/store';
-import Containers from '@pkg/pages/Containers.vue';
-import Diagnostics from '@pkg/pages/Diagnostics.vue';
-import Images from '@pkg/pages/Images.vue';
-import PortForwarding from '@pkg/pages/PortForwarding.vue';
-import Snapshots from '@pkg/pages/Snapshots.vue';
-import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
-import Volumes from '@pkg/pages/Volumes.vue';
+import Docker from '@pkg/pages/Docker.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
@@ -88,13 +64,7 @@ export default {
     ActionMenu,
     rdNav: Nav,
     TheTitle,
-    Containers,
-    Volumes,
-    PortForwarding,
-    Images,
-    Snapshots,
-    Troubleshooting,
-    Diagnostics,
+    Docker,
   },
 
   setup() {
@@ -111,7 +81,6 @@ export default {
   computed: {
     routes() {
       const badges = {
-        '/Diagnostics': this.diagnosticsCount,
       };
 
       return mainRoutes.map((route) => {
@@ -130,37 +99,7 @@ export default {
 
       return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
     },
-    activePageCopy() {
-      return ({
-        '/Containers': {
-          eyebrow: 'Containers', headline: 'Everything running, at a glance.', lead: 'Start, stop, inspect, and clean up local workloads.',
-        },
-        '/Volumes': {
-          eyebrow: 'Volumes', headline: 'Persistent data, accounted for.', lead: 'Browse storage, inspect mount points, and remove what is no longer needed.',
-        },
-        '/PortForwarding': {
-          eyebrow: 'Port forwarding', headline: 'Local services, within reach.', lead: 'Expose Kubernetes services on local ports and control every active forward.',
-        },
-        '/Images': {
-          eyebrow: 'Images', headline: 'The layers behind every workload.', lead: 'Pull, scan, push, and prune the images stored by your local runtime.',
-        },
-        '/Snapshots': {
-          eyebrow: 'Snapshots', headline: 'A safe point to return to.', lead: 'Capture the current runtime state and restore it when you need to rewind.',
-        },
-        '/Troubleshooting': {
-          eyebrow: 'Troubleshooting', headline: 'When the engine needs attention.', lead: 'Open logs, reset Kubernetes, or return the runtime to a clean state.',
-        },
-        '/Diagnostics': {
-          eyebrow: 'Diagnostics', headline: 'Know what is healthy, and what is not.', lead: 'Run system checks, inspect failures, and mute findings you have reviewed.',
-        },
-      })[this.activeMainTab] ?? { eyebrow: '', headline: '', lead: '' };
-    },
-    /** @returns {number} The number of diagnostics errors. */
-    diagnosticsCount() {
-      return this.diagnostics.filter(diagnostic => !diagnostic.mute).length;
-    },
     ...mapState('credentials', ['credentials']),
-    ...mapTypedState('diagnostics', ['diagnostics']),
     ...mapGetters('extensions', ['installedExtensions']),
   },
 
@@ -233,12 +172,11 @@ export default {
     async fetch() {
       await this.$store.dispatch('credentials/fetchCredentials');
       if (!this.credentials.port || !this.credentials.user || !this.credentials.password) {
-        console.log(`Credentials aren't ready for getting diagnostics -- will try later`);
+        console.log(`Backend credentials aren't ready -- will try later`);
 
         return;
       }
       await this.$store.dispatch('preferences/fetchPreferences');
-      await this.$store.dispatch('diagnostics/fetchDiagnostics');
     },
 
     openDashboard() {
@@ -588,8 +526,7 @@ export default {
 
   .troubleshooting-items > *,
   .snapshots .cards > div,
-  .general > div,
-  .diagnostics > .status {
+  .general > div {
     border-radius: 18px;
     background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
     box-shadow: inset 0 0 0 1px var(--docker-hairline);
@@ -625,14 +562,6 @@ export default {
     color: var(--docker-read);
     font-size: 14px;
     font-weight: 600;
-  }
-
-  .diagnostics > .status {
-    padding: 18px;
-  }
-
-  .diagnostics .item-results::first-letter {
-    color: var(--nx-danger);
   }
 
   .status-bar {

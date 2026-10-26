@@ -47,12 +47,12 @@ export async function materializeStoredFunctionInGuest(stored: FunctionDefinitio
   runtimePath: string;
 }> {
   const mkdir = await runCommand('sh', ['-c', `umask 077; mkdir -p '${ GUEST_RUNTIME_ROOT }'; chmod 700 '${ GUEST_RUNTIME_ROOT }'`], {
-    runInLimaShell: true,
+    runInGuest: true,
   });
   if (mkdir.exitCode !== 0) throw new Error(mkdir.stderr || 'Could not prepare guest function runtime directory');
 
   const created = await runCommand('mktemp', ['-d', `${ GUEST_RUNTIME_ROOT }/${ safeSlug(stored.slug) }-XXXXXXXX`], {
-    runInLimaShell: true,
+    runInGuest: true,
   });
   if (created.exitCode !== 0) throw new Error(created.stderr || 'Could not create guest function staging directory');
   const guestDir = created.stdout.trim();
@@ -64,7 +64,7 @@ export async function materializeStoredFunctionInGuest(stored: FunctionDefinitio
   }
   const materialized = await runCommand('node', ['-e', MATERIALIZE_SCRIPT], {
     stdin:          JSON.stringify({ root: guestDir, files }),
-    runInLimaShell: true,
+    runInGuest: true,
     timeoutMs:      30_000,
   });
   if (materialized.exitCode !== 0) {
@@ -77,7 +77,7 @@ export async function materializeStoredFunctionInGuest(stored: FunctionDefinitio
 
 export async function removeGuestFunctionMaterialization(guestDir: string): Promise<void> {
   assertGuestRuntimePath(guestDir);
-  const removed = await runCommand('rm', ['-rf', '--', guestDir], { runInLimaShell: true });
+  const removed = await runCommand('rm', ['-rf', '--', guestDir], { runInGuest: true });
 
   if (removed.exitCode !== 0) throw new Error(removed.stderr || 'Could not remove guest function staging directory');
 }

@@ -29,6 +29,7 @@ import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -67,10 +68,7 @@ const isDockerDaemonRunning = (): boolean => {
 
 const checkDockerMode = async() => {
   try {
-    const output = execSync(`LIMA_HOME="${ paths.lima }" "${ paths.limactl }" list --json`, { encoding: 'utf8' });
-    const instances = JSON.parse(output);
-    const instance = instances.find((i: any) => i.name === '0');
-    const vmRunning = instance?.status === 'Running';
+    const vmRunning = isSullaRuntimeActive();
 
     // Check if Kubernetes is enabled
     const k8sEnabled = await SullaSettingsModel.get('kubernetes.enabled', false);
@@ -118,7 +116,25 @@ export async function initiateWindowContext(): Promise<void> {
     SullaSettingsModel.setFallbackFilePath(fallbackPath);
     console.log('[WindowContext] Fallback path set to:', fallbackPath);
 
-    await SullaSettingsModel.bootstrap();
+    // Renderer settings share the main-process backends. Wait for the lifecycle
+    // readiness signal instead of racing cold Redis with a short retry budget.
+    // Every window awaits this before mounting, so only hold the mount for a
+    // short bound; on a cold boot finish bootstrapping in the background so
+    // the loading overlay can render while Redis/Postgres come up.
+    const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
+    const readyInTime = await Promise.race([
+      backendsReady.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 8_000)),
+    ]);
+
+    if (readyInTime) {
+      await SullaSettingsModel.bootstrap();
+    } else {
+      console.log('[WindowContext] Settings backends still starting; bootstrapping when ready');
+      backendsReady
+        .then(() => SullaSettingsModel.bootstrap())
+        .catch((error: unknown) => console.error('[WindowContext] Failed to initialize settings:', error));
+    }
   } catch (error) {
     console.error('[WindowContext] Failed to initialize settings:', error);
   }
@@ -252,7 +268,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
   // ── Database layer (depends on postgres connection) ────────────────────
 
-  lifecycle.registerOnce('database-manager', ['postgres'],
+  lifecycle.registerOnce('database-manager', ['postgres', 'redis'],
     async() => { await afterBackgroundLoaded() },
     async() => { await getDatabaseManager().stop() },
   );
@@ -333,7 +349,7 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
-  // In-process MCP server that Claude Code (running in the Lima VM) can call
+  // In-process MCP server that Claude Code (running in the Sulla VM) can call
   // back into. No external deps — pure main-process HTTP server. Must start
   // before any graph execution that invokes Claude Code, which in practice
   // means before the chat server accepts requests.
@@ -347,7 +363,11 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
   lifecycle.registerOnce('accounts', [],
     async() => {
-      const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
+      const { getSullaAccountsClient, waitForSullaAccountsService } = await import('@pkg/main/sullaAccountsClient');
+
+      // Boot starts the accounts container after Desktop is usable; wait for it
+      // instead of failing and backing off.
+      await waitForSullaAccountsService();
       await getSullaAccountsClient().initialize();
       console.log('[Background] Local Accounts broker session initialized');
     },
@@ -517,7 +537,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
 
-  // Start the terminal WebSocket server early (PTY into Lima VM).
+  // Start the terminal WebSocket server early (PTY into Sulla VM).
   // It has no DB/Redis dependencies and binds to 127.0.0.1 only.
   // Shutdown is handled in sullaEnd().
   try {
@@ -536,7 +556,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // Register ModelProviderService IPC handlers before any window loads.
   // Lifecycle-gated state loading happens later, but the UI needs to query
-  // state immediately — and instantiateSullaStart() only runs after Lima boots,
+  // state immediately — and instantiateSullaStart() only runs after the VM boots,
   // which may be blocked on container readiness.
   try {
     const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
@@ -888,7 +908,28 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
   let vaultMigrationRun: Promise<unknown> | undefined;
-  const refreshVaultStatus = async() => {
+  // Share one in-flight status refresh between the main-process poll and every
+  // renderer `vault:status` caller so slow/missing vault responses can't pile up.
+  let vaultStatusInFlight: Promise<Awaited<ReturnType<typeof refreshVaultStatusOnce>>> | undefined;
+  const refreshVaultStatus = () => {
+    vaultStatusInFlight ??= refreshVaultStatusOnce().finally(() => { vaultStatusInFlight = undefined });
+    return vaultStatusInFlight;
+  };
+  const startVaultStatusPoll = () => {
+    if (vaultStatusPoll) return;
+    vaultStatusPoll = setInterval(() => {
+      // Self-stop if the vault view went away without a vault:view-hide (renderer reload, crash).
+      if (!vaultViewManager.hasActiveOwner()) {
+        clearInterval(vaultStatusPoll);
+        vaultStatusPoll = undefined;
+        return;
+      }
+      if (vaultStatusRunning) return;
+      vaultStatusRunning = true;
+      void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
+    }, 1_000);
+  };
+  const refreshVaultStatusOnce = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
     const wasUnlocked = client.isUnlocked();
@@ -903,7 +944,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return status;
   };
 
-  ipcMainProxy.handle('vault:status', refreshVaultStatus);
+  ipcMainProxy.handle('vault:status', () => refreshVaultStatus());
 
   const vaultMetadataId = (value: unknown, name: 'integrationId' | 'accountId'): string => {
     const pattern = name === 'integrationId'
@@ -989,11 +1030,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
     const opened = await vaultViewManager.show(reservation, target.toString(), bounds);
     if (!opened) return { state: 'cancelled' };
-    if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
-      if (vaultStatusRunning) return;
-      vaultStatusRunning = true;
-      void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
-    }, 1_000);
+    startVaultStatusPoll();
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 
@@ -1680,7 +1717,7 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
 export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   const lifecycle = getServiceLifecycleManager();
 
-  // Stop the terminal WebSocket server (kills any live limactl shell PTYs).
+  // Stop the terminal WebSocket server (kills any live sulla-runtime exec PTYs).
   try {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
@@ -1703,7 +1740,7 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   await lifecycle.stopAll(mode);
 
   // Force-close connection clients if they're still alive.
-  // Lifecycle may think they never started (e.g. slow Docker/Lima boot
+  // Lifecycle may think they never started (e.g. slow Docker boot
   // caused waitForReady to fail), but the clients may have connected
   // independently via lazy-init or retry loops.
   if (mode === 'full') {

@@ -15,7 +15,7 @@ Loaded by every addon. Provides:
   - is_allowlisted(host) — bypass for internal / development hosts
   - classify_verdict(flags) — collapses multi-source signals into an action
 
-Config file: /etc/sulla-proxy.env — written by Electron side (LimaBackend).
+Config file: /etc/sulla-proxy.env — written by Electron side (Sulla VMBackend).
 """
 
 import json
@@ -100,7 +100,7 @@ def is_allowlisted(host: str, extra: Optional[Iterable[str]] = None) -> bool:
     h = host.lower().split(":")[0]  # strip port
     base_allow = {
         "localhost", "127.0.0.1", "::1",
-        "host.lima.internal", "host.docker.internal", "host.rancher-desktop.internal",
+        "host.sulla.internal", "host.docker.internal", "host.rancher-desktop.internal",
         "lima-rancher-desktop", "lima-0",
     }
     if h in base_allow:

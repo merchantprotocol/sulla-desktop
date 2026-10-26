@@ -55,9 +55,9 @@ let input='';process.stdin.on('data',c=>input+=c).on('end',()=>{try{
  }}process.stdout.write(JSON.stringify({roots:roots.map(x=>x.root),results:out}));
 }catch(e){process.stderr.write(e.message);process.exitCode=1}});`;
 
-async function nodeOperation<T>(script: string, input: unknown, runInLimaShell = false): Promise<T> {
+async function nodeOperation<T>(script: string, input: unknown, runInGuest = false): Promise<T> {
   const result = await runCommand('node', ['-e', script], {
-    stdin: JSON.stringify(input), timeoutMs: 120_000, maxOutputChars: 1_000_000, runInLimaShell,
+    stdin: JSON.stringify(input), timeoutMs: 120_000, maxOutputChars: 1_000_000, runInGuest,
   });
   if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || 'Container file operation failed');
   return JSON.parse(result.stdout) as T;

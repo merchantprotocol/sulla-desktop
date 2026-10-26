@@ -740,12 +740,12 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     version:     '1.0.0',
     lastUpdated: '2026-04-25',
     developer:   'Ollama',
-    formGuide:   'Sulla does not install or run Ollama for you. Point it at an Ollama server you run yourself: use http://host.lima.internal:11434/v1 if Ollama runs on this computer, or the server\'s address if it runs elsewhere.',
+    formGuide:   'Sulla does not install or run Ollama for you. Point it at an Ollama server you run yourself: use http://host.sulla.internal:11434/v1 if Ollama runs on this computer, or the server\'s address if it runs elsewhere.',
     properties:  [
       {
         key:         'base_url',
         title:       'Base URL',
-        hint:        'Your Ollama server\'s OpenAI-compatible URL. Use http://host.lima.internal:11434/v1 if Ollama runs on this computer.',
+        hint:        'Your Ollama server\'s OpenAI-compatible URL. Use http://host.sulla.internal:11434/v1 if Ollama runs on this computer.',
         type:        'url',
         required:    true,
         placeholder: 'http://localhost:11434/v1',

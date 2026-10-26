@@ -10,7 +10,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Conflicts Tool - List files with merge conflicts and show the conflict diffs.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitConflictsWorker extends BaseTool {
   name = '';
@@ -24,7 +24,7 @@ export class GitConflictsWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -35,7 +35,7 @@ export class GitConflictsWorker extends BaseTool {
 
       // Find files with conflicts
       const conflictCmd = `git -C "${ repoRoot }" diff --name-only --diff-filter=U`;
-      const conflictResult = await runCommand(conflictCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const conflictResult = await runCommand(conflictCmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (conflictResult.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git conflicts check failed: ${ conflictResult.stderr || conflictResult.stdout }` };
@@ -53,7 +53,7 @@ export class GitConflictsWorker extends BaseTool {
       for (const file of conflictFiles) {
         output += `=== ${ file } ===\n`;
         const diffCmd = `git -C "${ repoRoot }" diff "${ file }"`;
-        const diffResult = await runCommand(diffCmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+        const diffResult = await runCommand(diffCmd, [], { runInGuest: true, timeoutMs: 30_000 });
         output += diffResult.stdout.trim() + '\n\n';
       }
 

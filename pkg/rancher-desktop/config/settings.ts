@@ -17,7 +17,7 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 // Import heartbeat prompt from TypeScript file
 
-export const CURRENT_SETTINGS_VERSION = 17 as const;
+export const CURRENT_SETTINGS_VERSION = 18 as const;
 
 export enum VMType {
   QEMU = 'qemu',
@@ -123,7 +123,7 @@ export const defaultSettings = {
      */
     type:       process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? VMType.VZ : VMType.QEMU,
     /** can only be used when type is VMType.VZ, and only on aarch64 */
-    useRosetta: false,
+    useRosetta: process.platform === 'darwin' && process.arch === 'arm64' && parseInt(os.release(), 10) >= 22,
     mount:      {
       // Mount type defaults to virtiofs when using VZ.
       type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
@@ -134,7 +134,7 @@ export const defaultSettings = {
     /** The version of Kubernetes to launch, as a semver (without v prefix). */
     version: '',
     port:    6443,
-    enabled: true,
+    enabled: false,
     options: { traefik: true, flannel: true },
     ingress: { localhostOnly: false },
   },
@@ -146,14 +146,6 @@ export const defaultSettings = {
   containers: {
     showAll:   true,
     namespace: 'default',
-  },
-  diagnostics: {
-    showMuted:    false,
-    mutedChecks:  {} as Record<string, boolean>,
-    connectivity: {
-      interval: 5_000,
-      timeout:  5_000,
-    },
   },
   /**
    * Experimental settings

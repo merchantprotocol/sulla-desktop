@@ -74,6 +74,9 @@ export async function buildCommit(sync:Pick<SyncRow, 'collectionId' | 'keyVersio
 
 /** Turns the next unpushed local version into an upload session: decrypt locally, re-seal for Cloud, stage wires. */
 export class CloudPusher {
+  /** The version the last stage() call picked, so a failure can skip just that file. */
+  lastCandidate:{ fileId:string; versionId:string } | null = null;
+
   constructor(
     private readonly repository:PgCloudSyncRepository,
     private readonly store:Store,
@@ -84,6 +87,7 @@ export class CloudPusher {
   async stage(sync:SyncRow, root:Uint8Array):Promise<UploadSession | null> {
     const cursor = await this.repository.pushCursor(sync.collectionId);
     const item = await this.repository.nextPushCandidate(sync.collectionId, cursor);
+    this.lastCandidate = item ? { fileId: item.fileId, versionId: item.versionId } : null;
     if (!item) return null;
     const collectionId = sync.collectionId;
     // Chunks stored under another collection are re-sealed but not mapped, so P4 never evicts them on our word.

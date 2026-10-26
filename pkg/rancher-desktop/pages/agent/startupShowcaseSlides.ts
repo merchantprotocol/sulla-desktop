@@ -50,7 +50,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Agents work in their own Linux VM, and your home folder isn\'t mounted inside it. They see the files you share through Files. Reaching the Mac is a setting you turn on.',
     art:     'sandbox',
     points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
-    sources: ['resources/sulla-docs/environment/architecture.md (Lima VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
+    sources: ['resources/sulla-docs/environment/architecture.md (Sulla VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
   },
   {
     id:      'agents',
@@ -95,7 +95,10 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    `${ SHOWCASE_MODEL_NAMES.slice(0, -1).join(', ') } or ${ SHOWCASE_MODEL_NAMES[SHOWCASE_MODEL_NAMES.length - 1] }. Set a primary and a backup in settings.`,
     art:     'models',
     points:  [`${ SHOWCASE_MODEL_NAMES.slice(0, 3).join(', ') }`, `${ SHOWCASE_MODEL_NAMES.slice(3).join(', ') }`, 'Set a primary and a backup in settings'],
-    sources: ['pkg/rancher-desktop/agent/integrations/native/ai_infrastructure.ts', 'pkg/rancher-desktop/pages/LanguageModelSettings.vue'],
+    sources: [
+      'pkg/rancher-desktop/agent/integrations/native/ai_infrastructure.ts',
+      'pkg/rancher-desktop/components/settings/sections/ModelsSection.vue',
+    ],
   },
   {
     id:      'integrations',

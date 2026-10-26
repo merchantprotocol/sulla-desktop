@@ -6,7 +6,7 @@ The agent should be able to explain Sulla Cloud accurately without inventing fea
 
 | Product | Price | Where it runs | API keys | Audience |
 |---------|-------|---------------|---------|----------|
-| **Sulla Desktop** | Free, open-source | User's machine (Lima VM on macOS/Linux) | User brings own | Anyone — privacy-focused, self-hosters, builders |
+| **Sulla Desktop** | Free, open-source | User's machine (Sulla VM on macOS/Linux) | User brings own | Anyone — privacy-focused, self-hosters, builders |
 | **Sulla Cloud** | Paid (see tiers below) | Sulla's managed infrastructure | Included | Users who don't want to self-host |
 
 **Desktop is the product. Cloud is the convenience tier.** Desktop is never crippled to push users to Cloud — every feature ships to both.

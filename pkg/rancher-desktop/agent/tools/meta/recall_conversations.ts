@@ -29,7 +29,7 @@ import { BaseTool, ToolResponse } from '../base';
  * turns carry the decisions). Coverage limits are reported, never silent.
  *
  * Runs in the Electron main process, so these host-side file reads work whether
- * or not the primary agent executes inside Lima.
+ * or not the primary agent executes inside the Sulla VM.
  *
  *   action: "search"  — content-search across recent conversation logs for terms
  *   action: "read"    — render one conversation's transcript by id

@@ -17,7 +17,7 @@ import type { ApplyRemoteInput, ForkLocalInput, LocalFileState, PullRepository }
 import { conflictPath, type RemoteVersion } from './validation.js';
 
 export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault';
-export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete';
+export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete' | 'info';
 
 export interface UploadSession {
   journalSeq:number;
@@ -141,6 +141,33 @@ export class PgCloudSyncRepository implements PullRepository {
     return new Set(rows.map(row => String(row.id)));
   }
 
+  /** Per-file Finder badge: in the encrypted Cloud backup, or only indexed by Sulla, or still being processed. */
+  async finderBadges(collectionId:string):Promise<Array<{ path:string; state:'backed-up' | 'error' | 'indexed' | 'processing' | 'not-indexed' }>> {
+    return (await this.db.query(`SELECT f.path,
+        CASE WHEN s.enabled AND cv.version_id IS NOT NULL THEN 'backed-up'
+             WHEN s.enabled AND EXISTS(SELECT 1 FROM files_cloud_skips k WHERE k.version_id=f.current_version_id) THEN 'error'
+             WHEN f.extraction_status='indexed' THEN 'indexed'
+             WHEN f.extraction_status IN ('failed','unsupported') THEN 'not-indexed'
+             ELSE 'processing' END AS state
+      FROM files f
+      LEFT JOIN files_cloud_sync s ON s.collection_id=f.collection_id
+      LEFT JOIN files_cloud_versions cv ON cv.version_id=f.current_version_id
+      WHERE f.collection_id=$1 AND f.deleted_at IS NULL`, [collectionId])).rows;
+  }
+
+  /** Parks a version that keeps failing backup; retried after 1h, 2h, 4h… up to a day. */
+  async skipVersion(collectionId:string, fileId:string, versionId:string, error:string):Promise<void> {
+    await this.db.query(`INSERT INTO files_cloud_skips(version_id,collection_id,file_id,error,retry_at)
+      SELECT $1,$2,$3,$4,NOW()+INTERVAL '1 hour' WHERE EXISTS(SELECT 1 FROM file_versions WHERE id=$1)
+      ON CONFLICT(version_id) DO UPDATE SET error=excluded.error,attempts=files_cloud_skips.attempts+1,skipped_at=NOW(),
+        retry_at=NOW()+LEAST(INTERVAL '24 hours', INTERVAL '1 hour'*POWER(2,files_cloud_skips.attempts))`,
+    [versionId, collectionId, fileId, error.slice(0, 500)]);
+  }
+
+  async clearSkip(versionId:string):Promise<void> {
+    await this.db.query('DELETE FROM files_cloud_skips WHERE version_id=$1', [versionId]);
+  }
+
   async sync(collectionId:string):Promise<SyncRow | null> {
     const row = (await this.db.query('SELECT * FROM files_cloud_sync WHERE collection_id=$1', [collectionId])).rows[0];
     return row ? syncRow(row) : null;
@@ -177,8 +204,21 @@ export class PgCloudSyncRepository implements PullRepository {
       [collectionId, status, lastError]);
   }
 
+  /** The collection's folder name when Cloud doesn't hold this exact name yet (first backup or a rename). */
+  async staleInfoName(collectionId:string):Promise<{ name:string; sha:string } | null> {
+    const row = (await this.db.query(`SELECT c.name,s.info_name_sha FROM collections c JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.id=$1`, [collectionId])).rows[0];
+    const name = typeof row?.name === 'string' ? row.name.trim().slice(0, 200) : '';
+    if (!name) return null;
+    const sha = createHash('sha256').update(name, 'utf8').digest('hex');
+    return row.info_name_sha === sha ? null : { name, sha };
+  }
+
+  async markInfoSent(collectionId:string, nameSha:string):Promise<void> {
+    await this.db.query('UPDATE files_cloud_sync SET info_name_sha=$2,updated_at=NOW() WHERE collection_id=$1', [collectionId, nameSha || null]);
+  }
+
   async markCreated(collectionId:string, head:SyncHead, vaultId:string, vaultEpoch:number):Promise<void> {
-    await this.db.query(`UPDATE files_cloud_sync SET cloud_created=TRUE,last_seq=$2,head=$3,escrow_vault_id=$4,escrow_vault_epoch=$5,
+    await this.db.query(`UPDATE files_cloud_sync SET cloud_created=TRUE,info_name_sha=NULL,last_seq=$2,head=$3,escrow_vault_id=$4,escrow_vault_epoch=$5,
         status='idle',last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE collection_id=$1`,
     [collectionId, head.seq, head, vaultId, vaultEpoch]);
   }
@@ -206,7 +246,7 @@ export class PgCloudSyncRepository implements PullRepository {
 
   async markCloudDeleted(collectionId:string):Promise<void> {
     await transaction(this.db, async client => {
-      await client.query(`UPDATE files_cloud_sync SET enabled=FALSE,status='off',wrapped_root=NULL,head=NULL,last_seq=0,cloud_created=FALSE,
+      await client.query(`UPDATE files_cloud_sync SET enabled=FALSE,status='off',wrapped_root=NULL,head=NULL,last_seq=0,cloud_created=FALSE,info_name_sha=NULL,
           escrow_vault_id=NULL,escrow_vault_epoch=NULL,upload_session=NULL,pending_bytes=0,last_error=NULL,updated_at=NOW() WHERE collection_id=$1`, [collectionId]);
       await client.query('DELETE FROM files_cloud_file_heads WHERE collection_id=$1', [collectionId]);
       await client.query('DELETE FROM files_cloud_versions WHERE collection_id=$1', [collectionId]);
@@ -281,9 +321,11 @@ export class PgCloudSyncRepository implements PullRepository {
       JOIN file_versions v ON v.id=j.version_id
       LEFT JOIN manifests m ON m.hash=v.manifest_hash
       LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
-      WHERE j.collection_id=$1 AND j.seq>$2
+      LEFT JOIN files_cloud_skips k ON k.version_id=v.id
+      WHERE j.collection_id=$1 AND (j.seq>$2 OR k.retry_at<=NOW())
+        AND (k.version_id IS NULL OR k.retry_at<=NOW())
         AND NOT EXISTS(SELECT 1 FROM files_cloud_versions cv WHERE cv.version_id=v.id)
-      ORDER BY j.seq LIMIT 1`, [collectionId, cursor])).rows[0];
+      ORDER BY (k.version_id IS NOT NULL), j.seq LIMIT 1`, [collectionId, cursor])).rows[0];
     if (!row) return null;
     const mtime = row.mtime_ms !== null && row.mtime_ms !== undefined ? new Date(Number(row.mtime_ms)) : new Date(row.created_at);
     return {

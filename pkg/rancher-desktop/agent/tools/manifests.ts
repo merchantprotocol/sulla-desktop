@@ -27,14 +27,12 @@ import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
-import { limaToolManifests } from './lima/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { mobileToolManifests } from './mobile/manifests';
 import { modelsToolManifests } from './models/manifests';
 import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
-import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { reflexToolManifests } from './reflex/manifests';
 import { toolRegistry } from './registry';
@@ -64,14 +62,12 @@ toolRegistry.registerManifests([
   ...githubToolManifests,
   ...integrationsToolManifests,
   ...kubectlToolManifests,
-  ...limaToolManifests,
   ...marketplaceToolManifests,
   ...metaToolManifests,
   ...mobileToolManifests,
   ...modelsToolManifests,
   ...notifyToolManifests,
   ...pgToolManifests,
-  ...rdctlToolManifests,
   ...redisToolManifests,
   ...rulesToolManifests,
   ...reflexToolManifests,

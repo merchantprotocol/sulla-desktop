@@ -308,3 +308,26 @@ a { color: var(--sulla-accent) !important; }
   .pf-c-login__main { padding: 106px 22px 28px !important; }
   #kc-page-title { font-size: 29px; }
 }
+
+/* Sulla Server is invite-only: Keycloak must never expose registration or IdP links. */
+#kc-registration-container,
+#kc-social-providers,
+.kc-social-links,
+.pf-v5-c-login__main-footer-band { display: none !important; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --sulla-paper: #0d1117;
+    --sulla-ink: #edf3f8;
+    --sulla-muted: #9aabba;
+    --sulla-line: #334554;
+  }
+  html, body, .login-pf, .login-pf body {
+    background: radial-gradient(900px 500px at 88% -4%, #173746, transparent 60%), var(--sulla-paper) !important;
+  }
+  .card-pf, .pf-v5-c-login__main, .pf-c-login__main { background: #151d25 !important; border-color: #2c3c49 !important; }
+  .pf-v5-c-form__label, .pf-c-form__label, label { color: #c8d4de !important; }
+  .pf-v5-c-form-control, .pf-c-form-control { background: #0f161d !important; }
+  #kc-header::after { color: #91a5b5; }
+}

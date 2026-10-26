@@ -185,16 +185,6 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'agent.html'),
       filename: 'agent.html',
     },
-    'lm-settings': {
-      entry:    path.join(import.meta.dirname, 'entry', 'lm-settings.ts'),
-      template: path.join(import.meta.dirname, 'public', 'lm-settings.html'),
-      filename: 'lm-settings.html',
-    },
-    'audio-settings': {
-      entry:    path.join(import.meta.dirname, 'entry', 'audio-settings.ts'),
-      template: path.join(import.meta.dirname, 'public', 'audio-settings.html'),
-      filename: 'audio-settings.html',
-    },
     'process-manager': {
       entry:    path.join(import.meta.dirname, 'entry', 'process-manager.ts'),
       template: path.join(import.meta.dirname, 'public', 'process-manager.html'),

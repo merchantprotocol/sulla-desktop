@@ -61,7 +61,7 @@ export class Tray {
     {
       id:    'main',
       label: 'Open Sulla',
-      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
+      icon:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
       type:  'normal',
       click() {
         openMain();
@@ -91,7 +91,7 @@ export class Tray {
     {
       id:    'docker-dashboard',
       label: 'Docker Dashboard',
-      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
+      icon:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
       type:  'normal',
       click() {
         openDockerDashboard();
@@ -141,7 +141,7 @@ export class Tray {
         {
           id:    'issues',
           label: 'Issues',
-          icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
+          icon:  path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
           click() {
             openUrlInApp('https://sulladesktop.com/support');
           },
@@ -175,19 +175,19 @@ export class Tray {
   };
 
   private readonly trayIconsMacOs = {
-    stopped:  path.join(paths.resources, 'icons', 'logo-tray-stopped-Template@2x.png'),
-    starting: path.join(paths.resources, 'icons', 'logo-tray-starting-Template@2x.png'),
-    started:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
-    stopping: path.join(paths.resources, 'icons', 'logo-tray-stopping-Template@2x.png'),
-    error:    path.join(paths.resources, 'icons', 'logo-tray-error-Template@2x.png'),
+    stopped:  path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
+    starting: path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
+    started:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
+    stopping: path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
+    error:    path.join(paths.resources, 'icons', 'sulla-icon.png'),
   };
 
   private readonly trayIcons = {
     stopped:  '',
-    starting: path.join(paths.resources, 'icons', 'logo-square-bw.png'),
-    started:  path.join(paths.resources, 'icons', 'logo-square.png'),
+    starting: path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+    started:  path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
     stopping: '',
-    error:    path.join(paths.resources, 'icons', 'logo-square-red.png'),
+    error:    path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
   };
 
   private readonly trayIconSet = this.isMacOs() ? this.trayIconsMacOs : this.trayIcons;
@@ -298,24 +298,6 @@ export class Tray {
     mainEvents.on('k8s-check-state', this.k8sStateChangedEvent);
     mainEvents.on('settings-update', this.settingsUpdateEvent);
 
-    // If the network connectivity diagnostic changes results, update it here.
-    mainEvents.on('diagnostics-event', payload => {
-      if (payload.id !== 'network-connectivity') {
-        return;
-      }
-
-      const { connected } = payload;
-
-      if (this.networkState === connected) {
-        return; // network state hasn't changed since last check
-      }
-
-      this.networkState = connected;
-
-      this.handleUpdateNetworkStatus(this.networkState).catch((err: any) => {
-        console.log('Error updating network status: ', err);
-      });
-    });
   }
 
   private backendStateEvent = (backendIsLocked: string) => {
@@ -449,7 +431,7 @@ export class Tray {
     } else if (this.kubernetesState === State.ERROR) {
       // For licensing reasons, we cannot just tint the Kubernetes logo.
       // Here we're using an icon from GitHub's octicons set.
-      icon = path.join(paths.resources, 'icons', 'issue-opened-16.png');
+      icon = path.join(paths.resources, 'icons', 'sulla-app-icon.png');
       logo = this.trayIconSet.error;
     }
 

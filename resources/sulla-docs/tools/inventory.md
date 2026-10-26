@@ -14,7 +14,7 @@ sulla meta/browse_tools '{"category":"<category>"}'
 ## meta (11 tools)
 - `sulla meta/spawn_agent` — The one way to delegate.
 - `sulla meta/exec` — Run any shell command inside a fully isolated sandboxed Linux VM with root access.
-- `sulla meta/exechost` — LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Lima VM.
+- `sulla meta/exechost` — LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Sulla VM.
 - `sulla meta/ask_user_question` — Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min).
 - `sulla meta/execute_workflow` — Execute a pre-registered workflow by its EXACT slug.
 - `sulla meta/validate_sulla_workflow` — Validate a Sulla workflow YAML file for structural correctness before it goes live.
@@ -356,30 +356,10 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla docker/run` — Run a Docker container.
 - `sulla docker/stop` — Stop a running Docker container.
 
-## lima (6 tools)
-- `sulla lima/create` — Create a Lima virtual machine instance.
-- `sulla lima/delete` — Delete a Lima virtual machine instance.
-- `sulla lima/list` — List Lima virtual machine instances.
-- `sulla lima/shell` — Execute a command in a Lima virtual machine instance.
-- `sulla lima/start` — Start a Lima virtual machine instance.
-- `sulla lima/stop` — Stop a Lima virtual machine instance.
-
 ## kubectl (3 tools)
 - `sulla kubectl/apply` — Apply a Kubernetes manifest file.
 - `sulla kubectl/delete` — Delete Kubernetes resources.
 - `sulla kubectl/describe` — Describe Kubernetes resources.
-
-## rdctl (10 tools)
-- `sulla rdctl/extension` — Manage extensions.
-- `sulla rdctl/info` — Return information about Sulla Desktop.
-- `sulla rdctl/list_settings` — Lists the current settings.
-- `sulla rdctl/reset` — Reset Sulla Desktop.
-- `sulla rdctl/set` — Update selected fields in the Rancher Desktop UI and restart the backend.
-- `sulla rdctl/shell` — Run an interactive shell or a command in a Sulla Desktop-managed VM.
-- `sulla rdctl/shutdown` — Shuts down the running Sulla Desktop application.
-- `sulla rdctl/snapshot` — Manage Sulla Desktop snapshots.
-- `sulla rdctl/start` — Start up Sulla Desktop, or update its settings.
-- `sulla rdctl/version` — Shows the CLI version.
 
 ## secretary (3 tools)
 - `sulla secretary/start` — Start Secretary Mode — opens (or focuses) a Secretary tab and auto-begins the listening session.
@@ -445,14 +425,14 @@ Account IDs are discoverable via `sulla vault/list_accounts '{"account_type":"<s
 | github | 58 | | bookmarks | 7 |
 | project | 34 | | reflex | 7 |
 | browser | 24 | | pg | 6 |
-| capture | 19 | | lima | 6 |
+| capture | 19 | |
 | chat | 18 | | mobile | 5 |
 | observation | 12 | | applescript | 5 |
 | redis | 12 | | gdrive | 4 |
 | meta | 11 | | skills | 4 |
 | agents | 11 | | rules | 4 |
 | marketplace | 11 | | function | 3 |
-| rdctl | 10 | | models | 3 |
+| models | 3 |
 | files | 14 | | kubectl | 3 |
 | memory | 9 | | secretary | 3 |
 | docker | 9 | | settings | 2 |

@@ -21,7 +21,7 @@ function worktreeSlug(value: string): string {
 
 /**
  * Git Worktree Tool - Add, list, remove, or prune linked working trees.
- * Runs inside the Lima VM for filesystem consistency with the exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with the exec tool.
  *
  * Worktrees let you check out multiple branches of one repo into separate
  * directories simultaneously — the standard way to review/build several PRs in
@@ -47,7 +47,7 @@ export class GitWorktreeWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
       if (rootResult.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git error: ${ rootResult.stderr || rootResult.stdout }` };
@@ -93,7 +93,7 @@ export class GitWorktreeWorker extends BaseTool {
         return { successBoolean: false, responseString: `Unknown action '${ action }'. Use: add, list, remove, prune.` };
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 60_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 60_000 });
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git worktree ${ action } failed: ${ result.stderr || result.stdout }` };
       }

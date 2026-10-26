@@ -261,6 +261,21 @@ function normalizeConnectionInput(value:AccountsConnectionInput):AccountsConnect
   };
 }
 
+/**
+ * Resolves once the accounts container answers HTTP (any status), or after the
+ * timeout so a container that never starts still reaches the normal retry path.
+ */
+export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const reachable = await fetch(API, { signal: AbortSignal.timeout(1_000) }).then(() => true, () => false);
+
+    if (reachable) return;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
+
 export class SullaAccountsClient {
   private ownerSession?:   AccountsOwnerSession;
   private initialization?: Promise<AccountsProfile>;

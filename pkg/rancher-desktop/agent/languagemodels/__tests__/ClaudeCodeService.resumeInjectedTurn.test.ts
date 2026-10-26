@@ -36,7 +36,7 @@ jest.unstable_mockModule('@pkg/utils/logging', () => {
 });
 jest.unstable_mockModule('@pkg/utils/paths', () => ({
   __esModule: true,
-  default:    { limactl: '/bin/true', lima: '/dev/null', sullaHome: '/tmp', sullaConfig: '/tmp' },
+  default:    { sullaRuntime: '/bin/true', sullaHome: '/tmp', sullaConfig: '/tmp' },
 }));
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({ getWebSocketClientService: jest.fn() }));
 jest.unstable_mockModule('../../prompts/generateClaudeCodeMemoryFile', () => ({ generateClaudeCodeMemoryFile: async() => {} }));

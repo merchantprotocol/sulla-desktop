@@ -47,8 +47,7 @@ tools/
 | `calendar` | Calendar events | Event management |
 | `extensions` | Extension marketplace | Browse, install, uninstall extensions |
 | `workflow` | Workflow execution & recovery | `execute_workflow`, `restart_from_checkpoint` |
-| `rdctl` | Sulla/rdctl commands | Desktop management |
-| `lima` | Lima VM | VM instance management |
+| `lima` | Sulla VM | VM instance management |
 
 ## Creating a New Tool
 

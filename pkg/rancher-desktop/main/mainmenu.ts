@@ -14,7 +14,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
+import { openDockerDashboard, openMain, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { openProcessManager } from '@pkg/window/processManager';
@@ -165,7 +165,7 @@ function sendWhenReady(window: Electron.BrowserWindow, channel: string, data: un
 /**
  * Send a command to the Agent window renderer (e.g. to create tabs).
  */
-function sendAgentCommand(command: string, payload?: Record<string, unknown>): void {
+export function sendAgentCommand(command: string, payload?: Record<string, unknown>): void {
   openMain();
   const existing = getWindow('main-agent');
 
@@ -268,30 +268,6 @@ function getExtensionsSubmenu(): MenuItemConstructorOptions[] {
   });
 }
 
-/**
- * Navigate the Docker Dashboard window to a given route path.
- * Opens the Docker Dashboard first if it isn't already visible.
- */
-function navigateDockerDashboard(routePath: string): void {
-  const existing = getWindow('docker-dashboard');
-
-  if (existing) {
-    sendWhenReady(existing, 'route', { path: routePath });
-    existing.show();
-  } else {
-    openDockerDashboard();
-    const poll = setInterval(() => {
-      const window = getWindow('docker-dashboard');
-
-      if (window) {
-        clearInterval(poll);
-        sendWhenReady(window, 'route', { path: routePath });
-      }
-    }, 50);
-    setTimeout(() => clearInterval(poll), 5000);
-  }
-}
-
 // ── Menu builders ──
 
 function getFileMenu(): MenuItem {
@@ -361,12 +337,8 @@ function getFileMenu(): MenuItem {
       },
       { type: 'separator' },
       {
-        label:   'Diagnostics',
-        click:   () => navigateDockerDashboard('/Diagnostics'),
-      },
-      {
         label:   'Troubleshooting',
-        click:   () => navigateDockerDashboard('/Troubleshooting'),
+        click:   () => openPreferences('troubleshooting'),
       },
       { type: 'separator' },
       {
@@ -673,17 +645,7 @@ function getMacApplicationMenu(): MenuItem[] {
         {
           label:       'Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click:       openPreferences,
-        },
-        {
-          label:       'Language Model Settings…',
-          accelerator: 'CmdOrCtrl+L',
-          click:       openLanguageModelSettings,
-        },
-        {
-          label:       'Audio Settings…',
-          accelerator: 'CmdOrCtrl+Alt+U',
-          click:       openAudioSettings,
+          click:       () => openPreferences(),
         },
         { type: 'separator' },
         { role: 'services' },
@@ -764,7 +726,7 @@ function getMacApplicationMenu(): MenuItem[] {
       submenu: [
         {
           label:   'My Account',
-          click:   () => sendAgentCommand('open-tab', { mode: 'account' }),
+          click:   () => openPreferences('account'),
         },
       ],
     }),
@@ -824,7 +786,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
         {
           label:       '&Preferences…',
           accelerator: 'CmdOrCtrl+,',
-          click:       openPreferences,
+          click:       () => openPreferences(),
         },
         { type: 'separator' },
         {

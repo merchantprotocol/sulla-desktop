@@ -1,140 +1,120 @@
-import { exec } from 'child_process';
-import util from 'util';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
-import { Snapshot, SpawnResult } from '@pkg/main/snapshots/types';
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
+import { Snapshot } from '@pkg/main/snapshots/types';
 import { spawnFile } from '@pkg/utils/childProcess';
-import Logging from '@pkg/utils/logging';
-import { getRdctlPath } from '@pkg/utils/paths';
-import { executable } from '@pkg/utils/resources';
+import paths from '@pkg/utils/paths';
 
-const console = Logging.snapshots;
+const COMPLETE_FILE = 'complete.txt';
+const COMPLETE_CONTENTS = 'The presence of this file indicates that this snapshot is complete and valid.';
 
-function parseLines(line: string): string[] {
-  return line?.split(/\r?\n/) || [];
+interface SnapshotMetadata extends Snapshot { id: string }
+
+/** Snapshots copy VM disks; the Sulla runtime has none to copy yet. */
+class SnapshotsUnsupportedError {
+  readonly isSnapshotError = true;
+  message = 'Snapshots are not supported on the Sulla runtime yet';
 }
 
-class SnapshotsError {
-  readonly isSnapshotError = true;
-  message: string;
-
-  constructor(args: string[], response: SpawnResult) {
-    console.error(`snapshot error: command rdctl ${ args.join(' ') } => error ${ response.stdout }`);
-    try {
-      const value = JSON.parse(response.stdout);
-
-      this.message = value?.error;
-      if (!this.message) {
-        console.error(`Empty or no error field found in the output`);
-        this.message = 'Something went wrong with the `rdctl snapshot` command; the details are in the snapshots log file';
-      }
-    } catch (error) {
-      const msg = 'Cannot parse error message from `rdctl snapshot` command';
-
-      console.error(`${ msg }: ${ error }`);
-      this.message = msg;
-    }
+function assertSnapshotsSupported(): void {
+  if (isSullaRuntimeActive()) {
+    throw new SnapshotsUnsupportedError();
   }
 }
 
 class SnapshotsImpl {
-  private async rdctl(commandArgs: string[]): Promise<SpawnResult> {
-    try {
-      const rdctlPath = getRdctlPath();
+  private directory(snapshot: SnapshotMetadata): string {
+    return path.join(paths.snapshots, snapshot.id);
+  }
 
-      return await spawnFile(rdctlPath || '', commandArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err: any) {
-      return {
-        stdout: err?.stdout ?? '', stderr: err?.stderr ?? '', error: err,
-      };
-    }
+  private async metadata(): Promise<SnapshotMetadata[]> {
+    const entries = await fs.promises.readdir(paths.snapshots, { withFileTypes: true }).catch(() => []);
+    const snapshots = await Promise.all(entries.filter(entry => entry.isDirectory()).map(async(entry) => {
+      try {
+        const directory = path.join(paths.snapshots, entry.name);
+        await fs.promises.access(path.join(directory, COMPLETE_FILE));
+        return JSON.parse(await fs.promises.readFile(path.join(directory, 'metadata.json'), 'utf8')) as SnapshotMetadata;
+      } catch {
+        return undefined;
+      }
+    }));
+
+    return snapshots.filter((snapshot): snapshot is SnapshotMetadata => !!snapshot);
   }
 
   async list(): Promise<Snapshot[]> {
-    const response = await this.rdctl(['snapshot', 'list', '--json']);
-
-    if (response.error) {
-      return [];
-    }
-
-    const data = parseLines(response.stdout).filter(line => line);
-
-    return data.map(line => JSON.parse(line));
+    return (await this.metadata()).map(({ name, created, description }) => ({ name, created, description }));
   }
 
-  async create(snapshot: Snapshot) : Promise<void> {
-    const args = [
-      'snapshot',
-      'create',
-      snapshot.name,
-      '--json',
-    ];
-
-    if (snapshot.description) {
-      args.push('--description', snapshot.description);
+  async create(snapshot: Snapshot): Promise<void> {
+    assertSnapshotsSupported();
+    if (!snapshot.name.trim() || snapshot.name !== snapshot.name.trim() || [...snapshot.name].length > 250) {
+      throw new Error('Snapshot names must be 1–250 printable characters and cannot start or end with whitespace.');
+    }
+    if ((await this.metadata()).some(candidate => candidate.name === snapshot.name)) {
+      throw new Error(`A snapshot named "${ snapshot.name }" already exists.`);
     }
 
-    const response = await this.rdctl(args);
+    const metadata: SnapshotMetadata = { ...snapshot, id: crypto.randomUUID(), created: new Date().toISOString() };
+    const directory = this.directory(metadata);
 
-    if (response.error) {
-      throw new SnapshotsError(args, response);
-    }
-  }
-
-  async restore(name: string) : Promise<void> {
-    const args = ['snapshot', 'restore', name, '--json'];
-    const response = await this.rdctl(args);
-
-    if (response.error) {
-      throw new SnapshotsError(args, response);
-    }
-  }
-
-  async delete(name: string) : Promise<void> {
-    const args = ['snapshot', 'delete', name, '--json'];
-    const response = await this.rdctl(args);
-
-    if (response.error) {
-      throw new SnapshotsError(args, response);
-    }
-  }
-
-  async cancel() {
-    const name = 'rdctl';
-    const keyword = 'snapshot';
-    const command = `${ name } ${ keyword }`;
-    const asyncExec = util.promisify(exec);
-
+    await fs.promises.mkdir(directory, { recursive: true });
+    await fs.promises.writeFile(path.join(directory, 'metadata.json'), JSON.stringify(metadata, null, 2));
     try {
-      if (process.platform === 'win32') {
-        const { stdout } = await asyncExec(`tasklist /FI "IMAGENAME eq ${ name }.exe" /FO CSV /NH`);
-        const processes = stdout.split('\r\n');
-
-        for (const proc of processes) {
-          const [_imageName, rawPid, ..._rest] = proc.split(',');
-          const pid = Number(rawPid?.trim().replaceAll('"', ''));
-          const exe = executable('wsl-helper');
-
-          if (pid) {
-            console.log(`Found process ${ command } with PID ${ pid }`);
-            await spawnFile(exe, ['process', 'kill', `--pid=${ pid }`], { stdio: console });
-          }
-        }
-      } else {
-        const { stdout } = await asyncExec(`ps aux | grep "${ command }" | grep -v grep`);
-        const processes = stdout.split('\n');
-
-        processes.forEach((proc) => {
-          const [_user, rawPid, ..._rest] = proc.split(/\s+/);
-          const pid = Number(rawPid?.trim());
-
-          if (pid) {
-            console.log(`Found process ${ command } with PID ${ pid }`);
-            process.kill(pid, 'SIGTERM');
-          }
-        });
-      }
+      await this.copyState(directory, false);
+      await fs.promises.writeFile(path.join(directory, COMPLETE_FILE), COMPLETE_CONTENTS);
     } catch (error) {
-      console.error('Error:', error);
+      await fs.promises.rm(directory, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  async restore(name: string): Promise<void> {
+    assertSnapshotsSupported();
+    const snapshot = (await this.metadata()).find(candidate => candidate.name === name);
+    if (!snapshot) throw new Error(`Can't find snapshot "${ name }".`);
+    await this.copyState(this.directory(snapshot), true);
+  }
+
+  async delete(name: string): Promise<void> {
+    assertSnapshotsSupported();
+    const snapshot = (await this.metadata()).find(candidate => candidate.name === name);
+    if (!snapshot) throw new Error(`Can't find snapshot "${ name }".`);
+    await fs.promises.rm(this.directory(snapshot), { recursive: true, force: true });
+  }
+
+  async cancel(): Promise<void> {
+    // Snapshot operations now run in the main process and are serialized by callers.
+  }
+
+  private async copyState(directory: string, restore: boolean): Promise<void> {
+    if (process.platform === 'win32') {
+      await this.copyWindowsState(directory, restore);
+      return;
+    }
+
+    // Lima was the only non-Windows VM whose state snapshots knew how to copy;
+    // the Sulla runtime has no disk layout to snapshot yet.
+    throw new SnapshotsUnsupportedError();
+  }
+
+  private async copyWindowsState(directory: string, restore: boolean): Promise<void> {
+    const distros = [
+      { name: 'rancher-desktop', location: paths.wslDistro },
+      { name: 'rancher-desktop-data', location: paths.wslDistroData },
+    ];
+    if (restore) {
+      for (const distro of distros) {
+        await spawnFile('wsl.exe', ['--unregister', distro.name]).catch(() => undefined);
+        await fs.promises.mkdir(distro.location, { recursive: true });
+        await spawnFile('wsl.exe', ['--import', distro.name, distro.location, path.join(directory, `${ distro.name }.tar`)]);
+      }
+      await fs.promises.copyFile(path.join(directory, 'settings.json'), path.join(paths.config, 'settings.json'));
+    } else {
+      await Promise.all(distros.map(distro => spawnFile('wsl.exe', ['--export', distro.name, path.join(directory, `${ distro.name }.tar`)])));
+      await fs.promises.copyFile(path.join(paths.config, 'settings.json'), path.join(directory, 'settings.json'));
     }
   }
 }

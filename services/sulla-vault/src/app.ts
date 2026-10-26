@@ -34,6 +34,12 @@ import { AccessDenied, getOrgRole, requireCollectionRight, requireOrgManager } f
 import { bootstrapFirstOwner } from './serverBootstrap.js';
 import { registerCloudSyncRoutes } from './browserEnvelope/routes.js';
 import { CloudVaultSyncRunner } from './browserEnvelope/syncRunner.js';
+import {
+  createBrowserSyncRouter,
+  createServerProvidersRouter,
+  createVaultOrigin,
+  loadBrowserSyncConfig,
+} from './browserSync/index.js';
 import { FilesCloudEscrowService, registerFilesCloudEscrowRoute } from './filesCloudEscrow.js';
 
 import type { VaultConfig } from './config.js';
@@ -260,6 +266,13 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     response.json({ ok: true, mode: config.mode });
   });
+
+  if (config.mode === 'server') {
+    const browserSync = loadBrowserSyncConfig();
+    app.use(createVaultOrigin(browserSync));
+    app.use('/cloud-vault-sync', createBrowserSyncRouter(db, config, browserSync));
+    app.use('/v1', createServerProvidersRouter(db, config, browserSync));
+  }
 
   const serviceIdentity = (request: express.Request): { serviceId: string; token?: string } => ({
     serviceId: request.header('x-sulla-service-id') ?? '',
@@ -669,6 +682,9 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     const kdf = requiredObject(request.body.kdf, 'kdf');
     const encryptedOrgName = requiredObject(request.body.encryptedOrgName, 'encryptedOrgName');
     const wrappedOrgKey = requiredObject(request.body.wrappedOrgKey, 'wrappedOrgKey');
+    const organizationId = request.body.organizationId === undefined
+      ? undefined
+      : requiredUuid(request.body.organizationId, 'organizationId');
     const status = await bootstrapFirstOwner(db, {
       email,
       displayName,
@@ -679,6 +695,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       kdf,
       encryptedOrgName,
       wrappedOrgKey,
+      organizationId,
     });
     return response.status(status === 'created' ? 201 : 200).json({ status });
   });

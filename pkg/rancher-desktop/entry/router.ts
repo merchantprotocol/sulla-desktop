@@ -8,23 +8,16 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
 
 import AgentRoutines from '../pages/AgentRoutines.vue';
-import Containers from '../pages/Containers.vue';
 import DenyRoot from '../pages/DenyRoot.vue';
-import Diagnostics from '../pages/Diagnostics.vue';
+import Docker from '../pages/Docker.vue';
 import Dialog from '../pages/Dialog.vue';
 import FirstRun from '../pages/FirstRun.vue';
-import Images from '../pages/Images.vue';
 import KubernetesError from '../pages/KubernetesError.vue';
-import PortForwarding from '../pages/PortForwarding.vue';
 import Preferences from '../pages/Preferences.vue';
 import RoutinesHome from '../pages/RoutinesHome.vue';
-import Snapshots from '../pages/Snapshots.vue';
 import SudoPrompt from '../pages/SudoPrompt.vue';
-import Troubleshooting from '../pages/Troubleshooting.vue';
 import UnmetPrerequisites from '../pages/UnmetPrerequisites.vue';
 import Usage from '../pages/Usage.vue';
-import Volumes from '../pages/Volumes.vue';
-import ContainerInfo from '../pages/containers/ContainerInfo.vue';
 import ExtensionsItem from '../pages/extensions/_root/_src/_id.vue';
 import ImagesAdd from '../pages/images/add.vue';
 import ImagesScan from '../pages/images/scans/_image-name.vue';
@@ -37,28 +30,20 @@ export default createRouter({
   history: createWebHashHistory(),
   routes:  [
     { path: '/', redirect: '/Containers' },
-    {
-      path: '/Containers', component: Containers, name: 'Containers',
-    },
-    {
-      path: '/containers/info/:id', component: ContainerInfo, name: 'container-info',
-    },
-    {
-      path: '/Volumes', component: Volumes, name: 'Volumes',
-    },
+    { path: '/Containers', component: Docker, name: 'Containers', meta: { dockerSection: 'containers' } },
+    { path: '/containers/info/:id', component: Docker, name: 'container-info', meta: { dockerSection: 'container' } },
+    { path: '/Images', component: Docker, name: 'Images', meta: { dockerSection: 'images' } },
+    { path: '/Volumes', component: Docker, name: 'Volumes', meta: { dockerSection: 'volumes' } },
+    { path: '/Networks', component: Docker, name: 'Networks', meta: { dockerSection: 'networks' } },
+    { path: '/Ports', component: Docker, name: 'Ports', meta: { dockerSection: 'ports' } },
+    { path: '/PortForwarding', redirect: '/Ports' },
+    { path: '/Snapshots', component: Docker, name: 'Snapshots', meta: { dockerSection: 'snapshots' } },
+    { path: '/DockerOptions', component: Docker, name: 'Options', meta: { dockerSection: 'options' } },
     {
       path: '/Usage', component: Usage, name: 'Usage',
     },
     {
       path: '/volumes/files/:name', component: VolumeFiles, name: 'volumes-files-name',
-    },
-    {
-      path: '/PortForwarding', component: PortForwarding, name: 'Port Forwarding',
-    },
-    {
-      path:      '/Images',
-      component: Images,
-      name:      'Images',
     },
     {
       path: '/images/add', component: ImagesAdd, name: 'images-add',
@@ -67,16 +52,7 @@ export default createRouter({
       path: '/images/scans/:image-name?/:namespace?', component: ImagesScan, name: 'images-scans-image-name',
     },
     {
-      path: '/Snapshots', component: Snapshots, name: 'Snapshots',
-    },
-    {
       path: '/snapshots/create', component: SnapshotsCreate, name: 'snapshots-create',
-    },
-    {
-      path: '/Troubleshooting', component: Troubleshooting, name: 'Troubleshooting',
-    },
-    {
-      path: '/Diagnostics', component: Diagnostics, name: 'Diagnostics',
     },
     {
       path: '/extensions/:id/:root(.*)/:src', component: ExtensionsItem, name: 'rdx-root-src-id',

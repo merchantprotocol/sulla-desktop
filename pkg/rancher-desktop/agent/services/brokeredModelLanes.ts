@@ -28,7 +28,7 @@ export interface ModelListLane {
 /**
  * The exact broker route for a provider account. Claude Code and Grok store
  * subscription OAuth sessions under the fixed `oauth` account id (same
- * convention as limaClaudeBridge.ts and GrokService.ts).
+ * convention as guestClaudeBridge.ts and GrokService.ts).
  */
 export function modelListLane(providerId: string, accountId: string): ModelListLane | null {
   const oauth = accountId === 'oauth';

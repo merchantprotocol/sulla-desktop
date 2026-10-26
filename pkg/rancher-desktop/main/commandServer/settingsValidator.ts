@@ -87,7 +87,7 @@ export default class SettingsValidator {
     this.allowedSettings ||= {
       version:     this.checkUnchanged,
       application: {
-        adminAccess: this.checkLima(this.checkBoolean),
+        adminAccess: this.checkMac(this.checkBoolean),
         hostAccess:  this.checkBoolean,
         debug:       this.checkBoolean,
         extensions:  {
@@ -97,7 +97,7 @@ export default class SettingsValidator {
           },
           installed: this.checkInstalledExtensions,
         },
-        pathManagementStrategy: this.checkLima(this.checkEnum(...Object.values(PathManagementStrategy))),
+        pathManagementStrategy: this.checkMac(this.checkEnum(...Object.values(PathManagementStrategy))),
         telemetry:              { enabled: this.checkBoolean },
         /** Whether we should check for updates and apply them. */
         updater:                { enabled: this.checkBoolean },
@@ -122,15 +122,15 @@ export default class SettingsValidator {
         ),
       },
       virtualMachine: {
-        memoryInGB: this.checkLima(this.checkNumber(1, Number.POSITIVE_INFINITY)),
-        numberCPUs: this.checkLima(this.checkNumber(1, Number.POSITIVE_INFINITY)),
+        memoryInGB: this.checkMac(this.checkNumber(1, Number.POSITIVE_INFINITY)),
+        numberCPUs: this.checkMac(this.checkNumber(1, Number.POSITIVE_INFINITY)),
         useRosetta: this.checkPlatform('darwin', this.checkRosetta),
         type:       this.checkPlatform('darwin', this.checkMulti(
           this.checkEnum(...Object.values(VMType)),
           this.checkVMType),
         ),
         mount: {
-          type: this.checkLima(this.checkMulti(
+          type: this.checkMac(this.checkMulti(
             this.checkEnum(...Object.values(MountType)),
             this.checkMountType),
           ),
@@ -165,13 +165,13 @@ export default class SettingsValidator {
         sullaServiceAccountUserId: this.checkString,
         sullaSubscribeToUpdates:   this.checkBoolean,
         virtualMachine:            {
-          diskSize: this.checkLima(this.checkByteUnits),
+          diskSize: this.checkMac(this.checkByteUnits),
           mount:    {
             '9p': {
-              securityModel:   this.checkLima(this.check9P(this.checkEnum(...Object.values(SecurityModel)))),
-              protocolVersion: this.checkLima(this.check9P(this.checkEnum(...Object.values(ProtocolVersion)))),
-              msizeInKib:      this.checkLima(this.check9P(this.checkNumber(4, Number.POSITIVE_INFINITY))),
-              cacheMode:       this.checkLima(this.check9P(this.checkEnum(...Object.values(CacheMode)))),
+              securityModel:   this.checkMac(this.check9P(this.checkEnum(...Object.values(SecurityModel)))),
+              protocolVersion: this.checkMac(this.check9P(this.checkEnum(...Object.values(ProtocolVersion)))),
+              msizeInKib:      this.checkMac(this.check9P(this.checkNumber(4, Number.POSITIVE_INFINITY))),
+              cacheMode:       this.checkMac(this.check9P(this.checkEnum(...Object.values(CacheMode)))),
             },
           },
           proxy: {
@@ -182,7 +182,7 @@ export default class SettingsValidator {
             username: this.checkPlatform('win32', this.checkString),
             noproxy:  this.checkPlatform('win32', this.checkUniqueStringArray),
           },
-          sshPortForwarder: this.checkLima(this.checkBoolean),
+          sshPortForwarder: this.checkMac(this.checkBoolean),
         },
       },
       WSL:        { integrations: this.checkPlatform('win32', this.checkBooleanMapping) },
@@ -201,14 +201,6 @@ export default class SettingsValidator {
       containers: {
         showAll:   this.checkBoolean,
         namespace: this.checkString,
-      },
-      diagnostics: {
-        mutedChecks:  this.checkBooleanMapping,
-        showMuted:    this.checkBoolean,
-        connectivity: {
-          interval: this.checkNumber(0, 2 ** 31 - 1),
-          timeout:  this.checkNumber(1, 2 ** 31 - 1),
-        },
       },
     };
     this.canonicalizeSynonyms(newSettings);
@@ -328,12 +320,12 @@ export default class SettingsValidator {
   }
 
   /**
-   * checkLima ensures that the given parameter is only set on Lima-based platforms.
+   * checkMac ensures that the given parameter is only set on macOS.
    * @note This should not be used for things with default values.
    */
-  protected checkLima<C, D, N extends string>(validator: ValidatorFunc<Settings, C, D, N>) {
+  protected checkMac<C, D, N extends string>(validator: ValidatorFunc<Settings, C, D, N>) {
     return (mergedSettings: Settings, currentValue: C, desiredValue: D, errors: string[], fqname: N) => {
-      if (!['darwin', 'linux'].includes(os.platform())) {
+      if (os.platform() !== 'darwin') {
         if (!_.isEqual(currentValue, desiredValue)) {
           this.isFatal = true;
           errors.push(this.notSupported(fqname));

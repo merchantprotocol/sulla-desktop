@@ -83,7 +83,7 @@ export class SullaFilesSourceGateway {
 
   get vmUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
-    return `http://host.lima.internal:${ this.port }`;
+    return `http://host.sulla.internal:${ this.port }`;
   }
 
   /** URL for a job container on the isolated, hostname-routed agent network. */

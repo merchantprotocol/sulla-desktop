@@ -1,12 +1,12 @@
 # Terminal Server
 
-The terminal server provides interactive shell access to the Lima VM (instance `0`) from the Sulla Desktop UI. It pairs a WebSocket server on the main process side with an xterm.js frontend component, bridging browser-based terminal emulation to a real PTY running inside the guest VM.
+The terminal server provides interactive shell access to the Sulla VM (instance `0`) from the Sulla Desktop UI. It pairs a WebSocket server on the main process side with an xterm.js frontend component, bridging browser-based terminal emulation to a real PTY running inside the guest VM.
 
 ## Architecture Overview
 
 ```
-XTermTerminal.vue  --(WebSocket)-->  WebSocketTerminalServer  --(node-pty)-->  limactl shell 0
-   (renderer)           :6108             (main process)                         (Lima VM)
+XTermTerminal.vue  --(WebSocket)-->  WebSocketTerminalServer  --(node-pty)-->  sulla-runtime exec
+   (renderer)           :6108             (main process)                         (Sulla VM)
 ```
 
 Source files:
@@ -35,18 +35,18 @@ server.stop();
 
 ## PTY Sessions
 
-Each terminal session spawns a PTY process using `node-pty`. The PTY runs `limactl shell 0`, which opens an interactive shell inside the Lima VM.
+Each terminal session spawns a PTY process using `node-pty`. The PTY runs `sulla-runtime exec`, which opens an interactive shell inside the Sulla VM.
 
 ### Spawn Details
 
-The server resolves `limactlPath` and `LIMA_HOME` from `CommandRunner` utilities, then calls:
+The server uses `paths.sullaRuntime`, then calls:
 
 ```ts
-pty.spawn(limactlPath, ['shell', '0'], {
+pty.spawn(paths.sullaRuntime, ['exec', '--', '/bin/sh', '-l'], {
   name: 'xterm-256color',
   cols,
   rows,
-  env: { ...process.env, LIMA_HOME: limaHome, TERM: 'xterm-256color' },
+  env: { ...process.env, TERM: 'xterm-256color' },
 });
 ```
 
@@ -121,13 +121,13 @@ The component watches the `isDark` prop and updates the xterm.js theme in real t
    ```json
    { "type": "start", "sessionId": "...", "cols": 80, "rows": 24 }
    ```
-4. The server spawns a PTY via `limactl shell 0` and attaches the client.
+4. The server spawns a PTY via `sulla-runtime exec` and attaches the client.
 5. PTY output flows to the client; client keystrokes flow to the PTY.
 6. On unmount, the component closes the WebSocket. The server removes the client and kills the PTY if no other clients remain.
 
 ### Server-Side Retry (VM Not Ready)
 
-If the Lima VM is not yet running when the server tries to spawn the PTY, the server enters a retry loop:
+If the Sulla VM is not yet running when the server tries to spawn the PTY, the server enters a retry loop:
 
 - **Max retries**: 20
 - **Interval**: 3 seconds between attempts

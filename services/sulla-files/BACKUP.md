@@ -37,14 +37,14 @@ followed by manifest/object verification and an isolated PostgreSQL restore
 proof. Retention defaults to 24 hourly, 30 daily, and 12 weekly snapshots, and
 pruning is allowed only when a newer snapshot has both verification timestamps.
 
-Local destinations are single subfolder names under the persistent Lima disk
+Local destinations are single subfolder names under the persistent Sulla VM disk
 `/mnt/sulla-backups`, propagated read/write into Files at
 `/var/lib/sulla-files-backups` with `rslave`. This protects against accidental
 changes, **not loss of the computer or VM disk**. No Mac host folder is mounted.
 Each destination has its own object namespace so pruning cannot affect another
 destination that points at the same disk, share, or bucket.
 
-Desktop mounts NAS shares inside Lima at `/mnt/sulla-backups/nas-<id>` using
+Desktop mounts NAS shares inside Sulla VM at `/mnt/sulla-backups/nas-<id>` using
 `mount -t cifs` or `mount -t nfs` with `nosuid,nodev,noexec`. Enter an
 `smb://server/share` or `nfs://server/export` URL. NFS exports must permit the
 Files UID/GID to write; SMB maps ownership to that UID/GID. Mounts are reused
@@ -58,7 +58,7 @@ must contain string fields/custom fields `backup_kind` (`nas` or `s3`) and
 `backup_target` (the exact configured share URL or HTTPS endpoint). This binding
 is required before a backup-specific service identity can receive credentials.
 SMB uses username/password and optional domain; its root-only `0600` credentials
-file is transferred through stdin inside Lima and deleted immediately after
+file is transferred through stdin inside Sulla VM and deleted immediately after
 mount. It is never put in command arguments or logs. NFS needs no credential
 item. S3 uses `accessKeyId`, `secretAccessKey`, and optional `sessionToken`.
 Set the S3 signing region when it is not `us-east-1`. The Files service resolves S3 credentials through its pinned, authenticated

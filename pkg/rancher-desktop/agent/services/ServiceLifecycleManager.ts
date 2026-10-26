@@ -354,21 +354,26 @@ export class ServiceLifecycleManager extends EventEmitter {
   async waitUntilStarted(name: string, timeoutMs = 15_000): Promise<void> {
     if (this._shuttingDown) throw new Error(`Lifecycle service '${ name }' is unavailable during shutdown`);
     if (this.started.has(name)) return;
-    if (!this.services.has(name)) throw new Error(`Lifecycle service '${ name }' is not registered`);
-    if (this._allReady) throw new Error(`Lifecycle service '${ name }' failed to start`);
+    if (this._allReady && this.services.has(name)) throw new Error(`Lifecycle service '${ name }' failed to start`);
 
     await new Promise<void>((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout>;
+      const timer: ReturnType<typeof setTimeout> = setTimeout(() => finish(new Error(`Lifecycle service '${ name }' did not become ready within ${ timeoutMs }ms`)), timeoutMs);
       const finish = (error?: Error) => {
         clearTimeout(timer);
         this.off('service:ready', onServiceReady);
         this.off('all:ready', onAllReady);
         this.off('shutdown:begin', onShutdown);
+        this.off('service:status', onServiceStatus);
         if (error) reject(error);
         else resolve();
       };
       const onServiceReady = (readyName: string) => {
         if (readyName === name) finish();
+      };
+      // A renderer can begin waiting before the backend has registered its
+      // lifecycle services. Registration emits the initial status transition.
+      const onServiceStatus = (status: LifecycleServiceStatus) => {
+        if (status.name === name && status.status === 'ready') finish();
       };
       const onAllReady = () => {
         if (!this.started.has(name)) finish(new Error(`Lifecycle service '${ name }' failed to start`));
@@ -378,12 +383,12 @@ export class ServiceLifecycleManager extends EventEmitter {
       this.on('service:ready', onServiceReady);
       this.on('all:ready', onAllReady);
       this.on('shutdown:begin', onShutdown);
-      timer = setTimeout(() => finish(new Error(`Lifecycle service '${ name }' did not become ready within ${ timeoutMs }ms`)), timeoutMs);
+      this.on('service:status', onServiceStatus);
 
       // Close the gap between the checks above and listener registration.
       if (this.started.has(name)) finish();
       else if (this._shuttingDown) onShutdown();
-      else if (this._allReady) onAllReady();
+      else if (this._allReady && this.services.has(name)) onAllReady();
     });
   }
 

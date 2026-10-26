@@ -79,7 +79,7 @@
 
         <!-- OAuth section -->
         <div
-          v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditing"
+          v-if="integration.authType === 'oauth' || integration.oauth"
           class="editor-card"
         >
           <button
@@ -104,7 +104,7 @@
                 y2="12"
               />
             </svg>
-            Sign in with {{ integration.name }}
+            {{ isEditing ? 'Reconnect' : 'Sign in with' }} {{ integration.name }}
           </button>
           <p
             v-if="oauthError"
@@ -866,7 +866,8 @@ async function handleOAuthConnect() {
   }
 
   try {
-    const targetAccountId = 'oauth';
+    // Reconnecting refreshes the account being edited; a new sign-in uses the default one.
+    const targetAccountId = props.accountId || 'oauth';
     let clientId = '';
     let clientSecret = '';
     if (integration.value.authType === 'oauth') {
@@ -878,7 +879,9 @@ async function handleOAuthConnect() {
         return;
       }
     }
-    await integrationService.setAccountLabel(props.integrationId, targetAccountId, integration.value.name + ' OAuth');
+    if (!isEditing.value) {
+      await integrationService.setAccountLabel(props.integrationId, targetAccountId, integration.value.name + ' OAuth');
+    }
     // Run the OAuth flow in the MAIN process so embedded-window providers
     // (Codex, Grok) can construct a BrowserWindow — undefined in the renderer.
     const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {

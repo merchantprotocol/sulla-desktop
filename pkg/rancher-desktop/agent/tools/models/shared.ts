@@ -68,7 +68,7 @@ export async function getCliStatus(providerId: string): Promise<ProviderRuntimeS
   const res = await runCommand(
     `${ CLI_PATH } command -v ${ cli.command } >/dev/null 2>&1 && ${ cli.versionCommand }`,
     [],
-    { runInLimaShell: true, timeoutMs: 10_000, maxOutputChars: 4_000 },
+    { runInGuest: true, timeoutMs: 10_000, maxOutputChars: 4_000 },
   );
 
   if (res.exitCode === 0) {

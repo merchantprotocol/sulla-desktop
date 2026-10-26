@@ -262,8 +262,11 @@ export function initCloudConnectionEvents(): void {
   });
 
   ipc.handle('sulla-cloud-connection:delete-cloud-copy', async(_e: unknown, kind: CloudDataKind | 'all') => {
+    // Files, chats and passwords have their own encrypted stores; the rest are device projections.
     if (kind === 'vault') await VaultSyncV3.deleteCloudCopy();
-    else if (kind === 'all') await CloudDataSync.deleteAll();
+    else if (kind === 'files') await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' });
+    else if (kind === 'conversations') await ConversationSyncService.deleteAllCloudCopies();
+    else if (kind === 'all') { await CloudDataSync.deleteAll(); await FilesSyncV1.deleteAllCloudCopies({ kind: 'human' }); await ConversationSyncService.deleteAllCloudCopies() }
     else await CloudDataSync.deleteCloudCopy(kind);
     return getCloudConnectionStatus();
   });

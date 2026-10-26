@@ -1,7 +1,7 @@
 # Sulla Desktop -- Port Reference
 
 All ports used by Sulla Desktop services. Host-side ports in the 301xx range are
-forwarded into the Lima VM; lower ports run directly on the Electron host.
+forwarded into the Sulla VM; lower ports run directly on the Electron host.
 
 ## Port Map
 
@@ -9,7 +9,7 @@ forwarded into the Lima VM; lower ports run directly on the Electron host.
 |-------|----------------------------|----------|--------------|-------------------------------------------------------------------------|-----------------------------------------------------------------------------|
 | 3000  | ChatCompletionsServer      | HTTP     | 0.0.0.0      | OpenAI-compatible API (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`, `/v1/moderations`, `/v1/integrations`) | `pkg/rancher-desktop/main/chatCompletionsServer.ts`                         |
 | 6107  | HttpCommandServer          | HTTP     | 127.0.0.1    | Internal CLI/settings server -- settings CRUD, diagnostics, extensions, snapshots, backend state, port forwarding | `pkg/rancher-desktop/main/commandServer/httpCommandServer.ts`               |
-| 6108  | Terminal WebSocket Server  | WS       | 127.0.0.1    | PTY sessions inside the Lima VM via `limactl shell 0`; xterm frontend connects here | `pkg/rancher-desktop/main/terminalServer.ts`                                |
+| 6108  | Terminal WebSocket Server  | WS       | 127.0.0.1    | PTY sessions inside the Sulla VM via `sulla-runtime exec`; xterm frontend connects here | `pkg/rancher-desktop/main/terminalServer.ts`                                |
 | 6120  | Dashboard Server           | HTTP/WS  | 127.0.0.1    | Sulla Dashboard UI and K8s API proxy (proxies `/k8s`, `/api`, `/apis`, `/v1`, `/v3` to `127.0.0.1:9443`) | `pkg/rancher-desktop/main/dashboardServer/index.ts`                         |
 | 30114 | llama-server               | HTTP     | 127.0.0.1    | Local LLM inference (llama.cpp); serves OpenAI-compatible `/v1/embeddings` and completions endpoints | `pkg/rancher-desktop/agent/services/LlamaCppService.ts`                     |
 | 30116 | PostgreSQL                 | TCP      | 127.0.0.1    | Persistent relational store (maps host 30116 to container 5432); used by n8n and general Sulla data | `pkg/rancher-desktop/assets/sulla-docker-compose.yaml` (service: `postgres`) |
@@ -24,21 +24,21 @@ forwarded into the Lima VM; lower ports run directly on the Electron host.
 Express server exposing an OpenAI-compatible REST API. Accepts chat completion,
 completion, embedding, and moderation requests. Also provides an integration API
 for calling external service endpoints. Listens on all interfaces (`0.0.0.0`) so
-it is reachable from the Lima guest and from LAN clients.
+it is reachable from the Sulla VM guest and from LAN clients.
 
 Connects to the WebSocket Hub (port 30118) on channel `tasker` to receive and
 respond to asynchronous user messages (e.g. Slack app mentions).
 
 ### 6107 -- HttpCommandServer
 
-Authenticated HTTP API used by the `rdctl` CLI and the Electron renderer to
+Authenticated HTTP API used by the Electron renderer to
 read/write application settings, run diagnostic checks, manage extensions and
 snapshots, trigger factory resets, and control the backend lifecycle. Credentials
 are written to `~/Library/Application Support/rancher-desktop/rd-engine.json`.
 
 ### 6108 -- Terminal WebSocket Server
 
-Spawns `node-pty` processes that run `limactl shell 0` to provide interactive
+Spawns `node-pty` processes that run `sulla-runtime exec` to provide interactive
 terminal sessions inside the guest VM. Supports multiple concurrent sessions,
 automatic retry while the VM is booting, and terminal resize events.
 

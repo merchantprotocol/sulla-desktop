@@ -9,7 +9,7 @@
 //
 // The Codex model list is NOT hardcoded anywhere. It is read live from the
 // codex CLI's own catalog (`codex debug models`, which renders the raw model
-// list as JSON), invoked *through Sulla* inside the Lima VM so the ChatGPT
+// list as JSON), invoked *through Sulla* inside the Sulla VM so the ChatGPT
 // OAuth credentials Sulla stores in the vault (~/.codex/auth.json) are injected
 // — a bare terminal `codex` call would have no credentials and return a
 // degraded/empty catalog. `ensureCodexAuthFile()` rebuilds that auth file from
@@ -78,7 +78,7 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
 
   try {
     const { stdout, exitCode } = await runCommand(command, [], {
-      runInLimaShell: true,
+      runInGuest: true,
       timeoutMs:      20_000,
       // The raw catalog embeds per-model base instructions and can run to a few
       // hundred KB; keep the ceiling well clear so the JSON is never truncated.

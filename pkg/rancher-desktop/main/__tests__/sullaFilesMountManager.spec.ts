@@ -42,13 +42,13 @@ function busyboxGuest(lines: string[], options: { catFailures?: number } = {}) {
   let catFailures = options.catFailures ?? 0;
   const remove = (line: string) => { if (table.includes(line)) table.splice(table.indexOf(line), 1) };
   const executor: any = {
-    backend:     'lima',
+    backend:     'sulla-runtime',
     execCommand: (...args: any[]) => {
       if (typeof args[0] === 'object') args.shift();
       commands.push(args);
       const joined = args.join(' ');
 
-      if (args[0] === 'findmnt' || args[0] === 'fusermount3') return Promise.reject(new Error('limactl exited with code 1'));
+      if (args[0] === 'findmnt' || args[0] === 'fusermount3') return Promise.reject(new Error('sulla-runtime exited with code 1'));
       if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
         if (catFailures > 0) {
           catFailures--;
@@ -77,7 +77,7 @@ function busyboxGuest(lines: string[], options: { catFailures?: number } = {}) {
   return { executor, commands, table, mounts: () => commands.filter(c => c[0] === 'mount').map(c => c.join(' ')) };
 }
 
-/** Mirrors LimaBackend.recoverSullaFilesGuestMount: real preparation, then consumer reconcile. */
+/** Mirrors SullaRuntimeBackend.recoverSullaFilesGuestMount: real preparation, then consumer reconcile. */
 function recovery(manager: InstanceType<typeof SullaFilesMountManager>, guest: ReturnType<typeof busyboxGuest>) {
   const calls = { attempts: 0, consumersUpdated: 0, active: 0, maxActive: 0 };
   const recover = async() => {

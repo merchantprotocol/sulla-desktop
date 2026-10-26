@@ -14,7 +14,7 @@
     >
       <span class="terminal-status-dot" />
       <span class="terminal-title">Terminal</span>
-      <span class="terminal-session">Lima VM · {{ sessionId }}</span>
+      <span class="terminal-session">Sulla VM · {{ sessionId }}</span>
     </div>
     <XTermTerminal
       :session-id="sessionId"
@@ -43,7 +43,7 @@ export default defineComponent({
 
   setup(props) {
     // Stable session id so switching away and back reattaches to the same
-    // Lima VM shell instead of spawning a fresh one.
+    // Sulla VM shell instead of spawning a fresh one.
     const sessionId = computed(() => `tab-${ props.tabId || 'default' }`);
 
     return { sessionId };

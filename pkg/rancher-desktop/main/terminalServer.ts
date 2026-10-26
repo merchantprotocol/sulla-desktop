@@ -10,7 +10,7 @@ import http from 'http';
 import * as pty from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 
-import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
+import paths from '@pkg/utils/paths';
 
 const TERMINAL_PORT = 6108;
 const PTY_RETRY_INTERVAL_MS = 3000;
@@ -22,8 +22,8 @@ interface TerminalSession {
 }
 
 /**
- * WebSocket server that spawns PTY sessions inside the Lima VM.
- * Each session runs `limactl shell 0` to get a shell in the guest.
+ * WebSocket server that spawns PTY sessions inside the Sulla VM.
+ * Each session runs `sulla-runtime exec 0` to get a shell in the guest.
  * Multiple xterm clients can connect to independent sessions.
  */
 export class WebSocketTerminalServer {
@@ -32,20 +32,19 @@ export class WebSocketTerminalServer {
   private sessions = new Map<string, TerminalSession>();
 
   private trySpawnPty(cols: number, rows: number, command?: string): pty.IPty {
-    const limactlPath = resolveLimactlPath({});
-    const limaHome = resolveLimaHome({});
+    const runtimePath = paths.sullaRuntime;
 
     const args = command
-      ? ['shell', '0', '--', 'sh', '-lc', command]
-      : ['shell', '0'];
+      ? ['exec', '--', 'sh', '-lc', command]
+      : ['exec', '--', '/bin/sh', '-l'];
 
-    return pty.spawn(limactlPath, args, {
+    return pty.spawn(runtimePath, args, {
       name: 'xterm-256color',
       cols,
       rows,
       env:  {
         ...process.env,
-        LIMA_HOME: limaHome,
+        
         TERM:      'xterm-256color',
       } as Record<string, string>,
     });

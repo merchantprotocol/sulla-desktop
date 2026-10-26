@@ -471,6 +471,11 @@ function onAgentCommand(_event: any, args: any) {
   case 'open-tab': {
     // `packages` is the user-facing name of the `marketplace` view.
     const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
+    // My Account moved into Preferences › Account & Cloud.
+    if (mode === 'account') {
+      ipcRenderer.send('preferences-open', 'account');
+      break;
+    }
     if (mode === 'files' && args.fileId && args.path && supportsDocumentEditor(args.path)) {
       openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId });
       break;

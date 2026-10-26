@@ -8,7 +8,7 @@
 /**
  * Single-flight boot gate for main-process work that needs PostgreSQL.
  *
- * Postgres runs inside the Lima VM and can take a minute+ to come up on a
+ * Postgres runs inside the Sulla VM and can take a minute+ to come up on a
  * cold boot. Boot-time recovery that fires before it is reachable dies with
  * ECONNREFUSED 127.0.0.1:30116 and, without a retry, stays dead until the
  * next app restart (observed 2026-08-31 boot).

@@ -14,13 +14,12 @@ import semver from 'semver';
 
 import { getExtensions } from './lib/extension-data';
 
-import { Lima, Qemu, SocketVMNet, AlpineLimaISO } from 'scripts/dependencies/lima';
 import { MobyOpenAPISpec } from 'scripts/dependencies/moby-openapi';
 import * as tools from 'scripts/dependencies/tools';
 import { Wix } from 'scripts/dependencies/wix';
 import { WSLDistro, Moproxy } from 'scripts/dependencies/wsl';
 import {
-  AlpineLimaISOVersion, getOctokit,
+  getOctokit,
   iterateIterator,
   GitHubDependency,
   VersionedDependency,
@@ -32,8 +31,8 @@ const GITHUB_REPO = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'rancher-des
 
 interface VersionComparison {
   dependency:     VersionedDependency;
-  currentVersion: string | AlpineLimaISOVersion;
-  latestVersion:  string | AlpineLimaISOVersion;
+  currentVersion: string;
+  latestVersion:  string;
 }
 
 const dependencies: VersionedDependency[] = [
@@ -49,10 +48,6 @@ const dependencies: VersionedDependency[] = [
   new tools.Steve(),
   new tools.RancherDashboard(),
   new tools.ECRCredHelper(),
-  new Lima(),
-  new Qemu(),
-  new SocketVMNet(),
-  new AlpineLimaISO(),
   new WSLDistro(),
   new Wix(),
   new MobyOpenAPISpec(),
@@ -101,19 +96,19 @@ function git(returnOrArg: string | true, ...args: string[]): number | null {
   return result.status;
 }
 
-function printable(version: string | AlpineLimaISOVersion): string {
-  return typeof version === 'string' ? version : version.isoVersion;
+function printable(version: string): string {
+  return version;
 }
 
-function getBranchName(name: string, currentVersion: string | AlpineLimaISOVersion, latestVersion: string | AlpineLimaISOVersion): string {
+function getBranchName(name: string, currentVersion: string, latestVersion: string): string {
   return `rddepman/${ name }/${ printable(currentVersion) }-to-${ printable(latestVersion) }`;
 }
 
-function getTitle(name: string, currentVersion: string | AlpineLimaISOVersion, latestVersion: string | AlpineLimaISOVersion): string {
+function getTitle(name: string, currentVersion: string, latestVersion: string): string {
   return `rddepman: bump ${ name } from ${ printable(currentVersion) } to ${ printable(latestVersion) }`;
 }
 
-async function getBody(dependency: VersionedDependency, currentVersion: string | AlpineLimaISOVersion, latestVersion: string | AlpineLimaISOVersion): Promise<string> {
+async function getBody(dependency: VersionedDependency, currentVersion: string, latestVersion: string): Promise<string> {
   if (!(dependency instanceof GitHubDependency) || typeof currentVersion !== 'string' || typeof latestVersion !== 'string') {
     // If the dependency is not on GitHub, we don't have any additional information yet.
     return '';
@@ -192,7 +187,7 @@ async function getBody(dependency: VersionedDependency, currentVersion: string |
   }).join('\n');
 }
 
-async function createDependencyBumpPR(dependency: VersionedDependency, currentVersion: string | AlpineLimaISOVersion, latestVersion: string | AlpineLimaISOVersion): Promise<void> {
+async function createDependencyBumpPR(dependency: VersionedDependency, currentVersion: string, latestVersion: string): Promise<void> {
   const title = getTitle(dependency.name, currentVersion, latestVersion);
   const branchName = getBranchName(dependency.name, currentVersion, latestVersion);
 

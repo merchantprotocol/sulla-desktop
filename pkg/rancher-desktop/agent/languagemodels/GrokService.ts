@@ -147,6 +147,23 @@ export class GrokService extends OpenAICompatibleService {
     return GROK_SUBSCRIPTION_CONTEXT_WINDOWS[this.model] ?? super.getContextWindow();
   }
 
+  /**
+   * Vault mode: the subscription lane's OAuth token lives in the vault, so
+   * refresh it there before it expires rather than sending a dead token.
+   */
+  protected override async beforeProviderRequest(): Promise<void> {
+    if (!this.oauthMode || !this.accountId || !usesContainerVaultAuthority()) return;
+    const { getOAuthService } = await import('../services/OAuthService');
+    await getOAuthService().ensureVaultTokenFresh('grok', this.accountId);
+  }
+
+  /** On a 401 in vault mode, force a vault refresh so the retry uses a new token. */
+  override async refreshCredentials(): Promise<boolean> {
+    if (!this.oauthMode || !this.accountId || !usesContainerVaultAuthority()) return super.refreshCredentials();
+    const { getOAuthService } = await import('../services/OAuthService');
+    return getOAuthService().forceVaultRefresh('grok', this.accountId);
+  }
+
   protected override brokerInjections(): BrokerInjection[] {
     return this.oauthMode
       ? [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }]

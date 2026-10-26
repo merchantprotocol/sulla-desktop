@@ -9,7 +9,9 @@ import schedule from 'node-schedule';
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
-const FILES_API = process.env.SULLA_FILES_API_URL?.replace(/\/+$/, '') || 'http://127.0.0.1:30124';
+import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
+
+const FILES_API = process.env.SULLA_FILES_API_URL?.replace(/\/+$/, '');
 
 let instance: SullaFilesMaintenanceService | undefined;
 export class SullaFilesMaintenanceService {
@@ -19,7 +21,9 @@ export class SullaFilesMaintenanceService {
     this.job = schedule.scheduleJob('0 3 * * *', async() => {
       try {
         const token = await SullaSettingsModel.getServicePassword();
-        const response = await fetch(`${ FILES_API }/v1/local/maintenance`, { method: 'POST', headers: { 'x-sulla-files-token': token }, signal: AbortSignal.timeout(30_000) });
+        const init = { method: 'POST', headers: { 'x-sulla-files-token': token }, signal: AbortSignal.timeout(30_000) };
+        // Local Files only listens on pinned TLS; plain HTTP to 30124 always failed.
+        const response = FILES_API ? await fetch(`${ FILES_API }/v1/local/maintenance`, init) : await desktopFilesFetch(`${ FILES_HTTPS_ORIGIN }/v1/local/maintenance`, init);
         if (!response.ok) throw new Error(`Files maintenance returned ${ response.status }`);
         const result = await response.json() as { expiredFiles:number; deletedChunks:number };
         console.log(`[SullaFiles] nightly maintenance expired ${ result.expiredFiles } files and collected ${ result.deletedChunks } chunks`);

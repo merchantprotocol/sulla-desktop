@@ -13,7 +13,7 @@ import { toolRegistry } from '../registry';
  *
  * Returns ready-to-run `sulla <category>/<tool>` CLI invocations plus an
  * explicit reminder that these commands must be dispatched through a shell
- * tool — `exec` in the Lima-VM runtime, or the generic `Bash` tool on
+ * tool — `exec` in the Sulla VM runtime, or the generic `Bash` tool on
  * surfaces (e.g. this Claude Code MCP bridge) that don't carry a
  * Sulla-branded exec — models routinely forget this and dead-end in a "how
  * do I call this" loop.

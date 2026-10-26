@@ -34,13 +34,13 @@ describe('exec security guardrails', () => {
     runCommandMock.mockReset();
   });
 
-  it('reproduces lima instance-missing failure when exec is invoked with real-style command payload', async() => {
+  it('reproduces a guest-unavailable failure when exec is invoked with real-style command payload', async() => {
     const { ExecWorker } = await loadExecModule();
 
     runCommandMock.mockResolvedValueOnce({
       exitCode: 1,
       stdout:   '',
-      stderr:   'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `limactl create 0` to create a new instance"\n',
+      stderr:   'time="2026-02-19T19:59:03-08:00" level=fatal msg="instance \\\"0\\\" does not exist, run `create 0` to create a new instance"\n',
     });
 
     const worker = configureWorker(new ExecWorker(), execRegistration);
@@ -50,7 +50,7 @@ describe('exec security guardrails', () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       command,
       [],
-      expect.objectContaining({ runInLimaShell: true }),
+      expect.objectContaining({ runInGuest: true }),
     );
     expect(result.success).toBe(false);
     expect(result.result as string).toContain('Command failed with exit code 1');
@@ -72,7 +72,7 @@ describe('exec security guardrails', () => {
     expect(runCommandMock).toHaveBeenCalledWith(
       'echo ok',
       [],
-      expect.objectContaining({ runInLimaShell: true }),
+      expect.objectContaining({ runInGuest: true }),
     );
     expect(result.success).toBe(true);
     expect(result.result).toBe('ok');

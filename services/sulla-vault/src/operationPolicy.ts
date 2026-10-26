@@ -343,6 +343,12 @@ function hostMatches(host: string, allowed: string): boolean {
   return host === normalized || (allowed.startsWith('*.') && host.endsWith(`.${ normalized }`));
 }
 
+/** Files' own Cloud calls (shares, encrypted backup, catalog) on the owner's Sulla Cloud login. */
+export function isTrustedFilesCloudCall(input: BrokerExecuteRequest): boolean {
+  return (input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION || input.operation.startsWith('sulla-cloud.cloud-files.')) &&
+    input.ref.integrationId === 'sulla-cloud' && input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files';
+}
+
 export function validateOperation(
   input: BrokerExecuteRequest,
   hostname: string,

@@ -23,7 +23,7 @@ export function buildWorkspaceSection(ctx: PromptBuildContext): PromptSection | 
 
   if (ctx.mode === 'local') {
     const content = `## Environment
-You run inside an isolated Lima VM. Commands via \`exec\` execute in this sandbox.
+You run inside an isolated Sulla VM. Commands via \`exec\` execute in this sandbox.
 
 Sulla Home: ${ sullaHome }/
 Key dirs: skills/, workflows/, agents/, integrations/, identity/ (human/business/agent goals), projects/, logs/
@@ -41,15 +41,15 @@ Start by reading \`${ sullaDocs }/INDEX.md\` — it lists what to load next and 
 
   const content = `## Environment
 
-You run inside an isolated Lima VM. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.
+You run inside an isolated Sulla VM. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.
 
 ### Host Machine Access (exechost tool) — LAST RESORT ONLY
 
-**Default to the VM.** Everyday shell work, file search/read/write, package installs, git, builds, tests, and sulla CLI calls stay inside the Lima VM via the regular \`exec\` tool. The home directory is mounted into the VM at the same path, so host project files are already reachable without leaving the sandbox. Keep work inside the VM for maximum protection of the parent host.
+**Default to the VM.** Everyday shell work, file search/read/write, package installs, git, builds, tests, and sulla CLI calls stay inside the Sulla VM via the regular \`exec\` tool. The home directory is mounted into the VM at the same path, so host project files are already reachable without leaving the sandbox. Keep work inside the VM for maximum protection of the parent host.
 
 Use \`sulla meta/exechost\` **only** when the parent host MUST be used — for example:
 - Host-only binaries/paths the VM cannot see (e.g. macOS app bundles under \`/Applications\`, GUI apps)
-- Host Docker Desktop / host-only daemons that are not available inside Lima
+- Host Docker Desktop / host-only daemons that are not available inside the Sulla VM
 - User-installed host tools that truly are not present in the VM (and cannot be installed there)
 - Explicit user request to run something on the host machine
 
@@ -122,9 +122,9 @@ ${ sullaDocs }/
 │   ├── runtimes.md                     # Python / Node / Shell handlers
 │   └── examples.md                     # Working code
 ├── environment/
-│   ├── architecture.md                 # Electron main, Lima VM, ports, channels
-│   ├── docker.md                       # Host Docker vs Lima-internal services (they DIFFER)
-│   ├── kubernetes.md                   # k3s + kubectl_* / rdctl_* tools
+│   ├── architecture.md                 # Electron main, Sulla VM, ports, channels
+│   ├── docker.md                       # Host Docker vs guest-internal services (they DIFFER)
+│   ├── kubernetes.md                   # k3s + kubectl_* tools
 │   └── heartbeat.md                    # Autonomous heartbeat agent
 ├── agent-patterns/
 │   ├── user-stories.md                 # ⭐ Common request → step-by-step plan

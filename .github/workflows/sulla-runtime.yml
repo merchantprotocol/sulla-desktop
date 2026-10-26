@@ -1,0 +1,122 @@
+name: Sulla runtime
+
+# Builds the native macOS runtime (host binary + guest kernel/initramfs) and
+# bundles one tarball per Mac architecture.
+#
+#   push to main  -> build, bundle, and publish to the rolling `sulla-runtime-latest`
+#                    release. `just build` / `just package` download from there.
+#   Package       -> calls this workflow (skip_publish: true) and embeds the bundle in the
+#                    signed release app via SULLA_RUNTIME_ARTIFACTS_DIR.
+#   dispatch      -> same as a push; use it to republish by hand.
+#
+# Bundle layout (what Desktop and scripts/package.ts expect under
+# resources/darwin/sulla-runtime/):  sulla-runtime, guest/vmlinuz, guest/initramfs.img
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/runtime-host/macos/**'
+      - 'src/runtime-agent/**'
+      - 'assets/runtime/guest/**'
+      - '.github/workflows/sulla-runtime*.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      skip_publish:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    uses: ./.github/workflows/sulla-runtime-host-macos.yml
+  guest:
+    uses: ./.github/workflows/sulla-runtime-guest.yml
+
+  bundle:
+    needs: [host, guest]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            guest_arch: arm64
+          - arch: x86_64
+            guest_arch: amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sulla-runtime-macos-${{ matrix.arch }}
+          path: bundle
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sulla-runtime-guest-${{ matrix.guest_arch }}
+          path: bundle/guest
+      - name: Assemble bundle
+        run: |
+          set -euo pipefail
+          cd bundle
+          chmod 0755 sulla-runtime
+          test -s sulla-runtime && test -s guest/vmlinuz && test -s guest/initramfs.img
+          # The newest commit that changed anything inside the runtime. Local builds
+          # compare against it to tell whether the published bundle is current.
+          git -C "$GITHUB_WORKSPACE" log -1 --format=%H -- \
+            src/runtime-host/macos src/runtime-agent assets/runtime/guest > SOURCE
+          cat SOURCE
+      - name: Pack and checksum
+        run: |
+          set -euo pipefail
+          name="sulla-runtime-darwin-${{ matrix.arch }}"
+          mkdir -p out
+          tar -czf "out/$name.tar.gz" -C bundle sulla-runtime guest/vmlinuz guest/initramfs.img SOURCE
+          sha=$(sha256sum "out/$name.tar.gz" | cut -d' ' -f1)
+          # Small file the local fetch reads to decide whether anything changed.
+          printf 'sha256 %s\nsource %s\n' "$sha" "$(cat bundle/SOURCE)" > "out/$name.manifest"
+          ls -l out
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sulla-runtime-bundle-${{ matrix.arch }}
+          path: bundle/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sulla-runtime-release-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    # Main pushes and manual runs publish; a release build that only needs the bundle opts out.
+    if: ${{ !inputs.skip_publish }}
+    needs: bundle
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: sulla-runtime-release-*
+          merge-multiple: true
+          path: out
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=sulla-runtime-latest
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # A prerelease that is never "latest": the app's update feed must not see it.
+            gh release create "$tag" --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Sulla runtime (rolling)" \
+              --notes "Latest native macOS runtime built from main. Downloaded by 'just build'; not an app release."
+          fi
+          # Tarballs first, manifests last: a manifest is the signal that its tarball is complete.
+          gh release upload "$tag" out/*.tar.gz --clobber
+          gh release upload "$tag" out/*.manifest --clobber

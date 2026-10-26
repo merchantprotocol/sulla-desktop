@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: LicenseRef-Sulla-Fair-Code
+# Docker socket proxy for the server console. It allows the container list,
+# logs and stats, plus starting the one-shot backup container. Every other
+# Docker API call is refused with 403. Only the console can reach it.
+user root;
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events { worker_connections 64; }
+
+http {
+  access_log /dev/stdout;
+  client_body_temp_path /tmp/client_body;
+  proxy_temp_path /tmp/proxy;
+  fastcgi_temp_path /tmp/fastcgi;
+  uwsgi_temp_path /tmp/uwsgi;
+  scgi_temp_path /tmp/scgi;
+  client_max_body_size 1k;
+
+  upstream docker {
+    server unix:/var/run/docker.sock;
+  }
+
+  map "$request_method $uri" $sulla_docker_allowed {
+    default 0;
+    "~^(GET|HEAD) /(v[0-9.]+/)?(_ping|version)$" 1;
+    "~^(GET|HEAD) /(v[0-9.]+/)?containers/json$" 1;
+    # Container inspect (/containers/<id>/json) is not allowed: it returns
+    # every container's environment, including service secrets.
+    "~^(GET|HEAD) /(v[0-9.]+/)?containers/[A-Za-z0-9][A-Za-z0-9_.-]*/(logs|stats)$" 1;
+    "~^POST /(v[0-9.]+/)?containers/${SULLA_BACKUP_CONTAINER}/start$" 1;
+  }
+
+  server {
+    listen 2375;
+
+    location / {
+      # Encoded or dot segments could make Docker see a different path than
+      # the one checked above.
+      if ($request_uri ~ "(\.\.|%)") {
+        return 403;
+      }
+      if ($sulla_docker_allowed = 0) {
+        return 403;
+      }
+      proxy_pass http://docker$uri$is_args$args;
+      proxy_http_version 1.1;
+      proxy_buffering off;
+      proxy_read_timeout 1h;
+    }
+  }
+}

@@ -21,7 +21,7 @@ function clockModel() {
   return { model, tick: (ms: number) => { t += ms }, now: () => t };
 }
 
-/** Backend events the way backend/lima.ts reports them, in order. */
+/** Backend events the way backend/sullaRuntimeBackend.ts reports them, in order. */
 const BACKEND_TIMELINE = [
   { current: 0, max: -1, description: 'Starting Backend' },
   { current: 0, max: 100, description: 'Starting Backend' },

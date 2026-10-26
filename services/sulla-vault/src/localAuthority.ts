@@ -38,7 +38,7 @@ import {
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
-import { brokerTransferLimits, FILES_SYNC_OPERATION, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
+import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
@@ -1883,7 +1883,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (prepared.item) await this.audit(input, prepared.item, false, null);
       return result;
     } catch (error) {
-      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code);
+      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code === 'invalid_upstream_response' ? `${ error.code }: ${ error.message }` : error.code);
       throw error;
     }
   }
@@ -2066,7 +2066,10 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         prepared.maxRequestBytes,
       );
       if (result.status < 200 || result.status >= 300) {
-        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth upstream rejected the request');
+        // Status and the standard OAuth error code (e.g. invalid_grant) only, so the audit says why without copying response text.
+        const oauthError = (result.body as { error?: unknown } | null)?.error;
+        const code = typeof oauthError === 'string' && /^[a-z_]{1,64}$/.test(oauthError) ? ` ${ oauthError }` : '';
+        throw new LocalVaultError('invalid_upstream_response', 502, `OAuth upstream rejected the request (HTTP ${ result.status }${ code })`);
       }
       return await this.runSecurityOperation(() => this.runTransaction(async(client) => {
         this.requireGeneration(prepared.generation);
@@ -2338,7 +2341,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         throw new LocalVaultError('destination_denied', 403, 'OAuth destination is not registered for this provider');
       }
     }
-    const decision = agentPolicyAllows(effectivePolicy, {
+    // The Files service acts for the owner on their own Cloud account, so the
+    // owner-only agent policy doesn't apply; its operation policy still does.
+    const decision: { allowed: boolean; reason?: string } = isTrustedFilesCloudCall(input) ? { allowed: true } : agentPolicyAllows(effectivePolicy, {
       agentId: input.claims.agent_id,
       level: 'autofill',
       host: target.hostname,
@@ -2567,9 +2572,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!item || !personal || item.collection_id) {
       throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
     }
-    const trustedFirstParty = bypassAgentPolicy ||
-      ((input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION || input.operation.startsWith('sulla-cloud.cloud-files.')) &&
-        input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files');
+    const trustedFirstParty = bypassAgentPolicy || isTrustedFilesCloudCall(input);
     if (host && input.operation !== 'item.http' && !trustedFirstParty) {
       const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {

@@ -10,7 +10,7 @@
  *
  * # Sulla Threat Proxy — Electron-side lifecycle
  *
- * The actual proxy runs *inside* the Lima VM as an OpenRC service
+ * The actual proxy runs *inside* the Sulla VM as an OpenRC service
  * (`sulla-threat-proxy`, spawning `mitmdump` on 127.0.0.1:8888). This module
  * is the host-side glue:
  *
@@ -20,8 +20,8 @@
  *     because the VM's own internet access depends on the proxy working).
  *
  * The installation + start/stop of the in-VM service lives in
- * `LimaBackend.installThreatProxy()` (see backend/lima.ts). That keeps all
- * VM-touching code inside the Lima lifecycle methods where it belongs.
+ * the backend (see backend/sullaRuntimeBackend.ts). That keeps all
+ * VM-touching code inside the backend lifecycle methods where it belongs.
  */
 
 import fs from 'fs';
@@ -95,8 +95,8 @@ function getBlocklistHostPath(): string {
 
 /** Path to the in-VM log file, surfaced via mount so we can tail without execing into the VM. */
 function getVmLogHostHint(): string {
-  // Lima mounts /Users + paths.logs; the in-VM /var/log/sulla-threat-proxy.log
-  // isn't directly reachable from the host. The service reads it via limactl shell.
+  // The backend mounts /Users + paths.logs; the in-VM /var/log/sulla-threat-proxy.log
+  // isn't directly reachable from the host. The service reads it via sulla-runtime exec.
   return '/var/log/sulla-threat-proxy.log';
 }
 

@@ -18,7 +18,7 @@ function quote(value: string): string {
 async function remoteRefs(repoRoot: string, remote: string): Promise<Map<string, string>> {
   const result = await runCommand(
     `git -C ${ quote(repoRoot) } for-each-ref --format='%(refname:short) %(objectname)' ${ quote(`refs/remotes/${ remote }`) }`,
-    [], { runInLimaShell: true, timeoutMs: 30_000 },
+    [], { runInGuest: true, timeoutMs: 30_000 },
   );
   const refs = new Map<string, string>();
   if (result.exitCode === 0) {
@@ -47,7 +47,7 @@ export class GitFetchWorker extends BaseTool {
     try {
       const rootResult = await runCommand(
         `git -C ${ quote(absolutePath) } rev-parse --show-toplevel`,
-        [], { runInLimaShell: true, timeoutMs: 30_000 },
+        [], { runInGuest: true, timeoutMs: 30_000 },
       );
       if (rootResult.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git error: ${ rootResult.stderr || rootResult.stdout }` };
@@ -65,7 +65,7 @@ export class GitFetchWorker extends BaseTool {
       if (token) {
         const remoteUrlResult = await runCommand(
           `git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`,
-          [], { runInLimaShell: true, timeoutMs: 10_000 },
+          [], { runInGuest: true, timeoutMs: 10_000 },
         );
         let remoteUrl = remoteUrlResult.stdout.trim();
         if (remoteUrl.includes('github.com')) {
@@ -87,11 +87,11 @@ export class GitFetchWorker extends BaseTool {
         : ` ${ quote(`+refs/heads/*:refs/remotes/${ remote }/*`) }`;
       const runFetch = (target: string) => runCommand(
         `${ authPrefix }git ${ credFlags }-C ${ quote(repoRoot) } fetch${ prune ? ' --prune' : '' } ${ quote(target) }${ refspec }`,
-        [], { runInLimaShell: true, timeoutMs: 120_000 },
+        [], { runInGuest: true, timeoutMs: 120_000 },
       );
       const result = localAuthority
         ? await (async() => {
-          const remoteUrl = await runCommand(`git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          const remoteUrl = await runCommand(`git -C ${ quote(repoRoot) } remote get-url ${ quote(remote) }`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrl.exitCode !== 0) return remoteUrl;
           return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), runFetch);
         })()

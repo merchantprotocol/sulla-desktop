@@ -31,7 +31,7 @@ function stripAnsi(value: string): string {
 export async function listCursorModels(opts?: { force?: boolean }): Promise<CursorCatalogModel[]> {
   if (!opts?.force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
   try {
-    const result = await runCommand('export PATH="$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH"; cursor-agent --list-models', [], { runInLimaShell: true, timeoutMs: 30_000, maxOutputChars: 200_000 });
+    const result = await runCommand('export PATH="$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH"; cursor-agent --list-models', [], { runInGuest: true, timeoutMs: 30_000, maxOutputChars: 200_000 });
     if (result.exitCode !== 0) throw new Error(result.stderr || `exit ${ result.exitCode }`);
     const ids = stripAnsi(result.stdout).split(/\r?\n/).map(line => line.trim())
       .filter(line => line && !/^available models/i.test(line))

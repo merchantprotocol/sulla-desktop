@@ -195,7 +195,7 @@ const BACKEND_LABELS: Record<string, string> = {
   'Sulla deployment completed':                      'Sulla\'s private services are running',
 };
 
-/** Numeric checkpoints the backend reports during boot (see backend/lima.ts start()). */
+/** Numeric checkpoints the backend reports during boot (see backend/sullaRuntimeBackend.ts start()). */
 const BOOT_CHECKPOINTS = [0, 20, 40, 50, 60, 70, 75];
 const BOOT_SCALE = 75;
 /** What the VM is doing after reaching each boot checkpoint, when the description is generic. */

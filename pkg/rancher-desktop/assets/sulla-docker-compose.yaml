@@ -10,7 +10,7 @@ services:
     image: ghcr.io/merchantprotocol/sulla-postgres:latest
     container_name: sulla_postgres
     ports:
-      - "30116:5432"
+      - "127.0.0.1:30116:5432"
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_USER=sulla
@@ -47,7 +47,7 @@ services:
     image: redis:7-alpine
     container_name: sulla_redis
     ports:
-      - "30117:6379"
+      - "127.0.0.1:30117:6379"
     command: redis-server --save "" --appendonly no
     restart: unless-stopped
     mem_limit: 512m

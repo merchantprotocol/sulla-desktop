@@ -32,8 +32,18 @@ let timer: ReturnType<typeof setInterval> | null = null;
 onMounted(() => {
   ipcRenderer.on('startup-progress', updateWaiting);
   void ipcRenderer.invoke('startup-progress').then(snapshot => updateWaiting(undefined, snapshot));
+  let checking = false;
   timer = setInterval(async() => {
-    if (await refreshStatus()) emit('unlocked');
+    // Don't stack status IPCs when the vault is slow or unreachable.
+    if (checking) return;
+    checking = true;
+    try {
+      if (await refreshStatus()) emit('unlocked');
+    } catch {
+      // Vault not reachable yet; try again on the next tick.
+    } finally {
+      checking = false;
+    }
   }, 750);
 });
 

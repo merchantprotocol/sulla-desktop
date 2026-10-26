@@ -532,6 +532,10 @@ export const updateTable: Record<number, (settings: any, locked : boolean) => vo
       _.set(settings, 'containerEngine.mobyStorageDriver', 'auto');
     }
   },
+  17: (settings) => {
+    // The Sulla runtime is always the VM on macOS now; its opt-in setting is gone.
+    _.unset(settings, 'experimental.sullaRuntime');
+  },
 };
 
 function migrateSettingsToCurrentVersion(settings: Record<string, any>): Settings {
@@ -545,7 +549,7 @@ function migrateSettingsToCurrentVersion(settings: Record<string, any>): Setting
 
 /**
  * Used to migrate a settings payload from an earlier version to the current one.
- * Input payloads are expected to come from either the argument to `rdctl api settings -X PUT ...`
+ * Input payloads are expected to come from either the settings API
  * or a deployment profile.
  *
  * The contents of settings files go through the unexported function `migrateSettingsToCurrentVersion`

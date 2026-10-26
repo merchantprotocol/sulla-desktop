@@ -4,7 +4,7 @@ The tools the agent uses constantly: shell exec, file ops, tool discovery, searc
 
 ## Tool inventory
 
-### `meta/exec` — Run shell commands inside Lima
+### `meta/exec` — Run shell commands inside Sulla VM
 ```bash
 sulla meta/exec '{
   "command": "git status",
@@ -16,15 +16,15 @@ sulla meta/exec '{
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `command` (or `cmd`) | required | Shell command. Runs in Lima VM, not host. |
-| `cwd` | none | Working dir inside Lima. Omit it to use the VM default. |
+| `command` (or `cmd`) | required | Shell command. Runs in Sulla VM, not host. |
+| `cwd` | none | Working dir inside Sulla VM. Omit it to use the VM default. |
 | `timeout` | 120000 (2 min) | ms; bump for long installs (e.g., 600000 for 10 min) |
 | `stdin` | none | Piped to the command |
 
 **Output cap:** 160,000 characters of stdout+stderr combined. Exit 0 = success; non-zero = failure (stderr in `responseString`).
 
 **Important caveats:**
-- Runs in Lima, **not on the host macOS**. `~` is mounted at the same path so file paths work, but env vars from your shell don't carry over. Use `export X=Y && cmd` if you need them.
+- Runs in Sulla VM, **not on the host macOS**. `~` is mounted at the same path so file paths work, but env vars from your shell don't carry over. Use `export X=Y && cmd` if you need them.
 - Long-running commands keep running even on timeout — child processes aren't killed.
 - This is the dispatcher for **every** other CLI tool: `sulla browser/tab '...'` actually runs as `exec({ command: "sulla browser/tab '...'" })`.
 
@@ -39,18 +39,18 @@ sulla meta/exechost '{
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `command` (or `cmd`) | required | Shell command. Runs on the **host macOS**, not Lima. |
+| `command` (or `cmd`) | required | Shell command. Runs on the **host macOS**, not Sulla VM. |
 | `cwd` | none | Absolute working dir on the host |
 | `timeout` | 60000 (1 min) | ms |
 | `stdin` | none | Piped to the command |
 | `foreground` | `false` | `open` commands get `-g`, so apps launch without taking focus. Set `true` only when the app must come to the front. |
 
 **VM-first rule (non-negotiable):**
-- Everyday work stays in the Lima VM via regular `exec` / `file_search` / `read_file` and normal repo editing tools.
+- Everyday work stays in the Sulla VM via regular `exec` / `file_search` / `read_file` and normal repo editing tools.
 - The host home directory is mounted into the VM at the **same absolute path**, so project files, installs, builds, tests, and sulla CLI calls do **not** need host execution.
 - Use `exechost` **only** when the parent host MUST be used:
   - Host-only binaries / GUI apps (e.g. macOS app bundles under `/Applications`)
-  - Host Docker Desktop or other host-only daemons unavailable inside Lima
+  - Host Docker Desktop or other host-only daemons unavailable inside Sulla VM
   - User-installed host tools that truly cannot be installed or used in the VM
   - Explicit user request to run something on the host
 - Do **not** use `exechost` for routine search/edit/build/test just because files live under the host home path.
@@ -258,7 +258,7 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 ## Hard rules
 
 - **Never call CLI tools without wrapping in `exec`.** Browse_tools output is documentation, not execution.
-- **`exec` runs in Lima, not on host.** Default to it for everyday work. Home files are mounted into the VM at the same path.
+- **`exec` runs in Sulla VM, not on host.** Default to it for everyday work. Home files are mounted into the VM at the same path.
 - **`exechost` is LAST RESORT.** Use only when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Never for routine search/edit/build/test.
 - **Prefer VM → host network (`192.168.5.2`) over host shell** when you only need to reach a host-side service.
 - **Observational memory is durable but prompt space is finite.** Don't fill it with verbose status updates — save only durable, surprising, or non-obvious facts.

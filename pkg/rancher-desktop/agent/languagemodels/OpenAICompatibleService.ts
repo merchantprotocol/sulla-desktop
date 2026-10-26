@@ -61,6 +61,9 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     return [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }];
   }
 
+  /** Credential upkeep before each brokered request (e.g. vault OAuth refresh). */
+  protected async beforeProviderRequest(): Promise<void> {}
+
   /**
    * Send request to remote provider with retry.
    */
@@ -92,6 +95,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         const signal = this.combinedSignal(options?.signal, timeoutMs);
         const payload = this.buildFetchOptions(body, signal);
 
+        await this.beforeProviderRequest();
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  false,
           injections: this.brokerInjections(),
@@ -200,6 +204,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           : this.defaultTimeoutMs;
         const signal = this.combinedSignal(options?.signal, timeoutMs);
         const payload = this.buildFetchOptions(body, signal);
+        await this.beforeProviderRequest();
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  true,
           injections: this.brokerInjections(),

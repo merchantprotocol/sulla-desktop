@@ -35,6 +35,10 @@ final class FinderSync: FIFinderSync {
         controller.setBadgeImage(badge(color: .secondaryLabelColor, symbol: "icloud"), label: "Online only", forBadgeIdentifier: "online-only")
         controller.setBadgeImage(badge(color: .systemRed, symbol: "exclamationmark"), label: "Conflict", forBadgeIdentifier: "conflict")
         controller.setBadgeImage(badge(color: .systemGray, symbol: "questionmark"), label: "Sync state unavailable", forBadgeIdentifier: "unknown")
+        controller.setBadgeImage(badge(color: .systemGreen, symbol: "icloud.fill"), label: "Backed up to Sulla Cloud", forBadgeIdentifier: "backed-up")
+        controller.setBadgeImage(badge(color: .systemTeal, symbol: "magnifyingglass"), label: "Indexed by Sulla, not backed up", forBadgeIdentifier: "indexed")
+        controller.setBadgeImage(badge(color: .systemOrange, symbol: "hourglass"), label: "Sulla is processing", forBadgeIdentifier: "processing")
+        controller.setBadgeImage(badge(color: .systemGray, symbol: "minus"), label: "Stored in Sulla, can't be indexed", forBadgeIdentifier: "not-indexed")
     }
 
     private func badge(color: NSColor, symbol: String) -> NSImage {
@@ -154,9 +158,9 @@ final class FinderSync: FIFinderSync {
             states.insert(normalizedBadgeIdentifier(extendedAttribute(url: descendant, name: syncAttribute)))
             if states.contains("conflict") { return "conflict" }
         }
-        if states.contains("syncing") { return "syncing" }
+        // A folder shows its least-finished child, so a green folder means everything inside is backed up.
+        for state in ["syncing", "processing", "unknown", "indexed", "not-indexed", "synced", "backed-up"] where states.contains(state) { return state }
         if !states.isEmpty && states.isSubset(of: ["online-only"]) { return "online-only" }
-        if states.contains("synced") { return "synced" }
         return "unknown"
     }
 
@@ -166,6 +170,10 @@ final class FinderSync: FIFinderSync {
         case "syncing": return "syncing"
         case "online", "online-only": return "online-only"
         case "conflict", "error": return "conflict"
+        case "backed-up": return "backed-up"
+        case "indexed": return "indexed"
+        case "processing": return "processing"
+        case "not-indexed": return "not-indexed"
         default: return "unknown"
         }
     }

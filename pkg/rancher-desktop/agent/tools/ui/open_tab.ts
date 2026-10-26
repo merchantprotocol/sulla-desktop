@@ -7,7 +7,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 
-import { getWindow, openAudioSettings, openLanguageModelSettings } from '@pkg/window';
+import { getWindow } from '@pkg/window';
 import { openPreferences } from '@pkg/window/preferences';
 
 /**
@@ -53,10 +53,10 @@ export class UiOpenTabWorker extends BaseTool {
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     const mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
 
-    // `models` and `audio` are their own settings windows, not tabs.
+    // `models` and `audio` are sections of the Preferences window, not tabs.
     const WINDOW_MODES: Record<string, { open: () => void; label: string }> = {
-      models: { open: openLanguageModelSettings, label: 'Language Model Settings' },
-      audio:  { open: openAudioSettings, label: 'Audio Settings' },
+      models: { open: () => openPreferences('models'), label: 'Preferences › AI models' },
+      audio:  { open: () => openPreferences('voice'), label: 'Preferences › Voice & audio' },
     };
     if (WINDOW_MODES[mode]) {
       try {

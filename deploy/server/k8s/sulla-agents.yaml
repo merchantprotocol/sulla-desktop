@@ -32,6 +32,11 @@ spec:
             - {name: SULLA_ACCOUNTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/accounts-agents-token}
             - {name: SULLA_AGENT_AUDIENCE, value: sulla-agents}
             - {name: SULLA_WORKFLOWS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/agents-workflows-service-token}
+            - {name: SULLA_VAULT_PROVIDERS_URL, value: http://sulla-vault:8787}
+            - {name: SULLA_VAULT_PROVIDERS_SERVICE_ID, value: sulla-agents}
+            - {name: SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/vault-providers-token}
+            - {name: SULLA_AGENTS_BROKER_PUBLIC_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: agents-broker-public-key}}}
+            - {name: SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE, value: /run/sulla-secrets/agents-broker-private-key}
           volumeMounts: [{name: secrets, mountPath: /run/sulla-secrets, readOnly: true}, {name: docker, mountPath: /var/run/docker.sock}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 5}
       volumes:

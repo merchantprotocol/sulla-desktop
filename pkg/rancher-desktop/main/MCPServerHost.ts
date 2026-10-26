@@ -7,10 +7,10 @@
 
 /**
  * MCPServerHost — in-process MCP server that Claude Code (running inside the
- * Lima VM) can call back into during a chat turn.
+ * Sulla VM) can call back into during a chat turn.
  *
  * Why this exists:
- *   Claude Code's CLI runs inside the Lima VM and has no direct access to the
+ *   Claude Code's CLI runs inside the Sulla VM and has no direct access to the
  *   live BaseThreadState of the graph that invoked it. Native functions like
  *   `execute_workflow` need to mutate `state.metadata.activeWorkflow` on the
  *   CALLING graph instance so the orchestrator's next cycle can take over.
@@ -24,8 +24,8 @@
  *   - Started once at app boot (main-process singleton).
  *   - Binds to 0.0.0.0 on a random high port; Lima's portForwards rule
  *     (hostIP 0.0.0.0, guestPortRange 1–65535) plus the VM's built-in
- *     `host.lima.internal` DNS entry means the VM can reach it at
- *     `http://host.lima.internal:<port>/mcp`.
+ *     `host.sulla.internal` DNS entry means the VM can reach it at
+ *     `http://host.sulla.internal:<port>/mcp`.
  *   - Transport is stateless StreamableHTTP — one transport per request. We
  *     do NOT use MCP's own session mechanism; session-binding for tools (so
  *     a handler knows which graph it's running for) is layered on top via an
@@ -66,9 +66,9 @@ import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 const console = Logging.background;
 const LOG = '[MCPServerHost]';
 
-// Hostname the Lima VM uses to reach the host it's running on. Lima adds
+// Hostname the Sulla VM uses to reach the host it's running on. Lima adds
 // this to the VM's /etc/hosts automatically.
-const LIMA_HOST_DNS = 'host.lima.internal';
+const SULLA_HOST_DNS = 'host.sulla.internal';
 
 // Sweep frequency for expired sessions. Fast enough that crashes don't leak
 // sessions for long, slow enough that it's negligible overhead.
@@ -108,11 +108,11 @@ export class MCPServerHost {
   }
 
   /**
-   * URL Claude Code (inside the Lima VM) should use to reach this server.
+   * URL Claude Code (inside the Sulla VM) should use to reach this server.
    */
   getVmReachableUrl(): string {
     if (!this.port) throw new Error(`${ LOG } not started`);
-    return `http://${ LIMA_HOST_DNS }:${ this.port }/mcp`;
+    return `http://${ SULLA_HOST_DNS }:${ this.port }/mcp`;
   }
 
   // ── Session registry ───────────────────────────────────────────
@@ -463,7 +463,7 @@ export class MCPServerHost {
           'Call this before assuming a capability is unavailable.',
         ].join(' '),
         inputSchema: {
-          category: z.string().optional().describe('Tool category to list (e.g. docker, github, slack, redis, pg, calendar, kubectl, lima, vault, extensions, rdctl, meta, agents, project, github, memory, observation).'),
+          category: z.string().optional().describe('Tool category to list (e.g. docker, github, slack, redis, pg, calendar, kubectl, vault, extensions, meta, agents, project, github, memory, observation).'),
           query:    z.string().optional().describe('Keyword to search tool names and descriptions across all categories.'),
         },
       },
@@ -523,7 +523,7 @@ export class MCPServerHost {
       );
     }
 
-    // Scheduled providers run inside Lima and cannot launch host-app-specific
+    // Scheduled providers run inside the Sulla VM and cannot launch host-app-specific
     // controller binaries. Capability-enabled graphs receive this narrow
     // delegation to Sulla's real in-app WebContents browser. Ordinary chat,
     // API, Slack, and explicitly headless graphs do not see the tool at all.

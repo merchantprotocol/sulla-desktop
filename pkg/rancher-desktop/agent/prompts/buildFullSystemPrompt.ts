@@ -8,7 +8,7 @@
 /**
  * buildFullSystemPrompt — Assembles the full Sulla system prompt outside of a
  * graph node, for callers that talk to an LLM directly (e.g. ClaudeCodeService,
- * which spawns `claude -p` inside the Lima VM and needs every non-node LLM call
+ * which spawns `claude -p` inside the Sulla VM and needs every non-node LLM call
  * to still carry the Sulla runtime context).
  *
  * Mirrors the BaseNode.buildSystemPrompt flow but doesn't require a state or

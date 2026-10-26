@@ -14,9 +14,9 @@ import express from 'express';
 import _ from 'lodash';
 
 import { State } from '@pkg/backend/backend';
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import type { Settings } from '@pkg/config/settings';
 import type { TransientSettings } from '@pkg/config/transientSettings';
-import type { DiagnosticsResultCollection } from '@pkg/main/diagnostics/diagnostics';
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
 import mainEvents from '@pkg/main/mainEvents';
 import * as serverHelper from '@pkg/main/serverHelper';
@@ -76,15 +76,11 @@ export class HttpCommandServer {
     {
       get: {
         '/v1/about':                 [1, this.about],
-        '/v1/diagnostic_categories': [0, this.diagnosticCategories],
-        '/v1/diagnostic_ids':        [0, this.diagnosticIDsForCategory],
-        '/v1/diagnostic_checks':     [0, this.diagnosticChecks],
         '/v1/settings':              [0, this.listSettings],
         '/v1/settings/locked':       [0, this.listLockedSettings],
         '/v1/transient_settings':    [0, this.listTransientSettings],
         '/v1/backend_state':         [1, this.getBackendState],
       },
-      post: { '/v1/diagnostic_checks': [0, this.diagnosticRunChecks] },
       put:  {
         '/v1/factory_reset':      [0, this.factoryReset],
         '/v1/k8s_reset':          [0, this.k8sReset],
@@ -257,69 +253,6 @@ export class HttpCommandServer {
 
     sullaLog({ topic: 'http-server', level: 'error', message: `500 error handling ${ request.method } ${ request.path }`, error: err, data: { query: request.query } });
     response.type('txt').sendStatus(500);
-  }
-
-  protected diagnosticCategories(request: express.Request, response: express.Response, context: commandContext): Promise<void> {
-    const categories = this.commandWorker.getDiagnosticCategories(context);
-
-    if (categories) {
-      console.debug('diagnosticCategories: succeeded 200');
-      response.type('json').status(200)
-        .send(jsonStringifyWithWhiteSpace(categories));
-    } else {
-      console.debug('diagnosticCategories: failed 404');
-      response.type('text').status(404)
-        .send('No diagnostic categories found');
-    }
-
-    return Promise.resolve();
-  }
-
-  protected diagnosticIDsForCategory(request: express.Request, response: express.Response, context: commandContext): Promise<void> {
-    const url = new URL(`http://${ request.url }`);
-    const searchParams = url.searchParams;
-    const category = searchParams.get('category');
-
-    if (!category) {
-      console.debug('diagnostic_ids: failed 400');
-      response.type('txt').status(400)
-        .send('diagnostic_ids: no category specified');
-
-      return Promise.resolve();
-    }
-    const checkIDs = this.commandWorker.getDiagnosticIdsByCategory(category, context);
-
-    if (checkIDs) {
-      console.debug('diagnostic_ids: succeeded 200');
-      response.type('json').status(200)
-        .send(jsonStringifyWithWhiteSpace(checkIDs));
-    } else {
-      console.debug('diagnostic_ids: failed 404');
-      response.type('txt').status(404)
-        .send(`No diagnostic checks found in category ${ category }`);
-    }
-
-    return Promise.resolve();
-  }
-
-  protected async diagnosticChecks(request: express.Request, response: express.Response, context: commandContext): Promise<void> {
-    const url = new URL(`http://localhost/${ request.url }`);
-    const searchParams = url.searchParams;
-    const category = searchParams.get('category');
-    const id = searchParams.get('id');
-    const checks = await this.commandWorker.getDiagnosticChecks(category, id, context);
-
-    console.debug('diagnostic_checks: succeeded 200');
-    response.type('json').status(200)
-      .send(jsonStringifyWithWhiteSpace(checks));
-  }
-
-  protected async diagnosticRunChecks(request: express.Request, response: express.Response, context: commandContext): Promise<void> {
-    const results = await this.commandWorker.runDiagnosticChecks(context);
-
-    console.debug('diagnostic_run: succeeded 200');
-    response.status(200).type('json')
-      .send(jsonStringifyWithWhiteSpace(results));
   }
 
   protected invalidAPIVersionCall(neededVersion: number, request: express.Request, response: express.Response): Promise<void> {
@@ -537,6 +470,9 @@ export class HttpCommandServer {
       }
     } else {
       error = payloadError;
+    }
+    if (!error && isSullaRuntimeActive()) {
+      error = 'Factory reset is not supported on the Sulla runtime yet';
     }
     if (!error) {
       console.debug('factory reset: succeeded 202');
@@ -970,10 +906,6 @@ export interface CommandWorkerInterface {
   updateSettings:             (context: commandContext, newSettings: RecursivePartial<Settings>) => Promise<[string, string]>;
   proposeSettings:            (context: commandContext, newSettings: RecursivePartial<Settings>) => Promise<[string, string]>;
   requestShutdown:            (context: commandContext) => void;
-  getDiagnosticCategories:    (context: commandContext) => string[] | undefined;
-  getDiagnosticIdsByCategory: (category: string, context: commandContext) => string[] | undefined;
-  getDiagnosticChecks:        (category: string | null, checkID: string | null, context: commandContext) => Promise<DiagnosticsResultCollection>;
-  runDiagnosticChecks:        (context: commandContext) => Promise<DiagnosticsResultCollection>;
   getTransientSettings:       (context: commandContext) => string;
   updateTransientSettings:    (context: commandContext, newTransientSettings: RecursivePartial<TransientSettings>) => Promise<[string, string]>;
   /** Get the state of the backend */

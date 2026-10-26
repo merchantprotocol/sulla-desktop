@@ -125,6 +125,7 @@ import { up as up_0128, down as down_0128 } from './0128_conversation_message_ki
 import { up as up_0129, down as down_0129 } from './0129_drop_system_area_native_sources';
 import { up as up_0130, down as down_0130 } from './0130_use_case_file_index';
 import { up as up_0131, down as down_0131 } from './0131_enable_pg_stat_statements';
+import { up as up_0132, down as down_0132 } from './0132_stage_worker_agents_in_containers';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -244,4 +245,5 @@ export const migrationsRegistry = [
   { name: '0129_drop_system_area_native_sources', up: up_0129, down: down_0129 },
   { name: '0130_use_case_file_index', up: up_0130, down: down_0130 },
   { name: '0131_enable_pg_stat_statements', up: up_0131, down: down_0131 },
+  { name: '0132_stage_worker_agents_in_containers', up: up_0132, down: down_0132 },
 ] as const;

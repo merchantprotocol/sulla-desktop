@@ -79,7 +79,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'exechost',
-    description: 'LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Lima VM. Default to regular exec (VM sandbox) for everyday work; home files are already mounted into the VM. Use exechost ONLY when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Uses the user\'s login shell (/bin/zsh or /bin/bash) so PATH includes Homebrew/nvm/rbenv. Silent output, no Terminal window. Requires "Allow access to the host machine" in Preferences → Application → Administrative Access. Prefer this over AppleScript→Terminal when host execution is truly required.',
+    description: 'LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Sulla VM. Default to regular exec (VM sandbox) for everyday work; home files are already mounted into the VM. Use exechost ONLY when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Uses the user\'s login shell (/bin/zsh or /bin/bash) so PATH includes Homebrew/nvm/rbenv. Silent output, no Terminal window. Requires "Allow access to the host machine" in Preferences → Application → Administrative Access. Prefer this over AppleScript→Terminal when host execution is truly required.',
     category:    'meta',
     schemaDef:   {
       command: { type: 'string', optional: true, description: 'The exact shell command to run on the host' },
@@ -316,7 +316,7 @@ export const metaToolManifests: ToolManifest[] = [
     description: 'Discover available sulla CLI tools by category or keyword. Returns ready-to-run `sulla <category>/<tool>` commands with descriptions and parameter JSON. IMPORTANT: the commands it returns are NOT directly callable tools — you invoke each one by passing the full command string to the `exec` tool (e.g. exec({command: "sulla docker/ps \'{}\'"})). NEVER call execute_workflow for any command listed here — execute_workflow is only for named Sulla workflows. Call this before attempting any sulla CLI invocation you are unsure about.',
     category:    'meta',
     schemaDef:   {
-      category: { type: 'string', optional: true, description: 'Tool category to list (e.g. docker, github, slack, redis, pg, playwright, calendar, kubectl, lima, chrome, vault, extensions, rdctl, meta, agents, skills, bridge).' },
+      category: { type: 'string', optional: true, description: 'Tool category to list (e.g. docker, github, slack, redis, pg, playwright, calendar, kubectl, chrome, vault, extensions, meta, agents, skills, bridge).' },
       query:    { type: 'string', optional: true, description: 'Keyword to search tool names and descriptions across all categories.' },
     },
     operationTypes: ['read'],

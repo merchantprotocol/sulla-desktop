@@ -34,6 +34,12 @@ spec:
             - {name: SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/accounts-vault-token}
             - {name: SULLA_VAULT_ACCOUNTS_AUDIENCE, value: sulla-vault}
             - {name: SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES, value: member}
+            - {name: SULLA_PUBLIC_URL, valueFrom: {secretKeyRef: {name: sulla-server, key: public-url}}}
+            - {name: SULLA_VAULT_BROWSER_HOST, valueFrom: {secretKeyRef: {name: sulla-server, key: vault-host}}}
+            - {name: SULLA_VAULT_BROWSER_ORIGIN, valueFrom: {secretKeyRef: {name: sulla-server, key: vault-url}}}
+            - {name: SULLA_VAULT_PROVIDERS_RECIPIENT_PUBLIC_KEY, valueFrom: {secretKeyRef: {name: sulla-server, key: agents-broker-public-key}}}
+            - {name: SULLA_VAULT_PROVIDERS_SERVICE_ID, value: sulla-agents}
+            - {name: SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE, value: /run/sulla-secrets/vault-providers-token}
           volumeMounts: [{name: secrets, mountPath: /run/sulla-secrets, readOnly: true}]
           readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
       volumes: [{name: secrets, secret: {secretName: sulla-server, defaultMode: 0600}}]

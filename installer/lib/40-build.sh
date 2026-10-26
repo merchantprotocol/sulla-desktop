@@ -149,49 +149,6 @@ build::dump_build_report() {
     printf "  ${CROSS}  dist/app/index.html ${RED}MISSING${RESET}\n"
   fi
 
-  # rdctl platform binary
-  local rdctl_bin=""
-  case "$OS" in
-    macos)   rdctl_bin="resources/darwin/bin/rdctl" ;;
-    linux)   rdctl_bin="resources/linux/bin/rdctl" ;;
-    windows) rdctl_bin="resources/win32/bin/rdctl.exe" ;;
-  esac
-  if [ -n "$rdctl_bin" ]; then
-    if [ ! -f "$rdctl_bin" ]; then
-      log BUILD "  report: $rdctl_bin MISSING"
-      printf "  ${CROSS}  %s ${RED}MISSING${RESET}\n" "$rdctl_bin"
-    elif "$rdctl_bin" version >/dev/null 2>&1 || \
-         "$rdctl_bin" --version >/dev/null 2>&1 || \
-         "$rdctl_bin" paths >/dev/null 2>&1; then
-      log BUILD "  report: $rdctl_bin OK (executable)"
-      printf "  ${CHECK}  %s\n" "$rdctl_bin"
-    else
-      log BUILD "  report: $rdctl_bin EXISTS BUT FAILED TO EXECUTE — arch: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')"
-      printf "  ${CROSS}  %s ${RED}EXISTS BUT FAILED TO EXECUTE${RESET}\n" "$rdctl_bin"
-      printf "    ${DIM}arch: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')${RESET}\n"
-    fi
-  fi
-
-  # Lima (macOS/Linux only)
-  local limactl_bin=""
-  case "$OS" in
-    macos)   limactl_bin="resources/darwin/lima/bin/limactl" ;;
-    linux)   limactl_bin="resources/linux/lima/bin/limactl" ;;
-  esac
-  if [ -n "$limactl_bin" ]; then
-    if [ -x "$limactl_bin" ]; then
-      log BUILD "  report: $limactl_bin OK (executable)"
-      printf "  ${CHECK}  %s\n" "$limactl_bin"
-    elif [ -f "$limactl_bin" ]; then
-      log BUILD "  report: $limactl_bin EXISTS BUT NOT EXECUTABLE"
-      printf "  ${CROSS}  %s ${RED}EXISTS BUT NOT EXECUTABLE${RESET}\n" "$limactl_bin"
-    else
-      log BUILD "  report: $limactl_bin MISSING"
-      printf "  ${CROSS}  %s ${RED}MISSING${RESET}\n" "$limactl_bin"
-      printf "    ${DIM}Lima was not downloaded during postinstall — the VM cannot start without it.${RESET}\n"
-    fi
-  fi
-
   # Show dist/app contents
   echo ""
   printf "  ${DIM}Contents of dist/app/:${RESET}\n"
@@ -213,7 +170,6 @@ build::dump_build_report() {
 }
 
 # ---------------------------------------------------------------------------
-# yarn install — install packages + postinstall (downloads Lima, builds rdctl)
 # ---------------------------------------------------------------------------
 build::yarn_install() {
   log BUILD "Starting yarn install phase"
@@ -272,32 +228,11 @@ build::yarn_install() {
     echo "yarn install exited non-zero, checking artifacts..." >> "$INSTALL_LOG"
   fi
 
-  # Log postinstall artifacts — this catches silent Lima/rdctl download failures early
+  # Log postinstall artifacts
   log BUILD "=== Post-yarn-install artifact inventory ==="
   log BUILD "  node_modules/.yarn-integrity: $([ -f node_modules/.yarn-integrity ] && echo 'present' || echo 'MISSING')"
   log BUILD "  node_modules/electron/: $([ -d node_modules/electron ] && echo 'present' || echo 'MISSING')"
 
-  # Log platform binary state immediately after postinstall
-  local _rdctl_path="" _lima_path=""
-  case "$OS" in
-    macos)   _rdctl_path="resources/darwin/bin/rdctl"; _lima_path="resources/darwin/lima/bin/limactl" ;;
-    linux)   _rdctl_path="resources/linux/bin/rdctl"; _lima_path="resources/linux/lima/bin/limactl" ;;
-    windows) _rdctl_path="resources/win32/bin/rdctl.exe" ;;
-  esac
-  if [ -n "$_rdctl_path" ]; then
-    if [ -f "$_rdctl_path" ]; then
-      log BUILD "  rdctl ($OS): present ($(wc -c < "$_rdctl_path" 2>/dev/null || echo '?') bytes, $(file "$_rdctl_path" 2>/dev/null || echo 'unknown type'))"
-    else
-      log BUILD "  rdctl ($OS): MISSING at $_rdctl_path — postinstall may have failed to compile it"
-    fi
-  fi
-  if [ -n "$_lima_path" ]; then
-    if [ -f "$_lima_path" ]; then
-      log BUILD "  limactl ($OS): present ($(wc -c < "$_lima_path" 2>/dev/null || echo '?') bytes, $(file "$_lima_path" 2>/dev/null || echo 'unknown type'))"
-    else
-      log BUILD "  limactl ($OS): MISSING at $_lima_path — postinstall may have failed to download Lima"
-    fi
-  fi
   log BUILD "=== End artifact inventory ==="
 
   # Verify by artifacts, not exit code
@@ -384,15 +319,15 @@ build::yarn_build() {
 }
 
 # ---------------------------------------------------------------------------
-# Verify platform binaries (rdctl, limactl) after build
+# Verify platform binaries after build
 # ---------------------------------------------------------------------------
 build::verify_platform_binaries() {
-  log BUILD "Verifying platform binaries (rdctl, limactl)"
+  log BUILD "Verifying platform binaries"
   start_spinner "Verifying platform binaries..."
   dispatch verify_platform_binaries
   stop_spinner
   log BUILD "Platform binary verification complete"
-  step_ok "Platform binaries verified (rdctl, limactl)"
+  step_ok "Platform binaries verified"
 }
 
 # ---------------------------------------------------------------------------

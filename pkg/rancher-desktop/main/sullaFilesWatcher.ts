@@ -18,7 +18,7 @@ import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
-import { FINDER_BADGE_ATTRIBUTE, FinderBadgeSync } from './sullaFinderBadges';
+import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync } from './sullaFinderBadges';
 import { SullaFilesSystemIngestJob, type SystemIngestRequest, type SystemIngestStatus } from './sullaFilesSystemIngest';
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
@@ -151,6 +151,7 @@ class SullaFilesWatcher {
   private brokeredRescanQueued = new Set<string>();
   private rescanTimer?: NodeJS.Timeout;
   private safetyTimer?: NodeJS.Timeout;
+  private badgeTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
   private docsWatcher?: fs.FSWatcher;
@@ -394,9 +395,10 @@ class SullaFilesWatcher {
     const storedRoots=await traceAsync('files registry.stored', () => registry.stored());
     await this.configureFinderRoots(storedRoots.map(root=>root.path));
     for (const root of storedRoots) {
-      this.watchRoot(root.id,root.path);
-      this.enrollRoot(root).catch(error=>console.warn(`[SullaFiles] tracked root ${root.id} enrollment failed:`,error));
+      this.watchRoot(root.id, root.path);
     }
+    // Enrollment talks to Files and must not race the locked boot state.
+    // unlockService() enrolls every stored root after secure bootstrap succeeds.
     try {
       const docsRoot = resolveSullaDocsDir();
       this.docsWatcher = fs.watch(docsRoot, { recursive: process.platform !== 'linux', persistent: false }, () => {
@@ -406,6 +408,7 @@ class SullaFilesWatcher {
       console.warn('[SullaFiles] bundled docs watcher unavailable; periodic native scans remain active:', error);
     }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
+    this.badgeTimer = setInterval(() => this.refreshFinderBadges().catch(error => console.debug('[SullaFiles] Finder badge refresh failed:', error)), FINDER_BADGE_MIN_INTERVAL_MS + 5_000); this.badgeTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();
     const pauseUntil = Number(await SullaSettingsModel.get('sullaFilesPauseUntil', 0));
     if (pauseUntil > Date.now()) await this.pauseFor(pauseUntil - Date.now());
@@ -487,7 +490,7 @@ class SullaFilesWatcher {
     }catch(error){const message=error instanceof Error?error.message:String(error);await state('error',0,message).catch(()=>undefined);throw error}
   }
 
-  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.badgeTimer) clearInterval(this.badgeTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void {
     if (this.rescanTimer) clearTimeout(this.rescanTimer);
     this.rescanTimer = setTimeout(() => {
@@ -625,7 +628,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();
@@ -656,7 +662,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal: init.signal ?? AbortSignal.timeout(30_000) });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();
@@ -676,7 +685,10 @@ class SullaFilesWatcher {
       return desktopFilesFetch(url, { ...init, headers, redirect: 'error' as const, signal });
     };
     const response = await send();
-    if (!await this.isLockedResponse(response)) return response;
+    const locked = await this.isLockedResponse(response);
+    if (response.status !== 401 && !locked) return response;
+    // Files may finish secure bootstrap before its Desktop principal cache is
+    // refreshed. Re-resolve authority after the unlock signal and retry once.
     await response.body?.cancel();
     await this.ensureUnlocked();
     principalId = await this.localPrincipalId();
@@ -705,7 +717,14 @@ class SullaFilesWatcher {
       let badges=this.finderBadges.get(root.id);
       if(!badges){badges=new FinderBadgeSync(root.path,async(target,state)=>{const{setAttribute}=await import('@napi-rs/xattr');await setAttribute(target,FINDER_BADGE_ATTRIBUTE,state)});this.finderBadges.set(root.id,badges)}
       if(!badges.begin())continue;
-      try{const response=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);if(response.ok)await badges.apply(await response.json() as {path:string;sync_state?:string}[])}finally{badges.end()}
+      try{
+        const response=await this.requestFiles(`/v1/files?collectionId=${encodeURIComponent(root.collectionId)}&path=&trash=false`);if(!response.ok)continue;
+        const files=await response.json() as {path:string;sync_state?:string}[];
+        // Backed up to Cloud / indexed by Sulla / still processing; local sync problems still win.
+        const badgeResponse=await this.requestFiles(`/v1/desktop/cloud-sync/finder-badges?collectionId=${encodeURIComponent(root.collectionId)}`).catch(()=>null);
+        const processed=new Map((badgeResponse?.ok?await badgeResponse.json() as {path:string;state:string}[]:[]).map(item=>[item.path,item.state]));
+        await badges.apply(files.map(file=>({path:file.path,sync_state:['conflict','syncing','online-only'].includes(file.sync_state??'')?file.sync_state:processed.get(file.path)??file.sync_state})));
+      }finally{badges.end()}
     }
   }
 

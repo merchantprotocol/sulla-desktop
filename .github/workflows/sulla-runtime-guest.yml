@@ -1,0 +1,32 @@
+name: Sulla runtime guest
+
+# Pushes to main are built, bundled and published by sulla-runtime.yml, which
+# calls this workflow; this one runs on its own only by hand.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, amd64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.arch }} guest
+        env:
+          SOURCE_DATE_EPOCH: '0'
+        run: assets/runtime/guest/build.sh "${{ matrix.arch }}" "${{ runner.temp }}/guest-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sulla-runtime-guest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/guest-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14

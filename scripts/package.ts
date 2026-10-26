@@ -20,7 +20,7 @@ import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
 import { findIdentity } from 'app-builder-lib/out/codeSign/macCodeSign';
 import { executeAppBuilder, log } from 'builder-util';
 import {
-  AfterPackContext, Arch, build, CliOptions, Configuration, LinuxTargetSpecificOptions,
+  AfterPackContext, Arch, build, CliOptions, Configuration,
 } from 'electron-builder';
 import _ from 'lodash';
 import plist from 'plist';
@@ -133,31 +133,6 @@ class Builder {
   }
 
   /**
-   * Manually write out the Linux .desktop application shortcut definition; this
-   * is needed as by default this only happens for snap/fpm/etc., but not zip
-   * files.
-   */
-  protected async writeLinuxDesktopFile(context: AfterPackContext) {
-    const { LinuxPackager } = await import('app-builder-lib/out/linuxPackager');
-    const { LinuxTargetHelper } = await import('app-builder-lib/out/targets/LinuxTargetHelper');
-    const config = context.packager.config.linux;
-
-    if (!(context.packager instanceof LinuxPackager) || !config) {
-      return;
-    }
-
-    const options: LinuxTargetSpecificOptions = {
-      ...context.packager.platformSpecificBuildOptions,
-      compression: undefined,
-    };
-    const helper = new LinuxTargetHelper(context.packager);
-    const leaf = `${ context.packager.executableName }.desktop`;
-    const destination = path.join(context.appOutDir, `resources/resources/linux/${ leaf }`);
-
-    await helper.writeDesktopEntry(options, context.packager.executableName, destination);
-  }
-
-  /**
    * Edit the application's `Info.plist` file to remove the UsageDescription
    * keys that Electron adds by default, while preserving any that were
    * explicitly declared in extendInfo.
@@ -206,8 +181,51 @@ class Builder {
     // succeed without it we'll reinstate it as a separate step that
     // runs before codesign, not inside afterPack.
     // await this.flipFuses(context);
-    await this.writeLinuxDesktopFile(context);
     await this.buildMacNativeExtensions(context);
+    await this.embedSullaRuntime(context);
+  }
+
+  /**
+   * Places the native Sulla runtime (the macOS VM) in
+   * resources/darwin/sulla-runtime/ and signs the host binary with the
+   * Virtualization entitlement it needs. The files come from
+   * SULLA_RUNTIME_ARTIFACTS_DIR (CI artifacts) or from resources/ (built by
+   * scripts/build-sulla-runtime.sh). electron-builder skips the binary (via
+   * signIgnore) so this signature survives; the app seal covers it. A Mac
+   * build without the runtime fails: Desktop cannot boot without it.
+   */
+  protected async embedSullaRuntime(context:AfterPackContext):Promise<void> {
+    const { MacPackager } = await import('app-builder-lib/out/macPackager');
+
+    if (context.electronPlatformName !== 'darwin' || !(context.packager instanceof MacPackager)) return;
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const target = path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin', 'sulla-runtime');
+    const source = process.env.SULLA_RUNTIME_ARTIFACTS_DIR?.trim();
+
+    if (source) {
+      await fs.promises.rm(target, { recursive: true, force: true });
+      await fs.promises.cp(source, target, { recursive: true });
+    }
+    const binary = path.join(target, 'sulla-runtime');
+    const required = [binary, path.join(target, 'guest', 'vmlinuz'), path.join(target, 'guest', 'initramfs.img')];
+    const missing: string[] = [];
+
+    for (const file of required) {
+      if (!await fs.promises.access(file).then(() => true, () => false)) missing.push(path.relative(appPath, file));
+    }
+    if (missing.length) {
+      throw new Error(`Sulla runtime not embedded (missing ${ missing.join(', ') }). Run scripts/fetch-sulla-runtime.sh (the published build), scripts/build-sulla-runtime.sh, or set SULLA_RUNTIME_ARTIFACTS_DIR.`);
+    }
+    await fs.promises.chmod(binary, 0o755);
+    const { keychainFile } = await context.packager.codeSigningInfo.value;
+    const identity = await findIdentity('Developer ID Application', context.packager.platformSpecificBuildOptions.identity, keychainFile);
+    const entitlements = path.join(process.cwd(), 'src', 'runtime-host', 'macos', 'sulla-runtime.entitlements');
+    const args = identity
+      ? ['--force', '--options', 'runtime', '--timestamp', '--sign', identity.hash!, ...(keychainFile ? ['--keychain', keychainFile] : [])]
+      : ['--force', '--sign', '-'];
+
+    if (!identity) log.warn('No Developer ID identity; the Sulla runtime is ad-hoc signed and only runs on this Mac.');
+    await spawnFile('codesign', [...args, '--entitlements', entitlements, binary], { stdio: 'inherit' });
   }
 
   /**
@@ -260,7 +278,7 @@ class Builder {
   protected async configureMacProvisioning(config:ReadWrite<Configuration>):Promise<void> {
     const mac = (config.mac ??= {}) as ReadWrite<NonNullable<Configuration['mac']>>;
     const ignored = mac.signIgnore ? [mac.signIgnore].flat() : [];
-    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$'];
+    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$', '/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime$'];
     const profile = process.env.SULLA_MAC_PROVISIONING_PROFILE_APP?.trim();
     if (!profile) return;
     const { stdout } = await spawnFile('/usr/bin/security', ['cms', '-D', '-i', profile], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -278,6 +296,41 @@ class Builder {
     log.info({ applicationIdentifier }, 'Embedding the Developer ID provisioning profile in the app');
   }
 
+  protected async prepareSullaConsoleRuntime(): Promise<string> {
+    const root = process.cwd();
+    const runtimeRoot = path.join(buildUtils.distDir, 'sulla-console-runtime');
+    const serviceRoot = path.join(root, 'services', 'sulla-console');
+    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+    await fs.promises.rm(runtimeRoot, { recursive: true, force: true });
+    await fs.promises.mkdir(runtimeRoot, { recursive: true });
+    await fs.promises.copyFile(path.join(serviceRoot, 'package.json'), path.join(runtimeRoot, 'package.json'));
+    await fs.promises.copyFile(
+      path.join(serviceRoot, 'package-lock.json'),
+      path.join(runtimeRoot, 'package-lock.json'),
+    );
+    await fs.promises.cp(path.join(root, 'resources', 'sulla-console', 'public'), path.join(runtimeRoot, 'public'), {
+      recursive: true,
+    });
+    await spawnFile(process.execPath, [
+      path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
+      '-p',
+      path.join(serviceRoot, 'tsconfig.json'),
+      '--outDir',
+      path.join(runtimeRoot, 'dist'),
+    ], { stdio: 'inherit' });
+    await fs.promises.cp(
+      path.join(serviceRoot, 'src', 'migrations'),
+      path.join(runtimeRoot, 'dist', 'migrations'),
+      { recursive: true },
+    );
+    await spawnFile(npm, ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
+      cwd: runtimeRoot,
+      stdio: 'inherit',
+    });
+    return runtimeRoot;
+  }
+
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
 
@@ -288,7 +341,14 @@ class Builder {
     // before packaging (tag pushes → clean semver; non-tag builds →
     // `<last-tag>-dev.<short-sha>`). Local dev builds use whatever is
     // committed in package.json.
+    if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
+      // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
+      await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [buildUtils.arch === 'x64' ? 'x86_64' : 'arm64'], { stdio: 'inherit' });
+    }
+    const consoleRuntime = await this.prepareSullaConsoleRuntime();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
+    const extraResources = config.extraResources ??= [];
+    extraResources.push({ from: consoleRuntime, to: 'sulla-console' });
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;
@@ -296,7 +356,6 @@ class Builder {
     const electronPlatform = ({
       darwin: 'mac',
       win32:  'win',
-      linux:  'linux',
     } as const)[process.platform as string];
 
     if (!electronPlatform) {
@@ -304,9 +363,6 @@ class Builder {
     }
 
     switch (electronPlatform) {
-    case 'linux':
-      await this.createLinuxResources(finalBuildVersion);
-      break;
     case 'win':
       await this.createWindowsResources(distDir);
       break;
@@ -369,20 +425,13 @@ class Builder {
     }
   }
 
-  protected async createLinuxResources(finalBuildVersion: string) {
-    const appData = 'packaging/linux/sulla-desktop.appdata.xml';
-    const release = `<release version="${ finalBuildVersion }" date="${ new Date().toISOString() }"/>`;
-
-    await this.replaceInFile(appData, /<release.*\/>/g, release, appData.replace('packaging', 'resources'));
-  }
-
   protected async createWindowsResources(workDir: string) {
     // Create stub executable with the correct icon (for the installer)
-    const imageFile = path.join(process.cwd(), 'resources', 'icons', 'logo-square-512.png');
+    const imageFile = path.join(process.cwd(), 'resources', 'icons', 'sulla-app-icon.png');
     const iconArgs = ['icon', '--format', 'ico', '--out', workDir, '--input', imageFile];
     const iconResult = await this.executeAppBuilderAsJson(iconArgs);
     const iconFile = iconResult.icons[0].file;
-    const executable = path.join(process.cwd(), 'resources', 'win32', 'bin', 'rdctl.exe');
+    const executable = path.join(process.cwd(), 'resources', 'win32', 'bin', 'wsl-helper.exe');
     const rceditArgs = [executable, '--set-icon', iconFile];
 
     await executeAppBuilder(['rcedit', '--args', JSON.stringify(rceditArgs)], undefined, undefined, 3);

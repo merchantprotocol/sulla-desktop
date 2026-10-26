@@ -117,11 +117,6 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
     const { getAgentOverrideService } = await import('../languagemodels');
     if (!await getAgentOverrideService(meta.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
   }
-  if (meta.agent?.runLocation === 'container') {
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const provider = meta.agent.provider || await SullaSettingsModel.get('primaryProvider', 'grok');
-    if (!['claude-code', 'codex'].includes(provider)) throw new Error(`Provider "${ provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
-  }
   meta.activityKeys = input.activityKeys;
   meta.delegatedJobId = input.jobId;
   await saveThreadState(state);

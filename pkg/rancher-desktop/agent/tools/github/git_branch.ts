@@ -10,7 +10,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Branch Tool - Create, switch, delete, or list branches.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitBranchWorker extends BaseTool {
   name = '';
@@ -25,7 +25,7 @@ export class GitBranchWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -55,7 +55,7 @@ export class GitBranchWorker extends BaseTool {
         return { successBoolean: false, responseString: `Unknown action '${ action }'. Use: list, create, switch, delete.` };
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git branch failed: ${ result.stderr || result.stdout }` };

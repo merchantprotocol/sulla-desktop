@@ -25,6 +25,10 @@ const console = Logging.background;
 type Role = 'user' | 'assistant';
 type Link = { id:string; remote_conversation_id:string; privacy_mode:LinkPrivacyMode; upload_cursor:number };
 type CloudResult = { id:string; clientRequestId:string; ciphertext:string; nonce:string; keyVersion:number; messageId:string; responseCiphertext:string; responseNonce:string; responseKeyVersion:number; createdAt:string; completedAt:string };
+class LinkRateLimitError extends Error {
+  constructor(readonly retryAfterMs:number) { super(`Link rate limited; retry after ${ retryAfterMs }ms`) }
+}
+
 type Dispatch = (body:Record<string, any>, reply:(frame:Record<string, unknown>)=>void, respond:(frame:Record<string, unknown>)=>void)=>Promise<void>;
 
 /** Must match the browser (www js/cloud/chat/chat.js). Binds each body to its conversation, role and message id. */
@@ -40,9 +44,12 @@ class ConversationSyncServiceImpl {
   private linked = new Set<string>();
   private dispatcher:Dispatch|null = null;
   private syncing:Promise<void>|null = null;
+  private linkRetryAt = 0;
+  private linkRetryTimer:ReturnType<typeof setTimeout>|null = null;
+  private lastLinkAt = 0;
 
   start() { if (this.timer) return; this.loadKeys(); this.timer=setInterval(()=>this.syncNow().catch(e=>console.warn('[ConversationSync] sync failed:',e)),30_000); void this.syncNow().catch(() => undefined); }
-  stop() { if(this.timer) clearInterval(this.timer); this.timer=null; }
+  stop() { if(this.timer) clearInterval(this.timer); this.timer=null; if(this.linkRetryTimer)clearTimeout(this.linkRetryTimer);this.linkRetryTimer=null; }
   setDispatcher(fn:Dispatch) { this.dispatcher=fn; }
 
   // ── Keys (OS-sealed, never uploaded) ─────────────────────────
@@ -146,7 +153,18 @@ class ConversationSyncServiceImpl {
   async link(conversationId:string,title:string,privacyMode:LinkPrivacyMode){
     if(privacyMode==='encrypted_bodies')this.ensureKey(conversationId);
     const deviceId=await getDesktopDeviceId();
+    // Keep automatic history enrollment below the Cloud rate limit. Calls are
+    // serialized by syncNow/linkConversations; this gap prevents boot bursts.
+    const spacing = Math.max(0, 250 - (Date.now() - this.lastLinkAt));
+    if(spacing)await new Promise(resolve=>setTimeout(resolve,spacing));
     const r=await cloudRequest('POST','/cloud-chat-links',{headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId,remoteConversationId:conversationId,title,privacyMode})});
+    this.lastLinkAt=Date.now();
+    if(r.status===429){
+      const raw=r.headers.get('retry-after');
+      const seconds=raw&&/^\d+(?:\.\d+)?$/.test(raw)?Number(raw)*1000:NaN;
+      const date=raw&&!Number.isFinite(seconds)?Date.parse(raw)-Date.now():NaN;
+      throw new LinkRateLimitError(Math.max(1_000,Math.min(5*60_000,Number.isFinite(seconds)?seconds:Number.isFinite(date)?date:30_000)));
+    }
     if(!r.ok)throw new Error(`Link failed (${r.status})`);
     if(!this.linked.has(conversationId)){this.linked.add(conversationId);try{this.saveKeys()}catch{/* OS storage unavailable: encrypted links already failed above */}}
     void this.syncNow().catch(() => undefined);
@@ -159,12 +177,35 @@ class ConversationSyncServiceImpl {
   }
   /** Explicit "Link all conversations": links every chat, including previously unlinked ones. */
   async linkAll() { await this.linkConversations(false); }
-  private async linkConversations(onlyNew:boolean,limit=onlyNew?50:2000) {
+  private async linkConversations(onlyNew:boolean,limit=onlyNew?50:2000):Promise<boolean> {
     const conversations=await ConversationHistoryModel.getRecent(limit,'chat');
+    let complete=true;
     for(const conversation of conversations) {
       if(onlyNew&&this.linked.has(conversation.id)) continue;
-      try { await this.link(conversation.id,conversation.title||'New conversation','encrypted_bodies'); } catch(err) { console.warn(`[ConversationSync] could not link ${conversation.id}:`,err); }
+      if(Date.now()<this.linkRetryAt)return false;
+      try {
+        await this.link(conversation.id,conversation.title||'New conversation','encrypted_bodies');
+      } catch(err) {
+        console.warn(`[ConversationSync] could not link ${conversation.id}:`,err);
+        complete=false;
+        if(err instanceof LinkRateLimitError){
+          this.linkRetryAt=Date.now()+err.retryAfterMs;
+          if(this.linkRetryTimer)clearTimeout(this.linkRetryTimer);
+          this.linkRetryTimer=setTimeout(()=>{this.linkRetryTimer=null;void this.syncNow().catch(e=>console.warn('[ConversationSync] rate-limit retry failed:',e))},err.retryAfterMs);
+          this.linkRetryTimer.unref();
+          return false;
+        }
+      }
     }
+    return complete;
+  }
+  /** Profile › Conversations off with "delete the Cloud copy": unlink every chat and drop its Cloud copy. */
+  async deleteAllCloudCopies(){
+    const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)throw new Error(`Listing linked chats failed (${r.status})`);
+    const payload=await r.json() as any;
+    for(const link of (payload.data?.conversations??[]) as Link[]){await this.unlink(link.id,true);this.linked.delete(link.remote_conversation_id)}
+    this.historyLinked=false;
+    try{this.saveKeys()}catch{/* OS storage unavailable; links are already gone in Cloud */}
   }
   async unlink(linkId:string,deleteCloudCopy=false){const r=await cloudRequest('DELETE',`/cloud-chat-links/${encodeURIComponent(linkId)}?deleteCloudCopy=${deleteCloudCopy}`);if(!r.ok)throw new Error(`Unlink failed (${r.status})`)}
 
@@ -178,7 +219,7 @@ class ConversationSyncServiceImpl {
     { const prefs=await getCloudPreferences(); if(!prefs.enabled||!prefs.conversations)return; }
     // Profile › Conversations links every chat: the first pass after start
     // covers the whole history, later passes only pick up new chats.
-    await this.linkConversations(true,this.historyLinked?50:2000);this.historyLinked=true;
+    this.historyLinked=await this.linkConversations(true,this.historyLinked?50:2000);
     const r=await cloudRequest('GET','/cloud-chat-links');if(!r.ok)return;
     const payload=await r.json() as any;
     for(const link of (payload.data?.conversations??[]) as Link[]){
