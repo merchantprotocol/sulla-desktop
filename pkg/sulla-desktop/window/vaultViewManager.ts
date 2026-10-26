@@ -15,6 +15,9 @@ import { getWindow } from '@pkg/window';
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
 const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
+// The guided connect screen navigates here after saving a new integration account.
+const DESKTOP_CONNECTED_PATH = '/vault/desktop/connected';
+const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 export interface VaultViewReservation {
   ownerId:    string;
@@ -160,6 +163,13 @@ export class VaultViewManager {
         if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
           event.preventDefault();
           getWindow('main-agent')?.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
+        } else if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_CONNECTED_PATH) {
+          event.preventDefault();
+          const integrationId = target.searchParams.get('integration') ?? '';
+          const accountId = target.searchParams.get('account') ?? '';
+          if (SAFE_ID.test(integrationId) && SAFE_ID.test(accountId)) {
+            getWindow('main-agent')?.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
+          }
         } else if (target.origin !== VAULT_ORIGIN) {
           event.preventDefault();
         }
