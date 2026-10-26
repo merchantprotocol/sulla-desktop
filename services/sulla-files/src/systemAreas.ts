@@ -24,7 +24,7 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
     for (const area of AREAS) {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`system-area:${ area.key }`]);
       let collection = area.key === 'home'
-        ? (await client.query("SELECT * FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1", [config.userId])).rows[0]
+        ? (await client.query("SELECT * FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [config.userId])).rows[0]
         : (await client.query('SELECT * FROM collections WHERE system_area=$1', [area.key])).rows[0];
       if (!collection) {
         const id = randomUUID();
