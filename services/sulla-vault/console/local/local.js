@@ -25,6 +25,16 @@
   const integrationHint = initialUrl.searchParams.get('integration');
   const accountHint = initialUrl.searchParams.get('account');
   const filesRestore = initialUrl.searchParams.get('restoreFiles') === '1';
+  // Desktop passes the integration's public form (field labels, hints, setup notes) in the
+  // fragment so a new connection gets a guided screen. It holds no secrets.
+  const connectSpec = (() => {
+    try {
+      const raw = new URLSearchParams(initialUrl.hash.slice(1)).get('connect');
+      if (!raw) return null;
+      const spec = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(raw.replaceAll('-', '+').replaceAll('_', '/')), c => c.charCodeAt(0))));
+      return spec && typeof spec === 'object' && Array.isArray(spec.fields) ? spec : null;
+    } catch { return null; }
+  })();
   const byId = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
   const defaultPolicy = () => ({ mode: 'only_me', level: 'metadata', agents: [], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false });
@@ -347,7 +357,7 @@
     const enabled = byId('agent-enabled').checked; byId('policy-mode').value = enabled ? 'agents' : 'only_me';
     byId('item-form').classList.toggle('policy-disabled', !enabled);
   };
-  const showBrowser = () => { auditGeneration += 1; byId('editor-view').hidden = true; byId('audit-view').hidden = true; byId('browser-view').hidden = false; byId('nav-audit').classList.remove('on'); document.querySelectorAll('[data-category]').forEach(button => button.classList.toggle('on', button.dataset.category === category)); };
+  const showBrowser = () => { auditGeneration += 1; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('audit-view').hidden = true; byId('browser-view').hidden = false; byId('nav-audit').classList.remove('on'); document.querySelectorAll('[data-category]').forEach(button => button.classList.toggle('on', button.dataset.category === category)); };
   const renderProxyRules = rules => {
     const container = byId('proxy-rules'); container.replaceChildren();
     for (const rule of rules || []) {
@@ -386,7 +396,7 @@
     const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration;
     syncProxyFields();
     byId('delete-item').hidden = !detail?.id; byId('editor-title').textContent = detail?.id ? `Edit ${detail.name}` : 'New vault item'; byId('editor-crumb').textContent = detail?.name || 'New item'; byId('editor-tile').textContent = initials(detail) || '＋';
-    byId('browser-view').hidden = true; byId('editor-view').hidden = false; byId('name').focus();
+    byId('browser-view').hidden = true; byId('connect-view').hidden = true; byId('editor-view').hidden = false; byId('name').focus();
   };
   const itemPayload = () => {
     const type = byId('item-type').value; const origin = byId('website').value.trim(); const expiry = byId('policy-expiry').value;
@@ -411,7 +421,54 @@
   const openIntegrationHint = async() => {
     if (!integrationHint) return;
     if (accountHint) for (const item of items.slice(0, 200)) { const revealed = await api(`/v1/human/items/${encodeURIComponent(item.id)}/reveal`, { method: 'POST', body: '{}' }); if (revealed.item?.integration?.integrationId === integrationHint && revealed.item?.integration?.accountId === accountHint) { await openEditor({ ...revealed.item, id: revealed.id, revision: revealed.revision }); return; } }
+    if (!accountHint && connectSpec) { openConnect(); return; }
     await openEditor({ type: 'apiKey', name: integrationHint, integration: { integrationId: integrationHint, accountId: accountHint || 'default', properties: {} } });
+  };
+  const text = (value, max = 4_000) => typeof value === 'string' ? value.slice(0, max) : '';
+  const showConnectView = visible => { byId('connect-view').hidden = !visible; if (visible) { byId('browser-view').hidden = true; byId('editor-view').hidden = true; byId('audit-view').hidden = true; } };
+  const openConnect = () => {
+    const name = text(connectSpec.name, 120) || integrationHint;
+    byId('connect-form').reset();
+    byId('connect-title').textContent = `Connect ${name}`; byId('connect-crumb').textContent = `Connect ${name}`;
+    byId('connect-description').textContent = text(connectSpec.description, 400); byId('connect-tile').textContent = initials({ name });
+    const formGuide = text(connectSpec.formGuide); byId('connect-form-guide').hidden = !formGuide;
+    byId('connect-form-guide').replaceChildren(Object.assign(document.createElement('b'), { textContent: 'Where to find this information: ' }), formGuide);
+    const fields = byId('connect-fields'); fields.replaceChildren();
+    for (const field of connectSpec.fields.slice(0, 20)) {
+      if (!/^[A-Za-z0-9_.-]{1,64}$/.test(field?.key || '')) continue;
+      const label = document.createElement('label'); label.className = 'wide';
+      label.append(text(field.title, 120) || field.key);
+      if (field.required) label.append(Object.assign(document.createElement('span'), { className: 'error', textContent: ' *' }));
+      const input = document.createElement('input'); input.dataset.connectKey = field.key; input.autocomplete = field.type === 'password' ? 'new-password' : 'off';
+      input.type = field.type === 'password' ? 'password' : field.type === 'url' ? 'url' : 'text'; input.placeholder = text(field.placeholder, 200); input.required = Boolean(field.required);
+      label.append(input);
+      if (field.hint) label.append(Object.assign(document.createElement('span'), { className: 'field-help', textContent: text(field.hint, 400) }));
+      fields.append(label);
+    }
+    const guide = connectSpec.guide || {}; const steps = Array.isArray(guide.steps) ? guide.steps.slice(0, 20) : []; const notes = Array.isArray(guide.notes) ? guide.notes.slice(0, 20) : [];
+    byId('connect-guide').hidden = !steps.length && !notes.length && !guide.title;
+    byId('connect-guide-title').textContent = text(guide.title, 200); byId('connect-guide-description').textContent = text(guide.description, 1_000);
+    byId('connect-guide-steps').replaceChildren(...steps.map(step => { const li = document.createElement('li'); li.append(Object.assign(document.createElement('b'), { textContent: text(step?.title, 200) }), Object.assign(document.createElement('span'), { textContent: text(step?.content) })); return li; }));
+    byId('connect-guide-notes').hidden = !notes.length;
+    byId('connect-guide-notes-list').replaceChildren(...notes.map(note => Object.assign(document.createElement('li'), { textContent: text(note, 1_000) })));
+    showConnectView(true); byId('connect-label').focus();
+  };
+  const saveConnect = async() => {
+    const label = byId('connect-label').value.trim();
+    const accountId = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
+    if (!accountId) throw new Error('Give this account a label with at least one letter or number');
+    if (items.some(item => item.integration?.integrationId === integrationHint && item.integration?.accountId === accountId)) throw new Error(`An account labelled "${label}" already exists for this integration`);
+    const properties = { account_label: label, connection_status: 'connected', connected_at: new Date().toISOString() };
+    for (const input of byId('connect-fields').querySelectorAll('[data-connect-key]')) if (input.value) properties[input.dataset.connectKey] = input.value;
+    const agents = byId('connect-agents').checked;
+    const item = { type: 'apiKey', name: `${text(connectSpec.name, 120) || integrationHint} — ${label}`, username: accountId, password: '', notes: '', uris: [], favorite: false,
+      agentPolicy: { ...defaultPolicy(), mode: agents ? 'agents' : 'only_me', level: agents ? 'autofill' : 'metadata' },
+      integration: { integrationId: integrationHint, accountId, properties } };
+    await api('/v1/human/items', { method: 'POST', body: JSON.stringify({ item }) });
+    byId('connect-form').reset(); await load();
+    // Desktop intercepts this path, confirms the account reads back as connected,
+    // then reopens the vault on the full edit screen for it. Nothing is served here.
+    location.href = `/vault/desktop/connected?integration=${encodeURIComponent(integrationHint)}&account=${encodeURIComponent(accountId)}`;
   };
 
   const auditIsAgent = event => Boolean(event.metadata?.agentId) || ['vault_outbound_request', 'agent_credential_broker_use', 'agent_credential_use'].includes(event.action);
@@ -461,7 +518,7 @@
     }
   };
   const showAudit = () => {
-    invalidateDetail(); auditOffset = 0; byId('editor-view').hidden = true; byId('browser-view').hidden = true; byId('audit-view').hidden = false;
+    invalidateDetail(); auditOffset = 0; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('browser-view').hidden = true; byId('audit-view').hidden = false;
     document.querySelectorAll('[data-category]').forEach(button => button.classList.remove('on')); byId('nav-audit').classList.add('on'); void loadAudit();
   };
 
@@ -498,6 +555,8 @@
   document.querySelectorAll('input[name="policy-access"]').forEach(input => { input.onchange = syncPolicyEnabled; });
   document.querySelectorAll('[data-level]').forEach(button => button.onclick = () => setPolicyLevel(button.dataset.level));
   for (const id of ['cancel', 'editor-back']) byId(id).onclick = showBrowser;
+  for (const id of ['connect-cancel', 'connect-back']) byId(id).onclick = () => { byId('connect-form').reset(); showConnectView(false); showBrowser(); };
+  byId('connect-form').onsubmit = async event => { event.preventDefault(); try { await saveConnect(); } catch (error) { message(error.message, true); } };
   byId('search').oninput = event => { query = event.target.value.trim().toLowerCase(); renderItems(); };
   addEventListener('keydown', event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); byId('search').focus(); } });
   document.querySelectorAll('[data-category]').forEach(button => button.onclick = () => { showBrowser(); category = button.dataset.category; document.querySelectorAll('[data-category]').forEach(value => value.classList.toggle('on', value === button)); renderItems(); });
