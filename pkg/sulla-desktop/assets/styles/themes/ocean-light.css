@@ -364,11 +364,6 @@
   display: none !important;
 }
 
-.theme-ocean-light .chat-glow.a,
-.theme-ocean-light .chat-glow.b {
-  opacity: 0.2 !important;
-}
-
 /* Page root */
 .theme-ocean-light .chat-root,
 .theme-ocean-light .page-root,
