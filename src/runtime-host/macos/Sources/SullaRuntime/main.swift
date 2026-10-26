@@ -214,7 +214,7 @@ func connectUnixSocket(path: String) throws -> Int32 { try connectUnix(path: pat
 /// Runs a blocking socket loop on its own thread. On a dispatch queue each idle
 /// connection pins a worker for as long as it lives, and libdispatch stops creating
 /// workers near 64: after that every new accept, relay and control command waits
-/// forever, and a caller blocked on `limactl` hangs with it.
+/// forever, and a caller blocked on `sulla-runtime exec` hangs with it.
 private func runOnThread(_ body: @escaping @Sendable () -> Void) {
     let thread = Thread(block: body)
     thread.stackSize = 256 * 1024
