@@ -12,6 +12,9 @@ ARG TARGETARCH
 COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx docker-cli-compose \
       blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables openssl runc tini linux-lts cpio gzip \
+      cifs-utils nfs-utils fuse3 \
+      python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
+      coreutils findutils grep sed gawk openssh-client \
     && for dir in dev proc sys run tmp var/lib var/log var/tmp mnt/data mnt/worktrees; do mkdir -p "/image/rootfs/$dir"; done \
     && ln -s ../run /image/rootfs/var/run \
     && chmod 1777 /image/rootfs/tmp \
@@ -19,6 +22,7 @@ RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker doc
     && rm -rf /image/rootfs/etc/apk /image/rootfs/lib/firmware /image/rootfs/sbin/apk \
       /image/rootfs/etc/resolv.conf /image/rootfs/etc/hostname \
       /image/rootfs/var/cache/apk /image/rootfs/usr/share/man /image/rootfs/boot \
+      /image/rootfs/usr/local/bin/unzboot \
     && /usr/local/bin/unzboot /boot/vmlinuz-lts /image/vmlinuz
 COPY --from=agent /sulla-runtime-agent /image/rootfs/init
 # Everything in the guest already runs as root; Desktop's setup commands
@@ -28,9 +32,18 @@ COPY assets/runtime/guest/docker-credential-none.sh /image/rootfs/usr/bin/docker
 COPY assets/runtime/guest/config/daemon.json /image/rootfs/etc/docker/daemon.json
 COPY assets/runtime/guest/config/containerd.toml /image/rootfs/etc/containerd/config.toml
 COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
+# The agent bind-mounts /mnt/data/usr/local over /usr/local, so what models
+# install with `pip install` and `npm install -g` lands on the data disk and
+# survives reboots. pip.conf in sys.prefix is read only by the system
+# interpreter, never inside a venv; Alpine's npm already defaults its global
+# prefix to /usr/local (checked below).
+COPY assets/runtime/guest/config/pip.conf /image/rootfs/usr/pip.conf
+COPY assets/runtime/guest/config/sulla-usr-local.pth /image/rootfs/usr/sulla-usr-local.pth
 RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-sulla-desktop /usr/local/bin/make-artifact \
+    && mv /image/rootfs/usr/sulla-usr-local.pth /image/rootfs/usr/lib/python3.*/site-packages/ \
+    && grep -qx 'prefix=/usr/local' /image/rootfs/usr/lib/node_modules/npm/npmrc \
     && /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img \
-    && printf 'sulla-runtime-guest=0.1.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION \
+    && printf 'sulla-runtime-guest=0.2.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION \
     && cd /image && sha256sum vmlinuz initramfs.img VERSION > SHA256SUMS
 
 FROM scratch

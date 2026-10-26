@@ -28,6 +28,26 @@ import { openPreferences } from '@pkg/window/preferences';
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
+/** Height of a menu-bar icon in points. macOS draws a status item at the image's own size. */
+const TRAY_ICON_HEIGHT = 18;
+
+/**
+ * Load a tray icon scaled to menu-bar size. The artwork is much larger than a
+ * status item, and macOS would show it at full size (blank or clipped), so
+ * render it at 2x pixels and mark it as a 2x image.
+ */
+function loadTrayImage(file: string): Electron.NativeImage {
+  const source = Electron.nativeImage.createFromPath(file);
+
+  if (source.isEmpty()) {
+    return source;
+  }
+
+  const png = source.resize({ height: TRAY_ICON_HEIGHT * 2, quality: 'best' }).toPNG();
+
+  return Electron.nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+}
+
 /**
  * Tray is a class to manage the tray icon for sulla-desktop.
  */
@@ -170,7 +190,7 @@ export class Tray {
 
   private constructor(settings: Settings) {
     this.settings = settings;
-    this.trayMenu = new Electron.Tray(this.trayIconSet.starting);
+    this.trayMenu = new Electron.Tray(loadTrayImage(this.trayIconSet.starting));
     this.trayMenu.setToolTip('Sulla Desktop');
     const menuItem = this.contextMenuItems.find(item => item.id === 'container-engine');
 
@@ -328,7 +348,7 @@ export class Tray {
         item.enabled = !this.backendIsLocked;
       });
 
-    this.trayMenu.setImage(logo);
+    this.trayMenu.setImage(loadTrayImage(logo));
 
     // Forward state to the custom panel
     sendPanelState({ docker: ready ? 'STARTED' : 'STOPPED' });
