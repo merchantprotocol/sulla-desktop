@@ -403,14 +403,14 @@
                   class="mb-6 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4"
                 >
                   <p class="mb-3 text-sm text-slate-300">
-                    Credential values are edited only inside the isolated local vault.
+                    You'll enter these details on a secure vault screen. Desktop and your agents never see the values.
                   </p>
                   <button
                     type="button"
                     class="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
                     @click="openSecureVault(editingAccountId || undefined)"
                   >
-                    {{ editingAccountId ? 'Edit in secure vault' : 'Open secure vault' }}
+                    {{ editingAccountId ? 'Edit in secure vault' : `Connect ${ integration.name }` }}
                   </button>
                 </div>
 
@@ -1199,8 +1199,25 @@ const startEditAccount = async(accountId: string) => {
 
 const openSecureVault = (accountId?: string) => {
   if (!integration.value) return;
+  const { name, description, formGuide, installationGuide, properties } = integration.value;
+  // A new account opens the vault's guided Connect screen with this integration's own
+  // field labels and setup notes. Only the layout crosses over; values stay in the vault.
+  const connect = accountId ? undefined : {
+    name,
+    description,
+    formGuide,
+    fields: (properties ?? []).filter(p => p.key !== 'llm_access').map(p => ({
+      key: p.key, title: p.title, hint: p.hint, type: p.type, required: p.required, placeholder: p.placeholder,
+    })),
+    guide: installationGuide ? {
+      title:       installationGuide.title,
+      description: installationGuide.description,
+      steps:       installationGuide.steps,
+      notes:       installationGuide.importantNotes ?? [],
+    } : undefined,
+  };
   window.dispatchEvent(new CustomEvent('sulla:open-secure-vault', {
-    detail: { integrationId: integration.value.id, accountId },
+    detail: { integrationId: integration.value.id, accountId, connect },
   }));
 };
 
