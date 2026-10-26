@@ -42,6 +42,8 @@ const props = withDefaults(defineProps<{
   active?: boolean;
   modal?: boolean;
   restoreFiles?: boolean;
+  /** Public integration form (labels, hints, setup notes) for the guided Connect screen. */
+  connect?: Record<string, unknown>;
 }>(), { surface: 'page', siteUrl: '', active: true, modal: false });
 const loading = ref(true);
 const error = ref('');
@@ -78,6 +80,7 @@ async function open(): Promise<void> {
       tabId:         props.tabId,
       ownerId,
       restoreFiles: props.restoreFiles,
+      connect:      props.connect ? JSON.parse(JSON.stringify(props.connect)) : undefined,
     });
     if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;
