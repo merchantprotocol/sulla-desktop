@@ -145,6 +145,8 @@ interface MainEventNames {
 
   /** Emitted after the current backend generation reconciles managed services. */
   'sulla-managed-services-ready'(): void;
+  /** The managed services failed to start after all retries; the app opens degraded. */
+  'sulla-managed-services-failed'(): void;
 
   /**
    * Quit the application.
