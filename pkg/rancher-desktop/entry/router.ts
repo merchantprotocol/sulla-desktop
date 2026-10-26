@@ -9,7 +9,6 @@ import KubernetesError from '../pages/KubernetesError.vue';
 import Preferences from '../pages/Preferences.vue';
 import RoutinesHome from '../pages/RoutinesHome.vue';
 import SudoPrompt from '../pages/SudoPrompt.vue';
-import Troubleshooting from '../pages/Troubleshooting.vue';
 import UnmetPrerequisites from '../pages/UnmetPrerequisites.vue';
 import Usage from '../pages/Usage.vue';
 import ExtensionsItem from '../pages/extensions/_root/_src/_id.vue';
@@ -47,9 +46,6 @@ export default createRouter({
     },
     {
       path: '/snapshots/create', component: SnapshotsCreate, name: 'snapshots-create',
-    },
-    {
-      path: '/Troubleshooting', component: Troubleshooting, name: 'Troubleshooting',
     },
     {
       path: '/extensions/:id/:root(.*)/:src', component: ExtensionsItem, name: 'rdx-root-src-id',

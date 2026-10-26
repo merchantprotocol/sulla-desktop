@@ -45,7 +45,6 @@ import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import Docker from '@pkg/pages/Docker.vue';
-import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
@@ -57,7 +56,6 @@ export default {
     ActionMenu,
     rdNav: Nav,
     TheTitle,
-    Troubleshooting,
     Docker,
   },
 

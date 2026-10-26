@@ -6,23 +6,47 @@ import { webRoot, createWindow, getWindow } from '.';
 
 import { Help } from '@pkg/config/help';
 import paths from '@pkg/utils/paths';
+import { PREFERENCES_SECTION_IDS } from '@pkg/utils/preferencesModel';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
 import { getVersion } from '@pkg/utils/version';
-import { preferencesNavItems } from '@pkg/window/preferenceConstants';
 
 let isDirty = false;
+let isLoaded = false;
+let pendingSection: string | undefined;
+
+// On macOS the window draws its own title bar under the traffic lights, like the main window.
+const macTitleBar = process.platform === 'darwin'
+  ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 14 } }
+  : {};
 
 /**
- * Open the main window; if it is already open, focus it.
+ * Open the Preferences window, or focus it if it's already open.
+ * @param section A section id (`models`, `voice`, `account`…) to show.
  */
-export function openPreferences() {
+export function openPreferences(section?: string) {
+  const existing = getWindow('preferences');
+
+  // Menu items pass their click arguments through; only a string names a section.
+  section = typeof section === 'string' ? section : undefined;
+  pendingSection = section;
+  if (existing && isLoaded && section) {
+    existing.webContents.send('route', { name: section });
+    pendingSection = undefined;
+  }
+  if (!existing) {
+    isLoaded = false;
+  }
+
   const window = createWindow('preferences', `${ webRoot }/index.html#preferences`, {
     title:           'Sulla Desktop - Preferences',
-    width:           768,
-    height:          512,
+    ...macTitleBar,
+    minWidth:        900,
+    minHeight:       560,
+    width:           1120,
+    height:          760,
     autoHideMenuBar: true,
-    resizable:       false,
-    minimizable:     false,
+    resizable:       true,
+    minimizable:     true,
     show:            false,
     icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
     parent:          getWindow('main') ?? undefined,
@@ -59,7 +83,7 @@ export function openPreferences() {
       'Close preferences dialog',
     );
 
-    preferencesNavItems.forEach(({ name }, index) => {
+    PREFERENCES_SECTION_IDS.slice(0, 9).forEach((name, index) => {
       Shortcuts.register(
         window,
         {
@@ -67,7 +91,7 @@ export function openPreferences() {
           key: index + 1,
         },
         () => window.webContents.send('route', { name }),
-        `switch preferences tabs ${ name }`,
+        `switch preferences section ${ name }`,
       );
     });
 
@@ -92,37 +116,49 @@ export function openPreferences() {
     );
   }
 
-  window.webContents.on('ipc-message', (_event, channel) => {
-    if (channel === 'preferences/load') {
-      window.show();
-    }
-  });
+  // Listeners are added once, when the window is created, so reopening it doesn't stack close prompts.
+  if (!existing) {
+    window.webContents.on('ipc-message', (_event, channel) => {
+      if (channel === 'preferences/load') {
+        isLoaded = true;
+        window.show();
+        if (pendingSection) {
+          window.webContents.send('route', { name: pendingSection });
+          pendingSection = undefined;
+        }
+      }
+    });
+    window.on('closed', () => {
+      isLoaded = false;
+      isDirty = false;
+    });
 
-  window.on('close', (event) => {
-    if (!isDirty || (process.env.RD_TEST ?? '').includes('e2e')) {
-      return;
-    }
+    window.on('close', (event) => {
+      if (!isDirty || (process.env.RD_TEST ?? '').includes('e2e')) {
+        return;
+      }
 
-    const cancelPosition = 1;
+      const cancelPosition = 1;
 
-    const result = dialog.showMessageBoxSync(
-      window,
-      {
-        title:    'Sulla Desktop - Close Preferences',
-        type:     'warning',
-        message:  'Close preferences without applying?',
-        detail:   'There are preferences with changes that have not been applied. All unsaved preferences will be lost.',
-        cancelId: cancelPosition,
-        buttons:  [
-          'Discard changes',
-          'Cancel',
-        ],
-      });
+      const result = dialog.showMessageBoxSync(
+        window,
+        {
+          title:    'Sulla Desktop - Close Preferences',
+          type:     'warning',
+          message:  'Close without applying your changes?',
+          detail:   'Some changes restart Docker and haven’t been applied yet. Closing discards them.',
+          cancelId: cancelPosition,
+          buttons:  [
+            'Discard changes',
+            'Cancel',
+          ],
+        });
 
-    if (result === cancelPosition) {
-      event.preventDefault();
-    }
-  });
+      if (result === cancelPosition) {
+        event.preventDefault();
+      }
+    });
+  }
 
   app.dock?.show();
 }

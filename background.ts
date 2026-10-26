@@ -53,7 +53,7 @@ import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
-import buildApplicationMenu from '@pkg/main/mainmenu';
+import buildApplicationMenu, { sendAgentCommand } from '@pkg/main/mainmenu';
 import setupNetworking from '@pkg/main/networking';
 import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
@@ -1445,8 +1445,13 @@ ipcMainProxy.on('dashboard-close', () => {
   closeDashboard();
 });
 
-ipcMainProxy.on('preferences-open', () => {
-  openPreferences();
+ipcMainProxy.on('preferences-open', (_event, section) => {
+  openPreferences(section);
+});
+
+// Preferences is its own window; links like "Open Passwords" open the tab in the main window.
+ipcMainProxy.on('preferences/open-main-tab', (_event, mode) => {
+  sendAgentCommand('open-tab', { mode });
 });
 
 ipcMainProxy.on('preferences-close', () => {
