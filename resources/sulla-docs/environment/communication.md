@@ -2,7 +2,7 @@
 
 ## Agent → Main Process (MCP Server)
 
-Agent turns communicate with the Electron main process through Sulla's tool bridge. API-backed providers call tools through the graph runtime; CLI agent providers such as Claude Code and OpenAI Codex run inside Lima and reach Sulla tools through the MCP/native bridge. Tool calls like `exec`, `browse_tools`, `browser/tab` etc. are handled here.
+Agent turns communicate with the Electron main process through Sulla's tool bridge. API-backed providers call tools through the graph runtime; CLI agent providers such as Claude Code and OpenAI Codex run inside Sulla VM and reach Sulla tools through the MCP/native bridge. Tool calls like `exec`, `browse_tools`, `browser/tab` etc. are handled here.
 
 Flow:
 ```
@@ -61,7 +61,7 @@ Built-in channels: `sulla-desktop`, `heartbeat`, `mobile-relay`
 
 ## Terminal WebSocket (PTY)
 
-Port `6108`. Provides shell access into Lima.
+Port `6108`. Provides shell access into Sulla VM.
 
 ```json
 { "type": "start", "command": "bash" }
@@ -72,9 +72,9 @@ Raw terminal input is sent as plain bytes. Used by the terminal emulator in the 
 
 ---
 
-## exec Tool (Agent → Lima Shell)
+## exec Tool (Agent → Sulla VM Shell)
 
-When an agent calls `exec({ command: "..." })`, the main process spawns it inside Lima via `limactl shell 0`.
+When an agent calls `exec({ command: "..." })`, the main process spawns it inside Sulla VM via `sulla-runtime exec`.
 
 Environment inside exec:
 ```bash

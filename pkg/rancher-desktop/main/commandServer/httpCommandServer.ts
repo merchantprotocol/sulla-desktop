@@ -7,6 +7,7 @@ import express from 'express';
 import _ from 'lodash';
 
 import { State } from '@pkg/backend/backend';
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import type { Settings } from '@pkg/config/settings';
 import type { TransientSettings } from '@pkg/config/transientSettings';
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
@@ -462,6 +463,9 @@ export class HttpCommandServer {
       }
     } else {
       error = payloadError;
+    }
+    if (!error && isSullaRuntimeActive()) {
+      error = 'Factory reset is not supported on the Sulla runtime yet';
     }
     if (!error) {
       console.debug('factory reset: succeeded 202');

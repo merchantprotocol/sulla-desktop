@@ -14,6 +14,7 @@ import _ from 'lodash';
 import semver from 'semver';
 
 import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
+import { getServiceLifecycleManager } from './pkg/rancher-desktop/agent/services/ServiceLifecycleManager';
 
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { State } from '@pkg/backend/backend';
@@ -22,6 +23,7 @@ import K8sFactory from '@pkg/backend/factory';
 import { getImageProcessor } from '@pkg/backend/images/imageFactory';
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
 import * as K8s from '@pkg/backend/k8s';
+import { isSullaRuntimeActive, suspendSullaRuntimeOnNextStop } from '@pkg/backend/sullaRuntime/state';
 import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
@@ -503,8 +505,8 @@ Electron.app.whenReady().then(async() => {
     setupProtocolHandlers();
 
     // Gatekeeper App Translocation runs the app from a randomized read-only
-    // mount, which breaks lima provisioning (limactl copy/scp into the VM
-    // fails with opaque errors). Bail out with instructions before any
+    // mount, which breaks the VM's host shares and resource lookups
+    // with opaque errors. Bail out with instructions before any
     // backend work starts.
     if (await checkForAppTranslocation()) {
       return;
@@ -838,8 +840,8 @@ async function doFirstRunDialog() {
  * Detect macOS Gatekeeper App Translocation. When a quarantined app is
  * launched without being moved via Finder (e.g. run straight from the DMG or
  * ~/Downloads), macOS executes it from a randomized read-only mount under
- * /private/var/.../AppTranslocation/. Lima cannot provision the VM from
- * there, so startup fails deep inside limactl with unhelpful scp errors.
+ * /private/var/.../AppTranslocation/. The VM cannot be provisioned from
+ * there, so startup fails with unhelpful errors.
  * Catch it up front and tell the user how to fix it.
  *
  * @returns true if the app is translocated (a fatal dialog was shown and the
@@ -1229,8 +1231,9 @@ Electron.app.on('before-quit', async(event) => {
   // Stop all running Docker containers with a 30-second grace period BEFORE
   // shutting down the container engine.  This gives databases (MySQL, Postgres)
   // time to flush InnoDB/WAL buffers instead of being SIGKILL'd when the
-  // Docker daemon or VM is torn down.
-  if (!isRestarting) {
+  // Docker daemon or VM is torn down. The Sulla runtime saves the running VM
+  // instead, and its guest stops containers itself when it has to shut down.
+  if (!isRestarting && !isSullaRuntimeActive()) {
     await withTimeout('docker-containers-stop', 45_000, (async() => {
       try {
         const ids = execFileSync('docker', ['ps', '-q'], { timeout: 5_000 }).toString().trim();
@@ -1253,9 +1256,12 @@ Electron.app.on('before-quit', async(event) => {
   try {
     await withTimeout('extensions/shutdown', 10_000, mainEvents.tryInvoke('extensions/shutdown') ?? Promise.resolve());
 
-    if (isRestarting) {
+    // The Sulla runtime is a child of this process, so a restart stops it too;
+    // quitting saves its state so the next launch resumes it.
+    if (isRestarting && !isSullaRuntimeActive()) {
       sullaLog({ topic: 'shutdown', level: 'info', message: 'RESTART — skipping k8smanager.stop() (VM stays alive)' });
     } else {
+      if (isSullaRuntimeActive()) suspendSullaRuntimeOnNextStop();
       await withTimeout('k8smanager.stop', 60_000, k8smanager?.stop() ?? Promise.resolve());
     }
 
@@ -1466,24 +1472,14 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
   }
 }
 
-// ── Capture Studio IPC ──────────────────────────────────────────────────
-ipcMainProxy.handle('capture-studio:get-sources', async() => {
-  try {
-    const sources = await Electron.desktopCapturer.getSources({
-      types:            ['screen', 'window'],
-      thumbnailSize:    { width: 320, height: 180 },
-      fetchWindowIcons: false,
-    });
-    return sources.map(s => ({
-      id:               s.id,
-      name:             s.name,
-      thumbnailDataUrl: s.thumbnail.toDataURL(),
-    }));
-  } catch (e: any) {
-    console.warn('[capture-studio:get-sources] Failed:', e?.message || e?.name || String(e));
-    return [];
-  }
+// Renderer settings use their own model instance, but must not bootstrap until
+// the authoritative main-process lifecycle has observed both Postgres and Redis.
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async() => {
+  await getServiceLifecycleManager().waitUntilStarted('database-manager', 3 * 60_000);
 });
+
+// ── Capture Studio IPC ──────────────────────────────────────────────────
+// Source enumeration is registered once by registerCaptureStudioRpc().
 
 ipcMainProxy.handle('capture-studio:check-permissions', () => {
   const result: Record<string, string> = {
@@ -1705,6 +1701,16 @@ mainEvents.on('integration-update', (state) => {
 
 /** Stop the backend and remove application state without an external helper. */
 async function doFactoryReset(keepSystemImages: boolean) {
+  if (isSullaRuntimeActive()) {
+    // The runtime backend can't delete its VM yet; resetting here would leave
+    // the runtime's disk behind.
+    const message = 'Factory reset is not supported on the Sulla runtime yet';
+
+    console.error(`[sulla-runtime] ${ message }`);
+    Electron.dialog.showErrorBox('Factory reset', message);
+
+    return;
+  }
   await k8smanager.stop();
   await k8smanager.del();
   Electron.app.setLoginItemSettings({ openAtLogin: false });

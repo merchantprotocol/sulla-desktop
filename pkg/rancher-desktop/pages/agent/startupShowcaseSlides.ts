@@ -43,7 +43,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Agents work in their own Linux VM, and your home folder isn\'t mounted inside it. They see the files you share through Files. Reaching the Mac is a setting you turn on.',
     art:     'sandbox',
     points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
-    sources: ['resources/sulla-docs/environment/architecture.md (Lima VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
+    sources: ['resources/sulla-docs/environment/architecture.md (Sulla VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
   },
   {
     id:      'agents',

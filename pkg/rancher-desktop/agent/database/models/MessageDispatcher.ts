@@ -1204,10 +1204,6 @@ const TOOL_VERB_MAP: Record<string, string> = {
   remove_observational_memory: 'Forgetting',
   // Skills / Projects
   create_skill:                'Creating skill',
-  // Lima
-  lima_shell:                  'Running shell',
-  lima_start:                  'Starting VM',
-  lima_stop:                   'Stopping VM',
   // Channel
   send_notification_to_human:  'Notifying',
 };

@@ -14,7 +14,7 @@ Default to handle-based. Drop to coordinates only when the snapshot can't see th
 Heartbeat and other explicitly browser-capable scheduled graphs receive the
 graph-bound MCP tool `mcp__sulla_native__browser_controller` (listed in the
 catalog as `sulla browser/controller`). This is the supported delegation path when the installed Codex Browser skill is present
-but its host-app-specific `node_repl` controller cannot run inside Sulla's Lima
+but its host-app-specific `node_repl` controller cannot run inside Sulla's Sulla VM
 model process.
 
 Read the installed Browser skill first and keep its confirmation, transmission,

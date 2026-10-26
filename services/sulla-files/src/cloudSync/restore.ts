@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 
 import type { ChangesPage } from './cloudApi.js';
-import { openEscrowWithKey, verifyHead, type EscrowEnvelope, type TransportEnvelope } from './envelope.js';
+import { openCollectionInfo, openEscrowWithKey, verifyHead, type CollectionInfoEnvelope, type EscrowEnvelope, type TransportEnvelope } from './envelope.js';
 import type { EscrowTransportRequests } from './escrowTransport.js';
 import { isUuid } from './validation.js';
 
@@ -25,6 +25,18 @@ export interface RestoreTarget {
 export interface RestoreCloud {
   keys(collectionId:string):Promise<Array<{ keyVersion:number; escrow:unknown }>>;
   changes(collectionId:string, since:number, limit:number):Promise<ChangesPage>;
+  /** Cloud's collection list; carries each collection's sealed folder name. */
+  listCollections?():Promise<any[]>;
+}
+
+/** One collection to restore with an escrow key that is already unwrapped. */
+export interface RestoreWithKeyInput {
+  collectionId:string;
+  /** Used when Cloud has no readable folder name for the collection. */
+  name:string;
+  vaultId:string;
+  vaultEpoch:number;
+  info?:unknown;
 }
 
 export class RestoreError extends Error {
@@ -54,6 +66,19 @@ export class CloudRestore {
     if (!Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) throw new RestoreError(400, 'invalid_request', 'Restore request is invalid');
     const name = typeof input.name === 'string' ? input.name.trim().slice(0, 200) : '';
     const ek = await this.transport.unwrap(input.requestId, input.transport, input.vaultId, input.vaultEpoch);
+    try {
+      const info = (await this.cloud.listCollections?.().catch(() => []))?.find(entry => entry?.id === input.collectionId)?.info;
+      return await this.restoreWithKey(ek, { collectionId: input.collectionId, name, vaultId: input.vaultId, vaultEpoch: input.vaultEpoch, info });
+    } finally {
+      ek.fill(0);
+    }
+  }
+
+  /** The caller owns ek and zeroes it; restore-all reuses one escrow key for every collection. */
+  async restoreWithKey(ek:Uint8Array, input:RestoreWithKeyInput):Promise<{ restored:true; collectionId:string }> {
+    if (!isUuid(input?.collectionId) || !isUuid(input.vaultId) || !Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) {
+      throw new RestoreError(400, 'invalid_request', 'Restore request is invalid');
+    }
     let root:Uint8Array | undefined;
     let local:{ keyVersion:number; root:Buffer | null } | null = null;
     try {
@@ -76,13 +101,23 @@ export class CloudRestore {
       if (local?.root && (local.keyVersion !== escrow.keyVersion || !timingSafeEqual(local.root, Buffer.from(root)))) {
         throw new RestoreError(409, 'collection_conflict', 'A different local collection already uses this id');
       }
-      if (!local) await this.target.createCollection(input.collectionId, name || 'Restored files');
+      if (!local) await this.target.createCollection(input.collectionId, await this.folderName(root, input, escrow.keyVersion) || input.name.trim().slice(0, 200) || 'Restored files');
       await this.target.install(input.collectionId, escrow.keyVersion, root, input.vaultId, input.vaultEpoch);
       return { restored: true, collectionId: input.collectionId };
     } finally {
-      ek.fill(0);
       root?.fill(0);
       local?.root?.fill(0);
+    }
+  }
+
+  /** The folder name the backing-up Desktop sealed with this root, or '' when there is none we can verify. */
+  private async folderName(root:Uint8Array, input:RestoreWithKeyInput, keyVersion:number):Promise<string> {
+    const info = input.info as CollectionInfoEnvelope | undefined;
+    if (!info || info.collectionId !== input.collectionId || info.keyVersion !== keyVersion) return '';
+    try {
+      return (await openCollectionInfo(root, info)).name.trim().slice(0, 200);
+    } catch {
+      return '';
     }
   }
 }

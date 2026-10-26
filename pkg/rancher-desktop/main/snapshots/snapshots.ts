@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { Snapshot } from '@pkg/main/snapshots/types';
 import { spawnFile } from '@pkg/utils/childProcess';
 import paths from '@pkg/utils/paths';
@@ -10,6 +11,18 @@ const COMPLETE_FILE = 'complete.txt';
 const COMPLETE_CONTENTS = 'The presence of this file indicates that this snapshot is complete and valid.';
 
 interface SnapshotMetadata extends Snapshot { id: string }
+
+/** Snapshots copy VM disks; the Sulla runtime has none to copy yet. */
+class SnapshotsUnsupportedError {
+  readonly isSnapshotError = true;
+  message = 'Snapshots are not supported on the Sulla runtime yet';
+}
+
+function assertSnapshotsSupported(): void {
+  if (isSullaRuntimeActive()) {
+    throw new SnapshotsUnsupportedError();
+  }
+}
 
 class SnapshotsImpl {
   private directory(snapshot: SnapshotMetadata): string {
@@ -36,6 +49,7 @@ class SnapshotsImpl {
   }
 
   async create(snapshot: Snapshot): Promise<void> {
+    assertSnapshotsSupported();
     if (!snapshot.name.trim() || snapshot.name !== snapshot.name.trim() || [...snapshot.name].length > 250) {
       throw new Error('Snapshot names must be 1–250 printable characters and cannot start or end with whitespace.');
     }
@@ -58,12 +72,14 @@ class SnapshotsImpl {
   }
 
   async restore(name: string): Promise<void> {
+    assertSnapshotsSupported();
     const snapshot = (await this.metadata()).find(candidate => candidate.name === name);
     if (!snapshot) throw new Error(`Can't find snapshot "${ name }".`);
     await this.copyState(this.directory(snapshot), true);
   }
 
   async delete(name: string): Promise<void> {
+    assertSnapshotsSupported();
     const snapshot = (await this.metadata()).find(candidate => candidate.name === name);
     if (!snapshot) throw new Error(`Can't find snapshot "${ name }".`);
     await fs.promises.rm(this.directory(snapshot), { recursive: true, force: true });
@@ -79,30 +95,9 @@ class SnapshotsImpl {
       return;
     }
 
-    const files = [
-      [path.join(paths.config, 'settings.json'), path.join(directory, 'settings.json'), false],
-      [path.join(paths.lima, '_config', 'override.yaml'), path.join(directory, 'override.yaml'), true],
-      [path.join(paths.lima, '0', 'basedisk'), path.join(directory, 'basedisk'), false],
-      [path.join(paths.lima, '0', 'diffdisk'), path.join(directory, 'diffdisk'), false],
-      [path.join(paths.lima, '_config', 'user'), path.join(directory, 'user'), false],
-      [path.join(paths.lima, '_config', 'user.pub'), path.join(directory, 'user.pub'), false],
-      [path.join(paths.lima, '0', 'lima.yaml'), path.join(directory, 'lima.yaml'), false],
-    ] as const;
-
-    await Promise.all(files.map(async([working, saved, optional]) => {
-      const source = restore ? saved : working;
-      const destination = restore ? working : saved;
-      try {
-        await fs.promises.mkdir(path.dirname(destination), { recursive: true });
-        await fs.promises.copyFile(source, destination, fs.constants.COPYFILE_FICLONE);
-      } catch (error: any) {
-        if (optional && error?.code === 'ENOENT') {
-          if (restore) await fs.promises.rm(destination, { force: true });
-          return;
-        }
-        throw error;
-      }
-    }));
+    // Lima was the only non-Windows VM whose state snapshots knew how to copy;
+    // the Sulla runtime has no disk layout to snapshot yet.
+    throw new SnapshotsUnsupportedError();
   }
 
   private async copyWindowsState(directory: string, restore: boolean): Promise<void> {

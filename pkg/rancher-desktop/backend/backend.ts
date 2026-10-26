@@ -42,7 +42,7 @@ export interface BackendProgress {
 export type Architecture = 'x86_64' | 'aarch64';
 
 export interface FailureDetails {
-  /** The last lima/wsl command run: */
+  /** The last VM command run: */
   lastCommand?:       string,
   lastCommandComment: string,
   lastLogLines:       string[],
@@ -106,7 +106,7 @@ export type RestartReasons = Partial<Record<RecursiveKeys<Settings>, {
  */
 export interface VMBackend extends EventEmitter<BackendEvents> {
   /** The name of the VM backend */
-  readonly backend: 'wsl' | 'lima' | 'mock';
+  readonly backend: 'wsl' | 'sulla-runtime' | 'mock';
 
   readonly state: State;
 

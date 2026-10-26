@@ -30,7 +30,6 @@ describe('host execution gate', () => {
     expect([
       ['applescript', 'applescript_execute'],
       ['capture', 'screenshot'],
-      ['lima', 'lima_shell'],
       ['secretary', 'start'],
     ].every(([category, name]) => toolRequiresHostAccess(category, name))).toBe(true);
 

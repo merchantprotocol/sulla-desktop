@@ -113,7 +113,7 @@ The seven `calendar/*` tools create, get, list, list_upcoming, update, cancel, a
 
 ---
 
-## Docker / Lima / Kubernetes
+## Docker / Sulla VM / Kubernetes
 
 The docker category has nine tools: build, exec, images, logs, ps, pull, rm, run, and stop.
 

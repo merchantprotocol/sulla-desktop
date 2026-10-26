@@ -28,7 +28,7 @@ export function graphBrowserControllerContext(state?: BaseThreadState): string {
 This scheduled Sulla graph has a graph-bound in-app Browser delegation tool:
 \`mcp__sulla_native__browser_controller\`. The installed Codex Browser skill's
 \`node_repl\` controller is host-app-specific and is not the supported controller
-inside this Lima-launched scheduled graph. Read the installed Browser skill for
+inside this VM-launched scheduled graph. Read the installed Browser skill for
 its safety/confirmation rules and Sulla's bundled \`tools/browser.md\` for this
 controller's operations, then call \`browser_controller\` with a browser tool
 name and args. Tabs are scoped to this graph thread; reuse the returned assetId.

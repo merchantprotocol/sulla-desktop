@@ -42,6 +42,10 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 : "${SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE:?missing Accounts Accounts token file}"
 : "${SULLA_ACCOUNTS_VAULT_TOKEN_FILE:?missing Vault Accounts token file}"
 : "${SULLA_ACCOUNTS_FILES_TOKEN_FILE:?missing Files Accounts token file}"
+: "${SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE:?missing Console Accounts token file}"
+: "${SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE:?missing Vault providers service token file}"
+: "${SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE:?missing Agents broker private key file}"
+: "${SULLA_AGENTS_BROKER_PUBLIC_KEY:?missing Agents broker public key}"
 : "${SULLA_ACCOUNTS_AGENTS_TOKEN_FILE:?missing Agents Accounts token file}"
 : "${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE:?missing Workflows Accounts token file}"
 : "${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE:?missing Agents/Workflows service token file}"
@@ -54,11 +58,15 @@ ENV_FILE="$SCRIPT_DIR/server.env"
 [[ $(wc -c <"$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE") -ge 32 ]] || fail "Agents/Workflows service token must contain at least 32 bytes"
 workload_service_token="$(cat "$SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE")"
 [[ "$workload_service_token" != "$SULLA_AGENT_API_TOKEN" ]] || fail "Agents/Workflows service token must be separate from the installation API token"
-for accounts_token_file in "$SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE" "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE" "$SULLA_ACCOUNTS_FILES_TOKEN_FILE" "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE" "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE"; do
+for accounts_token_file in "$SULLA_ACCOUNTS_ACCOUNTS_TOKEN_FILE" "$SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE" "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE" "$SULLA_ACCOUNTS_FILES_TOKEN_FILE" "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE" "$SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE"; do
   [[ "$workload_service_token" != "$(cat "$accounts_token_file")" ]] || fail "Agents/Workflows service token must be separate from Accounts service tokens"
 done
 : "${SULLA_VAULT_IMAGE:?missing pinned vault image}"
 : "${SULLA_FILES_IMAGE:?missing pinned Files image}"
+: "${SULLA_RELAY_IMAGE:?missing pinned Relay image}"
+: "${SULLA_SERVER_ID:?missing server ID}"
+: "${SULLA_RELAY_DEVICE_TOKEN_SECRET:?missing relay device token secret}"
+: "${SULLA_RELAY_INTERNAL_TOKEN:?missing relay internal token}"
 : "${SULLA_CONSOLE_IMAGE:?missing pinned Console image}"
 : "${SULLA_STORAGE_CLASS:?missing storage class}"
 : "${SULLA_STORAGE_SIZE:?missing storage size}"
@@ -98,6 +106,7 @@ done
   --from-literal=accounts-encryption="$(cat "$SULLA_ACCOUNTS_ENCRYPTION_KEY_FILE")" \
   --from-literal=accounts-admin="$(cat "$SULLA_ACCOUNTS_ADMIN_SECRET_FILE")" \
   --from-literal=accounts-service-tokens="$(cat "$SULLA_ACCOUNTS_SERVICE_TOKENS_FILE")" \
+  --from-literal=accounts-console-token="$(cat "$SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE")" \
   --from-literal=accounts-vault-token="$(cat "$SULLA_ACCOUNTS_VAULT_TOKEN_FILE")" \
   --from-literal=accounts-files-token="$(cat "$SULLA_ACCOUNTS_FILES_TOKEN_FILE")" \
   --from-literal=accounts-agents-token="$(cat "$SULLA_ACCOUNTS_AGENTS_TOKEN_FILE")" \
@@ -115,6 +124,16 @@ done
   --from-literal=workflow-allowed-runner-scopes="$SULLA_WORKFLOW_ALLOWED_RUNNER_SCOPES" \
   --from-literal=desktop-executor-url="${SULLA_DESKTOP_EXECUTOR_URL:-}" \
   --from-literal=desktop-executor-token="${SULLA_DESKTOP_EXECUTOR_TOKEN:-}" \
+  --from-literal=server-id="$SULLA_SERVER_ID" \
+  --from-literal=console-database-url="postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_console" \
+  --from-literal=vault-providers-token="$(cat "$SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE")" \
+  --from-literal=agents-broker-private-key="$(cat "$SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE")" \
+  --from-literal=agents-broker-public-key="$SULLA_AGENTS_BROKER_PUBLIC_KEY" \
+  --from-literal=relay-device-token-secret="$SULLA_RELAY_DEVICE_TOKEN_SECRET" \
+  --from-literal=relay-internal-token="$SULLA_RELAY_INTERNAL_TOKEN" \
+  --from-literal=vault-host="$SULLA_VAULT_HOST" \
+  --from-literal=vault-url="$SULLA_VAULT_URL" \
+  --from-literal=public-url="$SULLA_PUBLIC_URL" \
   --from-literal=public-scheme="$SULLA_PUBLIC_SCHEME" \
   --from-literal=workflows-runner-image="${SULLA_WORKFLOW_RUNNER_IMAGE:-ghcr.io/merchantprotocol/sulla-workflows:sha-${SULLA_SOURCE_SHA:0:12}}" \
   --dry-run=client -o yaml | \
@@ -131,12 +150,13 @@ done
 rendered="$(mktemp)"; rendered_files="$(mktemp)"; rendered_console="$(mktemp)"; rendered_storage="$(mktemp)"; trap 'rm -f "$rendered" "$rendered_files" "$rendered_console" "$rendered_storage"' EXIT
 sed "s|__SULLA_VAULT_IMAGE__|${SULLA_VAULT_IMAGE}|g" "$K8S_DIR/sulla-vault.yaml" >"$rendered"
 sed "s|__SULLA_FILES_IMAGE__|${SULLA_FILES_IMAGE}|g" "$K8S_DIR/sulla-files.yaml" >"$rendered_files"
-rendered_accounts="$(mktemp)"; rendered_agents="$(mktemp)"; rendered_workflows="$(mktemp)"; rendered_tools="$(mktemp)"
-trap 'rm -f "$rendered" "$rendered_files" "$rendered_console" "$rendered_storage" "$rendered_accounts" "$rendered_agents" "$rendered_workflows" "$rendered_tools"' EXIT
+rendered_accounts="$(mktemp)"; rendered_relay="$(mktemp)"; rendered_agents="$(mktemp)"; rendered_workflows="$(mktemp)"; rendered_tools="$(mktemp)"
+trap 'rm -f "$rendered" "$rendered_files" "$rendered_console" "$rendered_storage" "$rendered_accounts" "$rendered_relay" "$rendered_agents" "$rendered_workflows" "$rendered_tools"' EXIT
 sed -e "s|__SULLA_ACCOUNTS_IMAGE__|${SULLA_ACCOUNTS_IMAGE}|g" -e "s|__SULLA_ACCOUNTS_AUTHORITY_ID__|${SULLA_ACCOUNTS_KEYCLOAK_AUTHORITY_ID}|g" -e "s|__SULLA_PUBLIC_URL__|${SULLA_PUBLIC_URL}|g" -e "s|__SULLA_ACCOUNTS_REDIRECT_URIS__|${SULLA_ACCOUNTS_WEB_REDIRECT_URIS}|g" "$K8S_DIR/sulla-accounts.yaml" >"$rendered_accounts"
 sed "s|__SULLA_AGENTS_IMAGE__|${SULLA_AGENTS_IMAGE}|g" "$K8S_DIR/sulla-agents.yaml" >"$rendered_agents"
 sed "s|__SULLA_WORKFLOWS_IMAGE__|${SULLA_WORKFLOWS_IMAGE}|g" "$K8S_DIR/sulla-workflows.yaml" >"$rendered_workflows"
 sed "s|__SULLA_TOOLS_IMAGE__|${SULLA_TOOLS_IMAGE}|g" "$K8S_DIR/sulla-tools.yaml" >"$rendered_tools"
+sed "s|__SULLA_RELAY_IMAGE__|${SULLA_RELAY_IMAGE}|g" "$K8S_DIR/relay.yaml" >"$rendered_relay"
 sed "s|__SULLA_CONSOLE_IMAGE__|${SULLA_CONSOLE_IMAGE}|g" "$K8S_DIR/sulla-console.yaml" >"$rendered_console"
 sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAGE_SIZE__|${SULLA_STORAGE_SIZE}|g" -e "s|__SULLA_FILES_STORAGE_SIZE__|${SULLA_FILES_STORAGE_SIZE}|g" "$K8S_DIR/storage.yaml" >"$rendered_storage"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_storage"
@@ -147,6 +167,7 @@ sed -e "s|__SULLA_STORAGE_CLASS__|${SULLA_STORAGE_CLASS}|g" -e "s|__SULLA_STORAG
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_files"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_accounts"
+"${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_relay"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_agents"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_workflows"
 "${KUBECTL[@]}" --namespace "$NAMESPACE" apply -f "$rendered_tools"
@@ -180,6 +201,7 @@ fi
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-agents --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-workflows --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-tools --timeout=5m
+"${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-relay --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-console --timeout=5m
 "${KUBECTL[@]}" --namespace "$NAMESPACE" rollout status deployment/sulla-gateway --timeout=5m
 

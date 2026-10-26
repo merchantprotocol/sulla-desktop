@@ -391,8 +391,7 @@ windows::verify_deps() {
 
 windows::verify_platform_binaries() {
   log VERIFY "Verifying Windows platform binaries"
-  # No limactl on Windows (uses WSL instead)
-  log VERIFY "Skipping limactl check (Windows uses WSL)"
+  log VERIFY "No bundled Windows platform binaries to verify"
 }
 
 # ---------------------------------------------------------------------------

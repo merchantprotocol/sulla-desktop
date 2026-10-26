@@ -167,7 +167,7 @@ describe('IdentityObservationsModel', () => {
       domain:  'environment',
       level:   2,
       kind:    'method',
-      content: 'The build cannot run in the Lima VM.',
+      content: 'The build cannot run in the Sulla VM.',
     })).rejects.toThrow('kind is only valid in the agent domain');
 
     expect(postgresClient.query).not.toHaveBeenCalled();

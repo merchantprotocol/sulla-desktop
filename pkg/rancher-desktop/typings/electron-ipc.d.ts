@@ -400,6 +400,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-settings:wait-for-backends': () => void;
+
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
   'sulla-cloud-chat:get-link': (conversationId: string) => Record<string, any> | null;
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
@@ -525,6 +527,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:delete-cloud-backup': (input:{collectionId:string}) => import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus;
   'files-ui:cloud-collections': () => import('@pkg/main/cloud/filesSyncV1/containerClient').CloudFilesCollection[];
   'files-ui:restore-cloud-collection': (input:{collectionId:string;name:string}) => {restored:true;collectionId:string};
+  'files-ui:restore-all-cloud-collections': () => import('@pkg/main/cloud/filesSyncV1/containerClient').CloudRestoreAllResult;
   'files-ui:delete-folder': (input: { collectionId: string; path: string }) => void;
   'files-preferences:list-roots': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView[];
   'files-preferences:add-root': () => import('@pkg/main/sullaFilesRootRegistry').SullaFilesRootView | undefined;

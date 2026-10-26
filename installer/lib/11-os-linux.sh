@@ -383,19 +383,7 @@ linux::verify_deps() {
 }
 
 linux::verify_platform_binaries() {
-  local limactl_bin="resources/linux/lima/bin/limactl"
-  local host_arch
-  host_arch="$(uname -m)"
-
-  log LIMA "Verifying limactl: $limactl_bin (host arch: $host_arch)"
-  if [ -f "$limactl_bin" ]; then
-    log LIMA "  file info: $(file "$limactl_bin" 2>/dev/null || echo 'unknown')"
-    log LIMA "  size: $(wc -c < "$limactl_bin" 2>/dev/null || echo '?') bytes"
-  else
-    log LIMA "  limactl binary NOT FOUND at $limactl_bin"
-    log LIMA "  resources/linux/lima/ contents: $(ls -la resources/linux/lima/bin/ 2>/dev/null || echo 'directory does not exist')"
-  fi
-  assert_executable "$limactl_bin" "limactl (Linux)"
+  log VERIFY "No bundled Linux platform binaries to verify"
 }
 
 # ---------------------------------------------------------------------------

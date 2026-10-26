@@ -1,4 +1,4 @@
-import { createStore, mapGetters, mapState, ModuleTree, Plugin } from 'vuex';
+import { createStore, mapGetters, mapState, ModuleTree } from 'vuex';
 
 import * as ActionMenu from '../store/action-menu';
 import * as ApplicationSettings from '../store/applicationSettings';
@@ -34,7 +34,6 @@ const modules = {
 
 export default createStore<any>({
   modules: Object.fromEntries(Object.entries(modules).map(([k, v]) => [k, { namespaced: true, ...v }])),
-  plugins: Object.values(modules).flatMap(v => 'plugins' in v ? v.plugins : []),
 });
 
 export type Modules = typeof modules;

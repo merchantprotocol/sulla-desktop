@@ -1,7 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { hasContainerFileRuntime, searchContainerPaths, searchGuestPaths } from '../util/containerFileRuntime';
 
-/** Full-text search is always executed in the agent container or Lima guest. */
+/** Full-text search is always executed in the agent container or Sulla guest. */
 export class MetaSearchWorker extends BaseTool {
   name = '';
   description = '';

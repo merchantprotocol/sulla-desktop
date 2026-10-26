@@ -1,6 +1,6 @@
 # Kubernetes (k3s)
 
-Sulla Desktop ships with **k3s** — a lightweight Kubernetes distribution running inside the Lima VM. k3s is **enabled by default**, the kubeconfig at `~/.kube/config` is auto-symlinked, and the agent has tools to drive it.
+Sulla Desktop ships with **k3s** — a lightweight Kubernetes distribution running inside the Sulla VM. k3s is **enabled by default**, the kubeconfig at `~/.kube/config` is auto-symlinked, and the agent has tools to drive it.
 
 ## Why this matters
 

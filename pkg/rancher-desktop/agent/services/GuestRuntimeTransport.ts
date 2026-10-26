@@ -3,12 +3,14 @@ import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
 export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
 export const GUEST_AGENT_WORKSPACES_ROOT = `${ GUEST_RUNTIME_ROOT }/agents`;
 export const GUEST_PROVIDER_FILES_ROOT = `${ GUEST_RUNTIME_ROOT }/provider-transport`;
 export const GUEST_AGENT_DOCS_ROOT = `${ GUEST_RUNTIME_ROOT }/docs`;
+export const GUEST_CONVERSATIONS_ROOT = `${ GUEST_RUNTIME_ROOT }/conversations`;
 
 const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];
 const CAPTURE_LIMIT = 64 * 1024;
@@ -33,8 +35,8 @@ function assertGuestPath(candidate: string, roots = GUEST_PATH_ROOTS): string {
   return resolved;
 }
 
-function limaEnvironment(): NodeJS.ProcessEnv {
-  return { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' };
+function guestEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, TERM: 'dumb' };
 }
 
 function boundedAppend(current: string, chunk: unknown): string {
@@ -50,8 +52,8 @@ function safeErrorText(value: string): string {
 }
 
 export function runGuestSync(args: string[], input?: string | Buffer): string {
-  const result = childProcess.spawnSync(paths.limactl, ['shell', '0', '--', ...args], {
-    env:      limaEnvironment(),
+  const result = childProcess.spawnSync(paths.sullaRuntime, ['exec', '--', ...args], {
+    env:      guestEnvironment(),
     input,
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,
@@ -65,18 +67,23 @@ export function runGuestSync(args: string[], input?: string | Buffer): string {
   return String(result.stdout ?? '').trim();
 }
 
-let guestIdentity: GuestRuntimeIdentity | undefined;
+let guestIdentity: { user: string; identity: GuestRuntimeIdentity } | undefined;
 
-/** The container runs as the actual Lima login identity, never a host-derived or guessed UID. */
+/** The container runs as the actual guest login identity, never a host-derived or guessed UID. */
 export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
-  if (guestIdentity) return guestIdentity;
-  const output = runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
+  // Guest commands run as root on the Sulla runtime; there the login account
+  // is the one the runtime created for this Mac user, looked up by name.
+  const runtimeUser = sullaRuntimeGuestUser()?.name ?? '';
+  if (guestIdentity?.user === runtimeUser) return guestIdentity.identity;
+  const output = runtimeUser
+    ? runGuestSync(['sh', '-c', 'set -eu; id -u "$1"; id -g "$1"', 'sulla-guest-id', runtimeUser])
+    : runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
   const [uid, gid] = output.split(/\s+/).map(Number);
   if (![uid, gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
-    throw new Error('Could not resolve the Lima guest runtime identity');
+    throw new Error('Could not resolve the Sulla guest runtime identity');
   }
-  guestIdentity = { uid, gid };
-  return guestIdentity;
+  guestIdentity = { user: runtimeUser, identity: { uid, gid } };
+  return guestIdentity.identity;
 }
 
 function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): string {
@@ -113,6 +120,27 @@ export function createGuestRuntimeDirectory(parent: string, prefix: string): str
     'sulla-guest-mkdir', boundedParent, safePrefix, String(uid), String(gid), GUEST_RUNTIME_ROOT,
   ]);
   return existingGuestPath(created, [boundedParent]);
+}
+
+/** Create or reopen one stable, guest-owned runtime directory. */
+export function ensureGuestRuntimeDirectory(parent: string, name: string): string {
+  const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
+  if (!/^[a-zA-Z0-9_.-]{1,120}$/.test(name)) throw new Error('Invalid stable guest runtime directory name');
+  const { uid, gid } = getGuestRuntimeIdentity();
+  const target = assertGuestPath(path.posix.join(boundedParent, name), [boundedParent]);
+  runGuestSync([
+    'sh', '-c',
+    [
+      'set -eu', 'umask 077',
+      'sudo install -d -m 0700 -o "$3" -g "$4" "$1"',
+      '[ "$(realpath "$1")" = "$1" ]',
+      'sudo install -d -m 0700 -o "$3" -g "$4" "$2"',
+      '[ "$(realpath "$2")" = "$2" ]',
+      '[ "$(stat -c %u:%g "$2")" = "$3:$4" ]',
+    ].join('; '),
+    'sulla-stable-guest-mkdir', boundedParent, target, String(uid), String(gid),
+  ]);
+  return existingGuestPath(target, [boundedParent]);
 }
 
 export function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): void {
@@ -213,8 +241,8 @@ async function pipeToGuest(
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const source = childProcess.spawn(sourceCommand, sourceArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const guest = childProcess.spawn(paths.limactl, ['shell', '0', '--', ...guestArgs], {
-      env:   limaEnvironment(),
+    const guest = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...guestArgs], {
+      env:   guestEnvironment(),
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     let sourceError = '';

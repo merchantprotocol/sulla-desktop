@@ -11,7 +11,7 @@ import {
 
 jest.mock('@pkg/utils/paths', () => ({
   __esModule: true,
-  default:    { limactl: '/bin/true', lima: '/dev/null', sullaHome: '/tmp' },
+  default:    { sullaRuntime: '/bin/true', sullaHome: '/tmp' },
 }));
 jest.mock('electron', () => ({ __esModule: true, default: {} }));
 

@@ -60,7 +60,7 @@ const formatters: Record<string, Formatter> = {
   bash:         execFormatter,
   run_command:  execFormatter,
 
-  // Host machine exec (macOS login shell — not the Lima VM)
+  // Host machine exec (macOS login shell — not the Sulla VM)
   exechost:     exechostFormatter,
 
   // ── File Search ─────────────────────────────────────────────────────────
@@ -370,25 +370,6 @@ const formatters: Record<string, Formatter> = {
     return { label: 'Extensions', summary: q ? `Searching extensions: ${ truncate(q, 40) }` : 'Browsing extension catalog' };
   },
 
-  // ── Lima (VM) ────────────────────────────────────────────────────────────
-  lima_shell(args) {
-    return { label: 'Lima', summary: `Running in VM`, input: str(args.command) || undefined };
-  },
-  lima_start(args) {
-    return { label: 'Lima', summary: `Starting VM ${ str(args.instance) || '0' }` };
-  },
-  lima_stop(args) {
-    return { label: 'Lima', summary: `Stopping VM ${ str(args.instance) || '0' }` };
-  },
-  lima_list() {
-    return { label: 'Lima', summary: 'Listing VMs' };
-  },
-  lima_create(args) {
-    return { label: 'Lima', summary: `Creating VM${ args.template ? ` from ${ str(args.template) }` : '' }` };
-  },
-  lima_delete(args) {
-    return { label: 'Lima', summary: `Deleting VM ${ str(args.instance) }` };
-  },
 
   // ── Agents ───────────────────────────────────────────────────────────────
   spawn_agent(args) {
@@ -507,7 +488,7 @@ function execFormatter(args: Args, result?: unknown): Partial<ToolCardDisplay> {
 }
 
 // Host-machine exec — same shape as bash, but labeled so the user can
-// tell a macOS host command from a Lima VM command at a glance.
+// tell a macOS host command from a Sulla VM command at a glance.
 function exechostFormatter(args: Args, result?: unknown): Partial<ToolCardDisplay> {
   const cmd = str(args.command || args.cmd);
   const cwd = str(args.cwd);
@@ -533,7 +514,6 @@ const PREFIX_LABELS: [string, string][] = [
   ['pg_', 'Database'],
   ['redis_', 'Redis'],
   ['slack_', 'Slack'],
-  ['lima_', 'Lima'],
   ['calendar_', 'Calendar'],
 ];
 
