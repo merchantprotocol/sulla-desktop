@@ -12,7 +12,10 @@
  *   images  — every service container image (packaging/bundled-images.yaml),
  *             pinned in resources/darwin/images/images.lock.json
  *   whisper — the ggml base.en speech model and the whisper-cli binary
- *   audio   — the BlackHole 2ch loopback driver installer package
+ *   audio   — the BlackHole 2ch loopback driver installer package, ONLY with
+ *             SULLA_BUNDLE_BLACKHOLE=1 (off by default until we hold a
+ *             redistribution license; without it the app installs BlackHole
+ *             through Homebrew as before)
  *
  *   node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts [arm64|x86_64]
  *
@@ -56,6 +59,14 @@ export const LOOPBACK_DRIVER = {
     'BlackHole source code is licensed under the GNU General Public License v3.0: https://github.com/ExistentialAudio/BlackHole\n',
 } as const;
 
+/**
+ * BlackHole's official installer is "All rights reserved" and its README asks
+ * non-GPLv3 projects for a license, so it is embedded only on explicit opt-in.
+ */
+export function blackholeBundlingEnabled(value = process.env.SULLA_BUNDLE_BLACKHOLE): boolean {
+  return value?.trim() === '1';
+}
+
 export function bundleRoot(root = process.cwd()): string {
   return path.join(root, 'resources', 'darwin');
 }
@@ -93,8 +104,15 @@ export async function fetchBundledAssets(arch: string, skip = skippedParts(), ro
     await fetchPinned(WHISPER_MODEL.url, path.join(darwin, 'whisper', WHISPER_MODEL.file), WHISPER_MODEL.sha256, WHISPER_MODEL.notice);
     await simpleSpawn('bash', [path.join(root, 'scripts', 'build-whisper-cli.sh'), arch === 'x64' ? 'x86_64' : arch]);
   }
-  if (!skip.has('audio')) {
-    await fetchPinned(LOOPBACK_DRIVER.url, path.join(darwin, 'audio-driver', LOOPBACK_DRIVER.file), LOOPBACK_DRIVER.sha256, LOOPBACK_DRIVER.notice);
+  const driverPkg = path.join(darwin, 'audio-driver', LOOPBACK_DRIVER.file);
+
+  if (!blackholeBundlingEnabled()) {
+    // Never ship a copy left behind by an earlier opt-in build.
+    await fs.promises.rm(driverPkg, { force: true });
+    await fs.promises.rm(path.join(darwin, 'audio-driver', 'NOTICE'), { force: true });
+    console.log('fetch-bundled-assets: not bundling the BlackHole installer (set SULLA_BUNDLE_BLACKHOLE=1 to opt in); the app installs it via Homebrew');
+  } else if (!skip.has('audio')) {
+    await fetchPinned(LOOPBACK_DRIVER.url, driverPkg, LOOPBACK_DRIVER.sha256, LOOPBACK_DRIVER.notice);
   }
 }
 
@@ -131,7 +149,11 @@ export function bundledAssetProblems(resourcesDarwin: string, arch: string, skip
     }
     if (!fs.existsSync(path.join(resourcesDarwin, 'bin', 'whisper-cli'))) problems.push('bin/whisper-cli is missing');
   }
-  if (!skip.has('audio') && !fs.existsSync(path.join(resourcesDarwin, 'audio-driver', LOOPBACK_DRIVER.file))) {
+  const driverPkg = path.join(resourcesDarwin, 'audio-driver', LOOPBACK_DRIVER.file);
+
+  if (!blackholeBundlingEnabled()) {
+    if (fs.existsSync(driverPkg)) problems.push(`audio-driver/${ LOOPBACK_DRIVER.file } is present but SULLA_BUNDLE_BLACKHOLE is not set`);
+  } else if (!skip.has('audio') && !fs.existsSync(driverPkg)) {
     problems.push(`audio-driver/${ LOOPBACK_DRIVER.file } is missing`);
   }
 

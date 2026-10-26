@@ -65,7 +65,8 @@ runtime:
 # Embed the service container images, whisper (model + whisper-cli) and the
 # audio loopback driver in resources/darwin/ so the app downloads nothing after
 # install. Only changed parts are downloaded. SULLA_BUNDLE_SKIP=all (or a
-# comma list of images,whisper,audio) skips them for quick dev builds.
+# comma list of images,whisper,audio) skips them for quick dev builds. The
+# BlackHole installer is only embedded with SULLA_BUNDLE_BLACKHOLE=1 (license).
 assets:
     node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts
 

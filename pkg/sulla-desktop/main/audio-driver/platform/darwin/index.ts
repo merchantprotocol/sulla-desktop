@@ -93,7 +93,7 @@ function runSwift(scriptPath: string, args: string[] = []): Promise<{ ok: boolea
 
 // ─── Loopback Driver ────────────────────────────────────────
 
-/** BlackHole's signed installer, embedded by scripts/fetch-bundled-assets.ts. */
+/** BlackHole's signed installer, embedded by scripts/fetch-bundled-assets.ts only with SULLA_BUNDLE_BLACKHOLE=1. */
 const LOOPBACK_PACKAGE = 'BlackHole2ch-0.6.1.pkg';
 
 function bundledLoopbackPackage(): string | undefined {
@@ -139,18 +139,29 @@ export const loopback = {
   },
 
   async install(): Promise<boolean> {
+    // The installer is bundled only in builds made with SULLA_BUNDLE_BLACKHOLE=1
+    // (pending a redistribution license); otherwise install through Homebrew.
     const pkg = bundledLoopbackPackage();
 
-    if (!pkg) {
-      log.error('Platform', 'The bundled loopback driver installer is missing', { expected: path.join(scriptDir, LOOPBACK_PACKAGE) });
-      return false;
-    }
-    log.info('Platform', 'Installing the bundled BlackHole 2ch driver', { pkg });
     try {
-      // One administrator prompt installs the driver and reloads CoreAudio.
-      execFileSync('osascript', ['-e', adminShellScript(`/usr/sbin/installer -pkg ${ shellQuote(pkg) } -target / && (/usr/bin/killall coreaudiod 2>/dev/null; true)`)], {
-        timeout: 180000, stdio: 'pipe', env: CHILD_ENV,
-      });
+      if (pkg) {
+        log.info('Platform', 'Installing the bundled BlackHole 2ch driver', { pkg });
+        // One administrator prompt installs the driver and reloads CoreAudio.
+        execFileSync('osascript', ['-e', adminShellScript(`/usr/sbin/installer -pkg ${ shellQuote(pkg) } -target / && (/usr/bin/killall coreaudiod 2>/dev/null; true)`)], {
+          timeout: 180000, stdio: 'pipe', env: CHILD_ENV,
+        });
+      } else {
+        log.info('Platform', 'Installing BlackHole 2ch via Homebrew...');
+        execSync('brew install --cask blackhole-2ch', { timeout: 120000, stdio: 'pipe', env: CHILD_ENV });
+        try {
+          execSync(
+            'osascript -e \'do shell script "killall coreaudiod 2>/dev/null" with administrator privileges\'',
+            { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
+          );
+        } catch {
+          // User cancelled or coreaudiod not running — it will recover on its own
+        }
+      }
       log.info('Platform', 'BlackHole 2ch installed');
 
       for (let i = 0; i < 5; i++) {
