@@ -20,6 +20,9 @@ All routes need `Authorization: Bearer <UPLOAD_TOKEN>`.
 | `POST /v1/upload/abort?key=K&uploadId=U` | cancel an upload |
 | `PUT /v1/object?key=K[&contentType=T][&cacheControl=C]` | upload a small file (at most 95 MB) in one request |
 
+CI talks to it through `scripts/release/publish-to-releases.mjs`; the release
+flow and bucket layout are in [`docs/releasing.md`](../../docs/releasing.md).
+
 `cacheControl` must be one of `no-cache`, `no-store`, `public, max-age=300`,
 `public, max-age=31536000, immutable`. Use `no-cache` for the update feed
 (`latest-mac.yml`) and the immutable value for versioned zips.

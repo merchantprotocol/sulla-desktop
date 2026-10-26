@@ -55,6 +55,17 @@ files:
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
   # `yarn install --ignore-platform` pulls every sherpa-onnx platform package
   # (~30-60 MB each); ship only the one for the target OS (see per-OS files).
+# Update feed. electron-builder writes this into the app's app-update.yml, and
+# electron-updater's generic provider reads <url>/latest-mac.yml from it. This
+# is the one place the feed location is configured; the zips themselves live
+# under releases/v<version>/ and the feed points at them with absolute URLs.
+# CI publishes both (see docs/releasing.md); electron-builder never uploads.
+# R2 serves single byte ranges only, so differential downloads must not ask
+# for several ranges in one request.
+publish:
+  provider: generic
+  url: https://releases.sulladesktop.com/channels/latest
+  useMultipleRangeRequest: false
 # Register the sulla:// custom URL scheme so the OS hands off deep
 # links (e.g. the "Open in Sulla Desktop" CTA on sulladesktop.com)
 # to this app. electron-builder writes CFBundleURLTypes into the

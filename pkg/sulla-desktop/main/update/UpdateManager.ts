@@ -199,7 +199,7 @@ class UpdateManager extends EventEmitter {
    * Entry point for every "check for updates" caller.
    *
    * Two-stage flow:
-   *   1. Always run the lightweight responder check — works in dev + prod.
+   *   1. Always run the lightweight feed check — works in dev + prod.
    *      This tells us what the latest version is and whether we're behind.
    *   2. Only in a packaged build, hand off to electron-updater to actually
    *      download & queue the install. Dev builds stop at step 1.
@@ -283,7 +283,7 @@ class UpdateManager extends EventEmitter {
     try {
       const { default: setupUpdate } = await import('./index');
 
-      await setupUpdate(true, false);
+      await setupUpdate(true);
       if (!lightweightSucceeded) {
         this.setState({ lastCheckedAt: Date.now() });
       }
@@ -305,7 +305,7 @@ class UpdateManager extends EventEmitter {
     if (!app.isPackaged) {
       console.warn('[UpdateManager] installUpdate ignored — app is not packaged');
       this.setState({
-        error: 'Install is only available in packaged builds. Download the latest DMG/installer from GitHub releases.',
+        error: 'Install is only available in packaged builds. Download the latest release from https://sulladesktop.com/downloads.',
       });
 
       return;
