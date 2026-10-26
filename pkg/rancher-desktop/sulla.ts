@@ -903,7 +903,28 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   let vaultStatusPoll: ReturnType<typeof setInterval> | undefined;
   let vaultStatusRunning = false;
   let vaultMigrationRun: Promise<unknown> | undefined;
-  const refreshVaultStatus = async() => {
+  // Share one in-flight status refresh between the main-process poll and every
+  // renderer `vault:status` caller so slow/missing vault responses can't pile up.
+  let vaultStatusInFlight: Promise<Awaited<ReturnType<typeof refreshVaultStatusOnce>>> | undefined;
+  const refreshVaultStatus = () => {
+    vaultStatusInFlight ??= refreshVaultStatusOnce().finally(() => { vaultStatusInFlight = undefined });
+    return vaultStatusInFlight;
+  };
+  const startVaultStatusPoll = () => {
+    if (vaultStatusPoll) return;
+    vaultStatusPoll = setInterval(() => {
+      // Self-stop if the vault view went away without a vault:view-hide (renderer reload, crash).
+      if (!vaultViewManager.hasActiveOwner()) {
+        clearInterval(vaultStatusPoll);
+        vaultStatusPoll = undefined;
+        return;
+      }
+      if (vaultStatusRunning) return;
+      vaultStatusRunning = true;
+      void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
+    }, 1_000);
+  };
+  const refreshVaultStatusOnce = async() => {
     const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
     const client = getDesktopVaultClient();
     const wasUnlocked = client.isUnlocked();
@@ -918,7 +939,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return status;
   };
 
-  ipcMainProxy.handle('vault:status', refreshVaultStatus);
+  ipcMainProxy.handle('vault:status', () => refreshVaultStatus());
 
   const vaultMetadataId = (value: unknown, name: 'integrationId' | 'accountId'): string => {
     const pattern = name === 'integrationId'
@@ -1004,11 +1025,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     }
     const opened = await vaultViewManager.show(reservation, target.toString(), bounds);
     if (!opened) return { state: 'cancelled' };
-    if (!vaultStatusPoll) vaultStatusPoll = setInterval(() => {
-      if (vaultStatusRunning) return;
-      vaultStatusRunning = true;
-      void refreshVaultStatus().catch(error => console.warn('[vault] Status refresh failed:', error)).finally(() => { vaultStatusRunning = false });
-    }, 1_000);
+    startVaultStatusPoll();
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 

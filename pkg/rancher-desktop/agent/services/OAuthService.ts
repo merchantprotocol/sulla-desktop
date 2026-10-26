@@ -8,6 +8,7 @@ import { BrowserWindow, shell } from 'electron';
 
 import { getIntegrationService } from './IntegrationService';
 import { startOAuthCallbackServer } from './OAuthCallbackServer';
+import { REFRESH_RETRY_DELAY_MS, refreshRetryDelayMs } from './oauthRefreshRetry';
 import {
   issueLocalBrokerContext,
   requireConfiguredCredentialBroker,
@@ -24,7 +25,6 @@ import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 const LOG_PREFIX = '[OAuthService]';
 const DEFAULT_REFRESH_BUFFER_SECONDS = 300;
 const UNKNOWN_EXPIRY_REFRESH_AFTER_MS = 55 * 60 * 1000;
-const REFRESH_RETRY_DELAY_MS = 60 * 1000;
 const MIN_REFRESH_DELAY_MS = 5000;
 
 // ─── DB row shape ─────────────────────────────────────────────────
@@ -60,6 +60,8 @@ const refreshTimers = new Map<string, NodeJS.Timeout>();
 // when each account is next due for refresh (from metadata expiry) and
 // coalesces refreshes so a timer and a request-time check never race.
 const vaultRefreshAt = new Map<string, number>();
+// Consecutive failed refresh retries per account, for exponential backoff.
+const refreshRetryCounts = new Map<string, number>();
 const vaultRefreshes = new Map<string, Promise<OAuthTokenSet>>();
 
 function timerKey(integrationId: string, accountId: string): string {
@@ -680,11 +682,18 @@ export class OAuthService {
       // Looks due (or unknown): confirm against the vault's current metadata
       // in case the token was already rotated by a reconnect or another call.
       target = await this.vaultRefreshTarget(integrationId, accountId);
-      if (!target || Date.now() < target.refreshAt) return;
+      if (!target) {
+        // No OAuth session for this account (missing/never-created credential).
+        // Cache the negative result so every upstream request doesn't re-query the vault.
+        vaultRefreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
+        return;
+      }
+      if (Date.now() < target.refreshAt) return;
       await this.refreshAccessToken(integrationId, accountId, target.providerId, target.clientId, '');
     } catch (err) {
       console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
       if (target) this.scheduleRefreshRetry(integrationId, accountId, target.providerId, target.clientId, '');
+      else vaultRefreshAt.set(timerKey(integrationId, accountId), Date.now() + REFRESH_RETRY_DELAY_MS);
     }
   }
 
@@ -837,16 +846,21 @@ export class OAuthService {
     const key = timerKey(integrationId, accountId);
     const existing = refreshTimers.get(key);
     if (existing) clearTimeout(existing);
+    // Back off exponentially so a missing/dead credential doesn't retry forever at 60s.
+    const failures = (refreshRetryCounts.get(key) ?? 0) + 1;
+    refreshRetryCounts.set(key, failures);
+    const delayMs = refreshRetryDelayMs(failures);
     // Request-time checks wait for the retry instead of hammering the vault.
-    if (usesContainerVaultAuthority()) vaultRefreshAt.set(key, Date.now() + REFRESH_RETRY_DELAY_MS);
+    if (usesContainerVaultAuthority()) vaultRefreshAt.set(key, Date.now() + delayMs);
     const retryTimer = setTimeout(async() => {
       try {
         await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
+        refreshRetryCounts.delete(key);
       } catch (err) {
         console.error(`${ LOG_PREFIX } Auto-refresh retry failed for ${ integrationId }/${ accountId }:`, err);
         this.scheduleRefreshRetry(integrationId, accountId, providerId, clientId, clientSecret);
       }
-    }, REFRESH_RETRY_DELAY_MS);
+    }, delayMs);
 
     if (retryTimer.unref) {
       retryTimer.unref();
@@ -932,6 +946,7 @@ export class OAuthService {
       refreshTimers.delete(key);
     }
     vaultRefreshAt.delete(key);
+    refreshRetryCounts.delete(key);
   }
 
   // ── Get a valid access token (auto-refreshes if expired) ──────
@@ -1198,6 +1213,7 @@ export class OAuthService {
     }
     refreshTimers.clear();
     vaultRefreshAt.clear();
+    refreshRetryCounts.clear();
     console.log(`${ LOG_PREFIX } All refresh timers cleared`);
   }
 }
