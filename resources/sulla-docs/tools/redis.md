@@ -1,6 +1,6 @@
 # Redis
 
-Sulla's KV / cache / list store. Container `sulla_redis` on port **30117** (host) inside Lima. The agent has 12 tools for it. **Most agents will only ever read `sulla:bridge:human_presence`.**
+Sulla's KV / cache / list store. Container `sulla_redis` on port **30117** (host) inside Sulla VM. The agent has 12 tools for it. **Most agents will only ever read `sulla:bridge:human_presence`.**
 
 ## What's stored where
 

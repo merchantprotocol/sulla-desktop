@@ -6,7 +6,7 @@
 
 Git and API calls authenticate via a Personal Access Token (PAT) stored in the vault, injected automatically at call time. SSH remotes are auto-converted to HTTPS with the PAT as `x-access-token`. **No SSH key setup, no raw `gh`, never extract the PAT yourself** — it's autofill-protected and a raw `git push` fails with no credential helper. Always go through these tools.
 
-Local git tools take `absolutePath` — the repo path (or **any path inside it**) on the Mac. Home is shared into Lima, so `/Users/<you>/Sites/...` paths work from the agent.
+Local git tools take `absolutePath` — the repo path (or **any path inside it**) on the Mac. Home is shared into Sulla VM, so `/Users/<you>/Sites/...` paths work from the agent.
 
 ---
 
@@ -78,7 +78,7 @@ sulla github/ci_logs '{"owner":"merchantprotocol","repo":"sulla-desktop","ref":"
 ---
 
 ## Notes
-- All local git operates on the **Mac filesystem** — the home dir is shared into Lima.
+- All local git operates on the **Mac filesystem** — the home dir is shared into Sulla VM.
 - Commit author is the repo's configured git identity.
 - Merges and destructive ops require a confirm flag: `github/merge_pr` and `github/close_pr` need `confirm:true`; `github/delete_repo` needs `confirm:true` plus `confirm_name` matching the repo name; `github/delete_ref` and a non-draft `github/create_release` need `confirm:true`.
 - Pushed changes to a running app still need a **rebuild/restart** to take effect in the binary.

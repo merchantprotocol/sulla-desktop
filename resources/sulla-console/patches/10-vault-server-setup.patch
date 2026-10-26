@@ -1,0 +1,216 @@
+Subject: 10-vault-server-setup: Passwords: first unlock on a server enrolls the member; the launcher opens setup
+
+diff --git a/js/cloud/passwords/launcher.js b/js/cloud/passwords/launcher.js
+index 7136e88f576ccb8fdc80e2a93dd60cdad7498440..078e1fd733d5c1be1813500d9dcf7f2491eaa341 100644
+--- a/js/cloud/passwords/launcher.js
++++ b/js/cloud/passwords/launcher.js
+@@ -53,7 +53,7 @@
+       ctx.states.error(ctx.view, error, { title: 'Vault sync status could not load', retry: () => render(ctx) });
+       return;
+     }
+-    if (!status?.enabled) {
++    if (!status?.enabled && !status?.setup) {
+       if (status?.syncSettings?.vault) {
+         const device = esc(status.sourceDeviceName || 'Sulla Desktop');
+         const offline = status.sourceDeviceOnline === false;
+diff --git a/js/cloud/passwords/sync-envelope.js b/js/cloud/passwords/sync-envelope.js
+index 491eb0fb4b15a7c1c6ca382ad5c969d8a48270f4..df5c73559cae5119a2de49ebe84eac2818e41303 100644
+--- a/js/cloud/passwords/sync-envelope.js
++++ b/js/cloud/passwords/sync-envelope.js
+@@ -279,6 +279,22 @@ export function createSyncEnvelope(sodium) {
+     return userKey;
+   }
+ 
++  /**
++   * First unlock on a Sulla Server (or after a password change): open the
++   * account's wrapped user key with the master password, before any bundle
++   * exists. Throws `wrong_password` locally. The caller zeroes the key.
++   */
++  function unwrapUserKey(fields, password) {
++    const masterKey = deriveMasterKey(password, fields?.kdf);
++    try {
++      return open(fields.encryptedUserKey, masterKey, 'sulla:user-key:v1');
++    } catch {
++      throw new EnvelopeError('wrong_password', 'Wrong master password');
++    } finally {
++      masterKey.fill(0);
++    }
++  }
++
+   function contentHash(record) {
+     if (record.deleted) return '';
+     return sha256(record.kind === 'item' ? record.item : record.encryptedName);
+@@ -396,7 +412,7 @@ export function createSyncEnvelope(sodium) {
+   }
+ 
+   return {
+-    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle,
++    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey,
+     buildBundle, verifyBundle, buildRecord, verifyRecord, stateHash, buildHead, verifyHead,
+     encryptItem, decryptItem,
+     encryptFolderName: (name, ownerKey, ownerId, folderId) => seal(enc.encode(name), ownerKey, folderAad(ownerId, folderId)),
+diff --git a/js/cloud/passwords/vault-app.js b/js/cloud/passwords/vault-app.js
+index 85f50850d998adc09139a41f66bd8dd85a405e50..cc1dea84d85a5b5dc062ef1ebc33ee9b98439c65 100644
+--- a/js/cloud/passwords/vault-app.js
++++ b/js/cloud/passwords/vault-app.js
+@@ -168,7 +168,7 @@ async function pollStatus() {
+     if (error.status === 401) { await client.lock(); window.VaultOrigin.toDashboard(); }
+     return;
+   }
+-  if (!next.enabled) return lock('The vault was deleted from this server.');
++  if (!next.enabled) return lock(next.setup === 'rewrap' ? 'Your vault password changed. Unlock again with the new one.' : 'The vault was deleted from this server.');
+   if (next.vaultId !== before?.vaultId || next.bundleGeneration !== before?.bundleGeneration || next.epoch !== before?.epoch) {
+     return lock('Your master password or vault keys changed on Sulla Desktop. Unlock again with the current password.');
+   }
+@@ -198,7 +198,8 @@ async function open() {
+   render();
+   try {
+     const status = await client.refreshStatus();
+-    if (!status.enabled) { ui.phase = 'off'; render(); return; }
++    ui.setup = status.enabled ? null : status.setup || null;
++    if (!status.enabled) { ui.phase = ui.setup ? 'setup' : 'off'; render(); return; }
+     await client.prefetch();
+     ui.phase = 'locked';
+   } catch (error) {
+@@ -225,7 +226,8 @@ async function unlock(form) {
+   form.querySelector('button[type=submit]').disabled = true;
+   form.querySelector('button[type=submit]').textContent = 'Unlocking…';
+   try {
+-    const result = await client.unlock(password);
++    const result = ui.setup ? await client.enroll(password) : await client.unlock(password);
++    ui.setup = null;
+     ui.fails = 0;
+     ui.list = result.list;
+     ui.phase = 'unlocked';
+@@ -235,7 +237,7 @@ async function unlock(form) {
+     pollTimer = setInterval(pollStatus, STATUS_POLL_MS);
+     render();
+   } catch (error) {
+-    ui.phase = 'locked';
++    ui.phase = ui.setup ? 'setup' : 'locked';
+     if (error.code === 'wrong_password') {
+       ui.fails += 1;
+       if (ui.fails >= MAX_FAILS) { ui.backoffUntil = Date.now() + BACKOFF_MS; ui.fails = 0; }
+@@ -245,7 +247,7 @@ async function unlock(form) {
+       return;
+     }
+     failIntegrity(error);
+-    if (ui.phase === 'locked') render();
++    if (ui.phase === 'locked' || ui.phase === 'setup') render();
+   }
+ }
+ 
+@@ -269,8 +271,8 @@ function renderLocked() {
+   const s = client.status() || {};
+   const files = route().vv === 'files';
+   const wait = Date.now() < ui.backoffUntil;
+-  return `<div class="vc"><section class="unlock-wrap"><div class="unlock-card card"><p class="eyebrow">Sulla Server ${files ? '· Files backup' : 'vault'} · ${esc(ui.ctx.org?.name || '')}</p><h1 class="title">${files ? 'Unlock your encrypted Files backup' : 'Unlock your vault'}</h1>
+-    <p class="lead">${files ? 'Use your vault master password to open the encrypted Files backup. The password stays inside this browser tab.' : 'Your password stays inside this browser tab. Sulla Server and agents never receive it.'}</p>
++  return `<div class="vc"><section class="unlock-wrap"><div class="unlock-card card"><p class="eyebrow">Sulla Server ${files ? '· Files backup' : 'vault'} · ${esc(ui.ctx.org?.name || '')}</p><h1 class="title">${files ? 'Unlock your encrypted Files backup' : ui.setup === 'enroll' ? 'Set up your vault' : ui.setup === 'rewrap' ? 'Your vault password changed' : 'Unlock your vault'}</h1>
++    <p class="lead">${files ? 'Use your vault master password to open the encrypted Files backup. The password stays inside this browser tab.' : ui.setup ? 'Enter your vault unlock password. This browser opens your keys and signs your vault; the password never leaves this tab.' : 'Your password stays inside this browser tab. Sulla Server and agents never receive it.'}</p>
+     ${ui.message ? `<div class="notice">${esc(ui.message)}</div>` : ''}
+     ${s.syncPaused ? '<div class="notice">Sync is paused on Sulla Desktop. You can view items here, but edits are off until it is turned back on.</div>' : ''}
+     <form data-unlock autocomplete="off"><label>Password<input type="password" name="password" autocomplete="off" spellcheck="false" ${wait ? 'disabled' : ''} required></label>
+@@ -520,7 +522,7 @@ function render() {
+   if (ui.phase === 'loading') { ui.ctx.states.loading(el, 'Loading your vault…'); return; }
+   if (ui.phase === 'off') { el.innerHTML = renderOff(); return; }
+   if (ui.phase === 'failed') { el.innerHTML = renderFailed(); return; }
+-  if (ui.phase === 'locked' || ui.phase === 'unlocking') {
++  if (ui.phase === 'locked' || ui.phase === 'unlocking' || ui.phase === 'setup') {
+     el.innerHTML = renderLocked();
+     el.querySelector('input[type=password]')?.focus();
+     return;
+diff --git a/js/cloud/passwords/vault-client.js b/js/cloud/passwords/vault-client.js
+index 5294b40870d787957af225a0be69517286ce615b..310cf8986465b2ccd548ea28a6489652a65be057 100644
+--- a/js/cloud/passwords/vault-client.js
++++ b/js/cloud/passwords/vault-client.js
+@@ -149,6 +149,24 @@ export function createVaultClient({
+     return { count: records.length };
+   }
+ 
++  /**
++   * Sulla Server: first unlock (status.setup 'enroll') or after a password
++   * change ('rewrap'). The worker MACs the bundle; only the MAC'd bundle and
++   * the empty personal head are sent. Then the normal load and unlock run.
++   */
++  async function enroll(password) {
++    const vault = encodeURIComponent(status.vaultId);
++    const setup = await http('GET', `/vaults/${vault}/enrollment`);
++    const made = await rpc('enroll', { fields: setup.fields, vaultId: status.vaultId, op: setup.op }, password);
++    if (setup.op === 'rewrap') {
++      await http('PUT', `/vaults/${vault}?op=rewrap`, { bundle: made.bundle, expectedBundleGeneration: setup.expectedBundleGeneration });
++    } else {
++      await http('PUT', `/vaults/${vault}?op=create`, { bundle: made.bundle, scope: 'personal', records: [], head: made.head });
++    }
++    await refreshStatus();
++    await prefetch();
++  }
++
+   /** Local only: the worker decides; no request is made. */
+   async function unlock(password) {
+     const result = await rpc('unlock', password);
+@@ -256,6 +274,12 @@ export function createVaultClient({
+     filesLoadCollection, filesChunkIds, filesDownload,
+     isUnlocked: () => unlocked,
+     prefetch,
++    enroll: async (password) => {
++      await enroll(password);
++      const result = await unlock(password);
++      currentSeq = result.seq;
++      return result;
++    },
+     unlock: async (password) => {
+       const result = await unlock(password);
+       currentSeq = result.seq;
+diff --git a/js/cloud/passwords/vault-core.js b/js/cloud/passwords/vault-core.js
+index 5829f5e46dd5879bde99389a7ddcf4f59bdfeb60..7c724326a497dd25dba7932ce6309a867de480e2 100644
+--- a/js/cloud/passwords/vault-core.js
++++ b/js/cloud/passwords/vault-core.js
+@@ -87,6 +87,34 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+     }
+   }
+ 
++  /**
++   * Sulla Server enrollment: MAC the account's bundle fields with the user key
++   * (opened here with the master password) and, for a new member, sign the
++   * empty personal head. Returns only the MAC'd bundle and head; no key leaves.
++   */
++  function enroll(input, password) {
++    if (!input?.fields || typeof input.vaultId !== 'string' || !['create', 'rewrap'].includes(input.op)) {
++      throw new VaultError('enroll_invalid', 'Vault setup data is incomplete');
++    }
++    let key;
++    try {
++      key = env.unwrapUserKey(input.fields, password);
++    } catch (error) {
++      if (error instanceof EnvelopeError) throw new VaultError(error.code, error.message);
++      throw error;
++    }
++    try {
++      const built = env.buildBundle(input.fields, key);
++      if (input.op === 'rewrap') return { bundle: built };
++      return { bundle: built, head: env.buildHead({ vaultId: input.vaultId, scope: SCOPE, seq: 1, records: [] }, key) };
++    } catch (error) {
++      if (error instanceof EnvelopeError) throw new VaultError(error.code, error.message);
++      throw error;
++    } finally {
++      key.fill(0);
++    }
++  }
++
+   /** Store ciphertext fetched before the password is typed. No keys, no network. */
+   function load(input) {
+     wipe();
+@@ -381,10 +409,10 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+   }
+ 
+   return {
+-    load, unlock, list, detail, reveal, editable, prepareSave, prepareDelete, commitAccepted, pendingItem, discard, merge, filesOpenEscrow, filesVerifyHead, filesLoadCollection, filesChunkIds, filesDownload, wipe,
++    enroll, load, unlock, list, detail, reveal, editable, prepareSave, prepareDelete, commitAccepted, pendingItem, discard, merge, filesOpenEscrow, filesVerifyHead, filesLoadCollection, filesChunkIds, filesDownload, wipe,
+     // State inspection for the wipe test; returns references, never copies of secrets.
+     _state: () => ({ keyBuffers: [...keyBuffers], itemCount: items.size, fileRootCount: fileRoots.size, unlocked: !!userKey, seq: head?.seq ?? null }),
+   };
+ }
+ 
+-export const WORKER_OPS = ['load', 'unlock', 'list', 'detail', 'reveal', 'editable', 'prepareSave', 'prepareDelete', 'commitAccepted', 'pendingItem', 'discard', 'merge', 'filesOpenEscrow', 'filesVerifyHead', 'filesLoadCollection', 'filesChunkIds', 'filesDownload', 'wipe'];
++export const WORKER_OPS = ['enroll', 'load', 'unlock', 'list', 'detail', 'reveal', 'editable', 'prepareSave', 'prepareDelete', 'commitAccepted', 'pendingItem', 'discard', 'merge', 'filesOpenEscrow', 'filesVerifyHead', 'filesLoadCollection', 'filesChunkIds', 'filesDownload', 'wipe'];

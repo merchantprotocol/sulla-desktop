@@ -18,6 +18,9 @@ spec:
             - {name: SULLA_TLS_KEY_CONTAINER_PATH, value: ""}
             - {name: SULLA_CONSOLE_UPSTREAM, value: http://sulla-console:8786}
             - {name: SULLA_PUBLIC_SCHEME, valueFrom: {secretKeyRef: {name: sulla-server, key: public-scheme}}}
+            - {name: SULLA_VAULT_HOST, valueFrom: {secretKeyRef: {name: sulla-server, key: vault-host}}}
+            - {name: SULLA_RELAY_UPSTREAM, value: http://sulla-relay:8790}
+            - {name: SULLA_VAULT_UPSTREAM, value: http://sulla-vault:8787}
           command: [sh, /etc/sulla/entrypoint.sh]
           volumeMounts:
             - {name: config, mountPath: /etc/sulla, readOnly: true}

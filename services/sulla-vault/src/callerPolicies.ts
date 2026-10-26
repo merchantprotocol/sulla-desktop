@@ -37,7 +37,7 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     hosts: ['sulla-workers.merchantprotocol.workers.dev'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
-    pathPattern: /^\/files-sync\/v1\/(collections(\/[0-9a-f-]{36}(\/(keys(\/[0-9]+)?|uploads|commit|changes|chunks\/[0-9a-f]{64}))?)?|uploads\/[0-9a-f-]{36}(\/chunks\/[0-9a-f]{64})?|usage)$/,
+    pathPattern: /^\/files-sync\/v1\/(collections(\/[0-9a-f-]{36}(\/(keys(\/[0-9]+)?|info|uploads|commit|changes|chunks\/[0-9a-f]{64}))?)?|uploads\/[0-9a-f-]{36}(\/chunks\/[0-9a-f]{64})?|usage)$/,
     binaryRequest: true,
   },
   'sulla-cloud.cloud-files.catalog': {

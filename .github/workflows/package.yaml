@@ -13,7 +13,16 @@ defaults:
     shell: bash
 
 jobs:
+  # The mac app embeds the native runtime (macOS VM). It is rebuilt from this
+  # commit on every release; win does not wait on its success.
+  runtime:
+    uses: ./.github/workflows/sulla-runtime.yml
+    with:
+      skip_publish: true
+
   package:
+    needs: runtime
+    if: ${{ !cancelled() }}
     strategy:
       # One platform's intermittent electron-extract failure must not cancel
       # the others — without this, a single unlucky runner nukes all four
@@ -34,8 +43,6 @@ jobs:
           # on windows-2022 is node-gyp-recognized. (Durable follow-up: upgrade
           # node-gyp instead of pinning the runner.)
           runs-on: windows-2022
-        - platform: linux
-          runs-on: ubuntu-22.04
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -87,8 +94,15 @@ jobs:
           echo "::error::Refusing unsigned macOS package; missing required signing configuration: ${missing[*]}"
           exit 1
         fi
+    - name: Download the Sulla runtime bundle
+      if: matrix.platform == 'mac'
+      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+      with:
+        name: sulla-runtime-bundle-${{ matrix.arch == 'aarch64' && 'arm64' || 'x86_64' }}
+        path: ${{ runner.temp }}/sulla-runtime
     - run: yarn package
       env:
+        SULLA_RUNTIME_ARTIFACTS_DIR: ${{ matrix.platform == 'mac' && format('{0}/sulla-runtime', runner.temp) || '' }}
         CSC_LINK: ${{ secrets.CSC_LINK }}
         CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -145,39 +159,6 @@ jobs:
         name: Sulla Desktop-win.zip
         path: dist/Sulla-Desktop-*-win.zip
         if-no-files-found: error
-    - name: Upload Linux zip
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      if: matrix.platform == 'linux'
-      with:
-        name: Sulla Desktop-linux.zip
-        path: dist/sulla-desktop-*-linux.zip
-        if-no-files-found: error
-    - name: Trigger OBS build
-      if: matrix.platform == 'linux' && github.ref_type == 'branch' && ( startsWith(github.ref_name, 'main') || startsWith(github.ref_name, 'release-') )
-      run: |
-        if [[ -z $AWS_ACCESS_KEY_ID ]] || [[ -z $OBS_WEBHOOK_TOKEN ]]; then
-          echo "Secrets unavailable, skipping."
-          exit 0
-        fi
-        # in pull requests GITHUB_REF_NAME is in the form "<pr_number>/merge";
-        # remove slashes since they aren't valid in filenames
-        no_slash_ref_name="${GITHUB_REF_NAME//\//-}"
-        zip_name="sulla-desktop-linux-${no_slash_ref_name}.zip"
-
-        # Copy zip file to S3
-        aws s3 cp \
-          dist/sulla-desktop-*-linux.zip \
-          "s3://sulla-desktop-assets-for-obs/$zip_name"
-
-        # Trigger OBS services for relevant package in dev channel
-        curl -X POST \
-          -H "Authorization: Token ${OBS_WEBHOOK_TOKEN}" \
-          "https://build.opensuse.org/trigger/runservice?project=isv:Sulla:dev&package=sulla-desktop-${GITHUB_REF_NAME}"
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_DEFAULT_REGION: us-east-1
-        OBS_WEBHOOK_TOKEN: ${{ secrets.OBS_WEBHOOK_TOKEN }}
 
   release:
     name: Create GitHub Release

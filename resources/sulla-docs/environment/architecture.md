@@ -6,11 +6,11 @@ Sulla Desktop is an Electron application with three distinct execution environme
 
 | Layer | Where it runs | What lives there |
 |-------|--------------|-----------------|
-| Electron Main Process | Host macOS/Linux | Service orchestration, IPC handlers, Lima control, vault, MCP server |
-| Lima VM | Linux guest (QEMU) | Docker containers: Postgres, Redis, Python/Node/Shell runtimes |
+| Electron Main Process | Host macOS/Linux | Service orchestration, IPC handlers, Sulla VM control, vault, MCP server |
+| Sulla VM | Linux guest (Virtualization.framework) | Docker containers: Postgres, Redis, Python/Node/Shell runtimes |
 | Vue Renderer | Electron window | Chat UI, AgentRoutines, workflow canvas |
 
-Agent turns run through Sulla's own graph + model-provider layer, not a single hardcoded model. Some providers are API-backed (Anthropic, OpenAI); command-line providers (Claude Code, OpenAI Codex) spawn CLI processes inside Lima and stream results back through the same graph. Tool calls route through the Sulla Tools API / in-process MCP server, and channel messages return over WebSocket. Around every actionable turn, a **subconscious layer** recalls memory before the reply and writes observations after — see [`environment/subconscious.md`](subconscious.md).
+Agent turns run through Sulla's own graph + model-provider layer, not a single hardcoded model. Some providers are API-backed (Anthropic, OpenAI); command-line providers (Claude Code, OpenAI Codex) spawn CLI processes inside Sulla VM and stream results back through the same graph. Tool calls route through the Sulla Tools API / in-process MCP server, and channel messages return over WebSocket. Around every actionable turn, a **subconscious layer** recalls memory before the reply and writes observations after — see [`environment/subconscious.md`](subconscious.md).
 
 ---
 
@@ -42,7 +42,7 @@ instantiateSullaStart() → bootstrapSullaHome()
 
 ---
 
-## Lima VM
+## Sulla VM
 
 ### Disk vs memory in the VM
 
@@ -57,16 +57,16 @@ Use /mnt/worktrees/<repo>-<branch> for code and
 container, use your working directory instead. Delete scratch when done.
 Move only finished work into /mnt/sulla-files.
 
-Lima runs Alpine Linux. `backend/lima.ts:getMounts()` mounts only app-owned
+Sulla VM runs Alpine Linux. `backend/sullaRuntimeBackend.ts:getMounts()` mounts only app-owned
 transport/cache roots: `/tmp/rancher-desktop`, `paths.cache`, `paths.logs`, and
 `paths.resources` (read-only). The host home is not mounted. Selected host
 content is reached through Files, not raw host paths.
 
 Agent files are exposed at `/mnt/sulla-files`. Git worktrees use
 `/mnt/worktrees`, bind-mounted from persistent `/mnt/data/worktrees` by
-`assets/lima-config.yaml`. The VM's guest-owned HOME is kept by CommandRunner.
+the runtime's guest image. The VM's guest-owned HOME is kept by CommandRunner.
 
-**Base Docker containers inside Lima:**
+**Base Docker containers inside Sulla VM:**
 
 | Container | Published port | Purpose |
 |-----------|----------------|---------|
@@ -79,13 +79,13 @@ Agent files are exposed at `/mnt/sulla-files`. Git worktrees use
 Function runtimes mount VM-owned function catalog and invocation directories,
 not host `~/sulla/functions`. See [docker.md](docker.md) for image sources.
 
-The `sulla` CLI is installed at `/usr/local/bin/sulla` in Lima. Use `meta/exec`
+The `sulla` CLI is installed at `/usr/local/bin/sulla` in Sulla VM. Use `meta/exec`
 for VM commands. `meta/exechost` is a separate host-only escape hatch, not a
 substitute for Files or normal VM development.
 
 ### Background task completions (Claude Code)
 
-`claude -p` runs in Lima via `ClaudeCodeService`, which keeps one warm CLI process per conversation between turns (the warm pool). When the model starts background work (`Bash run_in_background`, `Monitor`) and it finishes after the turn, the CLI emits `system/task_notification` and runs its own follow-up turn. The parked process keeps being read, and `claudeBackgroundTasks.ts` routes the completion into the owning graph thread:
+`claude -p` runs in Sulla VM via `ClaudeCodeService`, which keeps one warm CLI process per conversation between turns (the warm pool). When the model starts background work (`Bash run_in_background`, `Monitor`) and it finishes after the turn, the CLI emits `system/task_notification` and runs its own follow-up turn. The parked process keeps being read, and `claudeBackgroundTasks.ts` routes the completion into the owning graph thread:
 
 - **Idle thread** — woken immediately with a `user_message` (`metadata.source: background_task_completion`, `inputSource: system`), the same primitive `spawn_agent` uses; the next turn adopts the same process.
 - **Busy thread** — held and retried every 15s until the thread goes idle (a `user_message` on a running thread would abort it); a turn that starts first gets the notice prepended to its prompt instead.
@@ -123,7 +123,7 @@ In **development**:
 <repository>/resources/
 ```
 
-Accessed in code via `paths.resources`. This directory is **mounted read-only into Lima** — so anything in `resources/sulla-docs/` is readable inside Lima at the same absolute path.
+Accessed in code via `paths.resources`. This directory is **mounted read-only into Sulla VM** — so anything in `resources/sulla-docs/` is readable inside Sulla VM at the same absolute path.
 
 ---
 

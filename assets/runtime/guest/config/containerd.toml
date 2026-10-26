@@ -1,0 +1,8 @@
+version = 2
+# Kubernetes (CRI) is a separate add-on; Docker does not need it at boot.
+disabled_plugins = ["io.containerd.grpc.v1.cri"]
+root = "/var/lib/docker/containerd/daemon"
+state = "/run/containerd"
+
+[grpc]
+  address = "/run/containerd/containerd.sock"

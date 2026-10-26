@@ -172,6 +172,10 @@ reconcile_keycloak() {
     run_unprivileged "$kcadm" update "realms/${realm}" --config "$kcadm_config" -f "$realm_file" >/dev/null
   fi
 
+  if ! run_unprivileged "$kcadm" get "roles/server-admin" --config "$kcadm_config" -r "$realm" >/dev/null 2>&1; then
+    run_unprivileged "$kcadm" create roles --config "$kcadm_config" -r "$realm" -s name=server-admin -s 'description=Sulla Server administrator' >/dev/null
+  fi
+
   membership_scope_name="sulla-audience-${membership_audience}"
   membership_scope_file="${private_dir}/scope-membership.json"
   membership_scope_id="$(find_named_id client-scopes name "$membership_scope_name")"

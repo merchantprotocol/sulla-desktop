@@ -2,14 +2,7 @@ import semver from 'semver';
 
 import { BackendSettings } from '@pkg/backend/backend';
 import { KubeClient, ServiceEntry } from '@pkg/backend/kube/client';
-import LimaKubernetesBackend from '@pkg/backend/kube/lima';
 import WSLKubernetesBackend from '@pkg/backend/kube/wsl';
-
-export class LimaKubernetesBackendMock extends LimaKubernetesBackend {
-  start(config_: BackendSettings, kubernetesVersion: semver.SemVer): Promise<void> {
-    return super.start(config_, kubernetesVersion, () => new KubeClientMock());
-  }
-}
 
 export class WSLKubernetesBackendMock extends WSLKubernetesBackend {
   start(config_: BackendSettings, kubernetesVersion: semver.SemVer): Promise<void> {

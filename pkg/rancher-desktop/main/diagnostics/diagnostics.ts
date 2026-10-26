@@ -61,8 +61,6 @@ export class DiagnosticsManager {
           import('./kubeConfigSymlink'),
           import('./kubeContext'),
           import('./kubeVersionsAvailable'),
-          import('./limaDarwin'),
-          import('./limaOverrides'),
           import('./mobyImageStore'),
           import('./mockForScreenshots'),
           import('./pathManagement'),

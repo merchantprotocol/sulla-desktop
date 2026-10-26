@@ -7,9 +7,11 @@ import {
   chunkId,
   FLAG_DEFLATE_RAW,
   openChunk,
+  openCollectionInfo,
   openEscrow,
   openManifest,
   sealChunk,
+  sealCollectionInfo,
   sealEscrow,
   sealManifest,
   sha256Hex,
@@ -93,4 +95,15 @@ test('manifest plaintext stays bound to its own version', async() => {
   const sealed = await sealManifest(root, kat.collectionId, 1, kat.fileId, kat.versionId, manifest);
   assert.deepEqual(await openManifest(root, sealed), manifest);
   assert.notEqual(sealed.nonce, (await sealManifest(root, kat.collectionId, 1, kat.fileId, kat.versionId, manifest)).nonce);
+});
+
+test('collection info opens only with its own root, collection and key version', async() => {
+  const sealed = await sealCollectionInfo(root, kat.collectionId, 1, { v: 1, name: 'Synthetic folder' });
+  assert.deepEqual(await openCollectionInfo(root, sealed), { v: 1, name: 'Synthetic folder' });
+  await assert.rejects(openCollectionInfo(new Uint8Array(32).fill(9), sealed));
+  await assert.rejects(openCollectionInfo(root, { ...sealed, collectionId: '11111111-2222-4333-8444-000000000000' }));
+  await assert.rejects(openCollectionInfo(root, { ...sealed, keyVersion: 2 }));
+  const ct = Buffer.from(sealed.ct, 'base64url');
+  ct[0] ^= 1;
+  await assert.rejects(openCollectionInfo(root, { ...sealed, ct: ct.toString('base64url') }));
 });

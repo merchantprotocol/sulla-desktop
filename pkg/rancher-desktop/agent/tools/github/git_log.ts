@@ -3,7 +3,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Log Tool - Show commit history.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitLogWorker extends BaseTool {
   name = '';
@@ -17,7 +17,7 @@ export class GitLogWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -31,7 +31,7 @@ export class GitLogWorker extends BaseTool {
         : '--pretty=format:"%h %ad | %s [%an]" --date=short';
 
       const cmd = `git -C "${ repoRoot }" log ${ format } -n ${ limit }`;
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git log failed: ${ result.stderr || result.stdout }` };

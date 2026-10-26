@@ -30,12 +30,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/command"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/directories"
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/lima"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/paths"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/utils"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/wsl"
@@ -44,56 +42,30 @@ import (
 // Spawn a command that, when run, will be executed in the VM with the given
 // arguments.
 func SpawnCommand(ctx context.Context, args ...string) (*exec.Cmd, error) {
-	commandName, err := directories.GetLimactlPath()
-	if err != nil {
-		return nil, err
-	}
-
 	if runtime.GOOS == "windows" {
-		distroNames := []string{wsl.DistributionName}
-		found := false
-
-		if _, err = os.Stat(commandName); err == nil {
-			// If limactl is available, try the lima distribution first.
-			distroNames = append([]string{lima.InstanceFullName}, distroNames...)
-		}
-
-		for _, distroName := range distroNames {
-			err = assertWSLIsRunning(ctx, distroName)
-			if err == nil {
-				commandName = "wsl"
-				args = append([]string{
-					"--distribution", distroName,
-					"--exec", "/usr/local/bin/wsl-exec",
-				}, args...)
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			return nil, err
-		}
-	} else {
-		p, err := paths.GetPaths()
+		err := assertWSLIsRunning(ctx, wsl.DistributionName)
 		if err != nil {
 			return nil, err
 		}
-		if err := directories.SetupLimaHome(p.Lima); err != nil {
-			return nil, err
-		}
-		if err := setupPathEnvVar(p); err != nil {
-			return nil, err
-		}
-		if err := checkLimaIsRunning(ctx, commandName); err != nil {
-			return nil, err
-		}
-		args = append([]string{"shell", lima.InstanceName}, args...)
+		args = append([]string{
+			"--distribution", wsl.DistributionName,
+			"--exec", "/usr/local/bin/wsl-exec",
+		}, args...)
+		return exec.CommandContext(ctx, "wsl", args...), nil
 	}
+
+	commandName, err := directories.GetSullaRuntimePath()
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRuntimeIsRunning(ctx, commandName); err != nil {
+		return nil, err
+	}
+	args = append([]string{"exec", "--"}, args...)
 	return exec.CommandContext(ctx, commandName, args...), nil
 }
 
-// Set up the PATH environment variable for limactl.
+// Set up the PATH environment variable.
 func setupPathEnvVar(p *paths.Paths) error {
 	if runtime.GOOS != "windows" {
 		// This is only needed on Windows.
@@ -108,35 +80,22 @@ func setupPathEnvVar(p *paths.Paths) error {
 	return os.Setenv("PATH", strings.Join(pathList, string(os.PathListSeparator)))
 }
 
-func checkLimaIsRunning(ctx context.Context, commandName string) error {
+func checkRuntimeIsRunning(ctx context.Context, commandName string) error {
 	var stdout bytes.Buffer
-	var stderr bytes.Buffer
 
 	const desiredState = "Running"
 
-	//nolint:gosec // The command name is auto-detected, and the instance name is constant.
-	cmd := exec.CommandContext(ctx, commandName, "ls", lima.InstanceName, "--format", "{{.Status}}")
+	//nolint:gosec // The command name is auto-detected.
+	cmd := exec.CommandContext(ctx, commandName, "status")
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		logrus.Errorf("Failed to run %q: %s\n", cmd, err)
-		return command.NewFatalError("", 1)
+		// The control socket is only there while the runtime is up.
+		return command.NewVMStateError(ctx, desiredState, "")
 	}
-	limaState := strings.TrimRight(stdout.String(), "\n")
-	// We can do an equals check here because we should only have received the status for VM 0
-	if limaState == desiredState {
+	if strings.Contains(stdout.String(), `"state":"docker-ready"`) {
 		return nil
 	}
-	if limaState != "" {
-		return command.NewVMStateError(ctx, desiredState, limaState)
-	}
-	errorMsg := stderr.String()
-	if strings.Contains(errorMsg, fmt.Sprintf("No instance matching %s found.", lima.InstanceName)) {
-		return command.NewVMStateError(ctx, desiredState, "")
-	} else if errorMsg != "" {
-		return command.NewFatalError(errorMsg, 1)
-	}
-	return command.NewFatalError("Underlying limactl check failed with no output.", 1)
+	return command.NewVMStateError(ctx, desiredState, "Starting")
 }
 
 // Check that WSL is running the given distribution; if not, an error will be

@@ -1,6 +1,6 @@
 # Sulla Docs — Index
 
-Searchable reference for agents running inside Lima. All files are at:
+Searchable reference for agents running inside Sulla VM. All files are at:
 `<app-resources-path>/sulla-docs/`
 
 Search: `grep -r "keyword" <path-to-this-dir>/`
@@ -40,17 +40,17 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 
 ## environment/
 - [`projects-in-files.md`](environment/projects-in-files.md) — project folders, PROJECT.md and TASKS.md in Sulla Files
-- `architecture.md` — What runs where: Electron main, Lima VM, Vue renderer, Docker containers
+- `architecture.md` — What runs where: Electron main, Sulla VM, Vue renderer, Docker containers
 - `files-harness.md` — Working in your Human's files: shared-desk etiquette, disk-backed scratch, normal tools on the FUSE mount, drafts, publish requests, locks and retention, Use Cases lifecycle, folder metadata, what not to do
 - `files.md` — Files architecture: FUSE mount, Automerge versioning, per-agent identity, `_folder-metadata.yaml`, agent access rules, authority and custody
 - `files-first.md` — Files layout, system areas, audit logs, and Use Cases source of truth
 - [`sulla-file-format.md`](environment/sulla-file-format.md) — the `.sulla` document format: front matter properties, Markdown body, editor behaviour, live sync, links
-- `paths.md` — ~/sulla/ tree, app resources path, Lima paths, DB ports
+- `paths.md` — ~/sulla/ tree, app resources path, Sulla VM paths, DB ports
 - `communication.md` — WebSocket channels, IPC, exec tool, inter-agent messaging
-- `docker.md` — Lima vs host Docker, pre-installed containers, docker_* and lima_* tools
+- `docker.md` — Sulla VM vs host Docker, pre-installed containers, docker_* tools
 - `heartbeat.md` — Autonomous heartbeat agent: cadence, tick lifecycle, status, history, time-window config
 - `subconscious.md` — The recall/memory/observation layer around every turn: pre-turn recalls, post-turn observer writers, the observations + identity_observations tables, recall index
-- `kubernetes.md` — k3s built into Lima, kubectl_* and rdctl_* tools, no safety rails
+- `kubernetes.md` — k3s built into Sulla VM, kubectl_* and rdctl_* tools, no safety rails
 - `updates.md` — In-app updater (electron-updater + Longhorn provider, release channels, dev-mode config)
 
 ## tools/

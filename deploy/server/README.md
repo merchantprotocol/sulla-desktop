@@ -8,7 +8,37 @@ On a prepared Ubuntu 24.04 LTS server:
 npx sulla-desktop server
 ```
 
-The npm launcher ships the deployment kit, pins new installations to a source commit with a published matching server image, and requests root access through `sudo` when needed. It keeps the terminal attached while the installer asks for Docker Compose or Kubernetes, public URL, TLS or ingress settings, storage, organization, and first owner details. The owner password is entered twice with terminal echo disabled and derived inside the vault container; plaintext is never sent to the service, printed, stored, or placed in command arguments.
+The npm launcher ships the deployment kit, pins new installations to a source commit with a published matching server image, and requests root access through `sudo` when needed. It keeps the terminal attached while the installer asks for Docker Compose or Kubernetes, public URL, Vault hostname (default `vault.<host>`), TLS or ingress settings, storage, and the owner's email, display name and organization.
+
+### First run
+
+The installer then asks for two passwords, each twice with terminal echo off:
+
+1. **Sign-in password.** Accounts creates the organization, the owner's Keycloak user, an owner/admin membership and the `server-admin` realm role (`POST /v1/admin/setup/first-owner`).
+2. **Vault unlock password.** It must differ from the sign-in password. The Vault CLI derives the keys inside the vault container and creates the Vault owner in the Accounts organization's id, so both services share one organization.
+
+Passwords stay in unexported shell variables and reach the containers only on stdin. They are never put in command arguments, `server.env`, logs or shell history.
+
+The server id is created once and kept in `${SULLA_DATA_DIR}/server-id` (`/opt/sulla/server/server-id` on Kubernetes). Progress markers live in `${SULLA_DATA_DIR}/install/`. Rerunning the installer prints `kept` for the owner, organization, Vault and server id and changes none of them. If a run is interrupted, rerun it: it asks only for the passwords of the steps that did not finish, and reports a step as kept when the service shows it already completed.
+
+When it finishes, open `<public URL>/console` and sign in as the owner. The console asks for a license key. The console verifies license keys with `SULLA_SERVER_LICENSE_PUBLIC_KEY`; pass it to the installer or add it to `server.env`.
+
+### Hostname and certificates (Compose)
+
+```bash
+sudo bash install.sh --hostname sulla.example.com --cloudflare-token-file /root/cloudflare-dns.token
+```
+
+`--hostname` serves the console at `https://<hostname>` and Passwords at `https://vault.<hostname>`, with one certificate covering both names. Point both names at the server (an A record may use a LAN address).
+
+- **With `--cloudflare-token-file`**, the installer gets a Let's Encrypt certificate through the DNS-01 challenge, so a LAN-only server works. The file must hold a Cloudflare API token scoped to Zone:DNS:Edit and must be mode `0600`. The installer copies it to `secrets/cloudflare-dns.token` and hands it to [lego](https://go-acme.github.io/lego/) only as a mounted file; it is never printed or put in an environment value. The `tls-renew` service renews the certificate 30 days before it expires, and the gateway reloads certificates every 6 hours.
+- **Without a token**, the installer creates a local CA in `${SULLA_DATA_DIR}/tls-ca/` and signs a 397-day certificate for both names. Trust `${SULLA_DATA_DIR}/tls-ca/public/ca.crt` on every computer that opens the console. Reruns renew the certificate when it has less than 30 days left. Rerun later with `--cloudflare-token-file` to switch to Let's Encrypt.
+
+The hostname is saved in `${SULLA_DATA_DIR}/hostname`. A rerun keeps it and refuses a different `--hostname`.
+
+Compose installs run under the project name you choose (default `sulla-server`), so a second test install on the same host can use its own name, data directory and port. If `compose.override.yaml` exists next to `compose.yaml`, the installer includes it.
+
+The Docker socket proxy (`docker-socket-proxy:2375`) lets the console read container status, logs and stats and start the `backup` container. Every other Docker API call gets 403.
 
 To add a Kubernetes worker later, pass only the server URL:
 
@@ -16,7 +46,7 @@ To add a Kubernetes worker later, pass only the server URL:
 K3S_URL=https://FIRST_SERVER_IP:6443 npx sulla-desktop server
 ```
 
-The join token is requested through a hidden terminal prompt after elevation. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, first owner, and organization.
+The join token is requested through a hidden terminal prompt after elevation. The kit and root-readable `server.env` are saved to `/opt/sulla/server`; rerunning the installer keeps the database, generated service secrets, owner, organization, Vault and server id.
 
 The direct `curl | sudo bash` entry point remains available for source checkouts and recovery:
 
@@ -63,7 +93,7 @@ Sulla Desktop's built-in k3s runs **inside a Lima virtual machine**. Other physi
 - Internet access while installing k3s and pulling container images.
 - This `deploy/server` directory copied to the first server.
 
-The Compose choice requires Docker Engine with the Compose v2 plugin already installed and running. The wizard checks both, but it does not install Docker. The Kubernetes `existing` choice requires a working `kubectl` context. The Kubernetes `install` choice installs k3s only on a native Ubuntu 24.04 LTS server with systemd.
+The Compose choice runs on Ubuntu 20.04 LTS or newer and requires Docker Engine with the Compose v2 plugin already installed and running. The wizard checks both, but it does not install Docker. The Kubernetes `existing` choice requires a working `kubectl` context. The Kubernetes `install` choice installs k3s only on a native Ubuntu 24.04 LTS server with systemd.
 
 The scripts pin k3s to `v1.36.4+k3s1`. Override it only deliberately by exporting `INSTALL_K3S_VERSION` before running either install script.
 
@@ -273,3 +303,9 @@ sudo /usr/local/bin/k3s-uninstall.sh
 ```
 
 The uninstall scripts remove k3s containers, cluster state, and local storage managed by that installation. Back up Sulla data first.
+
+## Server license trust key
+
+The console verifies Sulla Cloud license tokens offline. `SULLA_SERVER_LICENSE_PUBLIC_KEY` must contain the base64 DER/SPKI Ed25519 public key that matches the Cloud Worker `SERVER_LICENSE_SIGNING_KEY` secret. The private key never belongs on the server. Compose persists the activated token in `${SULLA_DATA_DIR}/console/license.json` with container mode `0600`; Kubernetes reads the public key from the `sulla-license` Secret and stores activation state in `sulla-console-license`.
+
+Use Cases clients must call `GET /license/catalog-access` before loading or installing catalog entries. It returns `403 license_required` for missing, invalid, expired, revoked-on-check-in, or over-seat licenses. License status is exposed as `GET /license`. Until the authenticated Console API owns activation, `POST /license/activate` (`{"licenseKey":"…"}`) accepts loopback requests only.

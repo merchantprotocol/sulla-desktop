@@ -47,6 +47,7 @@ import {
 } from '@pkg/main/mobileRelayContent';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import { validateChatSelection } from '@pkg/main/chatSelection';
+import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 
 
@@ -619,10 +620,11 @@ export class DesktopRelayClient {
       const token = await SullaSettingsModel.getServicePassword();
       if (!token) throw new Error('Sulla Files authentication is unavailable');
       if (!this.isActiveShareRequest(request)) return;
-      const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, 'http://127.0.0.1:30124');
+      // Files only listens on pinned TLS now; the old plain-HTTP URL failed every shared-file fetch.
+      const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, FILES_HTTPS_ORIGIN);
       if (msg.path) url.searchParams.set('path', msg.path);
       const headers = new Headers({ 'X-Sulla-Files-Token': token }); if (msg.range) headers.set('Range', msg.range);
-      const response = await fetch(url, { headers, signal: request.controller.signal });
+      const response = await desktopFilesFetch(url, { headers, signal: request.controller.signal });
       if (![200, 206, 416].includes(response.status) || (response.status !== 416 && !response.body)) throw new Error((await response.text()).slice(0, 200) || `Sulla Files returned ${ response.status }`);
       if (!this.sendShareFrame(request, 'share_fetch_start', {
         status:        response.status,
@@ -760,7 +762,7 @@ export class DesktopRelayClient {
     // Mobile hit the stop button. Publish stop_run on the mobile-relay
     // channel — BackendGraphWebSocketService.handleChannelMessage handles
     // stop_run by aborting the active agent run (which propagates through
-    // ClaudeCodeService → limactl kill + in-VM claude pkill).
+    // ClaudeCodeService → sulla-runtime kill + in-VM claude pkill).
     const conversationId = msg.conversationId;
     if (!conversationId) {
       console.warn('[DesktopRelay] Rejecting cancel without conversationId');

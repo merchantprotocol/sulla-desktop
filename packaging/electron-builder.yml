@@ -40,10 +40,7 @@ asarUnpack:
 electronLanguages: [ en-US ]
 extraResources:
   - resources/
-  - '!resources/darwin/lima*.tgz'
-  - '!resources/darwin/qemu*.tgz'
-  - '!resources/linux/lima*.tgz'
-  - '!resources/linux/qemu*.tgz'
+  - '!resources/sulla-console/**'
   - '!resources/linux/staging/'
   - '!resources/win32/staging/'
   - '!resources/host/'
@@ -112,10 +109,3 @@ win:
     - build/signing-config-win.yaml
     - { from: dist/wix-custom-action.dll, to: wix-custom-action.dll }
     - { from: dist/electron-builder.yaml, to: electron-builder.yml }
-linux:
-  files:
-    - '!**/node_modules/sherpa-onnx-@(darwin|win)-*{,/**}'
-  category: Utility
-  executableName: sulla-desktop
-  artifactName: ${name}-${version}-linux.zip
-  target: [ zip ]

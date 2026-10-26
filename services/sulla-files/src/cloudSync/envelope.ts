@@ -16,7 +16,7 @@ export const CHUNK_PLAIN_BYTES = 4 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-export type SubkeyPurpose = 'chunk-id' | 'chunk' | 'manifest' | 'head';
+export type SubkeyPurpose = 'chunk-id' | 'chunk' | 'manifest' | 'head' | 'info';
 
 export interface ManifestPlain {
   v:1;
@@ -74,6 +74,19 @@ export interface TransportEnvelope {
   nonce:string;
   ct:string;
 }
+
+/** The collection's folder name, sealed with its root so a new device restores it under the same name. */
+export interface CollectionInfoEnvelope {
+  format:'sulla-files-sync-collection-info';
+  v:1;
+  alg:'A256GCM';
+  collectionId:string;
+  keyVersion:number;
+  nonce:string;
+  ct:string;
+}
+
+export interface CollectionInfoPlain { v:1; name:string }
 
 export interface StateEntry { fileId:string; versionId:string; deleted:boolean }
 
@@ -233,6 +246,36 @@ export async function openManifest(root:Uint8Array, envelope:ManifestEnvelope):P
     unb64u(envelope.ct),
   );
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain));
+}
+
+function infoAad(collectionId:string, keyVersion:number):Bytes {
+  return enc.encode(`sulla-fs1|info|${ collectionId }|${ keyVersion }`);
+}
+
+export async function sealCollectionInfo(root:Uint8Array, collectionId:string, keyVersion:number, info:CollectionInfoPlain, fixedNonce?:Uint8Array):Promise<CollectionInfoEnvelope> {
+  if (info?.v !== 1 || typeof info.name !== 'string' || !info.name.trim() || info.name.length > 200) throw new Error('bad collection info');
+  const iv = nonce12(fixedNonce);
+  const key = await aesKey(await subkey(root, 'info', collectionId, keyVersion), 'encrypt');
+  const ct = new Uint8Array(await subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: infoAad(collectionId, keyVersion), tagLength: 128 },
+    key,
+    enc.encode(JSON.stringify({ v: 1, name: info.name })),
+  ));
+  return { format: 'sulla-files-sync-collection-info', v: 1, alg: 'A256GCM', collectionId, keyVersion, nonce: b64u(iv), ct: b64u(ct) };
+}
+
+/** Throws on a wrong key, a moved envelope or tampering; callers fall back to a generic name. */
+export async function openCollectionInfo(root:Uint8Array, envelope:CollectionInfoEnvelope):Promise<CollectionInfoPlain> {
+  if (envelope?.format !== 'sulla-files-sync-collection-info' || envelope.v !== 1 || envelope.alg !== 'A256GCM') throw new Error('unsupported collection info');
+  const key = await aesKey(await subkey(root, 'info', envelope.collectionId, envelope.keyVersion), 'decrypt');
+  const plain = await subtle.decrypt(
+    { name: 'AES-GCM', iv: unb64u(envelope.nonce), additionalData: infoAad(envelope.collectionId, envelope.keyVersion), tagLength: 128 },
+    key,
+    unb64u(envelope.ct),
+  );
+  const info = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain));
+  if (info?.v !== 1 || typeof info.name !== 'string' || !info.name.trim() || info.name.length > 200) throw new Error('bad collection info');
+  return { v: 1, name: info.name };
 }
 
 /** entries = every file's current head in the collection. */
