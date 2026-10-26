@@ -429,6 +429,31 @@ export class LocalVaultApprovalClient {
     return response.json() as Promise<BrokerApprovalResponse>;
   }
 
+  /** Create the empty vault account a first OAuth sign-in stores its tokens in. Metadata only. */
+  async ensureOAuthAccount(integrationId: string, accountId: string, label: string): Promise<BrokerIntegrationMetadataResponse> {
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
+      throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
+    }
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(
+      `${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/oauth-account`,
+      {
+        method:  'PUT',
+        headers: {
+          authorization:        `Bearer ${ identity.serviceToken }`,
+          'content-type':       'application/json',
+          'x-sulla-service-id': identity.serviceId,
+        },
+        body: JSON.stringify({ accountId, label }),
+      },
+    );
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+  }
+
   async adoptSullaCloudSession(request: SullaCloudSessionAdoptRequest): Promise<SullaCloudSessionResponse> {
     return this.sullaCloudSession('PUT', request) as Promise<SullaCloudSessionResponse>;
   }

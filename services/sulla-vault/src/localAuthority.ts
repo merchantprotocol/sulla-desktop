@@ -39,7 +39,7 @@ import { makeLoginVerifier, verifyLoginHash } from './auth.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
-import { validateOAuthDestination } from './oauthPolicy.js';
+import { isNativeOAuthIntegration, validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedLookup } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 import {
@@ -58,6 +58,7 @@ import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from
 import type {
   BrokerCredentialRef,
   BrokerItemListResponse,
+  BrokerOAuthAccountRequest,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerRelayCreateRequest,
@@ -1486,6 +1487,58 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     );
     this.requireGeneration(generation);
     return this.integrationMetadata(callerId, token, integrationId);
+  }
+
+  /**
+   * Create the empty account a first OAuth sign-in writes its tokens into.
+   * oauth.exchange only updates an existing item, so without this a new
+   * Codex/Grok sign-in had nowhere to land. Desktop identity only, built-in
+   * OAuth integrations only, metadata only: no secret crosses this call.
+   */
+  async ensureOAuthAccount(
+    callerId: string, token: string | undefined, integrationId: string, input: BrokerOAuthAccountRequest,
+  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
+    this.requireDesktopIdentity(callerId, token);
+    const accountId = input?.accountId;
+    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || typeof accountId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
+      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
+    }
+    if (!isNativeOAuthIntegration(integrationId)) {
+      throw new LocalVaultError('policy_denied', 403, 'Integration has no built-in OAuth sign-in');
+    }
+    const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 120) : accountId;
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const integrationRef = `${ integrationId }/${ accountId }`;
+    const exists = await this.db.query(
+      `SELECT 1 FROM items WHERE owner_user_id=$1 AND integration_ref=$2 AND collection_id IS NULL AND deleted_at IS NULL`,
+      [keys.userId, integrationRef],
+    );
+    this.requireGeneration(generation);
+    if (!exists.rowCount) {
+      // Same default as the vault's guided Connect screen with "agents can use this" on.
+      const policy = {
+        mode: 'agents' as const, level: 'autofill' as const, agents: [], sites: [], expiresAt: null,
+        askFirst: false, allowServerAgents: false,
+      };
+      const itemId = randomUUID();
+      const plaintext: VaultItemPlaintext = {
+        type: 'apiKey', name: label, agentPolicy: policy,
+        integration: { integrationId, accountId, properties: { account_label: label } },
+      };
+      const encrypted = await encryptItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+      await this.runSecurityOperation(() => this.runTransaction(async client => {
+        this.requireGeneration(generation);
+        await client.query(
+          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
+           VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`,
+          [itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, integrationRef],
+        );
+        await this.auditHumanAction(client, keys.userId, 'oauth_account_created', itemId, label);
+        this.requireGeneration(generation);
+      }));
+    }
+    return this.integrationMetadata(this.config.brokerServiceId, this.config.brokerServiceToken, integrationId, accountId);
   }
 
   /**

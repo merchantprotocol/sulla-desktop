@@ -1480,7 +1480,7 @@ const handleOAuthConnect = async() => {
 
   isLoading.value = true;
   try {
-    await integrationService.setAccountLabel(integration.value.id, targetAccountId, integration.value.name + ' OAuth');
+    await integrationService.prepareOAuthAccount(integration.value.id, targetAccountId, integration.value.name + ' OAuth');
 
     // Start the OAuth flow in the MAIN process — it opens the (possibly
     // embedded) auth window and waits for the callback. Must run in main:
