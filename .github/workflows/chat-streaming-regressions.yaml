@@ -1,6 +1,7 @@
 name: Chat streaming regressions
 on:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - '.github/workflows/chat-streaming-regressions.yaml'
       - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'

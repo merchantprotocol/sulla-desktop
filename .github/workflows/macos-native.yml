@@ -1,14 +1,6 @@
 name: macOS native components
 
 on:
-  pull_request:
-    paths:
-      - 'native/**'
-      - 'scripts/build-macos-native.sh'
-      - 'scripts/package.ts'
-      - 'packaging/**'
-      - 'build/*entitlements*'
-      - '.github/workflows/macos-native.yml'
   push:
     branches: [main]
     paths:
