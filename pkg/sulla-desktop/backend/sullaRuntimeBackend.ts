@@ -47,7 +47,9 @@ import { readExistingDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
-import { SULLA_FILES_GUEST_MOUNT_PATH, drainFilesAdapterLayers, isGuestPathUsable, prepareSullaFilesGuestAnchor } from '@pkg/backend/guestMountInfo';
+import {
+  SULLA_FILES_GUEST_MOUNT_PATH, drainFilesAdapterLayers, isGuestPathUsable, prepareSullaFilesGuestAnchor, prepareSullaFilesGuestAnchorDraining,
+} from '@pkg/backend/guestMountInfo';
 import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { exec as sudo } from '@pkg/sudo-prompt';
@@ -1551,7 +1553,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    */
   private async prepareSullaFilesGuestMount(compose: any): Promise<boolean> {
     try {
-      await prepareSullaFilesGuestAnchor(this);
+      const { drained } = await prepareSullaFilesGuestAnchorDraining(this);
+
+      if (drained > 0) {
+        console.warn(`[Sulla] ${ SULLA_FILES_GUEST_MOUNT_PATH } had ${ drained } stale adapter mount(s); detached them and will recreate sulla_files_fuse`);
+        this.#staleFilesAdapters.add('sulla_files_fuse');
+      }
       // The logs and training-data views are optional extras with no mount manager of their
       // own. A failure here must not disable the main Files mount, and a surviving but broken
       // adapter must be detached (and its container recreated) instead of wedging startup.

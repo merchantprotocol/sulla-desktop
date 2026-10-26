@@ -9,7 +9,8 @@
 import { describe, expect, test } from '@jest/globals';
 
 import {
-  classifyFilesAnchor, parseMountInfo, prepareSullaFilesGuestAnchor, SULLA_FILES_GUEST_MOUNT_PATH,
+  classifyFilesAnchor, parseMountInfo, prepareSullaFilesGuestAnchor, prepareSullaFilesGuestAnchorDraining,
+  SULLA_FILES_GUEST_MOUNT_PATH,
 } from '../guestMountInfo';
 
 // Realistic Alpine (Lima) mount table excerpts.
@@ -180,5 +181,73 @@ describe('prepareSullaFilesGuestAnchor against a BusyBox guest', () => {
 
     guest.exec.execCommand = (...args: any[]) => (args.includes('--bind') ? Promise.resolve('') : original(...args));
     await expect(prepareSullaFilesGuestAnchor(guest.exec)).rejects.toThrow(/did not appear/);
+  });
+});
+
+/**
+ * A guest whose Files adapter lost its backend: while the adapter layer is on the table every
+ * request on the path (here `install -d`) fails with an I/O error; `umount` removes the layer.
+ */
+function guestWithDeadAdapter(initial: string, options: { umountFails?: boolean } = {}) {
+  let table = initial;
+  const commands: string[][] = [];
+  const adapterOnTable = () => table.split('\n').some(line => line.includes('sulla-files rw,user_id'));
+  const exec: any = {
+    execCommand: (...args: any[]) => {
+      if (typeof args[0] === 'object') args.shift();
+      commands.push(args);
+      if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') return Promise.resolve(`${ table }\n`);
+      if (args[0] === 'install' && args.includes(SULLA_FILES_GUEST_MOUNT_PATH) && adapterOnTable()) {
+        return Promise.reject(new Error(`install: cannot change permissions of '${ SULLA_FILES_GUEST_MOUNT_PATH }': I/O error`));
+      }
+      if (args[0] === 'umount' && !options.umountFails) {
+        const lines = table.split('\n');
+
+        lines.pop();
+        table = lines.join('\n');
+      }
+      if (args[0] === 'mount' && args[1] === '--bind') table += `\n${ DATA_DISK_BIND }`;
+
+      return Promise.resolve('');
+    },
+  };
+
+  return { exec, commands, table: () => table };
+}
+
+describe('prepareSullaFilesGuestAnchorDraining with a dead adapter', () => {
+  test('plain preparation is wedged by the dead adapter (the bug)', async() => {
+    const guest = guestWithDeadAdapter(`${ BASE }\n${ DATA_DISK_BIND }\n${ ADAPTER }`);
+
+    await expect(prepareSullaFilesGuestAnchor(guest.exec)).rejects.toThrow(/I\/O error/);
+  });
+
+  test('detaches the dead adapter and prepares the anchor underneath', async() => {
+    const guest = guestWithDeadAdapter(`${ BASE }\n${ DATA_DISK_BIND }\n${ ADAPTER }`);
+
+    await expect(prepareSullaFilesGuestAnchorDraining(guest.exec)).resolves.toEqual({ state: 'anchor', drained: 1 });
+    expect(guest.commands.some(command => command[0] === 'umount')).toBe(true);
+    expect(guest.table()).not.toContain('sulla-files rw,user_id');
+  });
+
+  test('a healthy guest is prepared without detaching anything', async() => {
+    const guest = busyboxGuest(BASE);
+
+    await expect(prepareSullaFilesGuestAnchorDraining(guest.exec)).resolves.toEqual({ state: 'anchor', drained: 0 });
+    expect(guest.commands.some(command => command[0] === 'umount')).toBe(false);
+  });
+
+  test('a live, healthy adapter is left alone', async() => {
+    const guest = busyboxGuest(`${ BASE }\n${ DATA_DISK_BIND }\n${ ADAPTER }`);
+
+    await expect(prepareSullaFilesGuestAnchorDraining(guest.exec)).resolves.toEqual({ state: 'adapter', drained: 0 });
+    expect(guest.commands.some(command => command[0] === 'umount')).toBe(false);
+  });
+
+  test('an unexpected foreign mount is still refused, and never unmounted', async() => {
+    const guest = busyboxGuest(`${ BASE }\n${ FOREIGN_FUSE }`);
+
+    await expect(prepareSullaFilesGuestAnchorDraining(guest.exec)).rejects.toThrow(/Refusing to reuse unexpected Files propagation mount/);
+    expect(guest.commands.some(command => command[0] === 'umount')).toBe(false);
   });
 });
