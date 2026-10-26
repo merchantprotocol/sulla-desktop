@@ -31,6 +31,11 @@ const INTEGRATION_PROVIDER_FALLBACK: Readonly<Record<string, string>> = {
   grok: 'grok', openai: 'openai', robinhood: 'robinhood', quickbooks: 'intuit',
 };
 
+/** Built-in OAuth integrations whose first sign-in may create an empty vault account. */
+export function isNativeOAuthIntegration(integrationId: string): boolean {
+  return Object.prototype.hasOwnProperty.call(INTEGRATION_PROVIDER_FALLBACK, integrationId);
+}
+
 function storedText(value: string | { content?: string } | undefined): string | null {
   return typeof value === 'string' ? value : typeof value?.content === 'string' ? value.content : null;
 }
