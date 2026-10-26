@@ -10,7 +10,7 @@
  *
  * Backed by `hostAccess` in SullaSettingsModel (the Redis + Postgres dual
  * store, same place heartbeatEnabled / remoteProvider live) — NOT the on-disk
- * rancher-desktop settings.json. This keeps host access consistent with every
+ * sulla-desktop settings.json. This keeps host access consistent with every
  * other Sulla setting: it can be read/written through the settings model, the
  * Redis `sulla_settings` hash, or the Preferences UI, and it works even when no
  * settings.json exists on disk.
@@ -53,7 +53,7 @@ export async function setHostAccessEnabled(enabled: boolean): Promise<void> {
 
 /**
  * One-way reconciliation: the Preferences checkbox persists to the
- * rancher-desktop settings.json, which this gate deliberately does not read —
+ * sulla-desktop settings.json, which this gate deliberately does not read —
  * so the checkbox is the authoritative record of user consent and its value
  * must be pushed into the dual store. Reads the file directly (rather than
  * getSettings()) so the result doesn't depend on settings-load order; a

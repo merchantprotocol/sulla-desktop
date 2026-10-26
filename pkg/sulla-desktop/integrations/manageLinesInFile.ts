@@ -6,8 +6,8 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging['path-management'];
 
-export const START_LINE = '### MANAGED BY RANCHER DESKTOP START (DO NOT EDIT)';
-export const END_LINE = '### MANAGED BY RANCHER DESKTOP END (DO NOT EDIT)';
+export const START_LINE = '### MANAGED BY SULLA DESKTOP START (DO NOT EDIT)';
+export const END_LINE = '### MANAGED BY SULLA DESKTOP END (DO NOT EDIT)';
 const DEFAULT_FILE_MODE = 0o644;
 
 /**
@@ -164,7 +164,7 @@ async function copyFileExtendedAttributes(fromPath: string, toPath: string): Pro
       }
     }
   } catch (cause) {
-    if (process.env.NODE_ENV === 'test' && !(process.env.RD_TEST ?? '').includes('e2e')) {
+    if (process.env.NODE_ENV === 'test' && !(process.env.SULLA_TEST ?? '').includes('e2e')) {
       // When running unit tests, assume they do not have extended attributes.
       return;
     }

@@ -62,7 +62,7 @@ const DEFAULT_UPDATE_CONFIG: UpdateYaml = {
 
 /**
  * Resolve the update configuration. Tries, in order:
- *   1. `RD_UPGRADE_RESPONDER_URL` env var override (for testing)
+ *   1. `SULLA_UPGRADE_RESPONDER_URL` env var override (for testing)
  *   2. `app-update.yml` in packaged resources (production)
  *   3. `dev-app-update.yml` at the repo root (development)
  *   4. Built-in defaults (the public responder for this repo)
@@ -109,8 +109,8 @@ async function resolveUpdateConfig(): Promise<UpdateYaml | undefined> {
   }
 
   // Env var override wins over config file values.
-  if (process.env.RD_UPGRADE_RESPONDER_URL) {
-    config.upgradeServer = process.env.RD_UPGRADE_RESPONDER_URL;
+  if (process.env.SULLA_UPGRADE_RESPONDER_URL) {
+    config.upgradeServer = process.env.SULLA_UPGRADE_RESPONDER_URL;
   }
 
   // Packaged builds ship electron-builder's GitHub app-update.yml, which has
@@ -153,7 +153,7 @@ export async function performLightweightCheck(): Promise<LightweightCheckResult>
   const config = await resolveUpdateConfig();
 
   if (!config?.upgradeServer) {
-    throw new Error('No upgrade server configured. Set RD_UPGRADE_RESPONDER_URL or provide dev-app-update.yml.');
+    throw new Error('No upgrade server configured. Set SULLA_UPGRADE_RESPONDER_URL or provide dev-app-update.yml.');
   }
 
   const semverCurrent = new semver.SemVer(currentVersion);

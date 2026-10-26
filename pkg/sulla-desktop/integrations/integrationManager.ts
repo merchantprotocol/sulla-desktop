@@ -6,9 +6,9 @@ import paths from '@pkg/utils/paths';
 
 /**
  * An IntegrationManager is a class that manages integrations for a particular
- * platform. An "integration" is a tool that is used with Rancher Desktop, such
+ * platform. An "integration" is a tool that is used with Sulla Desktop, such
  * as the docker CLI and its plugins. These tools are included
- * in the Rancher Desktop installation, but extra steps are usually needed to
+ * in the Sulla Desktop installation, but extra steps are usually needed to
  * make them available to the user. Carrying out these steps, as well as reversing
  * them when desired, is what an IntegrationManager is for.
  */

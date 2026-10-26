@@ -10,7 +10,6 @@
 !/resources/linux/sulla-desktop.desktop
 /resources/browserTabPreload.js*
 /resources/preload.js*
-/resources/rancher-dashboard/
 /resources/spin-operator*
 /resources/win32/
 /resources/models/

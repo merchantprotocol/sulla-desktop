@@ -44,7 +44,7 @@ export async function readDeploymentProfiles(): Promise<settings.DeploymentProfi
     const linuxPaths = {
       [paths.deploymentProfileSystem]:    ['defaults.json', 'locked.json'],
       [paths.altDeploymentProfileSystem]: ['defaults.json', 'locked.json'],
-      [paths.deploymentProfileUser]:      ['rancher-desktop.defaults.json', 'rancher-desktop.locked.json'],
+      [paths.deploymentProfileUser]:      ['sulla-desktop.defaults.json', 'sulla-desktop.locked.json'],
     };
 
     for (const configDir in linuxPaths) {
@@ -62,9 +62,9 @@ export async function readDeploymentProfiles(): Promise<settings.DeploymentProfi
 
   case 'darwin':
     for (const rootPath of [paths.deploymentProfileSystem, paths.altDeploymentProfileSystem, paths.deploymentProfileUser]) {
-      [defaults, locked] = await parseJsonFromPlists(rootPath, 'io.rancherdesktop.profile.defaults.plist', 'io.rancherdesktop.profile.locked.plist');
-      fullDefaultPath = join(rootPath, 'io.rancherdesktop.profile.defaults.plist');
-      fullLockedPath = join(rootPath, 'io.rancherdesktop.profile.locked.plist');
+      [defaults, locked] = await parseJsonFromPlists(rootPath, 'io.sulla.desktop.profile.defaults.plist', 'io.sulla.desktop.profile.locked.plist');
+      fullDefaultPath = join(rootPath, 'io.sulla.desktop.profile.defaults.plist');
+      fullLockedPath = join(rootPath, 'io.sulla.desktop.profile.locked.plist');
       if (typeof defaults !== 'undefined' || typeof locked !== 'undefined') {
         break;
       }

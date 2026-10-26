@@ -47,7 +47,7 @@ export default async function setupNetworking() {
 
     if (
       process.env.NODE_ENV === 'development' &&
-      process.env.RD_ENV_PLUGINS_DEV &&
+      process.env.SULLA_ENV_PLUGINS_DEV &&
       pluginDevUrls.some(x => url.startsWith(x))
     ) {
       event.preventDefault();

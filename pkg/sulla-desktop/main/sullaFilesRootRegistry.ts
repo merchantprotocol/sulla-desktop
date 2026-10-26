@@ -63,7 +63,7 @@ export function isProtectedTrackedPath(value:string):boolean {
     path.join(os.homedir(), 'sulla', 'crypto-wallet'),
     path.join(os.homedir(), 'sulla', 'wallets'),
     path.join(os.homedir(), 'Sites', 'crypto-wallet'),
-    path.join(os.homedir(), 'Library', 'Application Support', 'rancher-desktop'),
+    path.join(os.homedir(), 'Library', 'Application Support', 'sulla-desktop'),
     path.join(os.homedir(), 'Library', 'Application Support', 'Sulla Wallet'),
   ];
 

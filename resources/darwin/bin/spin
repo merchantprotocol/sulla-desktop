@@ -8,6 +8,6 @@ done
 scriptdir=$(cd "$(dirname "${scriptname}")" && pwd)
 internal=$(cd "${scriptdir}/../internal" && pwd)
 
-export SPIN_DATA_DIR="$HOME/Library/Application Support/rancher-desktop/spin"
+export SPIN_DATA_DIR="$HOME/Library/Application Support/sulla-desktop/spin"
 mkdir -p "$SPIN_DATA_DIR"
 exec "${internal}/spin" "$@"

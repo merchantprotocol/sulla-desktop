@@ -47,7 +47,7 @@ export default {
   },
 
   get rendererSrcDir() {
-    return path.resolve(this.rootDir, `${ process.env.RD_ENV_PLUGINS_DEV ? '' : 'pkg/sulla-desktop' }`);
+    return path.resolve(this.rootDir, `${ process.env.SULLA_ENV_PLUGINS_DEV ? '' : 'pkg/sulla-desktop' }`);
   },
 
   /**

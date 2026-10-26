@@ -83,9 +83,9 @@ export default {
     config.plugin('define-plugin').use(webpack.DefinePlugin, [{
       'process.client':       JSON.stringify(true),
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
-      'process.env.RD_TEST':  JSON.stringify(process.env.RD_TEST || ''),
+      'process.env.SULLA_TEST':  JSON.stringify(process.env.SULLA_TEST || ''),
 
-      'process.env.FEATURE_DIAGNOSTICS_FIXES': process.env.RD_ENV_DIAGNOSTICS_FIXES === '1',
+      'process.env.FEATURE_DIAGNOSTICS_FIXES': process.env.SULLA_ENV_DIAGNOSTICS_FIXES === '1',
 
       __VUE_OPTIONS_API__:                     true,
       __VUE_PROD_DEVTOOLS__:                   false,

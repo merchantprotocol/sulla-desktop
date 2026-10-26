@@ -8,7 +8,7 @@
 /**
  * This script is run as part of the "Build Upgrade Testing" GitHub workflow
  * (.github/workflows/upgrade-test.yaml) to generate upgrade data for testing
- * Rancher Desktop upgrades.
+ * Sulla Desktop upgrades.
  *
  * This will push changes to the "gh-pages" branch (for the upgrade manifest
  * JSON file), as well as publish releases (or update existing ones) for the
@@ -22,11 +22,11 @@
  *   GITHUB_REPOSITORY: The GitHub owner/repository (from GitHub Actions).
  *   GITHUB_SHA:        Commit hash (if creating a new release).
  *   GITHUB_ACTOR:      User that triggered this, github.actor
- *   RD_SETUP_MSI:      The installer (msi file) to upload.
- *   RD_MACX86_ZIP:     The macOS (x86_64) zip archive to upload.
- *   RD_MACARM_ZIP:     The macOS (aarch64) zip archive to upload.
- *   RD_BUILD_INFO:     Build information ("latest.yml" from electron-builder)
- *   RD_OUTPUT_DIR:     Checkout of `gh-pages`, to be updated.
+ *   SULLA_SETUP_MSI:   The installer (msi file) to upload.
+ *   SULLA_MACX86_ZIP:  The macOS (x86_64) zip archive to upload.
+ *   SULLA_MACARM_ZIP:  The macOS (aarch64) zip archive to upload.
+ *   SULLA_BUILD_INFO:  Build information ("latest.yml" from electron-builder)
+ *   SULLA_OUTPUT_DIR:  Checkout of `gh-pages`, to be updated.
  */
 
 import crypto from 'crypto';
@@ -132,9 +132,9 @@ async function getOctokit(): Promise<Octokit> {
 
 async function updateRelease(octokit: Octokit, owner: string, repo: string, tag: string) {
   const files = {
-    msi:    await getChecksum('RD_SETUP_MSI', `Sulla.Desktop.Setup.${ tag }.msi`),
-    macx86: await getChecksum('RD_MACX86_ZIP', `Sulla.Desktop-${ tag }-mac.x86_64.zip`),
-    macarm: await getChecksum('RD_MACARM_ZIP', `Sulla.Desktop-${ tag }-mac.aarch64.zip`),
+    msi:    await getChecksum('SULLA_SETUP_MSI', `Sulla.Desktop.Setup.${ tag }.msi`),
+    macx86: await getChecksum('SULLA_MACX86_ZIP', `Sulla.Desktop-${ tag }-mac.x86_64.zip`),
+    macarm: await getChecksum('SULLA_MACARM_ZIP', `Sulla.Desktop-${ tag }-mac.aarch64.zip`),
   };
 
   console.log(`Updating release with files:\n${ yaml.stringify(files) }`);
@@ -232,7 +232,7 @@ async function updatePages(tag: string) {
   };
 
   console.log('Updating gh-pages...');
-  await fs.promises.writeFile(path.join(getInput('RD_OUTPUT_DIR'), 'response.json'),
+  await fs.promises.writeFile(path.join(getInput('SULLA_OUTPUT_DIR'), 'response.json'),
     JSON.stringify(response),
     'utf-8');
   await simpleSpawn('git',
@@ -242,19 +242,19 @@ async function updatePages(tag: string) {
       'commit', `--message=Automated update to ${ tag }`, 'response.json',
     ], {
       stdio: ['ignore', 'inherit', 'inherit'],
-      cwd:   getInput('RD_OUTPUT_DIR'),
+      cwd:   getInput('SULLA_OUTPUT_DIR'),
     });
   await simpleSpawn('git',
     ['push'], {
       stdio: ['ignore', 'inherit', 'inherit'],
-      cwd:   getInput('RD_OUTPUT_DIR'),
+      cwd:   getInput('SULLA_OUTPUT_DIR'),
     });
   console.log('gh-pages updated.');
 }
 
 async function main() {
   console.log('Reading configuration information...');
-  const buildInfoPath = await getInputFile('RD_BUILD_INFO');
+  const buildInfoPath = await getInputFile('SULLA_BUILD_INFO');
   const [owner, repo] = getInput('GITHUB_REPOSITORY').split('/');
   const packageURL = new URL(JSON.parse(await fs.promises.readFile('package.json', 'utf-8')).repository.url);
   const [packageOwner, packageRepo] = packageURL.pathname.replace(/\.git$/, '').split('/').filter(x => x);

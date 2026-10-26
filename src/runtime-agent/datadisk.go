@@ -23,8 +23,10 @@ import (
 
 // The data filesystem is mounted at /mnt/data with one layout whether the
 // disk is new or carried over from an earlier Sulla VM: persistent state
-// lives under /mnt/data/var/lib (Docker at var/lib/docker) and git worktrees
-// under /mnt/data/worktrees. Those two trees are bind-mounted into place.
+// lives under /mnt/data/var/lib (Docker at var/lib/docker), git worktrees
+// under /mnt/data/worktrees, and what pip and npm install globally under
+// /mnt/data/usr/local (the image points both at /usr/local). These trees are
+// bind-mounted into place.
 const (
 	dataMount    = "/mnt/data"
 	agentLogPath = "/var/lib/sulla-runtime/logs/sulla-agent.log"
@@ -35,6 +37,7 @@ var dataBinds = []struct{ source, target string }{
 	{"worktrees", "/mnt/worktrees"},
 	{"home", "/home"},
 	{"root", "/root"},
+	{"usr/local", "/usr/local"},
 }
 
 // dataDiskPath returns the block device the host marked as the data disk with

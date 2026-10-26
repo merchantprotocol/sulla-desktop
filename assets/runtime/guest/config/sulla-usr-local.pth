@@ -1,0 +1,1 @@
+import site, sys; site.addsitedir('/usr/local/lib/python%d.%d/site-packages' % sys.version_info[:2])

@@ -21,8 +21,8 @@ import {
 } from 'scripts/lib/dependencies';
 
 const MAIN_BRANCH = 'main';
-const GITHUB_OWNER = process.env.GITHUB_REPOSITORY?.split('/')[0] || 'rancher-sandbox';
-const GITHUB_REPO = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'rancher-desktop';
+const GITHUB_OWNER = process.env.GITHUB_REPOSITORY?.split('/')[0] || 'merchantprotocol';
+const GITHUB_REPO = process.env.GITHUB_REPOSITORY?.split('/')[1] || 'sulla-desktop';
 
 interface VersionComparison {
   dependency:     VersionedDependency;
@@ -48,7 +48,7 @@ const dependencies: VersionedDependency[] = [
 function git(...args: string[]): 0 | null;
 function git(returnStatus: true, ...args: string[]): number | null;
 function git(returnOrArg: string | true, ...args: string[]): number | null {
-  const name = 'Rancher Desktop Dependency Manager';
+  const name = 'Sulla Desktop Dependency Manager';
   const email = 'donotuse@sulladesktop.com';
 
   if (typeof returnOrArg === 'string') {

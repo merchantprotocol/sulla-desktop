@@ -513,12 +513,8 @@ $selected: rgba(#3D98D3, .5);
   --sizzle-error               : #{red($error)},   #{green($error)},   #{blue($error)};
   --sizzle-unknown             : #{red($disabled)},#{green($disabled)},#{blue($disabled)};
 
-  $rancher                     : $primary;
   $partner                     : #FEA424;
   $other                       : #614EA2;
-
-  --app-rancher-accent         : #{$rancher};
-  --app-rancher-accent-text    : #{$darkest};
 
   --app-partner-accent         : #{$partner};
   --app-partner-accent-text    : black;
