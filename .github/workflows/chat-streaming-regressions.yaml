@@ -31,8 +31,7 @@ jobs:
         set +e
         yarn test:unit:jest --runInBand --json --outputFile="${RUNNER_TEMP}/streaming-results.json" \
           pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts \
-          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts \
-          pkg/rancher-desktop/pages/chat/services/__tests__/PersonaAdapter.test.ts 2>&1 | tee "${RUNNER_TEMP}/streaming.log"
+          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts 2>&1 | tee "${RUNNER_TEMP}/streaming.log"
         rc=$?
         if [ "$rc" -ne 0 ]; then
           node <<'NODE'

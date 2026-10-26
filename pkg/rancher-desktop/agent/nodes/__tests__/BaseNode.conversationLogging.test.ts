@@ -38,10 +38,23 @@ const wsSendMock: any = jest.fn(async() => true);
   throw new Error(`unmocked require() in test: ${ id }`);
 };
 
+// BaseLanguageModel and providerBroker pull in Electron-only modules (cloud auth, vault
+// client). These suites run in CI without the Electron binary, so stub both.
+jest.unstable_mockModule('@pkg/main/cloud/byoUsageSync', () => ({
+  ByoUsageSync: { record: jest.fn(), flush: jest.fn(async() => undefined) },
+}));
+jest.unstable_mockModule('../../languagemodels/providerBroker', () => ({
+  issueProviderExecutionContext:        jest.fn(async() => undefined),
+  issueServiceProviderExecutionContext: jest.fn(async() => undefined),
+  loadProviderRuntimeConfig:            jest.fn(async() => ({})),
+  providerFetch:                        jest.fn(),
+}));
+
 jest.unstable_mockModule('@pkg/utils/paths', () => ({
   default: { sullaHome: '/tmp/sulla-test', sullaConfig: '/tmp/sulla-test', sullaDesktopCodebase: '/tmp/sulla-test', logs: '/tmp' },
 }));
 jest.unstable_mockModule('@pkg/utils/logging', () => ({
+  Log:     class {},
   default: new Proxy({}, { get: () => ({ log: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn(), debug: jest.fn() }) }),
 }));
 
