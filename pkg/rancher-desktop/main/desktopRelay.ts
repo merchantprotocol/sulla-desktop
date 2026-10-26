@@ -762,7 +762,7 @@ export class DesktopRelayClient {
     // Mobile hit the stop button. Publish stop_run on the mobile-relay
     // channel — BackendGraphWebSocketService.handleChannelMessage handles
     // stop_run by aborting the active agent run (which propagates through
-    // ClaudeCodeService → limactl kill + in-VM claude pkill).
+    // ClaudeCodeService → sulla-runtime kill + in-VM claude pkill).
     const conversationId = msg.conversationId;
     if (!conversationId) {
       console.warn('[DesktopRelay] Rejecting cancel without conversationId');

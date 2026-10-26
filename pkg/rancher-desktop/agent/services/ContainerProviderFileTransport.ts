@@ -29,7 +29,7 @@ export function assertWorkspacePath(root: string, candidate: string): string {
 }
 
 /**
- * Stores provider inputs in the Lima guest, outside the container-writable
+ * Stores provider inputs in the Sulla guest, outside the container-writable
  * workspace. The source directory is mounted read-only inside the container,
  * so a container cannot redirect a Desktop write by replacing a parent path
  * with a symlink. No host-home path is used as a Docker bind source.

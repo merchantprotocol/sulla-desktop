@@ -3,7 +3,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Stash Tool - Save, list, apply, pop, or drop stashed changes.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitStashWorker extends BaseTool {
   name = '';
@@ -17,7 +17,7 @@ export class GitStashWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -49,7 +49,7 @@ export class GitStashWorker extends BaseTool {
         return { successBoolean: false, responseString: `Invalid stash action: ${ action }` };
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git stash ${ action } failed: ${ result.stderr || result.stdout }` };

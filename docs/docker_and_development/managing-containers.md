@@ -3,7 +3,7 @@
 Sulla Desktop gives you two ways to manage containers:
 
 1. Dashboard management inside the app
-2. Command-line management (Docker, Lima, and kubectl)
+2. Command-line management (Docker, Sulla VM, and kubectl)
 
 ## Manage containers in the dashboard
 
@@ -32,13 +32,12 @@ docker logs -f <container_name>
 docker exec -it <container_name> sh
 ```
 
-### Lima commands
+### Sulla VM commands
 
 ```bash
-limactl list
-limactl shell <instance_name>
-limactl stop <instance_name>
-limactl start <instance_name>
+sulla-runtime status
+sulla-runtime exec -- <command>
+sulla-runtime stop
 ```
 
 ### kubectl commands (when Kubernetes is enabled)

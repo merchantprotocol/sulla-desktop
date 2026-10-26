@@ -28,20 +28,9 @@ export interface DownloadContext {
   dockerPluginsDir:   string;
 }
 
-export interface AlpineLimaISOVersion {
-  // The version of the ISO build
-  isoVersion:    string;
-  // The version of Alpine Linux that the ISO is built on
-  alpineVersion: string
-}
-
-type Version = string | AlpineLimaISOVersion;
+type Version = string;
 
 export interface DependencyVersions {
-  lima:                            string;
-  qemu:                            string;
-  socketVMNet:                     string;
-  alpineLimaISO:                   AlpineLimaISOVersion;
   WSLDistro:                       string;
   kuberlr:                         string;
   helm:                            string;
@@ -227,7 +216,7 @@ export abstract class VersionedDependency implements Dependency {
 
   /** Format the version as a string for display. */
   static versionString(v: Version): string {
-    return typeof v === 'string' ? v : v.isoVersion;
+    return v;
   }
 }
 
@@ -259,9 +248,6 @@ export function GlobalDependency<T extends abstract new(...args: any[]) => Versi
       const depVersions = structuredClone(await GlobalDependency.depVersions());
       const name = this.name;
 
-      if (name === 'alpineLimaISO') {
-        throw new Error(`Default updateManifest does not handle ${ name }`);
-      }
       depVersions[name] = newVersion;
       const rawContents = YAML.stringify(depVersions);
 

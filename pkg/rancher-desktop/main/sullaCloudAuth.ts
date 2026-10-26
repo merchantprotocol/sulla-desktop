@@ -906,7 +906,7 @@ export function initSullaCloudAuthEvents(): void {
   //
   // This needs to be resilient to a DB that isn't ready yet. On a fresh app
   // launch the Sulla Postgres container can take 30-60s to come up while
-  // Lima provisions the VM and docker compose brings up the service, so
+  // The runtime provisions the VM and docker compose brings up the service, so
   // loadSession() — which reads from integration_values — throws
   // ECONNREFUSED if we fire it too early. Previously the IIFE ran once,
   // caught the error, and gave up. That left the relay permanently

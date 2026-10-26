@@ -17,18 +17,15 @@ limitations under the License.
 package factoryreset
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path"
 
 	dockerconfig "github.com/docker/cli/cli/config"
 
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/directories"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/paths"
 )
 
@@ -90,21 +87,6 @@ func clearDockerContext() error {
 		return err
 	}
 	return os.Rename(scratchFile.Name(), configFilePath)
-}
-
-func deleteLimaVM(ctx context.Context) error {
-	appPaths, err := paths.GetPaths()
-	if err != nil {
-		return err
-	}
-	if err := directories.SetupLimaHome(appPaths.Lima); err != nil {
-		return err
-	}
-	limactl, err := directories.GetLimactlPath()
-	if err != nil {
-		return err
-	}
-	return exec.CommandContext(ctx, limactl, "delete", "-f", "0").Run()
 }
 
 // DeleteCacheData deletes the application cache

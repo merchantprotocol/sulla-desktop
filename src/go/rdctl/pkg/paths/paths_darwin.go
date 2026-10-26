@@ -37,7 +37,7 @@ func GetPaths(getResourcesPathFuncs ...func() (string, error)) (*Paths, error) {
 		// ~/.rd/lima — must stay short to avoid UNIX_PATH_MAX (104 chars)
 		// for the Lima socket files (ssh.sock, ha.sock, etc.). The previous
 		// default (appHome/lima = ~/Library/Application Support/rancher-desktop/lima)
-		// blows past the limit on `limactl create` for users with long usernames.
+		// blows past the limit for users with long usernames.
 		Lima:                       filepath.Join(altAppHome, "lima"),
 		Integration:                filepath.Join(altAppHome, "bin"),
 		DeploymentProfileSystem:    "/Library/Managed Preferences",

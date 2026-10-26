@@ -11,7 +11,7 @@ export function buildRemotePidRecordCommand(pidFile: string): string {
 }
 
 /**
- * Build a portable shell command for launching Claude inside Lima. When
+ * Build a portable shell command for launching Claude inside the Sulla VM. When
  * `pidFile` is given, the shell records its PID there first; every `exec`
  * keeps that PID, so it ends up being the claude process itself.
  */

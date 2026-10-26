@@ -4,14 +4,14 @@
 
 Sulla Desktop transforms from a local-model AI assistant into a **Claude Code command center** — the bridge between your phone, your machine, and your AI. It manages a sandboxed Claude Code instance, exposes MCP servers, connects to Sulla Mobile, and acts as a persistent agent endpoint for workflows.
 
-The local model inference (llama.cpp, Ollama) and training pipeline are removed. Claude Code running inside a Lima VM becomes the brain. Sulla Desktop becomes the body.
+The local model inference (llama.cpp, Ollama) and training pipeline are removed. Claude Code running inside a Sulla VM becomes the brain. Sulla Desktop becomes the body.
 
 ---
 
 ## Core Principles
 
 1. **Claude Code is the brain.** Sulla doesn't compete with it — it gives it a body, senses, and memory.
-2. **The VM is the sandbox.** Claude Code runs with `--dangerously-skip-permissions` inside a Lima VM. Full autonomy, zero risk to the host.
+2. **The VM is the sandbox.** Claude Code runs with `--dangerously-skip-permissions` inside a Sulla VM. Full autonomy, zero risk to the host.
 3. **Everything flows through sync.** Mobile ↔ Cloud ↔ Desktop. Same offline-first architecture as Sulla Mobile.
 4. **One-click setup.** Install the app, scan QR from phone, done. No terminal, no JSON editing, no config files.
 
@@ -79,7 +79,7 @@ The local model inference (llama.cpp, Ollama) and training pipeline are removed.
 
 | Component | Reason |
 |-----------|--------|
-| llama.cpp service (`LlamaCppService.ts`) | Replaced by Claude Code in Lima VM |
+| llama.cpp service (`LlamaCppService.ts`) | Replaced by Claude Code in Sulla VM |
 | Ollama integration | No longer needed |
 | Model download manager | No local models |
 | Training pipeline (`/training/`, TrainingPane, TrainingDashboard) | Spun out or dropped |
@@ -94,7 +94,7 @@ The local model inference (llama.cpp, Ollama) and training pipeline are removed.
 |-----------|-----------|
 | Chat UI (BrowserTabChat, SidePanelChat) | Primary interface — points at Claude Code instead of local model |
 | Conversation history system | Persists across sessions, syncs to mobile |
-| MCP infrastructure (MCPBridge, MCPClient) | Bridges host-side servers into Lima VM |
+| MCP infrastructure (MCPBridge, MCPClient) | Bridges host-side servers into Sulla VM |
 | Password vault (AccountEditor) | MCP server for credential access |
 | Browser tabs (WebContentsView) | MCP server for web browsing |
 | Audio driver (Whisper, VAD) | Voice input to Claude Code |
@@ -119,9 +119,9 @@ Sulla Mobile scans it → exchanges the token for a persistent auth credential �
 - Mobile scans QR, confirms pairing, receives desktop's connection details
 - Desktop subscribes to the contractor's WS channel on CF Workers
 
-### 2. Lima VM Provisioning
+### 2. Sulla VM Provisioning
 
-On first run (or project setup), Sulla Desktop provisions a Lima VM:
+On first run (or project setup), Sulla Desktop provisions a Sulla VM:
 
 ```yaml
 # ~/.sulla/lima/default.yaml
@@ -169,7 +169,7 @@ Inbound message (mobile, workflow trigger, scheduled)
           ▼
 ┌─────────────────────┐
 │  Spin up Claude Code │
-│  in Lima VM with     │
+│  in Sulla VM with     │
 │  project context     │
 │  Stream response     │
 └─────────────────────┘
@@ -198,7 +198,7 @@ This is where the existing LangGraph node system gets repurposed — the nodes b
 
 ### 4. MCP Server Hub
 
-Sulla Desktop runs managed MCP servers on the host, bridged into the Lima VM:
+Sulla Desktop runs managed MCP servers on the host, bridged into the Sulla VM:
 
 | Server | What it provides |
 |--------|-----------------|
@@ -256,7 +256,7 @@ Sulla's DAG engine is the workflow system. No external tools needed. Workflows a
 2. App opens → "Welcome to Sulla"
 3. "Scan this QR code with Sulla Mobile" → pairing flow
 4. "Select projects Claude can access" → file picker, mount manager
-5. Lima VM provisions in background (progress bar)
+5. Sulla VM provisions in background (progress bar)
 6. "Sulla is ready" → menu bar icon appears with glow
 
 ### Daily Use
@@ -614,8 +614,8 @@ The user sees real-time progress without opening their laptop. If something need
 - Add QR pairing flow with Sulla Mobile
 - Desktop subscribes to contractor's WS channel
 
-### Phase 2: Lima VM (1-2 weeks)
-- Provision Lima VM from desktop app
+### Phase 2: Sulla VM (1-2 weeks)
+- Provision Sulla VM from desktop app
 - Install Claude Code inside VM
 - Project mount manager UI
 - Basic chat → Claude Code pipe (replace local model with VM)
@@ -650,11 +650,11 @@ The user sees real-time progress without opening their laptop. If something need
 
 ## Technical Decisions
 
-### Why Lima over Docker?
-- Lima provides a full Linux VM, not just containerized processes
+### Why Sulla VM over Docker?
+- Sulla VM provides a full Linux VM, not just containerized processes
 - Claude Code needs a real filesystem, real git, real shell — not a container
-- Lima integrates with macOS seamlessly (shared mounts, port forwarding)
-- Docker inside Lima is still possible if Claude needs containers
+- Sulla VM integrates with macOS seamlessly (shared mounts, port forwarding)
+- Docker inside Sulla VM is still possible if Claude needs containers
 
 ### Why not run Claude Code directly on the host?
 - `--dangerously-skip-permissions` on the host is actually dangerous

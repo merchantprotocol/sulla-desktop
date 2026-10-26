@@ -52,7 +52,7 @@ The host opens one stream per Mac-side connection and sends one JSON line, `{"po
 
 ## Host sockets
 
-In the runtime directory (`~/Library/Application Support/Sulla/runtime`, or `$SULLA_RUNTIME_DIR`), all mode 0600: `docker.sock` (port 2375), `control.sock` (`status` / `stop`), and `guest.sock`, where a client writes `<port>\n` (1025 or 2376 only) and is then spliced to that guest port. A symlink named `limactl` to the host binary answers `limactl shell 0 ...`, `limactl copy` and `limactl list --json` through guest exec.
+In the runtime directory (`~/Library/Application Support/Sulla/runtime`, or `$SULLA_RUNTIME_DIR`), all mode 0600: `docker.sock` (port 2375), `control.sock` (`status` / `stop`), and `guest.sock`, where a client writes `<port>\n` (1025 or 2376 only) and is then spliced to that guest port. The host binary runs guest commands itself: `sulla-runtime exec [--workdir DIR] [--env K=V] -- argv...` and `sulla-runtime copy [-r] SRC guest:PATH`.
 
 ## Boot milestones and readiness
 

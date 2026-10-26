@@ -22,7 +22,7 @@ const PROCESS_WATCH_MS = 5_000;
 /** Short-lived caller claims; renewed on every bridge request while the process lives. */
 const CONTEXT_TTL_S = 300;
 
-export interface LimaClaudeAuth {
+export interface GuestClaudeAuth {
   /** `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` — an opaque bridge capability, never the real credential. */
   oauthToken: string;
   apiKey:     string;
@@ -73,25 +73,25 @@ async function resolveAccount(): Promise<{
 
 /**
  * With the container-owned Vault, secrets never leave the vault, so a `claude`
- * process in the Lima VM cannot be handed a token. Instead it gets a
+ * process in the Sulla VM cannot be handed a token. Instead it gets a
  * process-scoped bridge on the host that the broker injects the real
  * credential through. Returns null when the legacy in-process vault is in use
  * (callers then fall back to reading the credential directly).
  */
-export async function createLimaClaudeAuth(input: {
+export async function createGuestClaudeAuth(input: {
   conversationId: string;
   state?:         BaseThreadState;
-}): Promise<LimaClaudeAuth | null> {
+}): Promise<GuestClaudeAuth | null> {
   if (!usesContainerVaultAuthority()) return null;
 
   const { integrationId, accountId, authMode } = await resolveAccount();
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
   const base = await issueLocalBrokerContext({
     agentId:         metadata.agentId ?? metadata.wsChannel ?? 'sulla',
-    podId:           `sulla-lima-claude-${ crypto.randomUUID() }`,
+    podId:           `sulla-guest-claude-${ crypto.randomUUID() }`,
     credentialScope: { integration_id: integrationId, account_id: accountId },
     threadId:        input.conversationId,
-    jobId:           `lima-${ crypto.randomUUID() }`,
+    jobId:           `guest-${ crypto.randomUUID() }`,
     orgId:           metadata.orgId,
   });
   const context = { ...base, device_id: await getDesktopDeviceId() };

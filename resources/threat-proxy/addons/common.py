@@ -8,7 +8,7 @@ Loaded by every addon. Provides:
   - is_allowlisted(host) — bypass for internal / development hosts
   - classify_verdict(flags) — collapses multi-source signals into an action
 
-Config file: /etc/sulla-proxy.env — written by Electron side (LimaBackend).
+Config file: /etc/sulla-proxy.env — written by Electron side (Sulla VMBackend).
 """
 
 import json

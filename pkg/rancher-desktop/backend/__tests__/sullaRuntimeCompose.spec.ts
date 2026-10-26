@@ -1,5 +1,5 @@
 /** @jest-environment node */
-// Drives the real LimaBackend.prepareSullaComposeFile() with the VM and the
+// Drives the real SullaRuntimeBackend.prepareSullaComposeFile() with the VM and the
 // app's services faked, then inspects the compose file it would write.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,11 +8,11 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import yaml from 'yaml';
 
-const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-lima-compose-'));
+const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-runtime-compose-'));
 const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-desktop/assets/sulla-docker-compose.yaml'), 'utf8'));
 // All '@pkg/assets/*' imports resolve to one stub, so the stub carries the
-// compose definition plus the dependency versions lima.ts reads at load.
-const assetStub: any = { alpineLimaISO: { isoVersion: '0', alpineVersion: '0' } };
+// compose definition plus the dependency versions sullaRuntimeBackend.ts reads at load.
+const assetStub: any = {};
 const flags = { vaultV2: false, fuse: false };
 // The guest's /proc/self/mountinfo; BusyBox Alpine has no usable findmnt.
 const guest = { mountinfo: '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n', catFails: false };
@@ -75,13 +75,13 @@ jest.unstable_mockModule('@pkg/window', () => stubs('centerDialog closeExtension
   'openUnmetPrerequisitesDialog openUpdatesWindow openUrlInApp restoreWindow send showMessageBox webRoot windowMapping'));
 jest.unstable_mockModule('@pkg/sudo-prompt', () => ({ exec: noop }));
 
-const { default: LimaBackend } = await import('../lima');
+const { default: SullaRuntimeBackend } = await import('../sullaRuntimeBackend');
 const { ACCOUNTS_SECRETS_DIRECTORY, findHostBindMounts } = await import('../sullaComposeMounts');
 
 interface Recorded { command: string[]; options: any }
 
 function fakeBackend() {
-  const backend: any = new LimaBackend('x86_64' as any, () => ({}) as any);
+  const backend: any = new SullaRuntimeBackend('x86_64' as any);
   const commands: Recorded[] = [];
   const copies: [string, string][] = [];
   let written = '';
@@ -92,7 +92,7 @@ function fakeBackend() {
     commands.push({ command: args, options });
 
     if (args[0] === 'mktemp') return Promise.resolve('/tmp/sulla-accounts-secrets.Test01\n');
-    if (args[0] === 'findmnt') return Promise.reject(new Error('limactl exited with code 1'));
+    if (args[0] === 'findmnt') return Promise.reject(new Error('sulla-runtime exited with code 1'));
     if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
       return guest.catFails ? Promise.reject(new Error('cat failed')) : Promise.resolve(guest.mountinfo);
     }
@@ -113,7 +113,7 @@ function fakeBackend() {
 
     return Promise.resolve('');
   };
-  backend.lima = (...args: string[]) => { copies.push([args[1], args[2]]); return Promise.resolve() };
+  backend.runtimeCommand = (args: string[]) => { copies.push([args[1], args[2]]); return Promise.resolve('') };
   backend.writeFile = (file: string, contents: string) => {
     if (file === '/tmp/sulla-docker-compose.yml') written = contents;
 
@@ -154,7 +154,7 @@ afterAll(() => { fs.rmSync(appHome, { recursive: true, force: true }) });
 beforeEach(() => {
   const fresh = structuredClone(assetCompose);
 
-  for (const key of Object.keys(assetStub)) if (key !== 'alpineLimaISO') delete assetStub[key];
+  for (const key of Object.keys(assetStub)) delete assetStub[key];
   Object.assign(assetStub, fresh);
   guest.mountinfo = '22 1 0:20 / / rw,relatime shared:1 - tmpfs tmpfs rw\n';
   guest.catFails = false;
@@ -198,7 +198,7 @@ describe.each([
         .map(name => `${ ACCOUNTS_SECRETS_DIRECTORY }/${ name }`));
     // Values come from the host value store under appHome, copied into staging.
     expect(copies.map(([hostPath]) => path.dirname(hostPath))).toEqual(Array(5).fill(path.join(appHome, 'accounts')));
-    expect(copies.every(([, guest]) => guest.startsWith('0:/tmp/sulla-accounts-secrets.Test01/'))).toBe(true);
+    expect(copies.every(([, guest]) => guest.startsWith('guest:/tmp/sulla-accounts-secrets.Test01/'))).toBe(true);
     const install = commands.find(c => c.command[0] === 'sh' && c.command.includes(ACCOUNTS_SECRETS_DIRECTORY));
 
     expect(install?.options.root).toBe(true);

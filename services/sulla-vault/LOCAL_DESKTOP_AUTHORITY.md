@@ -127,7 +127,7 @@ migration test input.
 | Tool/provider routing | `services/sulla-tools`, GitHub/Slack/Discord/OAuth/MCP/provider clients | typed vault operations as final outbound stage | inventoried |
 | Runtime functions | `SecretsCapabilityService`, `sullaSecretsServer`, launchers | remove plaintext env service; opaque request capability or fail closed | inventoried |
 | Browser autofill | `vault_autofill`, browser tab manager | generic agent-browser autofill is unsupported; isolated human reveal remains available | blocked fail-closed |
-| Vault broker legacy | `pkg/rancher-desktop/vault-broker/*`, Lima mounts | remove agent-key provisioning and decrypt callback | inventoried |
+| Vault broker legacy | `pkg/rancher-desktop/vault-broker/*`, Sulla VM mounts | remove agent-key provisioning and decrypt callback | inventoried |
 | Desktop UI | vault route/window registration and `services/sulla-vault/console/local/*` | sandboxed container view, no Node/preload/general browser registry | in progress (UI worker) |
 
 The consumer inventory is intentionally broader than the generic tool proxy.

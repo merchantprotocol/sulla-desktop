@@ -3,7 +3,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Blame Tool - Show who last modified each line of a file.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitBlameWorker extends BaseTool {
   name = '';
@@ -21,7 +21,7 @@ export class GitBlameWorker extends BaseTool {
         cmd = `git blame -L ${ startLine }, "${ absolutePath }"`;
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 60_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 60_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git blame failed: ${ result.stderr || result.stdout }` };

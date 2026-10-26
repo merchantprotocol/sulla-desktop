@@ -3,10 +3,10 @@ import { runCommand } from '../util/CommandRunner';
 import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostAccess';
 
 /**
- * ExecHost — LAST RESORT shell on the host macOS machine (NOT the Lima VM).
+ * ExecHost — LAST RESORT shell on the host macOS machine (NOT the Sulla VM).
  *
  * Everyday work must stay in the VM via the regular `exec` tool. The host
- * home directory is mounted into Lima at the same path, so project files,
+ * home directory is mounted into the Sulla VM at the same path, so project files,
  * installs, builds, tests, and sulla CLI calls do not need host execution.
  * Use this tool only when the parent host MUST be used (host-only
  * binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or
@@ -59,7 +59,7 @@ export class ExecHostWorker extends BaseTool {
         timeoutMs,
         maxOutputChars: 160_000,
         stdin,
-        // runInLimaShell is false by default → executes on the host process
+        // runInGuest is false by default → executes on the host process
       });
 
       if (res.exitCode !== 0) {

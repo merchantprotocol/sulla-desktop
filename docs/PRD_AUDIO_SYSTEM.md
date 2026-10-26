@@ -749,7 +749,7 @@ Store TTS audio buffers alongside speak messages. Add a playback UI that replays
 
 **As a user, I want Sulla to speak without requiring an internet connection or API key.**
 
-Support local TTS models (e.g., Piper, Coqui) as an alternative to ElevenLabs. Would run in the Lima VM or as a native binary. Eliminates API latency and cost.
+Support local TTS models (e.g., Piper, Coqui) as an alternative to ElevenLabs. Would run in the Sulla VM or as a native binary. Eliminates API latency and cost.
 
 ### 6.6 Push-to-Talk Mode
 

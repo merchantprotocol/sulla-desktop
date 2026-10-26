@@ -154,7 +154,7 @@ assert_executable() {
 # ---------------------------------------------------------------------------
 # assert_executable_runs — File must exist, be executable, AND run
 # ---------------------------------------------------------------------------
-# This is the strongest check — catches EBADARCH errors on rdctl/limactl
+# This is the strongest check — catches EBADARCH errors on rdctl
 # ---------------------------------------------------------------------------
 assert_executable_runs() {
   local path="$1"

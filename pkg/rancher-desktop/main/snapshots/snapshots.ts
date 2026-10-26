@@ -37,7 +37,7 @@ class SnapshotsError {
   }
 }
 
-/** Snapshots copy Lima's disks; the Sulla runtime has none to copy yet. */
+/** Snapshots copy VM disks; the Sulla runtime has none to copy yet. */
 class SnapshotsUnsupportedError {
   readonly isSnapshotError = true;
   message = 'Snapshots are not supported on the Sulla runtime yet';

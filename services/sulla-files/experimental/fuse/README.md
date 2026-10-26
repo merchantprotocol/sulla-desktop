@@ -11,7 +11,7 @@ The repository contains an experimental native source broker in
 `pkg/rancher-desktop/main/sullaFilesSourceGateway.ts`. Electron registers one
 exact regular file only after a native chooser, pins its descriptor/device/inode,
 and returns an opaque random handle. Host paths and source capabilities never
-enter Lima or a container.
+enter Sulla VM or a container.
 
 Electron ingests bounded bytes through the authenticated local Files API.
 `files_native_sources` is the durable handle-to-file index, separate from
@@ -25,7 +25,7 @@ for active requests and publication work to drain, then closes descriptors and
 revokes every session.
 
 Production host-home, external-volume, and broad Darwin-temp mounts are removed
-from the staged Lima configuration. Persisted mount arrays are replaced rather
+from the staged Sulla VM configuration. Persisted mount arrays are replaced rather
 than deep-merged, Files runs stored-only on encrypted chunks/named volumes, and
 agent file tools use guest-owned homes/workspaces. Sulla/PostgreSQL application
 data remains outside this change and retains its pre-change storage behavior.

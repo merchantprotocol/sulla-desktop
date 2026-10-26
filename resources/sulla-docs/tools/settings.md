@@ -28,7 +28,7 @@ Product code reads and writes durable settings through `SullaSettingsModel`. Exa
 |------|----------------------|
 | `main/sullaEvents.ts` | IPC `sulla-settings-get/set/delete` (renderer proxy) |
 | `config/settingsImpl.ts` | host-access / administrative gates |
-| `backend/lima.ts` | API token, Claude creds, compose secrets, proxy knobs |
+| `backend/sullaRuntimeBackend.ts` | API token, Claude creds, compose secrets, proxy knobs |
 | `main/desktopRelay.ts` | `pairedMobileUserId` |
 | `main/deviceIdentity.ts` | device id |
 | `composables/useTheme.ts` | theme |

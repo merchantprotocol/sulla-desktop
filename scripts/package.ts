@@ -13,7 +13,7 @@ import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
 import { findIdentity } from 'app-builder-lib/out/codeSign/macCodeSign';
 import { executeAppBuilder, log } from 'builder-util';
 import {
-  AfterPackContext, Arch, build, CliOptions, Configuration, LinuxTargetSpecificOptions,
+  AfterPackContext, Arch, build, CliOptions, Configuration,
 } from 'electron-builder';
 import _ from 'lodash';
 import plist from 'plist';
@@ -126,31 +126,6 @@ class Builder {
   }
 
   /**
-   * Manually write out the Linux .desktop application shortcut definition; this
-   * is needed as by default this only happens for snap/fpm/etc., but not zip
-   * files.
-   */
-  protected async writeLinuxDesktopFile(context: AfterPackContext) {
-    const { LinuxPackager } = await import('app-builder-lib/out/linuxPackager');
-    const { LinuxTargetHelper } = await import('app-builder-lib/out/targets/LinuxTargetHelper');
-    const config = context.packager.config.linux;
-
-    if (!(context.packager instanceof LinuxPackager) || !config) {
-      return;
-    }
-
-    const options: LinuxTargetSpecificOptions = {
-      ...context.packager.platformSpecificBuildOptions,
-      compression: undefined,
-    };
-    const helper = new LinuxTargetHelper(context.packager);
-    const leaf = `${ context.packager.executableName }.desktop`;
-    const destination = path.join(context.appOutDir, `resources/resources/linux/${ leaf }`);
-
-    await helper.writeDesktopEntry(options, context.packager.executableName, destination);
-  }
-
-  /**
    * Edit the application's `Info.plist` file to remove the UsageDescription
    * keys that Electron adds by default, while preserving any that were
    * explicitly declared in extendInfo.
@@ -199,7 +174,6 @@ class Builder {
     // succeed without it we'll reinstate it as a separate step that
     // runs before codesign, not inside afterPack.
     // await this.flipFuses(context);
-    await this.writeLinuxDesktopFile(context);
     await this.buildMacNativeExtensions(context);
     await this.embedSullaRuntime(context);
   }
@@ -375,7 +349,6 @@ class Builder {
     const electronPlatform = ({
       darwin: 'mac',
       win32:  'win',
-      linux:  'linux',
     } as const)[process.platform as string];
 
     if (!electronPlatform) {
@@ -383,9 +356,6 @@ class Builder {
     }
 
     switch (electronPlatform) {
-    case 'linux':
-      await this.createLinuxResources(finalBuildVersion);
-      break;
     case 'win':
       await this.createWindowsResources(distDir);
       break;
@@ -446,13 +416,6 @@ class Builder {
       // Only build installer if we're not asked not to.
       await buildInstaller(buildUtils.distDir, appDir, installerPath);
     }
-  }
-
-  protected async createLinuxResources(finalBuildVersion: string) {
-    const appData = 'packaging/linux/sulla-desktop.appdata.xml';
-    const release = `<release version="${ finalBuildVersion }" date="${ new Date().toISOString() }"/>`;
-
-    await this.replaceInFile(appData, /<release.*\/>/g, release, appData.replace('packaging', 'resources'));
   }
 
   protected async createWindowsResources(workDir: string) {

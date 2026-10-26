@@ -4,7 +4,6 @@ import os from 'os';
 import path from 'path';
 
 import * as goUtils from 'scripts/dependencies/go-source';
-import { Lima, Qemu, SocketVMNet, AlpineLimaISO } from 'scripts/dependencies/lima';
 import { MobyOpenAPISpec } from 'scripts/dependencies/moby-openapi';
 import { PotionRetrievalModel } from 'scripts/dependencies/potion';
 import { SudoPrompt } from 'scripts/dependencies/sudo-prompt';
@@ -50,16 +49,8 @@ const userTouchedDependencies = [
   new goUtils.GoDependency('docker-credential-none'),
 ];
 
-// Dependencies that are specific to unix hosts.
-const unixDependencies = [
-  new Lima(),
-  new Qemu(),
-  new AlpineLimaISO(),
-];
-
 // Dependencies that are specific to macOS hosts.
 const macOSDependencies = [
-  new SocketVMNet(),
   new SudoPrompt(),
   new tools.WhisperCLI(),
 ];
@@ -87,7 +78,7 @@ const wslDependencies = [
   new goUtils.NerdctlStub(),
 ];
 
-// Dependencies that are specific to WSL and Lima VMs.
+// Dependencies that are specific to WSL VMs.
 const vmDependencies = [
   new tools.Trivy(),
   new tools.WasmShims(),
@@ -213,7 +204,6 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
   const resourcesDir = path.join(currentDir, '..', 'resources');
   const platform = os.platform();
   const criticalBinaries = [
-    { name: 'limactl', path: path.join(resourcesDir, platform, 'lima', 'bin', 'limactl') },
     { name: 'rdctl', path: path.join(resourcesDir, platform, 'bin', 'rdctl') },
   ];
 
@@ -239,7 +229,7 @@ async function runScripts(): Promise<void> {
     // download things that go on unix host
     const hostDownloadContext = await buildDownloadContextFor(platform, depVersions);
 
-    for (const dependency of [...userTouchedDependencies, ...unixDependencies, ...hostDependencies]) {
+    for (const dependency of [...userTouchedDependencies, ...hostDependencies]) {
       dependencies.push({ dependency, context: hostDownloadContext });
     }
 
@@ -250,10 +240,6 @@ async function runScripts(): Promise<void> {
       }
     }
 
-    // download things that go inside Lima VM
-    const vmDownloadContext = await buildDownloadContextFor('linux', depVersions);
-
-    dependencies.push(...vmDependencies.map(dependency => ({ dependency, context: vmDownloadContext })));
   } else if (platform === 'win32') {
     // download things for windows
     const hostDownloadContext = await buildDownloadContextFor('win32', depVersions);

@@ -75,12 +75,9 @@ func appHomeDirectories(appPaths *paths.Paths) []string {
 
 // Most of the errors in this function are reported, but we continue to try to delete things,
 // because there isn't really a dependency graph here.
-// For example, if we can't delete the Lima VM, that doesn't mean we can't remove docker files
+// For example, if we can't clear one path, that doesn't mean we can't remove docker files
 // or pull the path settings out of the shell profile files.
 func deleteUnixLikeData(ctx context.Context, appPaths *paths.Paths, pathList []string) error {
-	if err := deleteLimaVM(ctx); err != nil {
-		logrus.Errorf("Error trying to delete the Lima VM: %s\n", err)
-	}
 	for _, currentPath := range pathList {
 		if err := os.RemoveAll(currentPath); err != nil {
 			logrus.Errorf("Error trying to remove %s: %s", currentPath, err)
