@@ -82,8 +82,8 @@ build-mac: build
     #!/bin/sh
     set -e
     yarn package
-    echo "DMG built in dist/"
-    just install-mac
+    just verify-mac-signing
+    echo "Mac app built and signed in dist/. Run 'just install-mac' to replace /Applications/Sulla Desktop.app."
 
 # Install the built app to /Applications (without rebuilding).
 # Never re-sign the copy: electron-builder already signed dist/ with the
