@@ -124,6 +124,12 @@ export class NativeRuntime {
         const name = kind === 'event' ? `event:${ rest[0] }` : kind;
 
         if (!name) return;
+        // The host's balloon decisions and its once-a-minute memory telemetry.
+        if (kind === 'memory' || kind === 'balloon') {
+          console.log(`[sulla-runtime] ${ line.trim() }`);
+
+          return;
+        }
         options.onMilestone?.(name, Date.now() - spawnedAt);
         if (kind === 'docker-ready' || kind === 'restored') {
           dockerReady = true;
@@ -186,6 +192,20 @@ export class NativeRuntime {
     this.#release();
   }
 
+
+  /**
+   * Ask the guest to drop its clean page cache now, so the balloon can hand
+   * the memory back to macOS. Worth it after one-time bulk IO (loading the
+   * bundled images); steady-state reclaim is the host's job.
+   */
+  async reclaimMemory(): Promise<void> {
+    if (!this.running) return;
+    try {
+      await spawnFile(this.artifacts.binary, ['reclaim'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      console.warn('[sulla-runtime] memory reclaim request failed:', error);
+    }
+  }
 
   /** The host's own status line, or undefined when no runtime answers. */
   async status(): Promise<{ state: string; hello: boolean; uptimeMs: number } | undefined> {
