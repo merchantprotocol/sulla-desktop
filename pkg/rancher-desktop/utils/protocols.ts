@@ -69,14 +69,14 @@ function setupAppProtocolHandler() {
 }
 
 /**
- * Set up protocol handler for x-rd-extension://
+ * Set up protocol handler for x-sulla-extension://
  *
  * This handler serves files from installed extensions; the format is:
- * x-rd-extension://<extension id>/...
+ * x-sulla-extension://<extension id>/...
  * Where the extension id is hex encoded (to avoid issues with slashes).
  */
 function setupExtensionProtocolHandler() {
-  const scheme = 'x-rd-extension';
+  const scheme = 'x-sulla-extension';
 
   if (!Electron.protocol.isProtocolHandled(scheme)) {
     Electron.protocol.handle(

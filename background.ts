@@ -290,7 +290,7 @@ mainEvents.handle('settings-fetch', () => {
 });
 
 Electron.protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }, {
-  scheme:     'x-rd-extension',
+  scheme:     'x-sulla-extension',
   privileges: {
     standard:            true,
     secure:              true,
