@@ -12,6 +12,8 @@
  * Mirrors the loopback model pattern: detect → cache → expose status.
  */
 
+import path from 'path';
+
 import * as platform from '../platform';
 
 interface WhisperStatus {
@@ -53,6 +55,14 @@ export async function remove(onProgress?: (line: string) => void): Promise<void>
  */
 export async function downloadModel(model: string, onProgress?: (pct: number, status: string) => void): Promise<boolean> {
   return platform.whisper.downloadModel(model, onProgress);
+}
+
+/** Path of a model's file: a downloaded copy, else the one bundled with the app. */
+export function modelPath(model: string): string | undefined {
+  if (typeof platform.whisper.modelPath === 'function') return platform.whisper.modelPath(model);
+  const modelsPath = cachedStatus?.modelsPath;
+
+  return modelsPath ? path.join(modelsPath, `ggml-${ model }.bin`) : undefined;
 }
 
 export function getModels(): string[] {

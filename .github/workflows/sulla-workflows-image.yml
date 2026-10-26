@@ -30,6 +30,7 @@ jobs:
           images: ghcr.io/merchantprotocol/sulla-workflows
           tags: |
             type=sha
+            type=sha,format=long
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
       - uses: docker/build-push-action@v6

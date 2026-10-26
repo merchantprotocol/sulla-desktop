@@ -17,7 +17,7 @@
  *   - reset-default-output.swift — reset output if stuck on loopback
  */
 
-import { execFile, execSync, spawn } from 'child_process';
+import { execFile, execFileSync, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -53,9 +53,29 @@ const CHILD_ENV = { ...process.env, PATH: SHELL_PATH };
 
 // ─── Helpers ────────────────────────────────────────────────
 
+/**
+ * The build compiles each Swift helper next to its script
+ * (scripts/build-audio-native.sh). Run that binary; interpret the script only
+ * when it is missing (a checkout that has not been built), which needs the
+ * Xcode command line tools.
+ */
+export function helperCommand(scriptPath: string, args: string[] = []): [string, string[]] {
+  const binary = scriptPath.replace(/\.swift$/, '');
+
+  try {
+    fs.accessSync(binary, fs.constants.X_OK);
+
+    return [binary, args];
+  } catch {
+    return ['swift', [scriptPath, ...args]];
+  }
+}
+
 function runSwift(scriptPath: string, args: string[] = []): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const [command, commandArgs] = helperCommand(scriptPath, args);
+
   return new Promise((resolve) => {
-    execFile('swift', [scriptPath, ...args], { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
+    execFile(command, commandArgs, { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
       const cleanStderr = (stderr || '')
         .split('\n')
         .filter((l) => !l.includes('warning:') && !(/^\s*\d+\s*\|/.exec(l)) && !(/^\s*`-/.exec(l)) && l.trim())
@@ -73,10 +93,31 @@ function runSwift(scriptPath: string, args: string[] = []): Promise<{ ok: boolea
 
 // ─── Loopback Driver ────────────────────────────────────────
 
+/** BlackHole's signed installer, embedded by scripts/fetch-bundled-assets.ts only with SULLA_BUNDLE_BLACKHOLE=1. */
+const LOOPBACK_PACKAGE = 'BlackHole2ch-0.6.1.pkg';
+
+function bundledLoopbackPackage(): string | undefined {
+  const pkg = path.join(scriptDir, LOOPBACK_PACKAGE);
+
+  return fs.existsSync(pkg) ? pkg : undefined;
+}
+
+/** Single-quote a value for /bin/sh. */
+export function shellQuote(value: string): string {
+  return `'${ value.replace(/'/g, `'\\''`) }'`;
+}
+
+/** AppleScript that runs a shell command as root behind the standard administrator prompt. */
+export function adminShellScript(command: string): string {
+  return `do shell script "${ command.replace(/\\/g, '\\\\').replace(/"/g, '\\"') }" with administrator privileges`;
+}
+
 export const loopback = {
   async detect(): Promise<any> {
+    const [command, args] = helperCommand(SCRIPTS.detect);
+
     return new Promise((resolve) => {
-      execFile('swift', [SCRIPTS.detect], { timeout: 20000, env: CHILD_ENV }, (err, stdout) => {
+      execFile(command, args, { timeout: 20000, env: CHILD_ENV }, (err, stdout) => {
         try {
           const result = JSON.parse(stdout.trim());
           if (result.found) {
@@ -98,19 +139,30 @@ export const loopback = {
   },
 
   async install(): Promise<boolean> {
-    log.info('Platform', 'Installing BlackHole 2ch via Homebrew...');
-    try {
-      execSync('brew install --cask blackhole-2ch', { timeout: 120000, stdio: 'pipe', env: CHILD_ENV });
-      log.info('Platform', 'BlackHole 2ch installed');
+    // The installer is bundled only in builds made with SULLA_BUNDLE_BLACKHOLE=1
+    // (pending a redistribution license); otherwise install through Homebrew.
+    const pkg = bundledLoopbackPackage();
 
-      try {
-        execSync(
-          'osascript -e \'do shell script "killall coreaudiod 2>/dev/null" with administrator privileges\'',
-          { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
-        );
-      } catch {
-        // User cancelled or coreaudiod not running — it will recover on its own
+    try {
+      if (pkg) {
+        log.info('Platform', 'Installing the bundled BlackHole 2ch driver', { pkg });
+        // One administrator prompt installs the driver and reloads CoreAudio.
+        execFileSync('osascript', ['-e', adminShellScript(`/usr/sbin/installer -pkg ${ shellQuote(pkg) } -target / && (/usr/bin/killall coreaudiod 2>/dev/null; true)`)], {
+          timeout: 180000, stdio: 'pipe', env: CHILD_ENV,
+        });
+      } else {
+        log.info('Platform', 'Installing BlackHole 2ch via Homebrew...');
+        execSync('brew install --cask blackhole-2ch', { timeout: 120000, stdio: 'pipe', env: CHILD_ENV });
+        try {
+          execSync(
+            'osascript -e \'do shell script "killall coreaudiod 2>/dev/null" with administrator privileges\'',
+            { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
+          );
+        } catch {
+          // User cancelled or coreaudiod not running — it will recover on its own
+        }
       }
+      log.info('Platform', 'BlackHole 2ch installed');
 
       for (let i = 0; i < 5; i++) {
         await new Promise((r) => setTimeout(r, 2000));
@@ -125,6 +177,7 @@ export const loopback = {
       log.error('Platform', 'BlackHole installed but not detected — run \'sudo killall coreaudiod\' or reboot');
       return false;
     } catch (e: any) {
+      // Includes the user cancelling the administrator prompt.
       log.error('Platform', 'Failed to install BlackHole', { error: e.message });
       return false;
     }
@@ -145,7 +198,7 @@ export const loopback = {
     // /Library/Audio/Plug-Ins/HAL/ is root-owned — use osascript for privilege elevation
     try {
       execSync(
-        'osascript -e \'do shell script "rm -rf /Library/Audio/Plug-Ins/HAL/AudioDriverLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver.disabled" with administrator privileges\'',
+        'osascript -e \'do shell script "rm -rf /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver /Library/Audio/Plug-Ins/HAL/AudioDriverLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver /Library/Audio/Plug-Ins/HAL/SullaLoopback2ch.driver.disabled; /usr/sbin/pkgutil --forget audio.existential.BlackHole2ch 2>/dev/null; true" with administrator privileges\'',
         { timeout: 15000, stdio: 'pipe', env: CHILD_ENV },
       );
     } catch {
@@ -216,7 +269,9 @@ export const watcher = {
     }
 
     log.info('Platform', 'Starting output device watcher');
-    watcherProcess = spawn('swift', [SCRIPTS.watch], {
+    const [command, args] = helperCommand(SCRIPTS.watch);
+
+    watcherProcess = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env:   CHILD_ENV,
     });
@@ -360,8 +415,10 @@ export const capture = {
 export const devices = {
   async setOutput(deviceName: string): Promise<any> {
     log.info('Platform', 'Setting system output', { deviceName });
+    const [command, args] = helperCommand(SCRIPTS.setDevice, ['--output', deviceName]);
+
     return new Promise((resolve) => {
-      execFile('swift', [SCRIPTS.setDevice, '--output', deviceName], { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
+      execFile(command, args, { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
         if (err) {
           const msg = (stderr || '').trim();
           log.error('Platform', 'Failed to set system output', { deviceName, error: msg });
@@ -379,8 +436,10 @@ export const devices = {
 
   async setInput(deviceName: string): Promise<any> {
     log.info('Platform', 'Setting system input', { deviceName });
+    const [command, args] = helperCommand(SCRIPTS.setDevice, ['--input', deviceName]);
+
     return new Promise((resolve) => {
-      execFile('swift', [SCRIPTS.setDevice, '--input', deviceName], { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
+      execFile(command, args, { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
         if (err) {
           const msg = (stderr || '').trim();
           log.error('Platform', 'Failed to set system input', { deviceName, error: msg });
@@ -397,17 +456,10 @@ export const devices = {
   },
 
   async resetOutput(): Promise<void> {
-    try {
-      const out = execSync(`swift "${ SCRIPTS.resetOutput }" 2>/dev/null`, {
-        timeout: 15000,
-        stdio:   'pipe',
-        env:     CHILD_ENV,
-      });
-      const msg = out.toString().trim();
-      if (msg) log.info('Platform', msg);
-    } catch {
-      // Already on a physical device
-    }
+    const result = await runSwift(SCRIPTS.resetOutput);
+
+    // A failure means the output is already on a physical device.
+    if (result.ok && result.stdout) log.info('Platform', result.stdout);
   },
 };
 
@@ -474,6 +526,20 @@ const WHISPER_MODELS_DIR = path.join(
   '.sulla', 'cache', 'whisper', 'models',
 );
 
+// Models shipped inside the app (base.en, from scripts/fetch-bundled-assets.ts).
+// Used in place, read-only; downloads of other models go to WHISPER_MODELS_DIR.
+const WHISPER_BUNDLED_MODELS_DIR = path.join(paths.resources, 'darwin', 'whisper');
+
+function modelNamesIn(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir)
+      .filter((f: string) => f.startsWith('ggml-') && f.endsWith('.bin'))
+      .map((f: string) => f.replace(/^ggml-/, '').replace(/\.bin$/, ''));
+  } catch {
+    return [];
+  }
+}
+
 export const whisper = {
   async detect(): Promise<any> {
     try {
@@ -514,7 +580,7 @@ export const whisper = {
   },
 
   async remove(_onProgress?: (line: string) => void): Promise<void> {
-    // Bundled binary cannot be removed; only clean up downloaded models
+    // The bundled binary and bundled models stay; only clean up downloaded models
     log.info('Platform', 'Removing downloaded whisper models...');
     try {
       if (fs.existsSync(WHISPER_MODELS_DIR)) {
@@ -527,15 +593,16 @@ export const whisper = {
   },
 
   listModels(): string[] {
-    try {
-      const fs = require('fs') as typeof import('fs');
-      if (!fs.existsSync(WHISPER_MODELS_DIR)) return [];
-      return fs.readdirSync(WHISPER_MODELS_DIR)
-        .filter((f: string) => f.startsWith('ggml-') && f.endsWith('.bin'))
-        .map((f: string) => f.replace(/^ggml-/, '').replace(/\.bin$/, ''));
-    } catch {
-      return [];
-    }
+    return [...new Set([...modelNamesIn(WHISPER_BUNDLED_MODELS_DIR), ...modelNamesIn(WHISPER_MODELS_DIR)])];
+  },
+
+  /** The file for a model: a downloaded copy, else the one bundled with the app. */
+  modelPath(model: string): string {
+    const file = `ggml-${ model }.bin`;
+    const downloaded = path.join(WHISPER_MODELS_DIR, file);
+    const bundled = path.join(WHISPER_BUNDLED_MODELS_DIR, file);
+
+    return !fs.existsSync(downloaded) && fs.existsSync(bundled) ? bundled : downloaded;
   },
 
   async downloadModel(model: string, onProgress?: (pct: number, status: string) => void): Promise<boolean> {
@@ -547,12 +614,13 @@ export const whisper = {
       fs.mkdirSync(WHISPER_MODELS_DIR, { recursive: true });
     }
 
-    const modelFile = path.join(WHISPER_MODELS_DIR, `ggml-${ model }.bin`);
-    if (fs.existsSync(modelFile)) {
-      log.info('Platform', 'Model already exists', { model, modelFile });
-      if (onProgress) onProgress(100, 'Already downloaded');
+    const existing = whisper.modelPath(model);
+    if (fs.existsSync(existing)) {
+      log.info('Platform', 'Model already exists', { model, modelFile: existing });
+      if (onProgress) onProgress(100, existing.startsWith(WHISPER_BUNDLED_MODELS_DIR) ? 'Included with Sulla' : 'Already downloaded');
       return true;
     }
+    const modelFile = path.join(WHISPER_MODELS_DIR, `ggml-${ model }.bin`);
 
     const baseUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
     const url = `${ baseUrl }/ggml-${ model }.bin`;

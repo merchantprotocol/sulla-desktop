@@ -521,9 +521,9 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opt
     return;
   }
 
-  const modelPath = path.join(status.modelsPath, `ggml-${ modelName }.bin`);
+  const modelPath = whisperModel.modelPath(modelName);
 
-  if (!fs.existsSync(modelPath)) {
+  if (!modelPath || !fs.existsSync(modelPath)) {
     log.error('WhisperTranscribe', 'Model file not found', { modelPath });
     cleanupFile(wavPath);
     done?.();

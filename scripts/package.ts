@@ -26,6 +26,7 @@ import _ from 'lodash';
 import plist from 'plist';
 import yaml from 'yaml';
 
+import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-bundled-assets';
 import buildUtils from './lib/build-utils';
 
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -180,6 +181,24 @@ class Builder {
     // await this.flipFuses(context);
     await this.buildMacNativeExtensions(context);
     await this.embedSullaRuntime(context);
+    await this.checkBundledAssets(context);
+  }
+
+  /**
+   * The app must carry every service image, the whisper model and binary, and
+   * the loopback driver installer, so nothing is downloaded after install.
+   * SULLA_BUNDLE_SKIP lets a dev build leave parts out; it says so loudly.
+   */
+  protected async checkBundledAssets(context: AfterPackContext): Promise<void> {
+    if (context.electronPlatformName !== 'darwin') return;
+    const appPath = path.join(context.appOutDir, `${ context.packager.appInfo.productFilename }.app`);
+    const skip = skippedParts();
+    const problems = bundledAssetProblems(path.join(appPath, 'Contents', 'Resources', 'resources', 'darwin'), context.arch === Arch.x64 ? 'x86_64' : 'arm64', skip);
+
+    if (problems.length) {
+      throw new Error(`The app is missing bundled assets: ${ problems.join('; ') }. Run scripts/fetch-bundled-assets.ts for this architecture.`);
+    }
+    if (skip.size) log.warn(`This app was packaged without: ${ [...skip].join(', ') } (SULLA_BUNDLE_SKIP). It will download them after install; do not release it.`);
   }
 
   /**
@@ -275,7 +294,14 @@ class Builder {
   protected async configureMacProvisioning(config:ReadWrite<Configuration>):Promise<void> {
     const mac = (config.mac ??= {}) as ReadWrite<NonNullable<Configuration['mac']>>;
     const ignored = mac.signIgnore ? [mac.signIgnore].flat() : [];
-    mac.signIgnore = [...ignored, '/Contents/MacOS/SullaFileProviderHelper$', '/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime$'];
+    mac.signIgnore = [
+      ...ignored, '/Contents/MacOS/SullaFileProviderHelper$', '/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime$',
+      // Data, not code: container image blobs, the whisper model and the
+      // vendor-signed driver installer. The app's resource seal covers them;
+      // codesigning each one would only add extended attributes.
+      '/Contents/Resources/resources/darwin/images/', '/Contents/Resources/resources/darwin/whisper/',
+      '/Contents/Resources/resources/darwin/audio-driver/[^/]+\\.pkg$',
+    ];
     const profile = process.env.SULLA_MAC_PROVISIONING_PROFILE_APP?.trim();
     if (!profile) return;
     const { stdout } = await spawnFile('/usr/bin/security', ['cms', '-D', '-i', profile], { stdio: ['ignore', 'pipe', 'inherit'] });
@@ -341,6 +367,11 @@ class Builder {
     if (process.platform === 'darwin' && process.env.SULLA_RUNTIME_BUILD === '1') {
       // Builds resources/darwin/sulla-runtime/ before electron-builder copies resources/.
       await spawnFile(path.join(process.cwd(), 'scripts', 'build-sulla-runtime.sh'), [buildUtils.arch === 'x64' ? 'x86_64' : 'arm64'], { stdio: 'inherit' });
+    }
+    if (process.platform === 'darwin') {
+      // Container images, whisper and the audio driver for this architecture
+      // (a no-op when resources/darwin/ is already up to date).
+      await fetchBundledAssets(buildUtils.arch === 'x64' ? 'x86_64' : 'arm64');
     }
     const consoleRuntime = await this.prepareSullaConsoleRuntime();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));

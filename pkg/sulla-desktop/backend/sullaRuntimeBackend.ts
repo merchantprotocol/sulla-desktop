@@ -21,6 +21,7 @@ import yaml from 'yaml';
 
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
+import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages } from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
@@ -104,6 +105,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.progress = progress;
       this.emit('progress');
     }, console);
+    // Service images embedded by the build (scripts/fetch-bundled-assets.ts).
+    useBundledImages(path.join(paths.resources, 'darwin', 'images'));
   }
 
   readonly executor = this;
@@ -693,11 +696,26 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.prepareSullaComposeFile();
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
+      this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
+    });
+
+    // Every service image (threat proxy included) must be in the guest before
+    // the agent network/egress setup and compose; agents depend on the proxy.
+    await this.progressTracker.action('Loading bundled container images', 40, async() => {
+      t = Date.now();
+      await this.loadBundledImages(image => !image.onDemand);
+      this.assertManagedServicesGeneration(generation);
+      console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
+      // Images used later (agent containers) load in the background.
+      void this.loadBundledImages(image => !!image.onDemand, false)
+        .catch(error => console.warn('[bundled-images] background load failed:', error));
+    });
+
+    await this.progressTracker.action('Preparing the threat proxy', 40, async() => {
       t = Date.now();
       await this.prepareThreatProxyGuest();
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareThreatProxyGuest: ${ Date.now() - t }ms`);
-      this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
@@ -712,6 +730,32 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
   }
 
+
+  /**
+   * Load the app's bundled images the guest does not have yet (first boot, or
+   * after an app update shipped new ones). Without a bundle (development) this
+   * does nothing and compose pulls as before.
+   */
+  private async loadBundledImages(filter: (image: { onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
+    const lock = currentBundledImageLock();
+    const imagesDir = bundledImagesDir();
+
+    if (!lock || !imagesDir) return;
+    const result = await ensureBundledImages({
+      lock,
+      imagesDir,
+      docker:     sullaRuntimeGuestDocker(paths.sullaRuntime),
+      filter,
+      onProgress: reportProgress
+        ? (done, total, image) => this.progressTracker.numeric(`Loading bundled image ${ image.name }`, done, total)
+        : undefined,
+    });
+
+    if (reportProgress) this.progressTracker.numeric('Bundled container images loaded', 100, 100);
+    if (result.loaded.length || result.failed.length) {
+      console.log(`[bundled-images] present=${ result.present.join(',') || '-' } loaded=${ result.loaded.join(',') || '-' } failed=${ result.failed.map(f => f.name).join(',') || '-' }`);
+    }
+  }
 
   private async loadOrCreateVaultServiceIdentities(): Promise<{
     bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
@@ -967,7 +1011,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (shouldRefreshSullaServiceImage(image, process.env.SULLA_THREAT_PROXY_IMAGE)) {
       this.#managedSullaRefreshImages.set('threat_proxy', image.image);
     }
-    if (!image.build && !process.env.SULLA_THREAT_PROXY_IMAGE && !image.image.endsWith(':latest')) {
+    if (!image.build && !image.bundled && !process.env.SULLA_THREAT_PROXY_IMAGE && !image.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('threat_proxy', {
         env: 'SULLA_THREAT_PROXY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-threat-proxy:latest',
       });
@@ -1000,10 +1044,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
+    // Bundled base images (postgres, redis, the function runtimes) run at
+    // their pinned version and are updated with the app, not refreshed.
+    const bundledBaseServices = new Set(pinComposeImages(compose, currentBundledImageLock()));
+
     for (const service of ['python_runtime', 'shell_runtime', 'node_runtime']) {
       const image = compose.services[service]?.image;
 
-      if (typeof image === 'string') this.#managedSullaRefreshImages.set(service, image);
+      if (typeof image === 'string' && !bundledBaseServices.has(service)) this.#managedSullaRefreshImages.set(service, image);
     }
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
@@ -1042,7 +1090,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       if (shouldRefreshSullaServiceImage(accountsImage, process.env.SULLA_ACCOUNTS_IMAGE)) {
         this.#managedSullaRefreshImages.set('sulla_accounts', accountsImage.image);
       }
-      if (!accountsImage.build && !process.env.SULLA_ACCOUNTS_IMAGE && !accountsImage.image.endsWith(':latest')) {
+      if (!accountsImage.build && !accountsImage.bundled && !process.env.SULLA_ACCOUNTS_IMAGE && !accountsImage.image.endsWith(':latest')) {
         this.#optionalSullaFallbackImages.set('sulla_accounts', {
           env: 'SULLA_ACCOUNTS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-accounts:latest',
         });
@@ -1100,7 +1148,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       if (shouldRefreshSullaServiceImage(vaultImage, process.env.SULLA_VAULT_IMAGE)) {
         this.#managedSullaRefreshImages.set('sulla_vault', vaultImage.image);
       }
-      if (!vaultImage.build && !process.env.SULLA_VAULT_IMAGE && !vaultImage.image.endsWith(':latest')) {
+      if (!vaultImage.build && !vaultImage.bundled && !process.env.SULLA_VAULT_IMAGE && !vaultImage.image.endsWith(':latest')) {
         this.#optionalSullaFallbackImages.set('sulla_vault', {
           env: 'SULLA_VAULT_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-vault:latest',
         });
@@ -1150,7 +1198,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (shouldRefreshSullaServiceImage(workflowImage, process.env.SULLA_WORKFLOW_IMAGE)) {
       this.#managedSullaRefreshImages.set('workflow_manager', workflowImage.image);
     }
-    if (!workflowImage.build && !process.env.SULLA_WORKFLOW_IMAGE && !workflowImage.image.endsWith(':latest')) {
+    if (!workflowImage.build && !workflowImage.bundled && !process.env.SULLA_WORKFLOW_IMAGE && !workflowImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('workflow_manager', {
         env: 'SULLA_WORKFLOW_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-workflows:latest',
       });
@@ -1203,7 +1251,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (shouldRefreshSullaServiceImage(relayImage, process.env.SULLA_RELAY_IMAGE)) {
       this.#managedSullaRefreshImages.set('sulla_relay', relayImage.image);
     }
-    if (!relayImage.build && !process.env.SULLA_RELAY_IMAGE && !relayImage.image.endsWith(':latest')) {
+    if (!relayImage.build && !relayImage.bundled && !process.env.SULLA_RELAY_IMAGE && !relayImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('sulla_relay', {
         env: 'SULLA_RELAY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-relay:latest',
       });
@@ -1235,7 +1283,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (shouldRefreshSullaServiceImage(toolsImage, process.env.SULLA_TOOLS_IMAGE)) {
       this.#managedSullaRefreshImages.set('tools', toolsImage.image);
     }
-    if (!toolsImage.build && !process.env.SULLA_TOOLS_IMAGE && !toolsImage.image.endsWith(':latest')) {
+    if (!toolsImage.build && !toolsImage.bundled && !process.env.SULLA_TOOLS_IMAGE && !toolsImage.image.endsWith(':latest')) {
       this.#optionalSullaFallbackImages.set('tools', {
         env: 'SULLA_TOOLS_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-tools:latest',
       });

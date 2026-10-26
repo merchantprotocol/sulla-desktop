@@ -50,6 +50,7 @@ import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
+import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import {
   AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, egressPolicyCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
@@ -425,6 +426,18 @@ async function ensureAgentImage(): Promise<string> {
       await guestExec(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
       await requireTransportImage(resolved.image);
       return resolved.image;
+    }
+
+    if (resolved.bundled) {
+      // Shipped inside the app: load it into the guest if this is its first use.
+      const lock = currentBundledImageLock();
+      const imagesDir = bundledImagesDir();
+
+      if (lock && imagesDir) {
+        await ensureBundledImages({
+          lock, imagesDir, docker: sullaRuntimeGuestDocker(paths.sullaRuntime), filter: image => image.ref === resolved.image,
+        });
+      }
     }
 
     if (!shouldRefresh) {

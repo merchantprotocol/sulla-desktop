@@ -10,7 +10,7 @@
 # Build native audio-driver binaries for the current platform.
 # Called automatically by `yarn build` before the main build step.
 #
-# macOS: Compiles create-mirror (CoreAudio aggregate device helper)
+# macOS: Compiles create-mirror, capture-loopback and the Swift CoreAudio helpers
 # Linux/Windows: No native binaries needed (uses system APIs directly)
 #
 
@@ -45,6 +45,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     echo "[audio-native] capture-loopback.cpp not found — skipping"
   fi
 
+  # Compile the Swift CoreAudio helpers ahead of time. Running them as
+  # scripts (`swift file.swift`) needs the Xcode command line tools on the
+  # user's Mac, which macOS would offer to download on first use.
+  SWIFT_HELPERS="detect-loopback create-multi-output watch-output set-system-device reset-default-output volume-control"
+  for helper in $SWIFT_HELPERS; do
+    swiftc -O -suppress-warnings -o "$AUDIO_DARWIN_DIR/$helper" "$AUDIO_DARWIN_DIR/$helper.swift"
+  done
+  echo "[audio-native] Swift helpers compiled successfully"
+
   # Stage scripts + binaries into resources/darwin/audio-driver/ so
   # electron-builder's extraResources picks them up. The runtime resolves
   # them via paths.resources (see platform/darwin/index.ts); resources/darwin
@@ -52,7 +61,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   STAGE_DIR="resources/darwin/audio-driver"
   mkdir -p "$STAGE_DIR"
   cp "$AUDIO_DARWIN_DIR"/*.swift "$STAGE_DIR/"
-  for bin in create-mirror capture-loopback; do
+  for bin in create-mirror capture-loopback $SWIFT_HELPERS; do
     if [[ -f "$AUDIO_DARWIN_DIR/$bin" ]]; then
       cp "$AUDIO_DARWIN_DIR/$bin" "$STAGE_DIR/"
       chmod +x "$STAGE_DIR/$bin"

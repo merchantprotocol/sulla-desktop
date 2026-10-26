@@ -8,6 +8,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { BundledImageLock, currentBundledImageLock, findBundledImage } from './bundledImages';
+
 export type SullaServiceImageName = 'sulla-accounts' | 'sulla-agent' | 'sulla-files' | 'sulla-files-fuse' | 'sulla-relay' | 'sulla-threat-proxy' | 'sulla-tools' | 'sulla-vault' | 'sulla-workflows';
 
 export interface SullaServiceImage {
@@ -16,6 +18,8 @@ export interface SullaServiceImage {
     dockerfile: string;
   };
   image: string;
+  /** The image ships inside the app (images.lock.json); Desktop loads it instead of pulling. */
+  bundled?: true;
 }
 
 export function resolveSullaServiceImage(
@@ -25,6 +29,7 @@ export function resolveSullaServiceImage(
   override?: string,
   fileExists: typeof fs.existsSync = fs.existsSync,
   pinnedTag: string | undefined = process.env.SULLA_SERVICE_IMAGE_TAG,
+  lock: BundledImageLock | null = currentBundledImageLock(),
 ): SullaServiceImage {
   const dockerfile = path.join('services', name, 'Dockerfile');
 
@@ -39,18 +44,30 @@ export function resolveSullaServiceImage(
     return { image: override };
   }
 
-  // CI publishes `latest` on every push to main; managed services track it.
-  // SULLA_SERVICE_IMAGE_TAG pins a specific tag (e.g. a release) for all services.
-  const tag = pinnedTag?.trim() || 'latest';
+  const repository = `ghcr.io/merchantprotocol/${ name }`;
+  const tag = pinnedTag?.trim();
 
-  return { image: `ghcr.io/merchantprotocol/${ name }:${ tag }` };
+  // SULLA_SERVICE_IMAGE_TAG pins a specific registry tag (e.g. a release) for all services.
+  if (tag) {
+    return { image: `${ repository }:${ tag }` };
+  }
+
+  // An app build embeds each service image at the version it was built with.
+  const bundled = findBundledImage(lock, repository);
+
+  if (bundled) {
+    return { image: bundled.ref, bundled: true };
+  }
+
+  // Without a bundle (development), CI publishes `latest` on every push to main.
+  return { image: `${ repository }:latest` };
 }
 
 /**
  * Default published images are managed by Desktop and may be refreshed during
- * startup. Source builds and explicit operator overrides retain their existing
- * local / externally-managed lifecycle.
+ * startup. Source builds, explicit operator overrides and images bundled in
+ * the app (updated with the app) retain their local lifecycle.
  */
 export function shouldRefreshSullaServiceImage(image: SullaServiceImage, override?: string): boolean {
-  return !image.build && !override;
+  return !image.build && !override && !image.bundled;
 }

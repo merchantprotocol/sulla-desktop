@@ -37,10 +37,10 @@ const userTouchedDependencies = [
   new tools.SpinCLI(),
 ];
 
-// Dependencies that are specific to macOS hosts.
+// Dependencies that are specific to macOS hosts. whisper-cli is built from
+// pinned source by scripts/fetch-bundled-assets.ts (`just build`, packaging).
 const macOSDependencies = [
   new SudoPrompt(),
-  new tools.WhisperCLI(),
 ];
 
 // Dependencies that are specific to hosts.

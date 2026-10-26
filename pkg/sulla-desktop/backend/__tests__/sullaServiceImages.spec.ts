@@ -43,6 +43,63 @@ describe(resolveSullaServiceImage, () => {
     expect(resolveSullaServiceImage('sulla-vault', '/source', '1.6.1', undefined, () => true, '1.6.0').build).toBeDefined();
   });
 
+  test('an app bundle pins its own version of each service and is never refreshed', () => {
+    const lock = {
+      version: 1 as const,
+      arch:    'arm64' as const,
+      images:  [{
+        name:              'sulla-vault',
+        source:            'ghcr.io/merchantprotocol/sulla-vault:latest',
+        ref:               'ghcr.io/merchantprotocol/sulla-vault:sha-0123456789abcdef0123456789abcdef01234567',
+        sourceDigest:      `sha256:${ 'a'.repeat(64) }`,
+        manifestDigest:    `sha256:${ 'b'.repeat(64) }`,
+        manifestMediaType: 'application/vnd.oci.image.manifest.v1+json',
+        manifestSize:      1,
+        configDigest:      `sha256:${ 'c'.repeat(64) }`,
+        configSize:        1,
+        layers:            [{ digest: `sha256:${ 'd'.repeat(64) }`, size: 1, mediaType: 'application/vnd.oci.image.layer.v1.tar+gzip' }],
+      }],
+    };
+    const bundled = resolveSullaServiceImage('sulla-vault', '/packaged', '1.6.1', undefined, () => false, undefined, lock);
+
+    expect(bundled).toEqual({ image: lock.images[0].ref, bundled: true });
+    expect(shouldRefreshSullaServiceImage(bundled)).toBe(false);
+    // Not in the bundle: tracks latest as before.
+    expect(resolveSullaServiceImage('sulla-tools', '/packaged', '1.6.1', undefined, () => false, undefined, lock).image)
+      .toBe('ghcr.io/merchantprotocol/sulla-tools:latest');
+    // Overrides, an explicit tag and source builds still win over the bundle.
+    expect(resolveSullaServiceImage('sulla-vault', '/packaged', '1.6.1', 'registry.example/vault:x', () => false, undefined, lock).image)
+      .toBe('registry.example/vault:x');
+    expect(resolveSullaServiceImage('sulla-vault', '/packaged', '1.6.1', undefined, () => false, '1.6.0', lock).image)
+      .toBe('ghcr.io/merchantprotocol/sulla-vault:1.6.0');
+    expect(resolveSullaServiceImage('sulla-vault', '/source', '1.6.1', undefined, () => true, undefined, lock).build).toBeDefined();
+  });
+
+  test('the threat proxy resolves through the bundle and keeps its env override', () => {
+    const ref = 'ghcr.io/merchantprotocol/sulla-threat-proxy:sha-0123456789abcdef0123456789abcdef01234567';
+    const lock = {
+      version: 1 as const,
+      arch:    'arm64' as const,
+      images:  [{
+        name:              'sulla-threat-proxy',
+        source:            'ghcr.io/merchantprotocol/sulla-threat-proxy:latest',
+        ref,
+        sourceDigest:      `sha256:${ 'a'.repeat(64) }`,
+        manifestDigest:    `sha256:${ 'b'.repeat(64) }`,
+        manifestMediaType: 'application/vnd.oci.image.manifest.v1+json',
+        manifestSize:      1,
+        configDigest:      `sha256:${ 'c'.repeat(64) }`,
+        configSize:        1,
+        layers:            [{ digest: `sha256:${ 'd'.repeat(64) }`, size: 1, mediaType: 'application/vnd.oci.image.layer.v1.tar+gzip' }],
+      }],
+    };
+
+    expect(resolveSullaServiceImage('sulla-threat-proxy', '/packaged', '1.6.1', undefined, () => false, undefined, lock))
+      .toEqual({ image: ref, bundled: true });
+    expect(resolveSullaServiceImage('sulla-threat-proxy', '/packaged', '1.6.1', 'registry.example/proxy:dev', () => false, undefined, lock))
+      .toEqual({ image: 'registry.example/proxy:dev' });
+  });
+
   test('refreshes only Desktop-managed published images', () => {
     const published = resolveSullaServiceImage('sulla-tools', '/packaged', '1.6.1', undefined, () => false, undefined);
     const overridden = resolveSullaServiceImage('sulla-tools', '/packaged', '1.6.1', 'registry.example/tools:stable', () => false);

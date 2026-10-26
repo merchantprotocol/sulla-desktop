@@ -30,6 +30,12 @@ logs/
 # resources/darwin/. No reason to track the binaries themselves.
 /pkg/sulla-desktop/main/audio-driver/platform/darwin/capture-loopback
 /pkg/sulla-desktop/main/audio-driver/platform/darwin/create-mirror
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/detect-loopback
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/create-multi-output
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/watch-output
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/set-system-device
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/reset-default-output
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/volume-control
 
 # Local build/tooling logs — never commit
 .build-*.log
