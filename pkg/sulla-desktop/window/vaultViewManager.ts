@@ -13,6 +13,8 @@ import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vault
 import { getWindow } from '@pkg/window';
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
+// The vault page's "Integrations" side-menu link; intercepted here, never loaded.
+const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
 
 export interface VaultViewReservation {
   ownerId:    string;
@@ -153,7 +155,15 @@ export class VaultViewManager {
     });
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     view.webContents.on('will-navigate', (event, url) => {
-      try { if (new URL(url).origin !== VAULT_ORIGIN) event.preventDefault() } catch { event.preventDefault() }
+      try {
+        const target = new URL(url);
+        if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
+          event.preventDefault();
+          getWindow('main-agent')?.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
+        } else if (target.origin !== VAULT_ORIGIN) {
+          event.preventDefault();
+        }
+      } catch { event.preventDefault() }
     });
     view.webContents.on('will-attach-webview', event => event.preventDefault());
     return { view, session: isolatedSession };
