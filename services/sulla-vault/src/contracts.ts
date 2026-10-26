@@ -304,6 +304,9 @@ export interface BrokerIntegrationMetadataResponse {
 
 export interface BrokerSetActiveAccountRequest { accountId: string }
 
+/** Trusted Desktop-only request to create the empty account a first OAuth sign-in fills in. */
+export interface BrokerOAuthAccountRequest { accountId: string; label?: string }
+
 /** Trusted Desktop-only handoff after a fixed-host Sulla Cloud auth flow. */
 export interface SullaCloudSessionAdoptRequest {
   userId:             string;
