@@ -29,9 +29,21 @@ All routes need `Authorization: Bearer <UPLOAD_TOKEN>`.
 ```bash
 cd infra/release-uploader
 npx wrangler deploy
-openssl rand -hex 32 | tr -d '\n' | tee >(npx wrangler secret put UPLOAD_TOKEN) | gh secret set RELEASES_UPLOAD_TOKEN
-gh variable set RELEASES_UPLOAD_URL --body "https://<worker>.workers.dev"
+
+# Generate the token once and store it in both places without printing it.
+TOKEN=$(openssl rand -hex 32)
+printf %s "$TOKEN" | npx wrangler secret put UPLOAD_TOKEN
+printf %s "$TOKEN" | gh secret set RELEASES_UPLOAD_TOKEN -R merchantprotocol/sulla-desktop
+unset TOKEN
+
+gh variable set RELEASES_UPLOAD_URL --body "https://<worker>.workers.dev" -R merchantprotocol/sulla-desktop
 ```
 
-Run `wrangler` from a folder without a `.env` that sets `CLOUDFLARE_API_TOKEN`,
-or the wrong account will be used. To rotate the token, run the `openssl` line again.
+Notes:
+
+- Run `wrangler` from a folder without a `.env` that sets `CLOUDFLARE_API_TOKEN`
+  (wrangler loads it automatically and it overrides `wrangler login`), or the wrong
+  account is used.
+- Pass `-R` to `gh`: a checkout with several git remotes makes `gh` refuse to guess.
+- A new secret takes a few seconds to reach the Worker; retry on a 401 right after setting it.
+- To rotate the token, run the block again. The old token stops working immediately.
