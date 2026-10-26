@@ -177,7 +177,6 @@ export default defineComponent({
         '/Snapshots':       '◷',
         '/DockerOptions':   '⚙',
         '/Troubleshooting': '⌁',
-        '/Diagnostics':     '◎',
       } as Record<string, string>)[route] ?? '·';
     },
     updateIndicator() {

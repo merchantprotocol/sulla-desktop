@@ -7,21 +7,12 @@
  *   - Expanding a `~` typed by the user (read_file, write_file, meta_search).
  *   - External-tool conventions owned by other vendors (`~/.docker`, `~/.kube`).
  *
- * Resolution order for the SSOT itself:
- *   1. `rdctl paths` Go binary (canonical — see `src/go/rdctl/pkg/directories/`).
- *   2. `getDefaultPaths()` TypeScript fallback for the cold-path / renderer case.
- *   3. `augmentPaths()` fills derived fields (`sullaRuntime`, `sullaHome`, `sullaConfig`)
- *      that aren't yet returned by rdctl.
- *
- * If a new path needs to be added, add it here and (ideally) to the Go
- * directories package — never re-derive in a consumer.
+ * Paths are derived in-process so every Electron process uses the same
+ * platform conventions without an external management binary.
  */
-import { spawnSync } from 'child_process';
-import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import electron from 'electron';
 
 export interface Paths {
   /** appHome: the location of the main appdata directory. */
@@ -137,38 +128,7 @@ export class WindowsPaths implements Paths {
   }
 }
 
-// Gets the path to rdctl. Returns null if rdctl cannot be found.
-export function getRdctlPath(): string | null {
-  let basePath: string;
-
-  // If we are running as a script (i.e. yarn postinstall), electron.app is undefined.
-  // In renderer processes, electron.app is not available, but process.resourcesPath
-  // is still set when packaged — check it directly.
-  if (electron.app?.isPackaged || (process.type === 'renderer' && process.resourcesPath)) {
-    basePath = process.resourcesPath;
-  } else if (process.env.SULLA_PROJECT_DIR) {
-    basePath = process.env.SULLA_PROJECT_DIR;
-  } else {
-    try {
-      basePath = process.cwd();
-    } catch {
-      return null;
-    }
-  }
-  const osSpecificName = os.platform().startsWith('win') ? `rdctl.exe` : 'rdctl';
-  const rdctlPath = path.join(basePath, 'resources', os.platform(), 'bin', osSpecificName);
-
-  if (!fs.existsSync(rdctlPath)) {
-    return null;
-  }
-
-  return rdctlPath;
-}
-
-/**
- * Build default paths without rdctl. Used as a fallback when rdctl is
- * unavailable (e.g. in renderer processes).
- */
+/** Build paths using the application's established platform data locations. */
 function getDefaultPaths(): Partial<Paths> {
   const home = os.homedir();
 
@@ -223,16 +183,35 @@ function getDefaultPaths(): Partial<Paths> {
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
   }
+  case 'win32': {
+    // Same layout the removed rdctl `paths` command reported on Windows.
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const appHome = path.join(localAppData, 'rancher-desktop');
+    const resources = process.resourcesPath
+      ? path.join(process.resourcesPath, 'resources')
+      : path.join(process.cwd(), 'resources');
+
+    return {
+      appHome,
+      altAppHome:      appHome,
+      config:          appHome,
+      logs:            process.env.RD_LOGS_DIR || path.join(appHome, 'logs'),
+      cache:           path.join(appHome, 'cache'),
+      resources,
+      wslDistro:       path.join(appHome, 'distro'),
+      wslDistroData:   path.join(appHome, 'distro-data'),
+      extensionRoot:   path.join(appHome, 'extensions'),
+      snapshots:       path.join(appHome, 'snapshots'),
+      containerdShims: path.join(appHome, 'containerd-shims'),
+    };
+  }
   default:
     return {};
   }
 }
 
 /**
- * Augment the paths object with derived fields that aren't returned by the
- * Go-side `rdctl paths` binary yet. When rdctl starts returning these, the
- * Object.assign in the Paths constructor will pick them up first and these
- * `if (!...)` guards become no-ops.
+ * Augment the platform paths with Sulla-specific and derived locations.
  */
 function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
   const home = os.homedir();
@@ -255,21 +234,7 @@ function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
 }
 
 function getPaths(): Paths {
-  const rdctlPath = getRdctlPath();
-  let pathsData: Partial<Paths> | undefined;
-
-  if (rdctlPath) {
-    const result = spawnSync(rdctlPath, ['paths'], { encoding: 'utf8' });
-
-    if (result.status === 0 && result.stdout.length > 0) {
-      pathsData = JSON.parse(result.stdout);
-    }
-  }
-
-  // Fallback to default paths when rdctl is unavailable (e.g. renderer processes)
-  if (!pathsData) {
-    pathsData = getDefaultPaths();
-  }
+  let pathsData = getDefaultPaths();
 
   if (!pathsData || Object.keys(pathsData).length === 0) {
     throw new Error(`Platform "${ process.platform }" is not supported.`);

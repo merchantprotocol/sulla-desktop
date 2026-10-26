@@ -44,8 +44,6 @@ import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
-import { mapTypedState } from '@pkg/entry/store';
-import Diagnostics from '@pkg/pages/Diagnostics.vue';
 import Docker from '@pkg/pages/Docker.vue';
 import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
 import initExtensions from '@pkg/preload/extensions';
@@ -60,7 +58,6 @@ export default {
     rdNav: Nav,
     TheTitle,
     Troubleshooting,
-    Diagnostics,
     Docker,
   },
 
@@ -78,7 +75,6 @@ export default {
   computed: {
     routes() {
       const badges = {
-        '/Diagnostics': this.diagnosticsCount,
       };
 
       return mainRoutes.map((route) => {
@@ -97,12 +93,7 @@ export default {
 
       return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
     },
-    /** @returns {number} The number of diagnostics errors. */
-    diagnosticsCount() {
-      return this.diagnostics.filter(diagnostic => !diagnostic.mute).length;
-    },
     ...mapState('credentials', ['credentials']),
-    ...mapTypedState('diagnostics', ['diagnostics']),
     ...mapGetters('extensions', ['installedExtensions']),
   },
 
@@ -175,12 +166,11 @@ export default {
     async fetch() {
       await this.$store.dispatch('credentials/fetchCredentials');
       if (!this.credentials.port || !this.credentials.user || !this.credentials.password) {
-        console.log(`Credentials aren't ready for getting diagnostics -- will try later`);
+        console.log(`Backend credentials aren't ready -- will try later`);
 
         return;
       }
       await this.$store.dispatch('preferences/fetchPreferences');
-      await this.$store.dispatch('diagnostics/fetchDiagnostics');
     },
 
     openDashboard() {
@@ -530,8 +520,7 @@ export default {
 
   .troubleshooting-items > *,
   .snapshots .cards > div,
-  .general > div,
-  .diagnostics > .status {
+  .general > div {
     border-radius: 18px;
     background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
     box-shadow: inset 0 0 0 1px var(--docker-hairline);
@@ -567,14 +556,6 @@ export default {
     color: var(--docker-read);
     font-size: 14px;
     font-weight: 600;
-  }
-
-  .diagnostics > .status {
-    padding: 18px;
-  }
-
-  .diagnostics .item-results::first-letter {
-    color: var(--nx-danger);
   }
 
   .status-bar {

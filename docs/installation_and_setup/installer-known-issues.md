@@ -8,7 +8,6 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 ## Table of Contents
 
-1. [rdctl EBADARCH on Apple Silicon](#1-rdctl-ebadarch-on-apple-silicon)
 2. [node-gyp Missing on Linux](#2-node-gyp-missing-on-linux)
 3. [PATH Not Bootstrapped — Tools Not Found](#3-path-not-bootstrapped--tools-not-found)
 4. [limactl Missing After Install](#4-limactl-missing-after-install)
@@ -29,22 +28,18 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 ---
 
-## 1. rdctl EBADARCH on Apple Silicon
 
 **PRs:** #207, #208
 
-**Symptom:** The app installed successfully but crashed on launch. Electron failed to spawn `rdctl` with error code -86 (EBADARCH).
 
 **Root cause:** `install-dev.sh` never exported `M1=true` on ARM machines. `postinstall.ts` read `process.env.M1` to decide the Go cross-compilation target, defaulted to `amd64`, and produced an x86_64 binary that macOS refused to execute on Apple Silicon.
 
 **What we tried:**
 - First fix: Export `M1=true` in `install-dev.sh` when `uname -m` reports `arm64` or `aarch64`
 - Second fix: Also detect ARM natively in `postinstall.ts` via `process.arch` so it works without the env var (IDE builds, manual `yarn install`)
-- Third fix: Add rdctl to `verify_build_artifacts` with an execution smoke-test so arch mismatches fail the build step instead of silently passing
 
 **Current solution (modular installer):**
 - `macos::preflight()` in `10-os-macos.sh` exports `M1=true` for ARM architectures
-- `macos::verify_platform_binaries()` calls `assert_executable_runs` on rdctl, which executes the binary AND includes `file()` output in the error message if it fails — so you see exactly what architecture the binary was compiled for
 
 ---
 
@@ -180,7 +175,6 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 
 **Symptom:** The installer would report failure after `yarn install` because it was checking for `dist/app/background.js` (a build output, not an install output). Or it would skip `yarn install` because it saw stale install artifacts from a previous run.
 
-**Root cause:** A single verification function checked everything — node_modules, dist/, rdctl, limactl — at every phase. Install artifacts and build artifacts were conflated.
 
 **What we tried (4 separate PRs):**
 1. Verify by artifacts, not exit codes
@@ -192,7 +186,6 @@ The installer was rewritten from a 1610-line monolithic bash script into a modul
 Three completely separate verification functions in `40-build.sh`:
 - `build::verify_install_artifacts()` — checks `node_modules/.yarn-integrity` and `node_modules/electron/` only. Called after `yarn install`.
 - `build::verify_build_artifacts()` — checks `dist/app/background.js` and `dist/app/index.html` only. Called after `yarn build`.
-- `build::verify_platform_binaries()` — checks rdctl and limactl via `dispatch verify_platform_binaries`. Called as a separate phase after build.
 
 ---
 

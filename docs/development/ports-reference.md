@@ -31,7 +31,7 @@ respond to asynchronous user messages (e.g. Slack app mentions).
 
 ### 6107 -- HttpCommandServer
 
-Authenticated HTTP API used by the `rdctl` CLI and the Electron renderer to
+Authenticated HTTP API used by the Electron renderer to
 read/write application settings, run diagnostic checks, manage extensions and
 snapshots, trigger factory resets, and control the backend lifecycle. Credentials
 are written to `~/Library/Application Support/rancher-desktop/rd-engine.json`.

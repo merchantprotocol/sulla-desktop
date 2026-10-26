@@ -81,7 +81,6 @@ Default to regular `exec` (Sulla VM) for search, edit, install, build, test, and
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
 | `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations; update_identity_section | Memory and domain-keyed identity observations |
 
-Categories not listed here (files, chat, memory, secretary, lima, kubectl, rdctl, gdrive, bookmarks, rules, reflex, mobile, ledger, and others) are in [`inventory.md`](inventory.md).
 
 ---
 

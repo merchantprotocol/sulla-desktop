@@ -354,10 +354,6 @@ function getFileMenu(): MenuItem {
       },
       { type: 'separator' },
       {
-        label:   'Diagnostics',
-        click:   () => navigateDockerDashboard('/Diagnostics'),
-      },
-      {
         label:   'Troubleshooting',
         click:   () => navigateDockerDashboard('/Troubleshooting'),
       },

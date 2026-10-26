@@ -16,7 +16,6 @@ macos::preflight() {
   log MACOS "Preflight: arch=$arch kernel=$(uname -r)"
   step_ok "Detected macOS (${arch})"
 
-  # Export M1 flag for postinstall scripts (rdctl Go cross-compilation)
   if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
     export M1=true
     log MACOS "ARM architecture detected — exported M1=true"
@@ -382,20 +381,7 @@ macos::verify_deps() {
 }
 
 macos::verify_platform_binaries() {
-  local rdctl_bin="resources/darwin/bin/rdctl"
-  local host_arch
-  host_arch="$(uname -m)"
-
-  log RDCTL "Verifying rdctl: $rdctl_bin (host arch: $host_arch)"
-  if [ -f "$rdctl_bin" ]; then
-    log RDCTL "  file info: $(file "$rdctl_bin" 2>/dev/null || echo 'unknown')"
-    log RDCTL "  size: $(wc -c < "$rdctl_bin" 2>/dev/null || echo '?') bytes"
-    log RDCTL "  M1 env was: ${M1:-not set}"
-  else
-    log RDCTL "  rdctl binary NOT FOUND at $rdctl_bin"
-  fi
-  assert_executable_runs "$rdctl_bin" "rdctl (macOS)" "version"
-
+  log VERIFY "No bundled macOS platform binaries to verify"
 }
 
 # ---------------------------------------------------------------------------

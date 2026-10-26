@@ -117,7 +117,7 @@ ${ sullaDocs }/
 ├── environment/
 │   ├── architecture.md                 # Electron main, Sulla VM, ports, channels
 │   ├── docker.md                       # Host Docker vs guest-internal services (they DIFFER)
-│   ├── kubernetes.md                   # k3s + kubectl_* / rdctl_* tools
+│   ├── kubernetes.md                   # k3s + kubectl_* tools
 │   └── heartbeat.md                    # Autonomous heartbeat agent
 ├── agent-patterns/
 │   ├── user-stories.md                 # ⭐ Common request → step-by-step plan

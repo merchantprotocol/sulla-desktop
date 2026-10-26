@@ -28,11 +28,7 @@ func run(ctx context.Context, outPath marshalledPath) error {
 
 	// Run the individual data collectors
 	processors := map[string]parsers.Parser{
-		"lima":                parsers.ParseLimaInitLogs,
 		"progress":            parsers.ParseProgress,
-		"dmesg":               parsers.ParseDmesg,
-		"openrc":              parsers.ProcessRCLogs,
-		"host-agent":          parsers.ParseLimaHostAgentLogs,
 		"networking":          parsers.ParseNetworkingLogs,
 		"windows-guest-agent": parsers.ParseWindowsGuestAgentLogs,
 		"windows-integration": parsers.ParseWindowsIntegrationLogs,

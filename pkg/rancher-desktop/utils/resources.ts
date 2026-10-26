@@ -14,7 +14,6 @@ const executableMap: Record<string, string[] | undefined> = {
   docker:             undefined,
   kubectl:            undefined,
   nerdctl:            undefined,
-  rdctl:              undefined,
   spin:               undefined,
   'setup-spin':       [paths.resources, 'setup-spin'],
   'wsl-helper':       [paths.resources, process.platform, 'internal', platformBinary('wsl-helper')],
