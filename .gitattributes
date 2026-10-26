@@ -2,4 +2,4 @@
 # But only text files should be changed (not any binaries / images / etc.)
 resources/linux/** text=auto eol=lf
 resources/setup-spin text=auto eol=lf
-pkg/rancher-desktop/assets/scripts/** text=auto eol=lf
+pkg/sulla-desktop/assets/scripts/** text=auto eol=lf

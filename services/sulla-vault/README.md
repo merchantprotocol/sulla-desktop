@@ -35,7 +35,7 @@ Run the existing Desktop compose file and the vault overlay together from the re
 ```sh
 docker compose \
   --project-directory . \
-  -f pkg/rancher-desktop/assets/sulla-docker-compose.yaml \
+  -f pkg/sulla-desktop/assets/sulla-docker-compose.yaml \
   -f services/sulla-vault/compose.snippet.yaml \
   up -d postgres sulla_vault
 ```

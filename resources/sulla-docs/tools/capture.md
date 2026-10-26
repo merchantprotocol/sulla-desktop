@@ -127,8 +127,8 @@ sulla capture/audio_state
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/capture/`
-- Manifest: `pkg/rancher-desktop/agent/tools/capture/manifests.ts`
-- Audio driver controllers: `pkg/rancher-desktop/main/audio-driver/controller/{Microphone,Speaker}DriverController.ts`
-- Teleprompter window: `pkg/rancher-desktop/main/teleprompterWindow.ts`
+- Tool dir: `pkg/sulla-desktop/agent/tools/capture/`
+- Manifest: `pkg/sulla-desktop/agent/tools/capture/manifests.ts`
+- Audio driver controllers: `pkg/sulla-desktop/main/audio-driver/controller/{Microphone,Speaker}DriverController.ts`
+- Teleprompter window: `pkg/sulla-desktop/main/teleprompterWindow.ts`
 - Capture Studio overview (the user-facing window): [`desktop/capture-studio.md`](../desktop/capture-studio.md)

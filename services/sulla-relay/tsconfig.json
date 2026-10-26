@@ -12,7 +12,7 @@
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/rancher-desktop/runtime/relayProtocol.ts",
-    "../../pkg/rancher-desktop/runtime/relayTunnelClient.ts"
+    "../../pkg/sulla-desktop/runtime/relayProtocol.ts",
+    "../../pkg/sulla-desktop/runtime/relayTunnelClient.ts"
   ]
 }

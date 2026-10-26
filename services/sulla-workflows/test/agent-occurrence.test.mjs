@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { agentOccurrence, consumeAgentOccurrence } from '../src/agentInvocation.ts';
-import { createPlaybookState, processNextStep, completeSubAgent } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts';
+import { createPlaybookState, processNextStep, completeSubAgent } from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts';
 
 const node = (id, category, subtype, config = {}) => ({ id, type: 'workflow', position: { x: 0, y: 0 }, data: { label: id, category, subtype, config } });
 const edge = (source, target, sourceHandle, targetHandle) => ({ id: `${source}-${target}`, source, target, sourceHandle, targetHandle });

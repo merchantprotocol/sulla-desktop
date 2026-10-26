@@ -122,7 +122,7 @@ The heartbeat is for **proactive ambient work**, not as a generic cron.
 
 ## Reference
 
-- Service: `pkg/rancher-desktop/agent/services/HeartbeatService.ts`
-- Node: `pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts`
-- Notification window: `pkg/rancher-desktop/main/heartbeatNotification.ts`
-- Settings model: `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
+- Service: `pkg/sulla-desktop/agent/services/HeartbeatService.ts`
+- Node: `pkg/sulla-desktop/agent/nodes/HeartbeatNode.ts`
+- Notification window: `pkg/sulla-desktop/main/heartbeatNotification.ts`
+- Settings model: `pkg/sulla-desktop/agent/database/models/SullaSettingsModel.ts`

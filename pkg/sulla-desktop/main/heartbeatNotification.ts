@@ -84,7 +84,7 @@ export function showHeartbeatNotification(title: string, message: string): void 
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
     ? path.join(appRoot, 'dist', 'app', 'assets', 'heartbeat-notification.html')
-    : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'heartbeat-notification.html');
+    : path.join(appRoot, 'pkg', 'sulla-desktop', 'assets', 'heartbeat-notification.html');
 
   win.loadFile(htmlPath);
 

@@ -13,10 +13,10 @@
  *   node scripts/ts-wrapper.js scripts/verify-integration-catalog.ts
  */
 
-import { loadCatalog } from '../pkg/rancher-desktop/agent/integrations/loader';
-import { nativeIntegrations } from '../pkg/rancher-desktop/agent/integrations/native';
+import { loadCatalog } from '../pkg/sulla-desktop/agent/integrations/loader';
+import { nativeIntegrations } from '../pkg/sulla-desktop/agent/integrations/native';
 
-import type { Integration } from '../pkg/rancher-desktop/agent/integrations/types';
+import type { Integration } from '../pkg/sulla-desktop/agent/integrations/types';
 
 function canonical(i: Integration): Integration {
   // connected is runtime state — always false at load time.

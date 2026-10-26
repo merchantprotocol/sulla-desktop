@@ -32,9 +32,9 @@ A recipe becomes an extension when the user launches it.
 paths.extensionRoot/<manifest.id>/
 ```
 
-Resolved via `paths.extensionRoot` in [`pkg/rancher-desktop/utils/paths.ts`](../../../pkg/rancher-desktop/utils/paths.ts). On macOS this is `~/Library/Application Support/sulla-desktop/extensions/<manifest.id>/`.
+Resolved via `paths.extensionRoot` in [`pkg/sulla-desktop/utils/paths.ts`](../../../pkg/sulla-desktop/utils/paths.ts). On macOS this is `~/Library/Application Support/sulla-desktop/extensions/<manifest.id>/`.
 
-**Critical:** recipes do NOT install to `~/sulla/recipes/`. They land in the same directory the existing extension manager already watches — the one the `sulla-recipes` GitHub-pull pipeline uses today. A marketplace-installed recipe is byte-identical on disk to one pulled from the `sulla-recipes` repo, so the existing [`RecipeExtensionImpl`](../../../pkg/rancher-desktop/main/extensions/recipeExtension.ts) install/start/stop/status/uninstall pipeline picks it up with no modifications.
+**Critical:** recipes do NOT install to `~/sulla/recipes/`. They land in the same directory the existing extension manager already watches — the one the `sulla-recipes` GitHub-pull pipeline uses today. A marketplace-installed recipe is byte-identical on disk to one pulled from the `sulla-recipes` repo, so the existing [`RecipeExtensionImpl`](../../../pkg/sulla-desktop/main/extensions/recipeExtension.ts) install/start/stop/status/uninstall pipeline picks it up with no modifications.
 
 The directory name is `manifest.id` (from the bundle's `manifest.yaml`), not the marketplace slug. This mirrors current behavior and keeps the integration point clean: the marketplace flow is "download the zip, drop it in the extension root, run the existing install."
 

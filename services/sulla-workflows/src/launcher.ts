@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import tar from 'tar-stream';
 
 import { config } from './config.js';
-import { DockerRuntimeDriver, KubernetesRuntimeDriver } from '../../../pkg/rancher-desktop/runtime/containerRuntime.js';
+import { DockerRuntimeDriver, KubernetesRuntimeDriver } from '../../../pkg/sulla-desktop/runtime/containerRuntime.js';
 
 export interface RunLaunch {
   executionId: string;

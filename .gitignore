@@ -29,8 +29,8 @@ logs/
 # tracked .c/.cpp/.swift source by scripts/build-audio-native.sh during the
 # build (scripts/build.ts → buildAudioNative), then copied to the gitignored
 # resources/darwin/. No reason to track the binaries themselves.
-/pkg/rancher-desktop/main/audio-driver/platform/darwin/capture-loopback
-/pkg/rancher-desktop/main/audio-driver/platform/darwin/create-mirror
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/capture-loopback
+/pkg/sulla-desktop/main/audio-driver/platform/darwin/create-mirror
 
 # Local build/tooling logs — never commit
 .build-*.log

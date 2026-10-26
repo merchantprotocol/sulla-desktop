@@ -15,7 +15,7 @@ each row lists the exact query so a reviewer can re-run it. This document makes
 **no code change** to runtime behavior — it is the characterization inventory
 required by Phase 0 of the task before the domain kernel is introduced.
 
-Scope root: `pkg/rancher-desktop`.
+Scope root: `pkg/sulla-desktop`.
 
 ## 1. Status / lane-key literals are pervasive (Acceptance criterion #3)
 

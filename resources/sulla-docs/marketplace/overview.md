@@ -96,7 +96,7 @@ Installed extensions are listed in the agent's system prompt (for example, "Twen
 
 ## Reference
 
-- Tool manifests: `pkg/rancher-desktop/agent/tools/extensions/manifests.ts`
-- Extension service: `pkg/rancher-desktop/agent/services/ExtensionService.ts`
-- Recipe path resolver: `resolveSullaRecipesDir()` in `pkg/rancher-desktop/agent/utils/sullaPaths.ts`
-- Lifecycle manager: `pkg/rancher-desktop/agent/services/ServiceLifecycleManager.ts`
+- Tool manifests: `pkg/sulla-desktop/agent/tools/extensions/manifests.ts`
+- Extension service: `pkg/sulla-desktop/agent/services/ExtensionService.ts`
+- Recipe path resolver: `resolveSullaRecipesDir()` in `pkg/sulla-desktop/agent/utils/sullaPaths.ts`
+- Lifecycle manager: `pkg/sulla-desktop/agent/services/ServiceLifecycleManager.ts`

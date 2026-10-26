@@ -26,7 +26,7 @@ Skills are **not** code. They are instructions. Code lives in [functions](../../
 ~/sulla/skills/<slug>/
 ```
 
-Resolved via `resolveSullaUserSkillsDir()` in [`sullaPaths.ts`](../../../pkg/rancher-desktop/agent/utils/sullaPaths.ts). Resource-shipped skills (bundled with the app) live at `~/sulla/resources/skills/`; the user dir takes precedence on slug collision when the skill loader scans both.
+Resolved via `resolveSullaUserSkillsDir()` in [`sullaPaths.ts`](../../../pkg/sulla-desktop/agent/utils/sullaPaths.ts). Resource-shipped skills (bundled with the app) live at `~/sulla/resources/skills/`; the user dir takes precedence on slug collision when the skill loader scans both.
 
 ## 3. Folder layout
 

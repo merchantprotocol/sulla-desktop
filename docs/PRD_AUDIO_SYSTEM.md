@@ -764,23 +764,23 @@ Add a toggle between VAD mode and push-to-talk mode. In push-to-talk: recording 
 ### Frontend (renderer process)
 | Path | Lines |
 |------|-------|
-| `pkg/rancher-desktop/composables/voice/VoiceRecorderService.ts` | 589 |
-| `pkg/rancher-desktop/composables/voice/TTSPlayerService.ts` | 314 |
-| `pkg/rancher-desktop/composables/voice/VoicePipeline.ts` | 437 |
-| `pkg/rancher-desktop/composables/voice/useVoiceSession.ts` | 178 |
-| `pkg/rancher-desktop/composables/voice/VoiceLogger.ts` | 337 |
-| `pkg/rancher-desktop/composables/voice/TypedEventEmitter.ts` | 52 |
-| `pkg/rancher-desktop/composables/voice/index.ts` | 8 |
+| `pkg/sulla-desktop/composables/voice/VoiceRecorderService.ts` | 589 |
+| `pkg/sulla-desktop/composables/voice/TTSPlayerService.ts` | 314 |
+| `pkg/sulla-desktop/composables/voice/VoicePipeline.ts` | 437 |
+| `pkg/sulla-desktop/composables/voice/useVoiceSession.ts` | 178 |
+| `pkg/sulla-desktop/composables/voice/VoiceLogger.ts` | 337 |
+| `pkg/sulla-desktop/composables/voice/TypedEventEmitter.ts` | 52 |
+| `pkg/sulla-desktop/composables/voice/index.ts` | 8 |
 
 ### Backend (main process)
 | Path | Lines |
 |------|-------|
-| `pkg/rancher-desktop/agent/services/TranscriptionService.ts` | 273 |
-| `pkg/rancher-desktop/agent/services/TextToSpeechService.ts` | 139 |
-| `pkg/rancher-desktop/agent/services/AudioDriverClient.ts` | 373 |
-| `pkg/rancher-desktop/agent/nodes/BaseNode.ts` | ~2000 (voice-relevant: lines 1389-1588, 1635-1665, 1869-1928) |
-| `pkg/rancher-desktop/agent/database/models/AgentPersonaModel.ts` | ~850 (voice-relevant: lines 605-835) |
-| `pkg/rancher-desktop/main/sullaEvents.ts` | ~1100 (voice-relevant: lines 1040-1095) |
+| `pkg/sulla-desktop/agent/services/TranscriptionService.ts` | 273 |
+| `pkg/sulla-desktop/agent/services/TextToSpeechService.ts` | 139 |
+| `pkg/sulla-desktop/agent/services/AudioDriverClient.ts` | 373 |
+| `pkg/sulla-desktop/agent/nodes/BaseNode.ts` | ~2000 (voice-relevant: lines 1389-1588, 1635-1665, 1869-1928) |
+| `pkg/sulla-desktop/agent/database/models/AgentPersonaModel.ts` | ~850 (voice-relevant: lines 605-835) |
+| `pkg/sulla-desktop/main/sullaEvents.ts` | ~1100 (voice-relevant: lines 1040-1095) |
 
 ### IPC Channels
 | Channel | Direction | Purpose |

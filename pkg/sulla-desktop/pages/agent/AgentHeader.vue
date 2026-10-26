@@ -1069,7 +1069,7 @@ function closeAnyTab(tab: HeaderTab) {
 
 // Agent-opened tabs now come from the main-process TabRegistry directly;
 // the activeAssets → tabs sync watcher was removed. See
-// pkg/rancher-desktop/main/browserTabs/TabRegistry.ts. The UI will mirror
+// pkg/sulla-desktop/main/browserTabs/TabRegistry.ts. The UI will mirror
 // main's state through a `tabs:change` IPC subscription.
 
 // ── Phase 5: Pointer-event drag-and-drop ──

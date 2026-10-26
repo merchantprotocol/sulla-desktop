@@ -101,7 +101,7 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
 - `heartbeatDelayMinutes = "15"` ✓
 
 ### File path citations (verified)
-22 cited source file paths tested with `ls`. All exist except one (SecretaryModeController.ts is at `pkg/rancher-desktop/controllers/`, which my docs correctly cite — the verification script had a typo).
+22 cited source file paths tested with `ls`. All exist except one (SecretaryModeController.ts is at `pkg/sulla-desktop/controllers/`, which my docs correctly cite — the verification script had a typo).
 
 ---
 

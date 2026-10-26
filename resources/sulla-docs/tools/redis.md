@@ -94,9 +94,9 @@ sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/redis/`
-- Manifest: `pkg/rancher-desktop/agent/tools/redis/manifests.ts`
-- Blocked-key guard: `pkg/rancher-desktop/agent/tools/redis/settingsGuard.ts`
-- Connection: `pkg/rancher-desktop/agent/database/RedisClient.ts` — default `redis://127.0.0.1:30117` (no auth), overridable with `SULLA_REDIS_URL`
-- Bridge tool wrapper: `pkg/rancher-desktop/agent/tools/bridge/`
-- Presence service: `pkg/rancher-desktop/agent/services/HumanHeartbeatBridge.ts`
+- Tool dir: `pkg/sulla-desktop/agent/tools/redis/`
+- Manifest: `pkg/sulla-desktop/agent/tools/redis/manifests.ts`
+- Blocked-key guard: `pkg/sulla-desktop/agent/tools/redis/settingsGuard.ts`
+- Connection: `pkg/sulla-desktop/agent/database/RedisClient.ts` — default `redis://127.0.0.1:30117` (no auth), overridable with `SULLA_REDIS_URL`
+- Bridge tool wrapper: `pkg/sulla-desktop/agent/tools/bridge/`
+- Presence service: `pkg/sulla-desktop/agent/services/HumanHeartbeatBridge.ts`

@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { providerResult } from '../src/providerOutput.ts';
-import { resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts';
+import { resolveDecision } from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts';
 const jsonl = (...events) => events.map(event => `2026-10-19T12:00:00.123456789Z ${JSON.stringify(event)}`).join('\n');
 test('Codex final answer excludes metadata, tools, acknowledgements and diagnostics', () => {
   const output = providerResult('codex', jsonl({type:'thread.started',thread_id:'123'}, {type:'turn.started'}, {type:'item.completed',item:{type:'command_execution',aggregated_output:'false'}}, {type:'item.completed',item:{type:'agent_message',text:'true'}}, {type:'sulla.steer.ack',id:'456'}, {type:'turn.completed',usage:{input_tokens:300}}) + '\nstderr diagnostic');

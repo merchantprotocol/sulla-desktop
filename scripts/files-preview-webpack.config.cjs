@@ -10,7 +10,7 @@ const HtmlWebpackPlugin = require('html-webpack-plugin');
 const { VueLoaderPlugin } = require('vue-loader');
 
 const repoRoot = path.resolve(__dirname, '..');
-const rendererRoot = path.join(repoRoot, 'pkg', 'rancher-desktop');
+const rendererRoot = path.join(repoRoot, 'pkg', 'sulla-desktop');
 
 module.exports = {
   mode: 'development',

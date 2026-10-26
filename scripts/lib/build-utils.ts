@@ -47,7 +47,7 @@ export default {
   },
 
   get rendererSrcDir() {
-    return path.resolve(this.rootDir, `${ process.env.RD_ENV_PLUGINS_DEV ? '' : 'pkg/rancher-desktop' }`);
+    return path.resolve(this.rootDir, `${ process.env.RD_ENV_PLUGINS_DEV ? '' : 'pkg/sulla-desktop' }`);
   },
 
   /**
@@ -156,7 +156,7 @@ export default {
       ],
       devtool:     this.isDevelopment ? 'source-map' : false,
       resolve:     {
-        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'rancher-desktop') },
+        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'sulla-desktop') },
         extensions: ['.ts', '.js', '.json', '.node'],
         // ESM-style './x.js' imports of TypeScript sources (packages/vault-crypto).
         extensionAlias: { '.js': ['.ts', '.js'] },
@@ -337,7 +337,7 @@ export default {
    * the tray panel BrowserWindow.
    */
   copyTrayPanelAssets(): void {
-    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'main', 'trayPanel');
+    const src = path.join(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'trayPanel');
     const dest = path.join(this.appDir, 'trayPanel');
 
     if (!fs.existsSync(src)) {
@@ -368,7 +368,7 @@ export default {
    * via app.getAppPath() + 'assets/'.
    */
   copyWindowAssets(): void {
-    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'assets');
+    const src = path.join(this.rootDir, 'pkg', 'sulla-desktop', 'assets');
     const dest = path.join(this.appDir, 'assets');
 
     if (!fs.existsSync(src)) {
@@ -390,7 +390,7 @@ export default {
    * The TS code references them via __dirname which resolves to dist/app/ at runtime.
    */
   copyAudioDriverNativeAssets(): void {
-    const src = path.join(this.rootDir, 'pkg', 'rancher-desktop', 'main', 'audio-driver', 'platform', 'darwin');
+    const src = path.join(this.rootDir, 'pkg', 'sulla-desktop', 'main', 'audio-driver', 'platform', 'darwin');
     const dest = path.join(this.appDir, 'audio-driver', 'platform', 'darwin');
 
     if (!fs.existsSync(src)) {

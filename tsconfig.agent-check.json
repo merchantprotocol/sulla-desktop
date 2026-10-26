@@ -5,6 +5,6 @@
     "skipLibCheck": true
   },
   "include": [
-    "pkg/rancher-desktop/agent/**/*.ts"
+    "pkg/sulla-desktop/agent/**/*.ts"
   ]
 }

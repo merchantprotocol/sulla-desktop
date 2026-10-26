@@ -80,7 +80,7 @@ const trySullaComposeDown = (): void => {
     return;
   }
   try {
-    const composeFilePath = path.join(process.cwd(), 'pkg/rancher-desktop/assets/sulla-docker-compose.yaml');
+    const composeFilePath = path.join(process.cwd(), 'pkg/sulla-desktop/assets/sulla-docker-compose.yaml');
     execSync(`docker-compose -f "${ composeFilePath }" down`, { cwd: process.cwd(), stdio: 'inherit', timeout: 30000 });
     console.log('[Shutdown] Docker containers stopped');
   } catch (err) {

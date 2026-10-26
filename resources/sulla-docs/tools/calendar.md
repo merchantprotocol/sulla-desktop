@@ -106,8 +106,8 @@ The agent CAN schedule its own future runs by creating a calendar event. When fi
 
 ## Reference
 
-- Tool manifests: `pkg/rancher-desktop/agent/tools/calendar/manifests.ts`
-- Model: `pkg/rancher-desktop/agent/database/models/CalendarEvent.ts`
-- Scheduler: `pkg/rancher-desktop/agent/services/SchedulerService.ts`
-- Client: `pkg/rancher-desktop/agent/services/CalendarClient.ts`
+- Tool manifests: `pkg/sulla-desktop/agent/tools/calendar/manifests.ts`
+- Model: `pkg/sulla-desktop/agent/database/models/CalendarEvent.ts`
+- Scheduler: `pkg/sulla-desktop/agent/services/SchedulerService.ts`
+- Client: `pkg/sulla-desktop/agent/services/CalendarClient.ts`
 - Migrations: `0008_create_calendar_events_table.ts`, `0009_add_status_to_calendar_events.ts`

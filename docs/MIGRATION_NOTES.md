@@ -31,8 +31,8 @@ Functions do **not** have versions either. Each function is its own git repo; ro
 
 The bridge between routines and functions is the new canvas node:
 
-- `subtype: 'function'`, category `agent`, defined in `pkg/rancher-desktop/pages/editor/workflow/nodeRegistry.ts`.
-- Config type `FunctionNodeConfig` in `pkg/rancher-desktop/pages/editor/workflow/types.ts`.
+- `subtype: 'function'`, category `agent`, defined in `pkg/sulla-desktop/pages/editor/workflow/nodeRegistry.ts`.
+- Config type `FunctionNodeConfig` in `pkg/sulla-desktop/pages/editor/workflow/types.ts`.
 - Points at a function by slug (`functionRef: dedupe-emails`). No `@version`.
 - At execution time the playbook HTTP-POSTs `/invoke` on the runtime that matches the function's declared runtime.
 

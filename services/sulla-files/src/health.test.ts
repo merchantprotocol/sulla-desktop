@@ -10,7 +10,7 @@ import test from 'node:test';
 
 import { healthPayload } from './health.js';
 
-// Exact compatibility gate from pkg/rancher-desktop/main/sullaFilesWatcher.ts ensureUnlocked().
+// Exact compatibility gate from pkg/sulla-desktop/main/sullaFilesWatcher.ts ensureUnlocked().
 const desktopRejects = (health:any) => !health.legacyImport || !['clear', 'secure-import-required'].includes(health.legacyImport.state);
 const cfg = (legacyPreflight?:any) => ({ mode: 'desktop' as const, legacyPreflight });
 

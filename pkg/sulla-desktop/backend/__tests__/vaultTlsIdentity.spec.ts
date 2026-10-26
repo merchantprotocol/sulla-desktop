@@ -16,7 +16,7 @@ import { afterEach, describe, expect, test } from '@jest/globals';
 
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from '../vaultTlsIdentity';
 
-const script = path.resolve('pkg/rancher-desktop/assets/scripts/provision-vault-tls');
+const script = path.resolve('pkg/sulla-desktop/assets/scripts/provision-vault-tls');
 const fixtures: string[] = [];
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-vault-tls-test-'));

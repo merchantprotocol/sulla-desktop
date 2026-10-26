@@ -68,7 +68,7 @@ Required attributes: num, title, origin.  Optional: url.
 Format (use this exact shape — attributes in double quotes, no JSON):
 
 <citations>
-  <source num="1" title="BaseNode.ts" origin="pkg/rancher-desktop/agent/nodes" url="file:///…" />
+  <source num="1" title="BaseNode.ts" origin="pkg/sulla-desktop/agent/nodes" url="file:///…" />
   <source num="2" title="Anthropic Citations" origin="docs.anthropic.com" url="https://…" />
 </citations>
 

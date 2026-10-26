@@ -72,7 +72,7 @@ Redis runs with `--save "" --appendonly no`.
 
 ## Sources
 
-- `pkg/rancher-desktop/utils/paths.ts`
-- `pkg/rancher-desktop/backend/sullaRuntimeBackend.ts`
-- `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`
-- `pkg/rancher-desktop/agent/tools/util/CommandRunner.ts`
+- `pkg/sulla-desktop/utils/paths.ts`
+- `pkg/sulla-desktop/backend/sullaRuntimeBackend.ts`
+- `pkg/sulla-desktop/assets/sulla-docker-compose.yaml`
+- `pkg/sulla-desktop/agent/tools/util/CommandRunner.ts`

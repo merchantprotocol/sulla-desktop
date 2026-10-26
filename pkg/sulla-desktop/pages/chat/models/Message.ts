@@ -150,7 +150,7 @@ export interface ToolQuestionMessage extends MessageBase {
 // ─── Patch ────────────────────────────────────────────────────────
 export interface PatchMessage extends MessageBase {
   kind:     'patch';
-  path:     string;         // "pkg/rancher-desktop/main/browserTabs/GuestBridge.ts"
+  path:     string;         // "pkg/sulla-desktop/main/browserTabs/GuestBridge.ts"
   stat:     { added: number; removed: number };
   hunks:    readonly PatchHunk[];
   state:    'proposed' | 'applied' | 'rejected';

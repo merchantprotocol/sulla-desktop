@@ -116,7 +116,7 @@ async function onShow(
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
     ? path.join(appRoot, 'dist', 'app', 'assets', 'tab-context-menu.html')
-    : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'tab-context-menu.html');
+    : path.join(appRoot, 'pkg', 'sulla-desktop', 'assets', 'tab-context-menu.html');
 
   win.loadFile(htmlPath);
 

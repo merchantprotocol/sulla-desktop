@@ -2,7 +2,7 @@
 
 ### To generate go code:
 
-`oapi-codegen pkg/rancher-desktop/assets/specs/command-api.yaml > api/commands.go`
+`oapi-codegen pkg/sulla-desktop/assets/specs/command-api.yaml > api/commands.go`
 
 #### Dependencies:
 

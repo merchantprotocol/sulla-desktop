@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-AUDIO_DARWIN_DIR="pkg/rancher-desktop/main/audio-driver/platform/darwin"
+AUDIO_DARWIN_DIR="pkg/sulla-desktop/main/audio-driver/platform/darwin"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   echo "[audio-native] Building native binaries for macOS..."

@@ -77,9 +77,9 @@ mounted into the agent VM.
 
 ## Implementation references
 
-- `pkg/rancher-desktop/agent/middleware/SubconsciousMiddleware.ts`
-- `pkg/rancher-desktop/agent/services/GraphRegistry.ts`
-- `pkg/rancher-desktop/agent/services/SubconsciousWriterGate.ts`
-- `pkg/rancher-desktop/agent/memory/MemoryRecallService.ts`
-- `pkg/rancher-desktop/agent/services/SullaLogger.ts`
-- `pkg/rancher-desktop/agent/services/RecallIndexService.ts`
+- `pkg/sulla-desktop/agent/middleware/SubconsciousMiddleware.ts`
+- `pkg/sulla-desktop/agent/services/GraphRegistry.ts`
+- `pkg/sulla-desktop/agent/services/SubconsciousWriterGate.ts`
+- `pkg/sulla-desktop/agent/memory/MemoryRecallService.ts`
+- `pkg/sulla-desktop/agent/services/SullaLogger.ts`
+- `pkg/sulla-desktop/agent/services/RecallIndexService.ts`

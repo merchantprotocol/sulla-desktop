@@ -3,8 +3,8 @@ WORKDIR /app
 COPY services/sulla-workflows/package*.json ./services/sulla-workflows/
 RUN cd services/sulla-workflows && npm ci --ignore-scripts
 COPY services/sulla-agents ./services/sulla-agents
-COPY pkg/rancher-desktop/runtime/containerRuntime.ts ./pkg/rancher-desktop/runtime/containerRuntime.ts
-COPY pkg/rancher-desktop/runtime/capabilityToken.ts ./pkg/rancher-desktop/runtime/capabilityToken.ts
+COPY pkg/sulla-desktop/runtime/containerRuntime.ts ./pkg/sulla-desktop/runtime/containerRuntime.ts
+COPY pkg/sulla-desktop/runtime/capabilityToken.ts ./pkg/sulla-desktop/runtime/capabilityToken.ts
 RUN ln -s ../sulla-workflows/node_modules services/sulla-agents/node_modules \
  && cd services/sulla-agents && ./node_modules/.bin/tsc -p tsconfig.json
 

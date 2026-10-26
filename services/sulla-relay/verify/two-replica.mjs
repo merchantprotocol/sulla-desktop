@@ -7,7 +7,7 @@
 
 import jwt from 'jsonwebtoken';
 
-import { RelayToolTunnel } from '../dist/pkg/rancher-desktop/runtime/relayTunnelClient.js';
+import { RelayToolTunnel } from '../dist/pkg/sulla-desktop/runtime/relayTunnelClient.js';
 
 const deviceSecret = process.env.SULLA_RELAY_DEVICE_TOKEN_SECRET;
 const internalToken = process.env.SULLA_RELAY_INTERNAL_TOKEN;

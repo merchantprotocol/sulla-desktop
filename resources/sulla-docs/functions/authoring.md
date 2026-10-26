@@ -174,10 +174,10 @@ If a runtime is down, tell the user. Don't try to restart the containers from th
 
 ## Reference
 
-- Tool manifests: `pkg/rancher-desktop/agent/tools/function/manifests.ts`
-- Run impl: `pkg/rancher-desktop/agent/tools/function/function_run.ts`
-- List impl: `pkg/rancher-desktop/agent/tools/function/function_list.ts`
-- Runtime URLs: `pkg/rancher-desktop/agent/tools/function/constants.ts`
+- Tool manifests: `pkg/sulla-desktop/agent/tools/function/manifests.ts`
+- Run impl: `pkg/sulla-desktop/agent/tools/function/function_run.ts`
+- List impl: `pkg/sulla-desktop/agent/tools/function/function_list.ts`
+- Runtime URLs: `pkg/sulla-desktop/agent/tools/function/constants.ts`
 - Schema: [`schema.md`](schema.md)
 - Handler signatures: [`runtimes.md`](runtimes.md)
 - Working examples: [`examples.md`](examples.md)

@@ -132,10 +132,10 @@ sulla vault/delete_credential '{"account_type":"github","property":"api_token","
 
 ## Reference
 
-- Tool manifests: `pkg/rancher-desktop/agent/tools/integrations/manifests.ts`
-- Tool implementations: `pkg/rancher-desktop/agent/tools/integrations/`
-- Access policy: `pkg/rancher-desktop/agent/services/vaultAccessPolicy.ts`
-- Integration service: `pkg/rancher-desktop/agent/services/IntegrationService.ts`
-- LLM access map: `pkg/rancher-desktop/agent/integrations/select_box/VaultLlmAccess.ts`
-- Autofill flow: `pkg/rancher-desktop/agent/tools/integrations/vault_autofill.ts`
-- Schema: migration `pkg/rancher-desktop/agent/database/migrations/0013_create_integration_values_table.ts`
+- Tool manifests: `pkg/sulla-desktop/agent/tools/integrations/manifests.ts`
+- Tool implementations: `pkg/sulla-desktop/agent/tools/integrations/`
+- Access policy: `pkg/sulla-desktop/agent/services/vaultAccessPolicy.ts`
+- Integration service: `pkg/sulla-desktop/agent/services/IntegrationService.ts`
+- LLM access map: `pkg/sulla-desktop/agent/integrations/select_box/VaultLlmAccess.ts`
+- Autofill flow: `pkg/sulla-desktop/agent/tools/integrations/vault_autofill.ts`
+- Schema: migration `pkg/sulla-desktop/agent/database/migrations/0013_create_integration_values_table.ts`

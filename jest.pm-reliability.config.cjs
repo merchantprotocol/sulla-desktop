@@ -20,7 +20,7 @@ module.exports = {
       },
     }],
   },
-  moduleNameMapper: { '^@pkg/(.*)$': '<rootDir>/pkg/rancher-desktop/$1' },
+  moduleNameMapper: { '^@pkg/(.*)$': '<rootDir>/pkg/sulla-desktop/$1' },
   modulePathIgnorePatterns: ['<rootDir>/node_modules/'],
   testMatch: [
     '**/PlaybookController.leases.test.ts',

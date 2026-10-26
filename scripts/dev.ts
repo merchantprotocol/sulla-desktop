@@ -122,7 +122,7 @@ class DevRunner extends events.EventEmitter {
     let startError: Error | undefined;
 
     console.info('Renderer process: starting...');
-    process.env.VUE_CLI_SERVICE_CONFIG_PATH = 'pkg/rancher-desktop/vue.config.mjs';
+    process.env.VUE_CLI_SERVICE_CONFIG_PATH = 'pkg/sulla-desktop/vue.config.mjs';
 
     this.#rendererProcess = this.spawn(
       'Renderer process',

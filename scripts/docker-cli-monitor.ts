@@ -56,7 +56,7 @@ async function checkDockerCli(): Promise<void> {
 
   console.log(`Latest version: ${ latestVersion }`);
 
-  const depVersionsPath = path.join('pkg', 'rancher-desktop', 'assets', 'dependencies.yaml');
+  const depVersionsPath = path.join('pkg', 'sulla-desktop', 'assets', 'dependencies.yaml');
   const dependencyVersions = await readDependencyVersions(depVersionsPath);
 
   console.log(`Current version: ${ dependencyVersions.dockerCLI }`);

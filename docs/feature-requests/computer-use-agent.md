@@ -209,7 +209,7 @@ Computer use gives the agent significant control. Guardrails are essential:
 ## File Structure (Proposed)
 
 ```
-pkg/rancher-desktop/
+pkg/sulla-desktop/
   main/
     computerUse/
       gridOverlay.ts              — Grid overlay BrowserWindow manager

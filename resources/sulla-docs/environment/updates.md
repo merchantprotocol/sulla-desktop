@@ -6,10 +6,10 @@ Sulla Desktop self-updates via an **electron-updater-based pipeline** with a cus
 
 | File | Role |
 |------|------|
-| [`pkg/rancher-desktop/main/update/UpdateManager.ts`](../../../pkg/rancher-desktop/main/update/UpdateManager.ts) | Coordinates the update lifecycle — schedules checks, wires `autoUpdater` events, shows the tray badge + UI notification |
-| [`pkg/rancher-desktop/main/update/LonghornProvider.ts`](../../../pkg/rancher-desktop/main/update/LonghornProvider.ts) | Custom `electron-updater` provider that polls Sulla's upgrade-responder backend (different from the GitHub-releases default provider) |
-| [`pkg/rancher-desktop/main/update/lightweightCheck.ts`](../../../pkg/rancher-desktop/main/update/lightweightCheck.ts) | Fast "is there an update?" check without running the full `autoUpdater` download pipeline — used in dev builds and for the tray badge |
-| [`pkg/rancher-desktop/main/update/MSIUpdater.ts`](../../../pkg/rancher-desktop/main/update/MSIUpdater.ts) | Windows-specific wrapper around `NsisUpdater` for MSI installers |
+| [`pkg/sulla-desktop/main/update/UpdateManager.ts`](../../../pkg/sulla-desktop/main/update/UpdateManager.ts) | Coordinates the update lifecycle — schedules checks, wires `autoUpdater` events, shows the tray badge + UI notification |
+| [`pkg/sulla-desktop/main/update/LonghornProvider.ts`](../../../pkg/sulla-desktop/main/update/LonghornProvider.ts) | Custom `electron-updater` provider that polls Sulla's upgrade-responder backend (different from the GitHub-releases default provider) |
+| [`pkg/sulla-desktop/main/update/lightweightCheck.ts`](../../../pkg/sulla-desktop/main/update/lightweightCheck.ts) | Fast "is there an update?" check without running the full `autoUpdater` download pipeline — used in dev builds and for the tray badge |
+| [`pkg/sulla-desktop/main/update/MSIUpdater.ts`](../../../pkg/sulla-desktop/main/update/MSIUpdater.ts) | Windows-specific wrapper around `NsisUpdater` for MSI installers |
 | [`dev-app-update.yml`](../../../dev-app-update.yml) | Dev-mode config — points the updater at the dev upgrade-responder so engineers can test the flow without a signed build |
 | [`scripts/populate-update-server.ts`](../../../scripts/populate-update-server.ts) | CI step that publishes new release metadata to the upgrade-responder |
 | Upgrade responder | External backend configured by `upgradeServer`; not a directory under Desktop |
@@ -50,7 +50,7 @@ A future `update/check` or `update/install` agent tool would wrap `UpdateManager
 
 ## Reference
 
-- UpdateManager entry: `pkg/rancher-desktop/main/update/UpdateManager.ts`
+- UpdateManager entry: `pkg/sulla-desktop/main/update/UpdateManager.ts`
 - electron-updater docs: https://www.electron.build/auto-update
 - Longhorn / upgrade-responder: `sulla-upgrade-responder` repo
 - Release publishing script: `scripts/populate-update-server.ts`

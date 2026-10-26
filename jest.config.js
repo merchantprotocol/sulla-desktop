@@ -12,7 +12,7 @@ import { TS_EXT_TO_TREAT_AS_ESM, ESM_TS_TRANSFORM_PATTERN } from 'ts-jest';
 export default {
   transform: {
     [ESM_TS_TRANSFORM_PATTERN]: ['ts-jest', { useESM: true }],
-    '^.+\\.vue$':               './pkg/rancher-desktop/utils/testUtils/vue-jest.js',
+    '^.+\\.vue$':               './pkg/sulla-desktop/utils/testUtils/vue-jest.js',
   },
   transformIgnorePatterns: [
     'node_modules/(?!(@octokit|@babel|@jest|uuid|nanoid|got|p-timeout|p-cancelable|@sindresorhus|lowercase-keys|responselike|cacheable-request|normalize-url|cacheable-lookup|keyv|json-buffer|clone-response|http-cache-semantics|mimic-response|form-data-encoder|@types)/)',
@@ -27,19 +27,19 @@ export default {
   ],
   modulePathIgnorePatterns: [
     '<rootDir>/dist',
-    '<rootDir>/pkg/rancher-desktop/dist',
+    '<rootDir>/pkg/sulla-desktop/dist',
     '<rootDir>/.git',
     '<rootDir>/.claude',
     '<rootDir>/screenshots',
   ],
   moduleNameMapper: {
-    '\\.css$':       '<rootDir>/pkg/rancher-desktop/config/emptyStubForJSLinter.js',
-    '^@pkg/assets/': '<rootDir>/pkg/rancher-desktop/config/emptyStubForJSLinter.js',
-    '^@pkg/(.*)$':   '<rootDir>/pkg/rancher-desktop/$1',
+    '\\.css$':       '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
+    '^@pkg/assets/': '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
+    '^@pkg/(.*)$':   '<rootDir>/pkg/sulla-desktop/$1',
   },
   setupFiles: [
-    '<rootDir>/pkg/rancher-desktop/utils/testUtils/setupTextEncoder.ts',
-    '<rootDir>/pkg/rancher-desktop/utils/testUtils/setupVue.ts',
+    '<rootDir>/pkg/sulla-desktop/utils/testUtils/setupTextEncoder.ts',
+    '<rootDir>/pkg/sulla-desktop/utils/testUtils/setupVue.ts',
   ],
   testEnvironment:        'jsdom',
   testEnvironmentOptions: {
@@ -52,6 +52,6 @@ export default {
     '<rootDir>/node_modules/',
     '<rootDir>/.claude/',
     '<rootDir>/.*/__tests__/fixtures/',
-    '<rootDir>/pkg/rancher-desktop/sudo-prompt/',
+    '<rootDir>/pkg/sulla-desktop/sudo-prompt/',
   ],
 };

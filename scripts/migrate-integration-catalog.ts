@@ -26,12 +26,12 @@ import path from 'path';
 
 import yaml from 'yaml';
 
-import { nativeIntegrations } from '../pkg/rancher-desktop/agent/integrations/native';
-import { validateIntegrationManifest } from '../pkg/rancher-desktop/agent/integrations/schema';
-import { resolveSullaIntegrationsDir } from '../pkg/rancher-desktop/agent/utils/sullaPaths';
+import { nativeIntegrations } from '../pkg/sulla-desktop/agent/integrations/native';
+import { validateIntegrationManifest } from '../pkg/sulla-desktop/agent/integrations/schema';
+import { resolveSullaIntegrationsDir } from '../pkg/sulla-desktop/agent/utils/sullaPaths';
 
-import type { IntegrationManifest } from '../pkg/rancher-desktop/agent/integrations/schema';
-import type { Integration } from '../pkg/rancher-desktop/agent/integrations/types';
+import type { IntegrationManifest } from '../pkg/sulla-desktop/agent/integrations/schema';
+import type { Integration } from '../pkg/sulla-desktop/agent/integrations/types';
 
 const MANIFESTS_DIR = resolveSullaIntegrationsDir();
 

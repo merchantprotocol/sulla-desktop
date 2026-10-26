@@ -160,7 +160,7 @@ async function downloadDependencies(items: DependencyWithContext[]): Promise<voi
 
 async function runScripts(): Promise<void> {
   // load desired versions of dependencies
-  const depVersions = await readDependencyVersions(path.join('pkg', 'rancher-desktop', 'assets', 'dependencies.yaml'));
+  const depVersions = await readDependencyVersions(path.join('pkg', 'sulla-desktop', 'assets', 'dependencies.yaml'));
   const platform = os.platform();
   const dependencies: DependencyWithContext[] = [];
 

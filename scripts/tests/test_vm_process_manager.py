@@ -15,7 +15,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[2] / 'pkg/rancher-desktop/main/processManager/probe.ts'
+SOURCE = Path(__file__).resolve().parents[2] / 'pkg/sulla-desktop/main/processManager/probe.ts'
 PROBE = SOURCE.read_text().split('String.raw`', 1)[1].rsplit('`;', 1)[0]
 namespace = {'__name__': 'probe_test'}
 exec(PROBE, namespace)

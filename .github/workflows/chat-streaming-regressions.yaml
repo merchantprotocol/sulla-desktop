@@ -4,9 +4,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/chat-streaming-regressions.yaml'
-      - 'pkg/rancher-desktop/agent/nodes/BaseNode.ts'
-      - 'pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts'
-      - 'pkg/rancher-desktop/pages/chat/components/transcript/TurnStreaming.vue'
+      - 'pkg/sulla-desktop/agent/nodes/BaseNode.ts'
+      - 'pkg/sulla-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts'
+      - 'pkg/sulla-desktop/pages/chat/components/transcript/TurnStreaming.vue'
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,8 +30,8 @@ jobs:
         set -o pipefail
         set +e
         yarn test:unit:jest --runInBand --json --outputFile="${RUNNER_TEMP}/streaming-results.json" \
-          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts \
-          pkg/rancher-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts 2>&1 | tee "${RUNNER_TEMP}/streaming.log"
+          pkg/sulla-desktop/agent/nodes/__tests__/BaseNode.providerRecovery.test.ts \
+          pkg/sulla-desktop/agent/nodes/__tests__/BaseNode.conversationLogging.test.ts 2>&1 | tee "${RUNNER_TEMP}/streaming.log"
         rc=$?
         if [ "$rc" -ne 0 ]; then
           node <<'NODE'

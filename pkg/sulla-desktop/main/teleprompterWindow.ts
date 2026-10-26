@@ -76,7 +76,7 @@ export function openTeleprompterWindow(): BrowserWindow {
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
     ? path.join(appRoot, 'dist', 'app', 'assets', 'teleprompter-float.html')
-    : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'teleprompter-float.html');
+    : path.join(appRoot, 'pkg', 'sulla-desktop', 'assets', 'teleprompter-float.html');
 
   console.log('[TeleprompterWindow] Loading HTML from:', htmlPath);
 

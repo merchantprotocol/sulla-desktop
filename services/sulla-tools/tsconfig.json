@@ -9,14 +9,14 @@
     "rootDir": "../..",
     "outDir": "dist",
     "baseUrl": "../..",
-    "paths": { "@pkg/*": ["pkg/rancher-desktop/*"] },
+    "paths": { "@pkg/*": ["pkg/sulla-desktop/*"] },
     "types": ["node"]
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/rancher-desktop/runtime/capabilityToken.ts",
-    "../../pkg/rancher-desktop/runtime/desktopExecutor.ts",
-    "../../pkg/rancher-desktop/agent/tools/executionContext.ts",
-    "../../pkg/rancher-desktop/agent/tools/executionTargets.ts"
+    "../../pkg/sulla-desktop/runtime/capabilityToken.ts",
+    "../../pkg/sulla-desktop/runtime/desktopExecutor.ts",
+    "../../pkg/sulla-desktop/agent/tools/executionContext.ts",
+    "../../pkg/sulla-desktop/agent/tools/executionTargets.ts"
   ]
 }

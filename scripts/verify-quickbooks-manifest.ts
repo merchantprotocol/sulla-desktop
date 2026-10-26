@@ -18,7 +18,7 @@ import path from 'path';
 
 import yaml from 'yaml';
 
-import { validateIntegrationManifest } from '../pkg/rancher-desktop/agent/integrations/schema';
+import { validateIntegrationManifest } from '../pkg/sulla-desktop/agent/integrations/schema';
 
 const manifestPath = path.join(os.homedir(), 'sulla', 'integrations', 'quickbooks', 'integration.yaml');
 const text = fs.readFileSync(manifestPath, 'utf8');

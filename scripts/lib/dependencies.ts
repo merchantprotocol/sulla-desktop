@@ -48,7 +48,7 @@ export interface DependencyVersions {
   'check-spelling':                string;
 }
 
-export const DEP_VERSIONS_PATH = 'pkg/rancher-desktop/assets/dependencies.yaml';
+export const DEP_VERSIONS_PATH = 'pkg/sulla-desktop/assets/dependencies.yaml';
 
 /**
  * Download the given checksum file (which contains multiple checksums) and find

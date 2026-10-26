@@ -34,7 +34,7 @@ function quoteShellArg(value: string): string {
 
 /**
  * Resolve the sulla-runtime binary. Prefers explicit override, then the
- * canonical `paths.sullaRuntime` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
+ * canonical `paths.sullaRuntime` (SSOT — see `pkg/sulla-desktop/utils/paths.ts`).
  */
 export function resolveRuntimePath(options: CommandRunnerOptions = {}): string {
   return options.runtimePath || paths.sullaRuntime;

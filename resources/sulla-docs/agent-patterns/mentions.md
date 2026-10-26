@@ -105,7 +105,7 @@ If the verb is ambiguous, ask one clarifying question before acting — don't gu
 
 ## Reference
 
-- Composable: `pkg/rancher-desktop/pages/chat/composables/useArtifactMentions.ts`
+- Composable: `pkg/sulla-desktop/pages/chat/composables/useArtifactMentions.ts`
 - Backing IPC handlers: `main/sullaLibraryEvents.ts`, `sullaFunctionEvents.ts`, `sullaRoutineTemplateEvents.ts`, `sullaWorkflowEvents.ts`, `sullaProjectEvents.ts`
 - Token type: `pages/chat/models/Command.ts` (`MentionTarget.kind`)
 - Popover: `pages/chat/components/composer/CommandPopover.vue`

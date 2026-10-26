@@ -22,9 +22,9 @@ import { createApp } from '../../src/app.ts';
 import { migrate } from '../../src/db.ts';
 import { FilesKeyring } from '../../src/keyring.ts';
 import { LocalFilesManager } from '../../src/localManager.ts';
-import { readBoundedResponse } from '../../../../pkg/rancher-desktop/main/sullaFilesBoundedResponse.ts';
-import { SullaFilesNativeBroker } from '../../../../pkg/rancher-desktop/main/sullaFilesNativeBroker.ts';
-import { SullaFilesSourceGateway } from '../../../../pkg/rancher-desktop/main/sullaFilesSourceGateway.ts';
+import { readBoundedResponse } from '../../../../pkg/sulla-desktop/main/sullaFilesBoundedResponse.ts';
+import { SullaFilesNativeBroker } from '../../../../pkg/sulla-desktop/main/sullaFilesNativeBroker.ts';
+import { SullaFilesSourceGateway } from '../../../../pkg/sulla-desktop/main/sullaFilesSourceGateway.ts';
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));

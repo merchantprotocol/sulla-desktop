@@ -102,10 +102,10 @@ If you genuinely can't go further without a bigger conversation or missing input
 
 ## Reference
 
-- Tool (in-process): `pkg/rancher-desktop/agent/tools/meta/ask_user_question.ts`
+- Tool (in-process): `pkg/sulla-desktop/agent/tools/meta/ask_user_question.ts`
 - Tool (Claude Code MCP bridge): `mcp__sulla-native__ask_user_question` (see `main/MCPServerHost.ts`)
-- Shared helpers: `pkg/rancher-desktop/agent/tools/meta/askUserQuestionShared.ts`
-- Service: `pkg/rancher-desktop/agent/services/ApprovalService.ts` (`parkQuestion`)
+- Shared helpers: `pkg/sulla-desktop/agent/tools/meta/askUserQuestionShared.ts`
+- Service: `pkg/sulla-desktop/agent/services/ApprovalService.ts` (`parkQuestion`)
 - IPC: the renderer fires `question:resolve` back to main to settle the pending promise (unverified)
 - Frontend card: `pages/chat/components/tool/ToolQuestion.vue`
 - Frontend wiring: `pages/chat/services/PersonaAdapter.ts` (question bridge)

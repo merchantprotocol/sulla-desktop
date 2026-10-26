@@ -123,7 +123,7 @@ sulla slack/connection_health '{}'
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/slack/`
-- Manifest: `pkg/rancher-desktop/agent/tools/slack/manifests.ts`
-- Client: `pkg/rancher-desktop/agent/integrations/slack/SlackClient.ts`
-- Credential properties: `pkg/rancher-desktop/agent/integrations/index.ts`
+- Tool dir: `pkg/sulla-desktop/agent/tools/slack/`
+- Manifest: `pkg/sulla-desktop/agent/tools/slack/manifests.ts`
+- Client: `pkg/sulla-desktop/agent/integrations/slack/SlackClient.ts`
+- Credential properties: `pkg/sulla-desktop/agent/integrations/index.ts`

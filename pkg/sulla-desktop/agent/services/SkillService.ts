@@ -574,7 +574,7 @@ export class SkillService {
     const candidates = [
       path.resolve(cwd, target),
       path.resolve(cwd, 'agent', target),
-      path.resolve(cwd, 'pkg/rancher-desktop/agent', target),
+      path.resolve(cwd, 'pkg/sulla-desktop/agent', target),
     ];
 
     return candidates;

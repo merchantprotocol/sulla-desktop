@@ -72,9 +72,9 @@ remove user data.
 
 ## Sources
 
-- `pkg/rancher-desktop/agent/tools/docker/`
-- `pkg/rancher-desktop/agent/tools/lima/`
-- `pkg/rancher-desktop/agent/tools/util/CommandRunner.ts`
-- `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`
-- `pkg/rancher-desktop/backend/sullaRuntimeBackend.ts`
-- `pkg/rancher-desktop/sulla.ts`
+- `pkg/sulla-desktop/agent/tools/docker/`
+- `pkg/sulla-desktop/agent/tools/lima/`
+- `pkg/sulla-desktop/agent/tools/util/CommandRunner.ts`
+- `pkg/sulla-desktop/assets/sulla-docker-compose.yaml`
+- `pkg/sulla-desktop/backend/sullaRuntimeBackend.ts`
+- `pkg/sulla-desktop/sulla.ts`

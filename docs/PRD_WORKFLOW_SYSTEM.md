@@ -37,20 +37,20 @@ Trigger (schedule / heartbeat / chat / desktop event / calendar / chat-completio
 
 | File | Responsibility |
 |------|----------------|
-| `pkg/rancher-desktop/agent/nodes/Graph.ts` | Playbook orchestration, sub-agent lifecycle (pendingSubAgents, pendingCompletions, pendingFailures, pendingEscalations), checkpoint saves, workflow event emission |
-| `pkg/rancher-desktop/agent/workflows/WorkflowPlaybook.ts` | DAG walker/state machine: createPlaybookState(), processNextStep(), resolveDecision(), completeSubAgent(), loop state management |
-| `pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts` | Background orchestrator: scans production workflows for heartbeat triggers, spawns agent graphs |
-| `pkg/rancher-desktop/agent/workflows/WorkflowRegistry.ts` | Workflow lookup/selection: finds candidates by trigger type, LLM-based selection when ambiguous |
-| `pkg/rancher-desktop/agent/services/WorkflowSchedulerService.ts` | Cron-based schedule trigger evaluation and execution |
-| `pkg/rancher-desktop/agent/models/WorkflowCheckpointModel.ts` | Persists full playbook state to Postgres after each node completion |
-| `pkg/rancher-desktop/agent/models/WorkflowPendingCompletionModel.ts` | Persists sub-agent results across graph restarts |
-| `pkg/rancher-desktop/agent/tools/execute_workflow.ts` | Tool that activates workflows from agent context |
-| `pkg/rancher-desktop/agent/tools/validate_sulla_workflow.ts` | Validates workflow YAML structure and connectivity |
-| `pkg/rancher-desktop/agent/tools/restart_from_checkpoint.ts` | Resumes workflow execution from a saved checkpoint |
-| `pkg/rancher-desktop/main/ipc/sullaWorkflowEvents.ts` | IPC handlers: workflow-list, workflow-get, workflow-save, workflow-execute, etc. |
-| `pkg/rancher-desktop/agent/services/N8nService.ts` | n8n REST API integration |
-| `pkg/rancher-desktop/agent/services/N8nBridgeService.ts` | n8n WebSocket live event bridge |
-| `pkg/rancher-desktop/pages/editor/workflow/` | UI components: node config panels, canvas, palette |
+| `pkg/sulla-desktop/agent/nodes/Graph.ts` | Playbook orchestration, sub-agent lifecycle (pendingSubAgents, pendingCompletions, pendingFailures, pendingEscalations), checkpoint saves, workflow event emission |
+| `pkg/sulla-desktop/agent/workflows/WorkflowPlaybook.ts` | DAG walker/state machine: createPlaybookState(), processNextStep(), resolveDecision(), completeSubAgent(), loop state management |
+| `pkg/sulla-desktop/agent/nodes/HeartbeatNode.ts` | Background orchestrator: scans production workflows for heartbeat triggers, spawns agent graphs |
+| `pkg/sulla-desktop/agent/workflows/WorkflowRegistry.ts` | Workflow lookup/selection: finds candidates by trigger type, LLM-based selection when ambiguous |
+| `pkg/sulla-desktop/agent/services/WorkflowSchedulerService.ts` | Cron-based schedule trigger evaluation and execution |
+| `pkg/sulla-desktop/agent/models/WorkflowCheckpointModel.ts` | Persists full playbook state to Postgres after each node completion |
+| `pkg/sulla-desktop/agent/models/WorkflowPendingCompletionModel.ts` | Persists sub-agent results across graph restarts |
+| `pkg/sulla-desktop/agent/tools/execute_workflow.ts` | Tool that activates workflows from agent context |
+| `pkg/sulla-desktop/agent/tools/validate_sulla_workflow.ts` | Validates workflow YAML structure and connectivity |
+| `pkg/sulla-desktop/agent/tools/restart_from_checkpoint.ts` | Resumes workflow execution from a saved checkpoint |
+| `pkg/sulla-desktop/main/ipc/sullaWorkflowEvents.ts` | IPC handlers: workflow-list, workflow-get, workflow-save, workflow-execute, etc. |
+| `pkg/sulla-desktop/agent/services/N8nService.ts` | n8n REST API integration |
+| `pkg/sulla-desktop/agent/services/N8nBridgeService.ts` | n8n WebSocket live event bridge |
+| `pkg/sulla-desktop/pages/editor/workflow/` | UI components: node config panels, canvas, palette |
 
 ### Workflow Directory Structure
 

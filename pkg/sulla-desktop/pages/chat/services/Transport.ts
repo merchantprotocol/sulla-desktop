@@ -67,7 +67,7 @@ export class Transport {
       const toolId = newMessageId();
       const tool: ToolMessage = {
         id: toolId, kind: 'tool', createdAt: Date.now(), turnId,
-        tool: 'Grep', desc: 'captureScreenshot · pkg/rancher-desktop', status: 'running',
+        tool: 'Grep', desc: 'captureScreenshot · pkg/sulla-desktop', status: 'running',
       };
       c.appendMessage(tool);
       c.transitionRun({ type: 'spawnTool', messageId: toolId, tool: 'Grep' });

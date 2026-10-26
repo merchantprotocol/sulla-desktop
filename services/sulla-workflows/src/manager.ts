@@ -30,13 +30,13 @@ import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
 import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
-import { createPlaybookState, resolveDecision } from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
-import { workflowConcurrencyLimit } from '../../../pkg/rancher-desktop/agent/workflow/workflowConcurrency.js';
+import { createPlaybookState, resolveDecision } from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.js';
+import { workflowConcurrencyLimit } from '../../../pkg/sulla-desktop/agent/workflow/workflowConcurrency.js';
 import { agentOccurrence } from './agentInvocation.js';
 
-import { issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
+import { issueCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
 
-import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
+import type { WorkflowPlaybookState } from '../../../pkg/sulla-desktop/agent/workflow/types.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));

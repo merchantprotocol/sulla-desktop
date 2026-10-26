@@ -6,7 +6,7 @@ Sulla's tool system gives the AI model the ability to take actions — read file
 
 The model interacts with tools through a structured JSON interface. When the model needs a tool, it first calls `browse_tools` to discover what's available, then calls the tool by name with a JSON arguments object.
 
-**Source:** `pkg/rancher-desktop/agent/tools/`
+**Source:** `pkg/sulla-desktop/agent/tools/`
 
 ## Architecture
 

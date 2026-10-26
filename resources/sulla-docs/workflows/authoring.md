@@ -236,13 +236,13 @@ Any other field stays as a literal. See `schema.md` for the full list and `node-
 ## Reference
 
 - Authoring skill mirror: [`create-workflow-skill.md`](create-workflow-skill.md)
-- Tool manifests: `pkg/rancher-desktop/agent/tools/workflow/manifests.ts`
-- Validator: `pkg/rancher-desktop/agent/tools/workflow/validate_sulla_workflow.ts`
-- Execute: `pkg/rancher-desktop/agent/tools/workflow/execute_workflow.ts`
-- Restart: `pkg/rancher-desktop/agent/tools/workflow/restart_from_checkpoint.ts`
-- Import and status: `pkg/rancher-desktop/agent/tools/workflow/import_workflow.ts`, `set_workflow_status.ts`
-- Scheduler: `pkg/rancher-desktop/agent/services/WorkflowSchedulerService.ts`
-- Playbook engine: `pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts`
-- In-app controller: `pkg/rancher-desktop/agent/controllers/PlaybookController.ts`
+- Tool manifests: `pkg/sulla-desktop/agent/tools/workflow/manifests.ts`
+- Validator: `pkg/sulla-desktop/agent/tools/workflow/validate_sulla_workflow.ts`
+- Execute: `pkg/sulla-desktop/agent/tools/workflow/execute_workflow.ts`
+- Restart: `pkg/sulla-desktop/agent/tools/workflow/restart_from_checkpoint.ts`
+- Import and status: `pkg/sulla-desktop/agent/tools/workflow/import_workflow.ts`, `set_workflow_status.ts`
+- Scheduler: `pkg/sulla-desktop/agent/services/WorkflowSchedulerService.ts`
+- Playbook engine: `pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts`
+- In-app controller: `pkg/sulla-desktop/agent/controllers/PlaybookController.ts`
 - Workflow service (manager and runner): `services/sulla-workflows/src/manager.ts`, `runner.ts`, `launcher.ts`
-- Models: `WorkflowModel`, `WorkflowCheckpointModel`, `WorkflowHistoryModel` under `pkg/rancher-desktop/agent/database/models/`
+- Models: `WorkflowModel`, `WorkflowCheckpointModel`, `WorkflowHistoryModel` under `pkg/sulla-desktop/agent/database/models/`

@@ -446,7 +446,7 @@ Logs are viewable in the Computer Use Settings window under a "History" tab.
 ## File Structure (Proposed)
 
 ```
-pkg/rancher-desktop/
+pkg/sulla-desktop/
   main/
     computerUseSettings/
       computerUseSettingsWindow.ts   — Electron BrowserWindow manager

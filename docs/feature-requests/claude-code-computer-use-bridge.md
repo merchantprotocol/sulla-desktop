@@ -8,7 +8,7 @@ This is a distinct feature from the generic Computer Use Agent (`computer-use-ag
 
 ## Why
 
-Sulla Desktop already spawns Claude Code inside Lima via `limactl shell claude` (see `pkg/rancher-desktop/main/claudeCodeTest.ts`). That pattern is a dead end for computer use: the VM is a Linux guest with no handle to the macOS window server, Accessibility API, or Core Graphics. Without a bridge:
+Sulla Desktop already spawns Claude Code inside Lima via `limactl shell claude` (see `pkg/sulla-desktop/main/claudeCodeTest.ts`). That pattern is a dead end for computer use: the VM is a Linux guest with no handle to the macOS window server, Accessibility API, or Core Graphics. Without a bridge:
 
 - The Claude Code built-in `computer-use` MCP (macOS-only) cannot load inside the guest
 - `xdotool` inside the guest would drive a nonexistent X server, not the host
@@ -20,14 +20,14 @@ A host-side MCP server solves this without giving up the VM's isolation for othe
 
 Every computer-use implementation has to solve three problems: screen capture, coordinate scaling, and input injection. Sulla has already solved the first two for a different purpose (recording) — and solved them better than most computer-use demos.
 
-1. **Screen capture with context** — `pkg/rancher-desktop/pages/capture-studio/composables/useMediaSources.ts` already handles multi-display selection, native resolution acquisition, and quality presets (480p / 720p / 1080p / 4K). An MCP `screenshot` action is a thin wrapper.
+1. **Screen capture with context** — `pkg/sulla-desktop/pages/capture-studio/composables/useMediaSources.ts` already handles multi-display selection, native resolution acquisition, and quality presets (480p / 720p / 1080p / 4K). An MCP `screenshot` action is a thin wrapper.
 2. **Model-aware coordinate scaling** — Capture Studio already renders at a chosen resolution while knowing the native framebuffer. That is exactly the transform Claude's computer use needs:
    - Claude Opus 4.7 — clip long edge to 2576px (1:1 for most displays)
    - Claude Sonnet 4.6 / Haiku 4.5 — clip long edge to 1568px
    The bridge receives coordinates in the downscaled frame from Claude, translates back to native pixels for `CGEventPost`.
 3. **Audio as a first-class agent input** — no off-the-shelf computer-use stack offers this. The existing audio driver (mic via WebM/Opus, speaker via CoreAudio loopback, RNNoise + VAD) can feed transcribed audio into the same turn as a screenshot. "Act on what the person on the call just asked" becomes answerable in one tool call.
 4. **Teleprompter overlay for human-in-the-loop** — the floating UI already built for Capture Studio can render Claude's next action before it fires, giving visible agent reasoning and a natural confirmation surface.
-5. **Sandboxing pattern already drafted** — the AppleScript tool's `APP_REGISTRY` gate (`pkg/rancher-desktop/agent/tools/applescript/applescript_execute.ts`) ports directly to computer use: the user pre-authorizes which apps Claude may click into. Same pattern as `computer-use-settings.md`.
+5. **Sandboxing pattern already drafted** — the AppleScript tool's `APP_REGISTRY` gate (`pkg/sulla-desktop/agent/tools/applescript/applescript_execute.ts`) ports directly to computer use: the user pre-authorizes which apps Claude may click into. Same pattern as `computer-use-settings.md`.
 
 ## Two Deployment Paths
 
@@ -179,7 +179,7 @@ Additions specific to this bridge:
 ## Relationship to Existing Systems
 
 - **`claudeCodeTest.ts`** — current "throwaway test path" is replaced by a proper managed Claude Code process with MCP wiring. The spawn pattern (`limactl shell`) stays the same for Path B; for Path A it becomes a direct child process.
-- **MCP Bridge** (`pkg/rancher-desktop/agent/integrations/mcp/Bridge.ts`) — already handles multiple MCP server connections. The host-side `computer_use` MCP registers through the same bridge. Sulla's own agent (the one from `computer-use-agent.md`) and Claude Code both consume the same MCP surface.
+- **MCP Bridge** (`pkg/sulla-desktop/agent/integrations/mcp/Bridge.ts`) — already handles multiple MCP server connections. The host-side `computer_use` MCP registers through the same bridge. Sulla's own agent (the one from `computer-use-agent.md`) and Claude Code both consume the same MCP surface.
 - **Capture Studio** — this feature is the first non-recording consumer of its screen capture path. The useMediaSources composable may need a headless mode that captures without mounting the Vue UI.
 - **Audio Driver** — provides optional `audio_context` attachment on screenshot responses. No new capture path needed; just a read from the existing transcript buffer.
 - **AppleScript Tool / Computer Use Settings** — shares the `APP_REGISTRY` gate. A user who has already authorized Calendar for AppleScript control does not need to re-authorize it for computer-use clicks.
@@ -226,7 +226,7 @@ Prioritize this first. The MCP scaffolding is boring; `CGEventPost` has the real
 ## File Structure (Proposed)
 
 ```
-pkg/rancher-desktop/
+pkg/sulla-desktop/
   main/
     claudeCode/
       host.ts                     — Path A: direct child process manager

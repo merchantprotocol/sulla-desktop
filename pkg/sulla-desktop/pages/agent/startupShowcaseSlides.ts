@@ -50,7 +50,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Agents work in their own Linux VM, and your home folder isn\'t mounted inside it. They see the files you share through Files. Reaching the Mac is a setting you turn on.',
     art:     'sandbox',
     points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
-    sources: ['resources/sulla-docs/environment/architecture.md (Sulla VM)', 'pkg/rancher-desktop/sulla.ts (host-access-sync)'],
+    sources: ['resources/sulla-docs/environment/architecture.md (Sulla VM)', 'pkg/sulla-desktop/sulla.ts (host-access-sync)'],
   },
   {
     id:      'agents',
@@ -68,7 +68,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Turn a task you repeat into a routine and give it a schedule. Sulla runs it in the background, no reminder needed.',
     art:     'routines',
     points:  ['Turn a repeated task into a routine', 'Give it a schedule', 'Runs in the background, no reminder needed'],
-    sources: ['resources/sulla-docs/workflows/authoring.md', 'pkg/rancher-desktop/sulla.ts (workflow-scheduler)'],
+    sources: ['resources/sulla-docs/workflows/authoring.md', 'pkg/sulla-desktop/sulla.ts (workflow-scheduler)'],
   },
   {
     id:      'vault',
@@ -96,8 +96,8 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     art:     'models',
     points:  [`${ SHOWCASE_MODEL_NAMES.slice(0, 3).join(', ') }`, `${ SHOWCASE_MODEL_NAMES.slice(3).join(', ') }`, 'Set a primary and a backup in settings'],
     sources: [
-      'pkg/rancher-desktop/agent/integrations/native/ai_infrastructure.ts',
-      'pkg/rancher-desktop/components/settings/sections/ModelsSection.vue',
+      'pkg/sulla-desktop/agent/integrations/native/ai_infrastructure.ts',
+      'pkg/sulla-desktop/components/settings/sections/ModelsSection.vue',
     ],
   },
   {
@@ -107,7 +107,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'CRMs, ad platforms, databases, Slack, GitHub. Connect an account once and agents call it through the vault, so the key stays out of the chat.',
     art:     'integrations',
     points:  ['CRMs, ad platforms and databases', 'Slack and GitHub', 'Called through the vault, so keys stay out of the chat'],
-    sources: ['pkg/rancher-desktop/agent/integrations/native/index.ts', 'resources/sulla-docs/tools/vault.md (proxy pattern)'],
+    sources: ['pkg/sulla-desktop/agent/integrations/native/index.ts', 'resources/sulla-docs/tools/vault.md (proxy pattern)'],
   },
   {
     id:      'heartbeat',

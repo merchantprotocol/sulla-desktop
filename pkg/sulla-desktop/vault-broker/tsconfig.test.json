@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@pkg/*": ["pkg/rancher-desktop/*"],
+      "@pkg/*": ["pkg/sulla-desktop/*"],
       "@sulla/vault-crypto": ["packages/vault-crypto/src/index.ts"]
     }
   }

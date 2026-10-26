@@ -115,7 +115,7 @@ function onShow(
   const appRoot = app.getAppPath();
   const htmlPath = app.isPackaged
     ? path.join(appRoot, 'dist', 'app', 'assets', 'more-menu.html')
-    : path.join(appRoot, 'pkg', 'rancher-desktop', 'assets', 'more-menu.html');
+    : path.join(appRoot, 'pkg', 'sulla-desktop', 'assets', 'more-menu.html');
 
   // Pass theme as query param
   win.loadFile(htmlPath, { query: { theme } });

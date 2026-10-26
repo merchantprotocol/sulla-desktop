@@ -16,7 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@
 import yaml from 'yaml';
 
 const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-runtime-compose-'));
-const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/rancher-desktop/assets/sulla-docker-compose.yaml'), 'utf8'));
+const assetCompose = yaml.parse(fs.readFileSync(path.resolve('pkg/sulla-desktop/assets/sulla-docker-compose.yaml'), 'utf8'));
 // All '@pkg/assets/*' imports resolve to one stub, so the stub carries the
 // compose definition plus the dependency versions sullaRuntimeBackend.ts reads at load.
 const assetStub: any = {};

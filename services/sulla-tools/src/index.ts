@@ -15,12 +15,12 @@ import { Pool } from 'pg';
 import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToolExecutionContext } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
-import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
-import { HttpDesktopExecutor } from '../../../pkg/rancher-desktop/runtime/desktopExecutor.js';
-import { RelayDesktopExecutor } from '../../../pkg/rancher-desktop/runtime/relayDesktopExecutor.js';
+import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import { HttpDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/desktopExecutor.js';
+import { RelayDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/relayDesktopExecutor.js';
 
-import type { ToolExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/executionContext.js';
-import type { DesktopExecutor } from '../../../pkg/rancher-desktop/runtime/desktopExecutor.js';
+import type { ToolExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/executionContext.js';
+import type { DesktopExecutor } from '../../../pkg/sulla-desktop/runtime/desktopExecutor.js';
 
 validateConfig();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
