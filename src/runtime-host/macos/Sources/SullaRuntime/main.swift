@@ -352,10 +352,13 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         return config
     }
 
-    /// Drives the balloon so the guest's memory follows what it uses.
-    /// SULLA_RUNTIME_BALLOON=off leaves the VM at its configured size.
+    /// Drives the balloon so the guest's memory follows what it uses. Opt-in
+    /// (SULLA_RUNTIME_BALLOON=on): the first real boot showed the controller shrinking the VM,
+    /// the guest then counting the balloon's pages as unavailable, its low-memory alarm firing,
+    /// and the controller growing straight back to ~20 GB (host footprint 21.8 GB, worse than
+    /// with no controller). It stays out of the default path until that is fixed.
     private func makeBalloonController() -> BalloonController? {
-        guard ProcessInfo.processInfo.environment["SULLA_RUNTIME_BALLOON"] != "off",
+        guard ProcessInfo.processInfo.environment["SULLA_RUNTIME_BALLOON"] == "on",
               let device = machine.memoryBalloonDevices.compactMap({ $0 as? VZVirtioTraditionalMemoryBalloonDevice }).first
         else { return nil }
         return BalloonController(
