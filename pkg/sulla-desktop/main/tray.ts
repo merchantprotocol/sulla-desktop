@@ -28,26 +28,6 @@ import { openPreferences } from '@pkg/window/preferences';
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
-/** Height of a menu-bar icon in points. macOS draws a status item at the image's own size. */
-const TRAY_ICON_HEIGHT = 18;
-
-/**
- * Load a tray icon scaled to menu-bar size. The artwork is much larger than a
- * status item, and macOS would show it at full size (blank or clipped), so
- * render it at 2x pixels and mark it as a 2x image.
- */
-function loadTrayImage(file: string): Electron.NativeImage {
-  const source = Electron.nativeImage.createFromPath(file);
-
-  if (source.isEmpty()) {
-    return source;
-  }
-
-  const png = source.resize({ height: TRAY_ICON_HEIGHT * 2, quality: 'best' }).toPNG();
-
-  return Electron.nativeImage.createFromBuffer(png, { scaleFactor: 2 });
-}
-
 /**
  * Tray is a class to manage the tray icon for sulla-desktop.
  */
@@ -71,7 +51,7 @@ export class Tray {
     {
       id:    'main',
       label: 'Open Sulla',
-      icon:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
+      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
       type:  'normal',
       click() {
         openMain();
@@ -101,7 +81,7 @@ export class Tray {
     {
       id:    'docker-dashboard',
       label: 'Docker Dashboard',
-      icon:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
+      icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
       type:  'normal',
       click() {
         openDockerDashboard();
@@ -141,7 +121,7 @@ export class Tray {
         {
           id:    'issues',
           label: 'Issues',
-          icon:  path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+          icon:  path.join(paths.resources, 'icons', 'issue-opened-16.png'),
           click() {
             openUrlInApp('https://sulladesktop.com/support');
           },
@@ -171,11 +151,11 @@ export class Tray {
   };
 
   private readonly trayIconsMacOs = {
-    stopped:  path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
-    starting: path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
-    started:  path.join(paths.resources, 'icons', 'sulla-icon.png'),
-    stopping: path.join(paths.resources, 'icons', 'sulla-muted-icon.png'),
-    error:    path.join(paths.resources, 'icons', 'sulla-icon.png'),
+    stopped:  path.join(paths.resources, 'icons', 'logo-tray-stopped-Template@2x.png'),
+    starting: path.join(paths.resources, 'icons', 'logo-tray-starting-Template@2x.png'),
+    started:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
+    stopping: path.join(paths.resources, 'icons', 'logo-tray-stopping-Template@2x.png'),
+    error:    path.join(paths.resources, 'icons', 'logo-tray-error-Template@2x.png'),
   };
 
   private readonly trayIcons = {
@@ -190,7 +170,7 @@ export class Tray {
 
   private constructor(settings: Settings) {
     this.settings = settings;
-    this.trayMenu = new Electron.Tray(loadTrayImage(this.trayIconSet.starting));
+    this.trayMenu = new Electron.Tray(this.trayIconSet.starting);
     this.trayMenu.setToolTip('Sulla Desktop');
     const menuItem = this.contextMenuItems.find(item => item.id === 'container-engine');
 
@@ -327,6 +307,10 @@ export class Tray {
       logo = this.trayIconSet.started;
     } else if (this.backendState === State.ERROR) {
       logo = this.trayIconSet.error;
+    } else if (this.backendState === State.STOPPING) {
+      logo = this.trayIconSet.stopping;
+    } else if (this.backendState === State.STOPPED) {
+      logo = this.trayIconSet.stopped;
     }
 
     const containerEngineMenu = this.contextMenuItems.find(item => item.id === 'container-engine');
@@ -348,7 +332,7 @@ export class Tray {
         item.enabled = !this.backendIsLocked;
       });
 
-    this.trayMenu.setImage(loadTrayImage(logo));
+    this.trayMenu.setImage(logo);
 
     // Forward state to the custom panel
     sendPanelState({ docker: ready ? 'STARTED' : 'STOPPED' });
