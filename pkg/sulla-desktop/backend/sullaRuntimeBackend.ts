@@ -1018,7 +1018,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         env: 'SULLA_THREAT_PROXY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-threat-proxy:latest',
       });
     }
-    compose.services.threat_proxy = threatProxyComposeService({ ...image, image: resolvedImage });
+    compose.services.threat_proxy = threatProxyComposeService({ ...composeImageFields(image), image: resolvedImage });
   }
 
   /**
