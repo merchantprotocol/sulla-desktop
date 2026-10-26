@@ -6,8 +6,8 @@ The heartbeat system is an autonomous background agent loop that periodically tr
 
 The system consists of two core components:
 
-- **HeartbeatService** (`pkg/rancher-desktop/agent/services/HeartbeatService.ts`) -- A singleton scheduler that runs a check every minute, determines whether a heartbeat is due based on the configured delay interval, and triggers execution when the time arrives.
-- **HeartbeatNode** (`pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts`) -- A graph node that gathers project and skills context, builds a rich autonomous prompt, and spawns a fresh AgentGraph sub-execution for each cycle. It loops until the agent reports DONE, BLOCKED, or hits the maximum cycle count (default 10).
+- **HeartbeatService** (`pkg/sulla-desktop/agent/services/HeartbeatService.ts`) -- A singleton scheduler that runs a check every minute, determines whether a heartbeat is due based on the configured delay interval, and triggers execution when the time arrives.
+- **HeartbeatNode** (`pkg/sulla-desktop/agent/nodes/HeartbeatNode.ts`) -- A graph node that gathers project and skills context, builds a rich autonomous prompt, and spawns a fresh AgentGraph sub-execution for each cycle. It loops until the agent reports DONE, BLOCKED, or hits the maximum cycle count (default 10).
 
 ### Execution Flow
 

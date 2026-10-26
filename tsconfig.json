@@ -20,7 +20,7 @@
     "baseUrl": ".",
     "paths": {
       "@pkg/*": [
-        "pkg/rancher-desktop/*"
+        "pkg/sulla-desktop/*"
       ],
       "@shell/*": [
         "./node_modules/@rancher/shell/*"

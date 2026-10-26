@@ -184,7 +184,7 @@ test-install:
 test-plans:
     @echo "🧪 Running Active Plan Management Mock Tests (no server required)"
     @echo "Tests use mocked dependencies - completely isolated"
-    yarn test pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
+    yarn test pkg/sulla-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
 
 # Run all tests
 test-all:
@@ -278,69 +278,69 @@ test-takeover:
     @echo "  ⚠️ Strike 2: Unhealthy plans (60-120s) - should pause"
     @echo "  💀 Strike 3: Stale plans (>120s) - should takeover"
     @echo ""
-    yarn test pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts --verbose
+    yarn test pkg/sulla-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts --verbose
 
 # Test with coverage report
 test-coverage:
     @echo "📊 Running tests with coverage report..."
-    yarn test --coverage pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
+    yarn test --coverage pkg/sulla-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
 
 # Run InputHandlerNode mock tests
 test:
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/SkillGraph.integration.test.ts --detectOpenHandles
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/SkillGraph.integration.test.ts --detectOpenHandles
 
 # Run PlanRetrievalNode mock tests  
 test-retrieval:
     @echo "📋 Running PlanRetrievalNode Mock Tests (intent classification, skill selection, rule-based detection)"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
 
 # Run InputHandlerNode production tests (legitimate scenarios)
 test-input-prod:
     @echo "🏭 Running InputHandlerNode Production Tests (real user scenarios, proper types)"
     @echo "Testing: injection detection, rate limiting, spam detection, summarization triggers"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/InputHandlerNode.production.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/InputHandlerNode.production.test.ts
 
 # Run advanced InputHandler tests (real service integration)
 test-advanced-input:
     @echo "🔥 Running Advanced InputHandler Tests"
     @echo "Testing: real ConversationSummaryService and ObservationalSummaryService integration"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/InputHandler.advanced.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/InputHandler.advanced.test.ts
 
 # Run single simple InputHandler test (start small)
 test-simple-input:
     @echo "🧪 Running Single Simple InputHandler Test"
     @echo "Testing: basic message processing with minimal setup"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/InputHandler.simple.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/InputHandler.simple.test.ts
 
 # Run single simple PlanRetrievalNode test (start small)
 test-simple-plan:
     @echo "📋 Running Single Simple PlanRetrievalNode Test"
     @echo "Testing: basic intent classification with minimal setup"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlanRetrievalNode.simple.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlanRetrievalNode.simple.test.ts
 
 # Run advanced PlanRetrievalNode tests (adversarial scenarios)
 test-advanced-plan:
     @echo "🔥 Running Advanced PlanRetrievalNode Tests"
     @echo "Testing: malformed responses, timeouts, massive content, concurrency"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlanRetrievalNode.advanced.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlanRetrievalNode.advanced.test.ts
 
 # Run simple PlannerNode test (start small)
 test-simple-planner:
     @echo "📅 Running Simple PlannerNode Test"
     @echo "Testing: basic plan generation with minimal setup"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlannerNode.simple.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlannerNode.simple.test.ts
 
 # Run simple SullaSettingsModel test (start small)
 test-simple-settings:
     @echo "⚙️ Running Simple SullaSettingsModel Test"
     @echo "Testing: basic get/set operations with file fallback"
-    npx jest pkg/rancher-desktop/agent/database/models/__tests__/SullaSettingsModel.simple.test.ts
+    npx jest pkg/sulla-desktop/agent/database/models/__tests__/SullaSettingsModel.simple.test.ts
 
 # Run ReAct loop integration test
 test-react-loop:
     @echo "🔄 Running ReAct Loop Integration Test"
     @echo "Testing: ReasoningNode → ActionNode → ReasoningNode cycle until goal achieved"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/ReActLoop.simple.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/ReActLoop.simple.test.ts
 
 # ============================================================================
 # SKILLGRAPH TESTS
@@ -351,14 +351,14 @@ test-skillgraph-core:
     @echo "🎯 Running SkillGraph CORE PRODUCTION Test"
     @echo "Testing: TypeScript compatibility, real state mutations, actual node execution"
     @echo "Purpose: Validate core functionality catches real production issues"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/SkillGraph.core-production.test.ts --verbose
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/SkillGraph.core-production.test.ts --verbose
 
 # Run SkillGraph retry scenarios test (validates retry logic with simulated failures)
 test-skillgraph-retries:
     @echo "🔄 Running SkillGraph RETRY SCENARIOS Test"
     @echo "Testing: Planner retries (3 attempts), Reasoning retries (3 attempts), Critic verification"
     @echo "Purpose: Validate retry logic works when LLM responses fail initially"
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/SkillGraph.retry-scenarios.test.ts --verbose
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/SkillGraph.retry-scenarios.test.ts --verbose
 
 # ============================================================================
 # NODE TESTS
@@ -368,9 +368,9 @@ test-skillgraph-retries:
 test-nodes:
     @echo "🧪 Running All Node Mock Tests (InputHandler → PlanRetrieval → ActivePlan)"
     @echo "Testing complete conversation flow..."
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/InputHandlerNode.mock.test.ts
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
-    npx jest pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/InputHandlerNode.mock.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
+    npx jest pkg/sulla-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
 
 # Build whisper-cli from source (requires cmake). Builds a static binary with Metal acceleration.
 build-whisper:

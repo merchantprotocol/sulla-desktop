@@ -319,8 +319,8 @@ sulla browser/snapshot '{"assetId":"my-tab"}'              # confirm loaded
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/browser/`
-- Manifests: `pkg/rancher-desktop/agent/tools/browser/manifests.ts`
-- Tab registry: `pkg/rancher-desktop/main/browserTabs/TabRegistry.ts`
-- Guest bridge (page-side runtime): `pkg/rancher-desktop/main/browserTabs/GuestBridge.ts`
+- Tool dir: `pkg/sulla-desktop/agent/tools/browser/`
+- Manifests: `pkg/sulla-desktop/agent/tools/browser/manifests.ts`
+- Tab registry: `pkg/sulla-desktop/main/browserTabs/TabRegistry.ts`
+- Guest bridge (page-side runtime): `pkg/sulla-desktop/main/browserTabs/GuestBridge.ts`
 - Screenshot store: `~/sulla/artifacts/screenshots/`

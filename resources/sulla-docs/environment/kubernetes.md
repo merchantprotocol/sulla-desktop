@@ -86,7 +86,7 @@ backend. No Helm tool is registered in these categories.
 
 ## Reference
 
-- kubectl tools: `pkg/rancher-desktop/agent/tools/kubectl/`
-- k3s install script: `pkg/rancher-desktop/assets/scripts/install-k3s`
-- Cluster lifecycle: `pkg/rancher-desktop/backend/k3sHelper.ts`
-- Command runner: `pkg/rancher-desktop/agent/tools/util/CommandRunner.ts`
+- kubectl tools: `pkg/sulla-desktop/agent/tools/kubectl/`
+- k3s install script: `pkg/sulla-desktop/assets/scripts/install-k3s`
+- Cluster lifecycle: `pkg/sulla-desktop/backend/k3sHelper.ts`
+- Command runner: `pkg/sulla-desktop/agent/tools/util/CommandRunner.ts`

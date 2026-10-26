@@ -8,9 +8,9 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { githubRepositoryFromArgs, scopeToolExecutionContext as scopeCredentialExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/credentialScope.js';
-import type { ToolExecutionContext } from '../../../pkg/rancher-desktop/agent/tools/executionContext.js';
-import type { ToolExecutionTarget } from '../../../pkg/rancher-desktop/agent/tools/executionTargets.js';
+import { githubRepositoryFromArgs, scopeToolExecutionContext as scopeCredentialExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/credentialScope.js';
+import type { ToolExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/executionContext.js';
+import type { ToolExecutionTarget } from '../../../pkg/sulla-desktop/agent/tools/executionTargets.js';
 
 export interface CatalogTool {
   name:            string;
@@ -20,12 +20,12 @@ export interface CatalogTool {
   executionTarget: ToolExecutionTarget;
 }
 
-let registry: typeof import('../../../pkg/rancher-desktop/agent/tools/registry.js').toolRegistry;
+let registry: typeof import('../../../pkg/sulla-desktop/agent/tools/registry.js').toolRegistry;
 const tools = new Map<string, CatalogTool>();
 
 export async function initializeCatalog(): Promise<void> {
-  await import('../../../pkg/rancher-desktop/agent/tools/manifests.js');
-  ({ toolRegistry: registry } = await import('../../../pkg/rancher-desktop/agent/tools/registry.js'));
+  await import('../../../pkg/sulla-desktop/agent/tools/manifests.js');
+  ({ toolRegistry: registry } = await import('../../../pkg/sulla-desktop/agent/tools/registry.js'));
   for (const { category } of registry.getCategoriesWithDescriptions()) {
     for (const name of registry.getToolNamesForCategory(category)) {
       tools.set(name, {

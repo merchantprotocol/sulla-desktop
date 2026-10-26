@@ -163,5 +163,5 @@ Always inspect `successBoolean` before using `responseString`. Common failure mo
 
 ## Reference
 
-- Tool: `pkg/rancher-desktop/agent/tools/applescript/applescript_execute.ts`
-- Manifest: `pkg/rancher-desktop/agent/tools/applescript/manifests.ts`
+- Tool: `pkg/sulla-desktop/agent/tools/applescript/applescript_execute.ts`
+- Manifest: `pkg/sulla-desktop/agent/tools/applescript/manifests.ts`

@@ -8,7 +8,7 @@ authenticated Sulla Files service. It is off unless the service starts with
 ## Native source boundary increment
 
 The repository contains an experimental native source broker in
-`pkg/rancher-desktop/main/sullaFilesSourceGateway.ts`. Electron registers one
+`pkg/sulla-desktop/main/sullaFilesSourceGateway.ts`. Electron registers one
 exact regular file only after a native chooser, pins its descriptor/device/inode,
 and returns an opaque random handle. Host paths and source capabilities never
 enter Sulla VM or a container.

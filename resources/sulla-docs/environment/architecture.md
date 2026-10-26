@@ -16,7 +16,7 @@ Agent turns run through Sulla's own graph + model-provider layer, not a single h
 
 ## Electron Main Process
 
-Application service registration: `pkg/rancher-desktop/sulla.ts`
+Application service registration: `pkg/sulla-desktop/sulla.ts`
 
 `instantiateSullaStart()` bootstraps application storage and registers services
 with ServiceLifecycleManager, which starts them by declared dependency.

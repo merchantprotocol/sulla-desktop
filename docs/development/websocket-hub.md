@@ -63,7 +63,7 @@ Every major subsystem in Sulla -- the frontend chat UI, the backend agent dispat
 
 ## WebSocketClientService
 
-**File:** `pkg/rancher-desktop/agent/services/WebSocketClientService.ts`
+**File:** `pkg/sulla-desktop/agent/services/WebSocketClientService.ts`
 
 The `WebSocketClientService` is a singleton that manages all WebSocket connections from the Electron app to the hub. Each logical channel gets its own `WebSocketConnection` instance.
 
@@ -143,37 +143,37 @@ interface WebSocketMessage {
 
 ### BackendGraphWebSocketService
 
-**File:** `pkg/rancher-desktop/agent/services/BackendGraphWebSocketService.ts`
+**File:** `pkg/sulla-desktop/agent/services/BackendGraphWebSocketService.ts`
 
 The main-process agent dispatcher. It subscribes to `sulla-desktop`, `heartbeat`, `calendar_event`, and all custom agent channels. When a `user_message` arrives, it resolves the correct agent persona via `GraphRegistry`, creates or reuses an `AgentGraph` for the thread, and executes the graph. It handles `stop_run` (abort) and `new_conversation` (reset) as well.
 
 ### FrontendGraphWebSocketService
 
-**File:** `pkg/rancher-desktop/agent/services/FrontendGraphWebSocketService.ts`
+**File:** `pkg/sulla-desktop/agent/services/FrontendGraphWebSocketService.ts`
 
 The renderer-process counterpart. It connects to a single channel (default `sulla-desktop`), handles incoming `user_message` events, and executes the agent graph in the renderer. Supports `switchChannel()` for multi-agent UIs. Registers/deregisters itself in the ActiveAgentsRegistry.
 
 ### SchedulerService
 
-**File:** `pkg/rancher-desktop/agent/services/SchedulerService.ts`
+**File:** `pkg/sulla-desktop/agent/services/SchedulerService.ts`
 
 Uses `node-schedule` to fire calendar events at their scheduled times. When an event fires, the scheduler sends a `user_message` to the `sulla-desktop` channel (frontend-first), waits up to 3 s for a `scheduler_ack`, and falls back to the `heartbeat` channel (backend) if the frontend does not respond.
 
 ### StartupProgressController
 
-**File:** `pkg/rancher-desktop/pages/agent/StartupProgressController.ts`
+**File:** `pkg/sulla-desktop/pages/agent/StartupProgressController.ts`
 
 Probes `ws://localhost:30118/` during app startup. A successful WebSocket connection means the Kubernetes services are running and the startup overlay can be dismissed.
 
 ### send_notification_to_human Tool
 
-**File:** `pkg/rancher-desktop/agent/tools/bridge/send_notification_to_human.ts`
+**File:** `pkg/sulla-desktop/agent/tools/bridge/send_notification_to_human.ts`
 
 An agent tool that displays a desktop notification popup to the human. The notification persists on-screen for 5 minutes past any mouse or keyboard activity, ensuring important messages are not missed.
 
 ## Health Monitoring
 
-The debug event handler in `pkg/rancher-desktop/main/sullaDebugEvents.ts` exposes several IPC endpoints for monitoring the hub:
+The debug event handler in `pkg/sulla-desktop/main/sullaDebugEvents.ts` exposes several IPC endpoints for monitoring the hub:
 
 | IPC Handle | Purpose |
 |-----------|---------|
@@ -185,7 +185,7 @@ The debug event handler in `pkg/rancher-desktop/main/sullaDebugEvents.ts` expose
 
 ## File-Based Logging
 
-All WebSocket infrastructure events are logged to disk via **SullaLogger** (`pkg/rancher-desktop/agent/services/SullaLogger.ts`). Log files are written to `~/sulla/logs/`:
+All WebSocket infrastructure events are logged to disk via **SullaLogger** (`pkg/sulla-desktop/agent/services/SullaLogger.ts`). Log files are written to `~/sulla/logs/`:
 
 | File | Contents |
 |------|----------|
@@ -203,7 +203,7 @@ To investigate a "message went into a black hole" scenario, check `websocket.log
 
 ## Deployment
 
-The WebSocket server is defined in `pkg/rancher-desktop/assets/sulla-deployments.yaml`:
+The WebSocket server is defined in `pkg/sulla-desktop/assets/sulla-deployments.yaml`:
 
 - **Image:** `byrdziak/sulla-websocket:latest`
 - **Container port:** 8080

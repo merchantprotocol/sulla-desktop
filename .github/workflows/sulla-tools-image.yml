@@ -5,9 +5,9 @@ on:
     tags: ['v*']
     paths:
       - 'services/sulla-tools/**'
-      - 'pkg/rancher-desktop/agent/**'
-      - 'pkg/rancher-desktop/runtime/**'
-      - 'pkg/rancher-desktop/vault-broker/**'
+      - 'pkg/sulla-desktop/agent/**'
+      - 'pkg/sulla-desktop/runtime/**'
+      - 'pkg/sulla-desktop/vault-broker/**'
       - '.github/workflows/sulla-tools-image.yml'
 permissions:
   contents: read

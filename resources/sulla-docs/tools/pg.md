@@ -12,7 +12,7 @@ Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) 
 | User | `sulla` |
 | Password | Read by the app from the `sullaServicePassword` setting via `SullaSettingsModel.getServicePassword()`. Never print it. |
 
-The agent doesn't authenticate manually — the `pg/*` tools handle the connection via a pool. Pool settings are at `pkg/rancher-desktop/agent/database/PostgresClient.ts:38-42`: max 20 connections (override with `SULLA_DATABASE_POOL_MAX`), 30s idle timeout, 2s connect timeout. `SULLA_DATABASE_URL` replaces the host/user/password config.
+The agent doesn't authenticate manually — the `pg/*` tools handle the connection via a pool. Pool settings are at `pkg/sulla-desktop/agent/database/PostgresClient.ts:38-42`: max 20 connections (override with `SULLA_DATABASE_POOL_MAX`), 30s idle timeout, 2s connect timeout. `SULLA_DATABASE_URL` replaces the host/user/password config.
 
 ## Tools
 
@@ -188,11 +188,11 @@ Take a backup first if the write deletes or rewrites data you can't rebuild.
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/pg/`
-- Manifest: `pkg/rancher-desktop/agent/tools/pg/manifests.ts`
-- Pool config: `pkg/rancher-desktop/agent/database/PostgresClient.ts:38-42`
-- Migrations: `pkg/rancher-desktop/agent/database/migrations/`
-- Models (preferred over raw SQL): `pkg/rancher-desktop/agent/database/models/`
+- Tool dir: `pkg/sulla-desktop/agent/tools/pg/`
+- Manifest: `pkg/sulla-desktop/agent/tools/pg/manifests.ts`
+- Pool config: `pkg/sulla-desktop/agent/database/PostgresClient.ts:38-42`
+- Migrations: `pkg/sulla-desktop/agent/database/migrations/`
+- Models (preferred over raw SQL): `pkg/sulla-desktop/agent/database/models/`
 
 ## Projects tables
 

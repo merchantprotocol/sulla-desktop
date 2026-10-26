@@ -26,7 +26,7 @@ The agent should be able to explain Sulla Cloud accurately without inventing fea
 
 **Secretary mode** — local meeting transcription + auto-extracted action items is **shipped today** (`Cmd+Shift+S` to start; see `desktop/secretary-mode.md`). The Cloud-routed Phase 2 — handling incoming conversations regardless of whether the user's machine is on — is the aspirational extension. The wiring (gateway sessions + desktop relay to Cloudflare Workers) is in place.
 
-**Threat-proxy URL filtering** — URLhaus and VirusTotal lookups are in the Desktop code (`pkg/rancher-desktop/agent/integrations/native/security.ts`). Whether it's bundled as an Enterprise Gateway value driver is a business decision, not code. The other feeds named in older notes (Quad9, SafeBrowsing) aren't in that file.
+**Threat-proxy URL filtering** — URLhaus and VirusTotal lookups are in the Desktop code (`pkg/sulla-desktop/agent/integrations/native/security.ts`). Whether it's bundled as an Enterprise Gateway value driver is a business decision, not code. The other feeds named in older notes (Quad9, SafeBrowsing) aren't in that file.
 
 ## Pricing tiers (current targets)
 
@@ -61,8 +61,8 @@ Pairing lets Sulla Mobile send work to a paired Cloud (or Desktop) instance. The
 ## Signup & account provisioning
 
 Shipped. The user signs up / signs in via the **SullaCloudCard** Vue component — surfaces in:
-- `pkg/rancher-desktop/components/account/SullaCloudCard.vue` — the card itself (sign-in / sign-out, displays tier + status)
-- `pkg/rancher-desktop/components/routines/MarketplaceTab.vue` — embeds the card at the top of the Use Cases tab (the file keeps its old name)
+- `pkg/sulla-desktop/components/account/SullaCloudCard.vue` — the card itself (sign-in / sign-out, displays tier + status)
+- `pkg/sulla-desktop/components/routines/MarketplaceTab.vue` — embeds the card at the top of the Use Cases tab (the file keeps its old name)
 
 Once signed in, the card fetches status (tier, minutes, pairing) and keeps itself in sync. The agent can direct the user there via:
 ```bash
@@ -93,5 +93,5 @@ If a user asks about Cloud features, point them at the Use Cases tab — the car
 ## Reference
 
 - Identity / goals: `~/sulla/identity/business/identity.md`, `~/sulla/identity/business/goals.md`
-- Cloud card: `pkg/rancher-desktop/components/account/SullaCloudCard.vue`
-- Cloud auth (desktop): `pkg/rancher-desktop/main/sullaCloudAuth.ts`
+- Cloud card: `pkg/sulla-desktop/components/account/SullaCloudCard.vue`
+- Cloud auth (desktop): `pkg/sulla-desktop/main/sullaCloudAuth.ts`

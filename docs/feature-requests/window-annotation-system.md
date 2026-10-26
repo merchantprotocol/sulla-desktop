@@ -105,7 +105,7 @@ Since the annotation overlay is a real Electron window rendered on screen, it is
 ## File Structure (Proposed)
 
 ```
-pkg/rancher-desktop/
+pkg/sulla-desktop/
   main/
     annotationWindow.ts          — Electron BrowserWindow manager for the overlay
   assets/

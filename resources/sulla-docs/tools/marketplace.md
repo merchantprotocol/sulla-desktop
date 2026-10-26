@@ -58,7 +58,7 @@ sulla marketplace/unpublish '{"kind":"function","slug":"my-tool","confirm":true}
 
 ## Reference
 
-- Agent tools: `pkg/rancher-desktop/agent/tools/marketplace/`
-- API client: `pkg/rancher-desktop/main/marketplace/client.ts`
-- Install pipeline: `pkg/rancher-desktop/main/marketplace/install.ts`, `databaseInstaller.ts`
-- Publish pipeline: `pkg/rancher-desktop/main/marketplace/publish.ts`, `bundleFiles.ts`, `manifestBuilder.ts`
+- Agent tools: `pkg/sulla-desktop/agent/tools/marketplace/`
+- API client: `pkg/sulla-desktop/main/marketplace/client.ts`
+- Install pipeline: `pkg/sulla-desktop/main/marketplace/install.ts`, `databaseInstaller.ts`
+- Publish pipeline: `pkg/sulla-desktop/main/marketplace/publish.ts`, `bundleFiles.ts`, `manifestBuilder.ts`

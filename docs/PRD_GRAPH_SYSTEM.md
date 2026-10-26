@@ -33,14 +33,14 @@ User message
 
 | File | Lines | Responsibility |
 |------|-------|----------------|
-| `pkg/rancher-desktop/agent/nodes/Graph.ts` | ~2859 | LangGraph-style DAG executor, playbook orchestration, sub-agent tracking, conversation/training logging, graph lifecycle |
-| `pkg/rancher-desktop/agent/nodes/BaseNode.ts` | ~2542 | Abstract base class: LLM calling, WebSocket dispatch, tool execution, speak/thinking extraction, streaming, prompt enrichment, training data, message budget |
-| `pkg/rancher-desktop/agent/nodes/AgentNode.ts` | ~631 | Main agent node: system prompt assembly, voice mode handling, outcome extraction (DONE/BLOCKED/CONTINUE), tool execution orchestration |
-| `pkg/rancher-desktop/agent/nodes/InputHandlerNode.ts` | ~416 | Input sanitization, rate-limiting, conversation batch summarization, token budget enforcement |
-| `pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts` | ~348 | Background task orchestrator: scans heartbeat-triggered workflows, spawns sub-agent graphs |
-| `pkg/rancher-desktop/agent/nodes/StreamBufferManager.ts` | ~290 | Buffers partial speech transcripts, detects pauses, manages serverless handoffs |
-| `pkg/rancher-desktop/agent/nodes/ThreadStateStore.ts` | ~191 | Thread state persistence (Redis with in-memory fallback) |
-| `pkg/rancher-desktop/agent/services/WebSocketClientService.ts` | - | WebSocket connection management, hub readiness gate, channel multiplexing |
+| `pkg/sulla-desktop/agent/nodes/Graph.ts` | ~2859 | LangGraph-style DAG executor, playbook orchestration, sub-agent tracking, conversation/training logging, graph lifecycle |
+| `pkg/sulla-desktop/agent/nodes/BaseNode.ts` | ~2542 | Abstract base class: LLM calling, WebSocket dispatch, tool execution, speak/thinking extraction, streaming, prompt enrichment, training data, message budget |
+| `pkg/sulla-desktop/agent/nodes/AgentNode.ts` | ~631 | Main agent node: system prompt assembly, voice mode handling, outcome extraction (DONE/BLOCKED/CONTINUE), tool execution orchestration |
+| `pkg/sulla-desktop/agent/nodes/InputHandlerNode.ts` | ~416 | Input sanitization, rate-limiting, conversation batch summarization, token budget enforcement |
+| `pkg/sulla-desktop/agent/nodes/HeartbeatNode.ts` | ~348 | Background task orchestrator: scans heartbeat-triggered workflows, spawns sub-agent graphs |
+| `pkg/sulla-desktop/agent/nodes/StreamBufferManager.ts` | ~290 | Buffers partial speech transcripts, detects pauses, manages serverless handoffs |
+| `pkg/sulla-desktop/agent/nodes/ThreadStateStore.ts` | ~191 | Thread state persistence (Redis with in-memory fallback) |
+| `pkg/sulla-desktop/agent/services/WebSocketClientService.ts` | - | WebSocket connection management, hub readiness gate, channel multiplexing |
 
 ### Services (30+)
 
@@ -171,7 +171,7 @@ Current implementation (AbortService + throwIfAborted):
 
 **As a developer, I want every conversation persisted with full message history, tool calls, and graph lifecycle events — and infrastructure events (WebSocket, chat, message dispatch) persisted with timestamps — so that I can debug issues and review past interactions.**
 
-All logs are written to `~/sulla/logs/` (or `$SULLA_HOME_DIR/logs/`) by a single service: **SullaLogger** (`pkg/rancher-desktop/agent/services/SullaLogger.ts`).
+All logs are written to `~/sulla/logs/` (or `$SULLA_HOME_DIR/logs/`) by a single service: **SullaLogger** (`pkg/sulla-desktop/agent/services/SullaLogger.ts`).
 
 SullaLogger provides two capabilities:
 

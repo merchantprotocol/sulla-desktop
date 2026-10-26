@@ -71,19 +71,19 @@ Remove or gut these files before porting. They will be replaced by audio-driver 
 
 | File | Reason |
 |------|--------|
-| `pkg/rancher-desktop/composables/voice/VoiceRecorderService.ts` | Replaced by audio-driver's mic capture + VAD |
-| `pkg/rancher-desktop/composables/voice/VoicePipeline.ts` | Replaced by audio-driver's lifecycle controller |
-| `pkg/rancher-desktop/agent/services/TranscriptionService.ts` | Replaced by audio-driver's gateway streaming |
-| `pkg/rancher-desktop/controllers/virtualAudioDetection.ts` | Audio-driver handles this natively via loopback detection |
+| `pkg/sulla-desktop/composables/voice/VoiceRecorderService.ts` | Replaced by audio-driver's mic capture + VAD |
+| `pkg/sulla-desktop/composables/voice/VoicePipeline.ts` | Replaced by audio-driver's lifecycle controller |
+| `pkg/sulla-desktop/agent/services/TranscriptionService.ts` | Replaced by audio-driver's gateway streaming |
+| `pkg/sulla-desktop/controllers/virtualAudioDetection.ts` | Audio-driver handles this natively via loopback detection |
 
 ### Files to Keep
 
 | File | Reason |
 |------|--------|
-| `pkg/rancher-desktop/composables/voice/TTSPlayerService.ts` | Audio-driver doesn't do TTS — keep this |
-| `pkg/rancher-desktop/composables/voice/VoiceLogger.ts` | Useful logging utility — keep |
-| `pkg/rancher-desktop/pages/AudioSettings.vue` | Will be updated to show audio-driver controls |
-| `pkg/rancher-desktop/pages/SecretaryMode.vue` | Will wire into audio-driver lifecycle |
+| `pkg/sulla-desktop/composables/voice/TTSPlayerService.ts` | Audio-driver doesn't do TTS — keep this |
+| `pkg/sulla-desktop/composables/voice/VoiceLogger.ts` | Useful logging utility — keep |
+| `pkg/sulla-desktop/pages/AudioSettings.vue` | Will be updated to show audio-driver controls |
+| `pkg/sulla-desktop/pages/SecretaryMode.vue` | Will wire into audio-driver lifecycle |
 
 ### Imports to Clean Up
 
@@ -101,7 +101,7 @@ Copy audio-driver's native macOS platform code into sulla-desktop.
 ### Target Location
 
 ```
-pkg/rancher-desktop/main/audio-driver/
+pkg/sulla-desktop/main/audio-driver/
 ├── platform/
 │   └── darwin/
 │       ├── index.js              ← Swift runner (keep as JS)
@@ -141,7 +141,7 @@ Port the audio-driver code as-is in JavaScript. This minimizes migration risk an
 
 - The `create-mirror` C binary must be compiled during `yarn build`, NOT at runtime
 - Add a build script to sulla-desktop's build pipeline: `clang -framework CoreAudio -framework AudioToolbox create-mirror.c -o create-mirror`
-- Update `electron-builder` config to include `pkg/rancher-desktop/main/audio-driver/platform/darwin/*` in `asarUnpack`
+- Update `electron-builder` config to include `pkg/sulla-desktop/main/audio-driver/platform/darwin/*` in `asarUnpack`
 - Copy entitlements from audio-driver's `entitlements.mac.plist` into sulla-desktop's signing config
 
 ---

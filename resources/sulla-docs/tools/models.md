@@ -34,7 +34,7 @@ Reads Sulla's own local usage tracking (`agent/usage/providerUsage.ts`). **Today
 
 ## Notes
 - All three are **read-only**. They never change the active model or touch credentials.
-- Provider/model state is owned by `ModelProviderService` (`pkg/rancher-desktop/agent/services/ModelProviderService.ts`). Agent turns resolve their model through this layer — see [`environment/architecture.md`](../environment/architecture.md).
+- Provider/model state is owned by `ModelProviderService` (`pkg/sulla-desktop/agent/services/ModelProviderService.ts`). Agent turns resolve their model through this layer — see [`environment/architecture.md`](../environment/architecture.md).
 - CLI providers (`claude-code`, `codex`) need their CLI installed **in the Sulla VM**; `models/providers` reports that per provider.
 
 → Back to [`tools/inventory.md`](inventory.md)

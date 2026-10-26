@@ -159,7 +159,7 @@ async function syncModules(fix: boolean): Promise<boolean> {
 // Run golangci-lint with the given arguments for the given OS, and return
 // whether the command succeeded.
 async function runGoLangCILint(platform: SupportedPlatform, ...args: string[]): Promise<boolean> {
-  const depVersionsPath = path.join('pkg', 'rancher-desktop', 'assets', 'dependencies.yaml');
+  const depVersionsPath = path.join('pkg', 'sulla-desktop', 'assets', 'dependencies.yaml');
   const dependencyVersions = await readDependencyVersions(depVersionsPath);
   const commandLine = ['go', 'run'];
 

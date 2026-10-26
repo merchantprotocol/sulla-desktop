@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 
-import { deriveCapabilitySigningKey } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
+import { deriveCapabilitySigningKey } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
 
 const installationSecret = process.env.SULLA_API_TOKEN ?? '';
 

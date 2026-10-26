@@ -86,7 +86,7 @@ Semantic testing is per-turn judgment. Structural validation is mechanical — a
 
 ## Reference
 
-- Workflow graph validator: `pkg/rancher-desktop/agent/tools/workflow/validate_sulla_workflow.ts`
-- Kind-schema validators: `pkg/rancher-desktop/agent/tools/marketplace/validate.ts`
-- Integration validator: `pkg/rancher-desktop/agent/integrations/configApi/…`
+- Workflow graph validator: `pkg/sulla-desktop/agent/tools/workflow/validate_sulla_workflow.ts`
+- Kind-schema validators: `pkg/sulla-desktop/agent/tools/marketplace/validate.ts`
+- Integration validator: `pkg/sulla-desktop/agent/integrations/configApi/…`
 - Per-artifact authoring guides: `workflows/authoring.md`, `functions/authoring.md`, `tools/marketplace.md`

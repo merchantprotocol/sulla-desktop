@@ -20,8 +20,8 @@ import Electron, { MessageBoxOptions } from 'electron';
 import _ from 'lodash';
 import semver from 'semver';
 
-import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
-import { getServiceLifecycleManager } from './pkg/rancher-desktop/agent/services/ServiceLifecycleManager';
+import { SullaSettingsModel } from './pkg/sulla-desktop/agent/database/models/SullaSettingsModel';
+import { getServiceLifecycleManager } from './pkg/sulla-desktop/agent/services/ServiceLifecycleManager';
 
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { BackendError, FailureDetails, State } from '@pkg/backend/backend';

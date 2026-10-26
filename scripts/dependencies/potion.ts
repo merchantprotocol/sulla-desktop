@@ -16,7 +16,7 @@ import { download } from 'scripts/lib/download';
 
 /**
  * minishlab/potion-retrieval-32M — MIT-licensed static embedding model used by
- * ranked memory recall (pkg/rancher-desktop/agent/memory/). Pinned to an exact
+ * ranked memory recall (pkg/sulla-desktop/agent/memory/). Pinned to an exact
  * Hugging Face revision + sha256 so builds are reproducible.
  *
  * The 129 MB float32 table is converted to int8 with a per-row scale (~33 MB);

@@ -74,7 +74,7 @@ test('provider.models denies injections outside the registered lane', () => {
 test('every lane the desktop builds is accepted by provider.models', async() => {
   // The desktop helper and this policy must agree; a drift would silently
   // degrade every picker to its static list.
-  const { modelListLane } = await import('../../../pkg/rancher-desktop/agent/services/brokeredModelLanes.js');
+  const { modelListLane } = await import('../../../pkg/sulla-desktop/agent/services/brokeredModelLanes.js');
   const lanes: [string, string][] = [
     ['claude-code', 'oauth'], ['claude-code', 'default'], ['anthropic', 'default'], ['openai', 'default'], ['grok', 'oauth'], ['grok', 'default'],
   ];

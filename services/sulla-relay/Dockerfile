@@ -7,8 +7,8 @@ RUN cd services/sulla-relay && npm install --ignore-scripts && ln -s services/su
 COPY services/sulla-relay/tsconfig.json ./services/sulla-relay/tsconfig.json
 COPY services/sulla-relay/src ./services/sulla-relay/src
 COPY services/sulla-relay/verify ./services/sulla-relay/verify
-COPY pkg/rancher-desktop/runtime/relayProtocol.ts ./pkg/rancher-desktop/runtime/relayProtocol.ts
-COPY pkg/rancher-desktop/runtime/relayTunnelClient.ts ./pkg/rancher-desktop/runtime/relayTunnelClient.ts
+COPY pkg/sulla-desktop/runtime/relayProtocol.ts ./pkg/sulla-desktop/runtime/relayProtocol.ts
+COPY pkg/sulla-desktop/runtime/relayTunnelClient.ts ./pkg/sulla-desktop/runtime/relayTunnelClient.ts
 RUN cd services/sulla-relay && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime

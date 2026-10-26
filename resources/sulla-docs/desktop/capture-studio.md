@@ -117,11 +117,11 @@ for managed recordings. There is no dedicated batch transcription tool in
 
 ## Reference
 
-- Main component: `pkg/rancher-desktop/pages/CaptureStudio.vue`
-- Window entry: `pkg/rancher-desktop/entry/capture-studio.ts`
-- Window opener: `openCaptureStudio()` in `pkg/rancher-desktop/window/index.ts`
-- Tracking / IPC: `pkg/rancher-desktop/main/captureStudioTracking.ts`
-- Sub-components: `pkg/rancher-desktop/pages/capture-studio/`
-- Composables: `pkg/rancher-desktop/pages/capture-studio/composables/`
-- Audio driver: `pkg/rancher-desktop/main/audio-driver/`
-- Tools: `pkg/rancher-desktop/agent/tools/capture/manifests.ts`
+- Main component: `pkg/sulla-desktop/pages/CaptureStudio.vue`
+- Window entry: `pkg/sulla-desktop/entry/capture-studio.ts`
+- Window opener: `openCaptureStudio()` in `pkg/sulla-desktop/window/index.ts`
+- Tracking / IPC: `pkg/sulla-desktop/main/captureStudioTracking.ts`
+- Sub-components: `pkg/sulla-desktop/pages/capture-studio/`
+- Composables: `pkg/sulla-desktop/pages/capture-studio/composables/`
+- Audio driver: `pkg/sulla-desktop/main/audio-driver/`
+- Tools: `pkg/sulla-desktop/agent/tools/capture/manifests.ts`

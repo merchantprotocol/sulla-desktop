@@ -22,7 +22,7 @@ The block is optional. Omitting it is correct for most short replies. Inventing 
 
 ```xml
 <citations>
-  <source num="1" title="BaseNode.ts" origin="pkg/rancher-desktop/agent/nodes" url="file:///Users/…/BaseNode.ts" />
+  <source num="1" title="BaseNode.ts" origin="pkg/sulla-desktop/agent/nodes" url="file:///Users/…/BaseNode.ts" />
   <source num="2" title="Anthropic Citations" origin="docs.anthropic.com" url="https://docs.anthropic.com/…" />
 </citations>
 ```
@@ -74,9 +74,9 @@ top of document content blocks [2].
 
 ## Reference
 
-- Extractor: `pkg/rancher-desktop/agent/controllers/CitationExtractor.ts`
-- Prompt section: `pkg/rancher-desktop/agent/prompts/sections/citations.ts`
-- Streaming strip: `pkg/rancher-desktop/agent/utils/stripProtocolTags.ts` (`stripProtocolTagsStreaming`)
+- Extractor: `pkg/sulla-desktop/agent/controllers/CitationExtractor.ts`
+- Prompt section: `pkg/sulla-desktop/agent/prompts/sections/citations.ts`
+- Streaming strip: `pkg/sulla-desktop/agent/utils/stripProtocolTags.ts` (`stripProtocolTagsStreaming`)
 - WS dispatch: `BaseNode.wsChatMessage` (`kind = 'citation'` + `extras.citations`)
-- Renderer: `pkg/rancher-desktop/pages/chat/components/citation/CitationRow.vue`
+- Renderer: `pkg/sulla-desktop/pages/chat/components/citation/CitationRow.vue`
 - Frontend mapping: `PersonaAdapter.mapBackendMessage` (citation branch)

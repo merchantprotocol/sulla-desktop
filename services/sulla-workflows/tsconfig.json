@@ -11,15 +11,15 @@
     "resolveJsonModule": true,
     "types": ["node"],
     "baseUrl": "../..",
-    "paths": { "@pkg/*": ["pkg/rancher-desktop/*"] }
+    "paths": { "@pkg/*": ["pkg/sulla-desktop/*"] }
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.ts",
-    "../../pkg/rancher-desktop/agent/workflow/types.ts",
-    "../../pkg/rancher-desktop/agent/workflow/workflowConcurrency.ts",
-    "../../pkg/rancher-desktop/pages/editor/workflow/types.ts",
-    "../../pkg/rancher-desktop/runtime/containerRuntime.ts",
-    "../../pkg/rancher-desktop/runtime/capabilityToken.ts"
+    "../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts",
+    "../../pkg/sulla-desktop/agent/workflow/types.ts",
+    "../../pkg/sulla-desktop/agent/workflow/workflowConcurrency.ts",
+    "../../pkg/sulla-desktop/pages/editor/workflow/types.ts",
+    "../../pkg/sulla-desktop/runtime/containerRuntime.ts",
+    "../../pkg/sulla-desktop/runtime/capabilityToken.ts"
   ]
 }

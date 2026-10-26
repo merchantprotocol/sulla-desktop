@@ -147,10 +147,10 @@ each linked file with its direction (`outgoing` or `incoming`).
 
 ## Implementation references
 
-- `pkg/rancher-desktop/pages/files/editor/editorTypes.ts`: extension → editor type
-- `pkg/rancher-desktop/pages/files/editor/registry.ts`: front-matter parser, serialize
-- `pkg/rancher-desktop/pages/files/editor/MarkdownEditingArea.vue`: live preview
-- `pkg/rancher-desktop/pages/files/editor/DocumentEditorShell.vue`: title, properties, slash menu, save
-- `pkg/rancher-desktop/pages/files/editor/liveDocument.ts` and `automergeYjsBridge.ts`: live sync
+- `pkg/sulla-desktop/pages/files/editor/editorTypes.ts`: extension → editor type
+- `pkg/sulla-desktop/pages/files/editor/registry.ts`: front-matter parser, serialize
+- `pkg/sulla-desktop/pages/files/editor/MarkdownEditingArea.vue`: live preview
+- `pkg/sulla-desktop/pages/files/editor/DocumentEditorShell.vue`: title, properties, slash menu, save
+- `pkg/sulla-desktop/pages/files/editor/liveDocument.ts` and `automergeYjsBridge.ts`: live sync
 - `services/sulla-files/src/liveText.ts`, `automergeText.ts`, `app.ts` (`/live`, `/content`, `/file-edges`)
 - `services/sulla-files/src/mimeTypes.ts`: `.sulla` and `.md` → `text/markdown`

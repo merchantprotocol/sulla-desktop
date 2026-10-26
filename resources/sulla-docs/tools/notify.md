@@ -88,9 +88,9 @@ The agent can also publish its own state with `bridge/update_human_presence` whe
 
 ## Reference
 
-- Tool manifest: `pkg/rancher-desktop/agent/tools/notify/manifests.ts`
-- Implementation: `pkg/rancher-desktop/agent/tools/notify/notify_user.ts`
-- Mobile delivery: `pkg/rancher-desktop/agent/mobile/MobileApiClient.ts`
-- Bridge tools: `pkg/rancher-desktop/agent/tools/bridge/manifests.ts`
-- Presence service: `pkg/rancher-desktop/agent/services/HumanHeartbeatBridge.ts`
-- Heartbeat window: `pkg/rancher-desktop/main/heartbeatNotification.ts`
+- Tool manifest: `pkg/sulla-desktop/agent/tools/notify/manifests.ts`
+- Implementation: `pkg/sulla-desktop/agent/tools/notify/notify_user.ts`
+- Mobile delivery: `pkg/sulla-desktop/agent/mobile/MobileApiClient.ts`
+- Bridge tools: `pkg/sulla-desktop/agent/tools/bridge/manifests.ts`
+- Presence service: `pkg/sulla-desktop/agent/services/HumanHeartbeatBridge.ts`
+- Heartbeat window: `pkg/sulla-desktop/main/heartbeatNotification.ts`

@@ -21,7 +21,7 @@ All four are peers. They share the same bundle format, the same import/export/pu
 
 ### 1.1. Note on the recipe install target
 
-Recipes install into the **existing extension root**, not `~/sulla/recipes/`. This is the directory the current extension manager already watches (`paths.extensionRoot` in [`pkg/rancher-desktop/utils/paths.ts`](../../pkg/rancher-desktop/utils/paths.ts)):
+Recipes install into the **existing extension root**, not `~/sulla/recipes/`. This is the directory the current extension manager already watches (`paths.extensionRoot` in [`pkg/sulla-desktop/utils/paths.ts`](../../pkg/sulla-desktop/utils/paths.ts)):
 
 - macOS: `~/Library/Application Support/sulla-desktop/extensions/<manifest.id>/`
 - Linux: `$XDG_DATA_HOME/sulla-desktop/extensions/<manifest.id>/`
@@ -166,7 +166,7 @@ Bundle publish is a **two-step** upload to `sulla-workers`:
 
 The manifest schema (`sulla/v3`) is defined by the marketplace repo and validated against [`docs/marketplace/manifest-schema.json`](../../../docs/marketplace/manifest-schema.json). Client-side validation should run before the first POST so the user sees errors immediately instead of a worker 400.
 
-Per-kind manifest builders live under `pkg/rancher-desktop/main/marketplace/manifest/{routine,skill,function,recipe}.ts`. They share a common helper for file-tree + checksum + preview extraction; only the kind-specific `*Summary` block differs.
+Per-kind manifest builders live under `pkg/sulla-desktop/main/marketplace/manifest/{routine,skill,function,recipe}.ts`. They share a common helper for file-tree + checksum + preview extraction; only the kind-specific `*Summary` block differs.
 
 ## 8. Install from marketplace
 

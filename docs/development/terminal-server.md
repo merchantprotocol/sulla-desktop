@@ -11,8 +11,8 @@ XTermTerminal.vue  --(WebSocket)-->  WebSocketTerminalServer  --(node-pty)-->  s
 
 Source files:
 
-- **Server**: `pkg/rancher-desktop/main/terminalServer.ts`
-- **Frontend**: `pkg/rancher-desktop/pages/editor/XTermTerminal.vue`
+- **Server**: `pkg/sulla-desktop/main/terminalServer.ts`
+- **Frontend**: `pkg/sulla-desktop/pages/editor/XTermTerminal.vue`
 
 ## Terminal WebSocket Server (Port 6108)
 

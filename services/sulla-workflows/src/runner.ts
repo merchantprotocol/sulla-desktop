@@ -13,8 +13,8 @@ import {
   processNextStep,
   resolveDecision,
   type PlaybookStepResult,
-} from '../../../pkg/rancher-desktop/agent/workflow/WorkflowPlaybook.js';
-import type { WorkflowPlaybookState } from '../../../pkg/rancher-desktop/agent/workflow/types.js';
+} from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.js';
+import type { WorkflowPlaybookState } from '../../../pkg/sulla-desktop/agent/workflow/types.js';
 
 import { config } from './config.js';
 import { agentOccurrence, consumeAgentOccurrence } from './agentInvocation.js';

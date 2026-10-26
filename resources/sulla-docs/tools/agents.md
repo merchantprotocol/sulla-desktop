@@ -259,8 +259,8 @@ Agent definitions are runtime rows in `agent_definitions`, indexed from the publ
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/agents/`
-- Manifest: `pkg/rancher-desktop/agent/tools/agents/manifests.ts`
+- Tool dir: `pkg/sulla-desktop/agent/tools/agents/`
+- Manifest: `pkg/sulla-desktop/agent/tools/agents/manifests.ts`
 - Agent definitions: `Use Cases/agents/<slug>/` in Files (see [files-harness.md](../environment/files-harness.md))
 - Channel routing: see `agent-patterns/channels.md`
 

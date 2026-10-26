@@ -31,4 +31,4 @@ Addons and config are copied by `Sulla VMBackend.installThreatProxy()` to:
 5. URL filter rejects known-bad URLs before connecting (HTTP 451).
 6. Prompt-injection scanner flags suspicious patterns in response bodies.
 
-See `pkg/rancher-desktop/main/threat-proxy/` for the Electron-side lifecycle service.
+See `pkg/sulla-desktop/main/threat-proxy/` for the Electron-side lifecycle service.

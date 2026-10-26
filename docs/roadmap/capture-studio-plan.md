@@ -124,7 +124,7 @@ The audio-driver is currently a standalone Electron tray app at `~/Sites/sulla/a
 |------------------------|----------------------|
 | Separate Electron app | Panel/tab in Sulla Desktop |
 | Own tray icon | Uses Sulla's existing tray |
-| `src/main/platform/darwin/` native code | Moves to `pkg/rancher-desktop/platform/darwin/` |
+| `src/main/platform/darwin/` native code | Moves to `pkg/sulla-desktop/platform/darwin/` |
 | Socket daemon (create-mirror, capture helpers) | Same daemon, launched by AudioDriverClient (already exists) |
 | Renderer UI (index.html, style.css) | Becomes a Vue component in Sulla |
 | Standalone `just build-mac` packaging | Part of Sulla Desktop's electron-builder |

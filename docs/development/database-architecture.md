@@ -2,7 +2,7 @@
 
 ## Overview
 
-Sulla uses PostgreSQL as its primary data store and Redis as a caching/pub-sub layer. Both run as Docker containers inside the Sulla VM, managed by the Docker Compose file at `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`.
+Sulla uses PostgreSQL as its primary data store and Redis as a caching/pub-sub layer. Both run as Docker containers inside the Sulla VM, managed by the Docker Compose file at `pkg/sulla-desktop/assets/sulla-docker-compose.yaml`.
 
 ## Infrastructure
 
@@ -34,7 +34,7 @@ The same PostgreSQL and Redis instances are shared with the n8n workflow engine 
 
 ### PostgresClient
 
-Source: `pkg/rancher-desktop/agent/database/PostgresClient.ts`
+Source: `pkg/sulla-desktop/agent/database/PostgresClient.ts`
 
 A singleton wrapper around `pg.Pool` that provides connection pooling and query helpers.
 
@@ -59,7 +59,7 @@ A singleton wrapper around `pg.Pool` that provides connection pooling and query 
 
 ### RedisClient
 
-Source: `pkg/rancher-desktop/agent/database/RedisClient.ts`
+Source: `pkg/sulla-desktop/agent/database/RedisClient.ts`
 
 A singleton wrapper around `ioredis` with lazy connection, automatic reconnection, and a clean command API.
 
@@ -95,7 +95,7 @@ During initial setup, settings are stored in a local JSON lock file (offline-fir
 
 ## Database Models
 
-All models extend `BaseModel` (in `pkg/rancher-desktop/agent/database/BaseModel.ts`) which provides an ActiveRecord-style ORM over PostgresClient.
+All models extend `BaseModel` (in `pkg/sulla-desktop/agent/database/BaseModel.ts`) which provides an ActiveRecord-style ORM over PostgresClient.
 
 ### Sulla-Owned Tables
 
@@ -128,7 +128,7 @@ These tables are managed by n8n but accessed read-only by Sulla's agent system:
 
 ## Migration System
 
-Schema migrations live in `pkg/rancher-desktop/agent/database/migrations/` and are tracked in the `sulla_migrations` table. The `DatabaseManager` (`pkg/rancher-desktop/agent/database/DatabaseManager.ts`) runs pending migrations on startup.
+Schema migrations live in `pkg/sulla-desktop/agent/database/migrations/` and are tracked in the `sulla_migrations` table. The `DatabaseManager` (`pkg/sulla-desktop/agent/database/DatabaseManager.ts`) runs pending migrations on startup.
 
 Migration files follow a numbered naming convention (e.g., `0001_create_migrations_and_seeders_table.ts`, `0011_create_settings_table.ts`).
 

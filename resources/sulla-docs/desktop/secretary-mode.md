@@ -31,12 +31,12 @@ If the microphone permission is denied or transcription can't start (no whisper 
 
 | Layer | File | Role |
 |-------|------|------|
-| UI | `pkg/rancher-desktop/pages/SecretaryMode.vue` | Transcript + notes panes, mute, level bars, timer, chat box, notes saving; serializes all agent requests on the tab's chat thread |
-| Controller | `pkg/rancher-desktop/controllers/SecretaryModeController.ts` | Session lifecycle, wake word, barge-in, audio levels, analysis loop (one request at a time), transcript merge, notes markdown |
-| Agent extractor | `pkg/rancher-desktop/agent/controllers/SecretaryExtractor.ts` | `parseSecretaryAnalysis()`; strips accidental `<speak>` tags on analysis turns |
+| UI | `pkg/sulla-desktop/pages/SecretaryMode.vue` | Transcript + notes panes, mute, level bars, timer, chat box, notes saving; serializes all agent requests on the tab's chat thread |
+| Controller | `pkg/sulla-desktop/controllers/SecretaryModeController.ts` | Session lifecycle, wake word, barge-in, audio levels, analysis loop (one request at a time), transcript merge, notes markdown |
+| Agent extractor | `pkg/sulla-desktop/agent/controllers/SecretaryExtractor.ts` | `parseSecretaryAnalysis()`; strips accidental `<speak>` tags on analysis turns |
 | Mode routing | `agent/nodes/BaseNode.ts`, `AgentNode.ts` | Only `secretary-analysis` turns run in secretary (extraction) mode; `secretary-wake` / `secretary-chat` get normal replies |
-| Transcription | `pkg/rancher-desktop/main/audio-driver/service/whisper-transcribe.ts` | Mic + speaker chunks → `gateway-transcript` events |
-| State + notes | `pkg/rancher-desktop/main/secretaryModeState.ts` | Listening cache for the agent tools; `secretary-mode:save-notes` / `reveal-notes` (writes only inside `~/sulla/meetings`) |
+| Transcription | `pkg/sulla-desktop/main/audio-driver/service/whisper-transcribe.ts` | Mic + speaker chunks → `gateway-transcript` events |
+| State + notes | `pkg/sulla-desktop/main/secretaryModeState.ts` | Listening cache for the agent tools; `secretary-mode:save-notes` / `reveal-notes` (writes only inside `~/sulla/meetings`) |
 
 ## Privacy posture
 

@@ -18,15 +18,15 @@ The Tab/UI System is the primary user-facing interface of Sulla Desktop. It hand
 
 | File | Role |
 |------|------|
-| `pkg/rancher-desktop/pages/BrowserTabChat.vue` | Main chat tab component: message display, auto-scroll, tool card expansion, voice state coordination, thinking/streaming display, first-chat detection, context menus, title generation, continue button |
-| `pkg/rancher-desktop/pages/agent/AgentComposer.vue` | Text input textarea with auto-grow, model selector dropdown, send/stop/continue buttons, recording indicator (level meter + timer), TTS speaker button, mic start button |
-| `pkg/rancher-desktop/pages/agent/ChatInterface.ts` | Chat controller class: wraps AgentPersonaService, manages messages array, threadId, query ref, localStorage persistence (200 message cap, images stripped), send/stop/continue/newChat/dispose |
-| `pkg/rancher-desktop/pages/chat-options/ChatOptionsVariantB.vue` | Landing page (empty state): editorial layout with serif headline, monospace labels, action card grid (Calendar, Integrations, Extensions, Browser), onboarding card, embedded AgentComposer |
-| `pkg/rancher-desktop/pages/agent/AgentModelSelectorController.ts` | Model switching: loads providers from integrations catalog, fetches model lists per provider, persists selection to SullaSettingsModel, emits IPC model-changed events |
-| `pkg/rancher-desktop/composables/voice/useVoiceSession.ts` | Voice composable: creates VoiceRecorderService + TTSPlayerService + VoicePipeline, bridges service events to Vue refs, auto-cleans up on unmount |
-| `pkg/rancher-desktop/pages/chat/ChatContextMenu.vue` | Right-click context menu on chat messages |
-| `pkg/rancher-desktop/components/HtmlMessageRenderer.vue` | Renders raw HTML message content safely |
-| `pkg/rancher-desktop/pages/editor/workflow/SubAgentBubble.vue` | Renders sub-agent activity bubbles |
+| `pkg/sulla-desktop/pages/BrowserTabChat.vue` | Main chat tab component: message display, auto-scroll, tool card expansion, voice state coordination, thinking/streaming display, first-chat detection, context menus, title generation, continue button |
+| `pkg/sulla-desktop/pages/agent/AgentComposer.vue` | Text input textarea with auto-grow, model selector dropdown, send/stop/continue buttons, recording indicator (level meter + timer), TTS speaker button, mic start button |
+| `pkg/sulla-desktop/pages/agent/ChatInterface.ts` | Chat controller class: wraps AgentPersonaService, manages messages array, threadId, query ref, localStorage persistence (200 message cap, images stripped), send/stop/continue/newChat/dispose |
+| `pkg/sulla-desktop/pages/chat-options/ChatOptionsVariantB.vue` | Landing page (empty state): editorial layout with serif headline, monospace labels, action card grid (Calendar, Integrations, Extensions, Browser), onboarding card, embedded AgentComposer |
+| `pkg/sulla-desktop/pages/agent/AgentModelSelectorController.ts` | Model switching: loads providers from integrations catalog, fetches model lists per provider, persists selection to SullaSettingsModel, emits IPC model-changed events |
+| `pkg/sulla-desktop/composables/voice/useVoiceSession.ts` | Voice composable: creates VoiceRecorderService + TTSPlayerService + VoicePipeline, bridges service events to Vue refs, auto-cleans up on unmount |
+| `pkg/sulla-desktop/pages/chat/ChatContextMenu.vue` | Right-click context menu on chat messages |
+| `pkg/sulla-desktop/components/HtmlMessageRenderer.vue` | Renders raw HTML message content safely |
+| `pkg/sulla-desktop/pages/editor/workflow/SubAgentBubble.vue` | Renders sub-agent activity bubbles |
 
 ### Component Hierarchy
 

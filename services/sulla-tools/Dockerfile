@@ -3,9 +3,9 @@ WORKDIR /app
 COPY services/sulla-tools/package.json ./package.json
 RUN npm install --ignore-scripts --omit=dev
 COPY services/sulla-tools/src ./services/sulla-tools/src
-COPY pkg/rancher-desktop/agent ./pkg/rancher-desktop/agent
-COPY pkg/rancher-desktop/runtime ./pkg/rancher-desktop/runtime
-COPY pkg/rancher-desktop/vault-broker ./pkg/rancher-desktop/vault-broker
+COPY pkg/sulla-desktop/agent ./pkg/sulla-desktop/agent
+COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
+COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY tsconfig.json ./tsconfig.json
 ENV NODE_ENV=production
 WORKDIR /app/services/sulla-tools

@@ -120,8 +120,8 @@ export default defineConfigWithVueTs(
     // Files we imported from Rancher Dashboard.
     name:  'rancher-dashboard-imports',
     files: [
-      'pkg/rancher-desktop/plugins/*.js',
-      'pkg/rancher-desktop/utils/*.js',
+      'pkg/sulla-desktop/plugins/*.js',
+      'pkg/sulla-desktop/utils/*.js',
     ],
     languageOptions: {
       globals: globals.browser,
@@ -135,7 +135,7 @@ export default defineConfigWithVueTs(
         // Files we imported from Rancher Dashboard.
         name:  'rancher-dashboard-imports',
         files: [
-          'pkg/rancher-desktop/components/SortableTable/**',
+          'pkg/sulla-desktop/components/SortableTable/**',
         ],
         rules: {
           'vue/eqeqeq': 'off',

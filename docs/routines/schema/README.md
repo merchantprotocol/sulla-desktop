@@ -47,7 +47,7 @@ Routines are **installation-scoped**. There is no global registry, no semver, no
 
 ## 2. Routine = Workflow (DAG)
 
-The shape of a routine is identical to the existing `WorkflowDefinition` TypeScript interface in `pkg/rancher-desktop/pages/editor/workflow/types.ts`:
+The shape of a routine is identical to the existing `WorkflowDefinition` TypeScript interface in `pkg/sulla-desktop/pages/editor/workflow/types.ts`:
 
 ```ts
 interface WorkflowDefinition {

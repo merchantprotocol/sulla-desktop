@@ -10,5 +10,5 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "../../pkg/rancher-desktop/runtime/containerRuntime.ts", "../../pkg/rancher-desktop/runtime/capabilityToken.ts"]
+  "include": ["src/**/*.ts", "../../pkg/sulla-desktop/runtime/containerRuntime.ts", "../../pkg/sulla-desktop/runtime/capabilityToken.ts"]
 }

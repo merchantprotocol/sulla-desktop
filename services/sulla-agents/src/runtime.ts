@@ -12,8 +12,8 @@ import tar from 'tar-stream';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { providerResult } from './providerOutput.js';
-import { DockerRuntimeDriver } from '../../../pkg/rancher-desktop/runtime/containerRuntime.js';
-import { deriveCapabilitySigningKey, issueCapabilityToken } from '../../../pkg/rancher-desktop/runtime/capabilityToken.js';
+import { DockerRuntimeDriver } from '../../../pkg/sulla-desktop/runtime/containerRuntime.js';
+import { deriveCapabilitySigningKey, issueCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
 
 import type { RequestIdentity } from './auth.js';
 

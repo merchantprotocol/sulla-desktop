@@ -267,7 +267,7 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 
 ## Reference
 
-- Tool dir: `pkg/rancher-desktop/agent/tools/meta/` (observation tools live here too, under category `observation`)
-- Manifest: `pkg/rancher-desktop/agent/tools/meta/manifests.ts`
-- exec implementation: `pkg/rancher-desktop/agent/tools/meta/exec.ts`
-- Memory storage: `pkg/rancher-desktop/agent/database/models/ObservationsModel.ts` (Postgres `observations` table, see `tools/pg.md`)
+- Tool dir: `pkg/sulla-desktop/agent/tools/meta/` (observation tools live here too, under category `observation`)
+- Manifest: `pkg/sulla-desktop/agent/tools/meta/manifests.ts`
+- exec implementation: `pkg/sulla-desktop/agent/tools/meta/exec.ts`
+- Memory storage: `pkg/sulla-desktop/agent/database/models/ObservationsModel.ts` (Postgres `observations` table, see `tools/pg.md`)

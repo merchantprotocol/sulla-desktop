@@ -9,7 +9,7 @@ import Darwin
 import FileProvider
 import Foundation
 
-/// Team-ID-prefixed app group shared with Sulla Desktop main (pkg/rancher-desktop/main/sullaAppGroup.ts).
+/// Team-ID-prefixed app group shared with Sulla Desktop main (pkg/sulla-desktop/main/sullaAppGroup.ts).
 let sullaAppGroup = "946AF7TL74.io.sulla.desktop"
 
 struct RelayFailure: Error {

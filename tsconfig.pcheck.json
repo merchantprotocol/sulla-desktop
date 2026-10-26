@@ -1,12 +1,12 @@
 {
-  "extends": "./pkg/rancher-desktop/tsconfig.json",
+  "extends": "./pkg/sulla-desktop/tsconfig.json",
   "compilerOptions": { "noEmit": true, "skipLibCheck": true },
   "include": [
-    "pkg/rancher-desktop/agent/tools/work/*.ts",
-    "pkg/rancher-desktop/agent/prompts/workReport.ts",
-    "pkg/rancher-desktop/agent/nodes/AgentNode.ts",
-    "pkg/rancher-desktop/composables/useProjects.ts",
-    "pkg/rancher-desktop/main/workItemsEvents.ts",
-    "pkg/rancher-desktop/typings/electron-ipc.d.ts"
+    "pkg/sulla-desktop/agent/tools/work/*.ts",
+    "pkg/sulla-desktop/agent/prompts/workReport.ts",
+    "pkg/sulla-desktop/agent/nodes/AgentNode.ts",
+    "pkg/sulla-desktop/composables/useProjects.ts",
+    "pkg/sulla-desktop/main/workItemsEvents.ts",
+    "pkg/sulla-desktop/typings/electron-ipc.d.ts"
   ]
 }

@@ -88,10 +88,10 @@ sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
 
 ## Reference
 
-- Tool: `pkg/rancher-desktop/agent/tools/ui/open_tab.ts`
-- Manifest: `pkg/rancher-desktop/agent/tools/ui/manifests.ts`
-- Renderer handler: `pkg/rancher-desktop/pages/AgentRouter.vue` (`onAgentCommand`)
-- Window resolver: `getWindow('main-agent')` from `pkg/rancher-desktop/window/index.ts`
+- Tool: `pkg/sulla-desktop/agent/tools/ui/open_tab.ts`
+- Manifest: `pkg/sulla-desktop/agent/tools/ui/manifests.ts`
+- Renderer handler: `pkg/sulla-desktop/pages/AgentRouter.vue` (`onAgentCommand`)
+- Window resolver: `getWindow('main-agent')` from `pkg/sulla-desktop/window/index.ts`
 
 
 Projects are plain files. See [Projects in Files](../environment/projects-in-files.md).

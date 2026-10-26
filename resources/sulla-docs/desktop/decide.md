@@ -15,5 +15,5 @@ Verify the deployed Desktop and paired clients before claiming live acceptance.
 
 ## References
 
-- `pkg/rancher-desktop/agent/services/DecisionService.ts`
-- `pkg/rancher-desktop/agent/database/migrations/0098_create_decisions.ts`
+- `pkg/sulla-desktop/agent/services/DecisionService.ts`
+- `pkg/sulla-desktop/agent/database/migrations/0098_create_decisions.ts`
