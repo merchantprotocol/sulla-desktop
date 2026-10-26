@@ -12,10 +12,7 @@ import { spawnSync } from 'child_process';
 import { Octokit } from 'octokit';
 import semver from 'semver';
 
-import { MobyOpenAPISpec } from 'scripts/dependencies/moby-openapi';
 import * as tools from 'scripts/dependencies/tools';
-import { Wix } from 'scripts/dependencies/wix';
-import { WSLDistro, Moproxy } from 'scripts/dependencies/wsl';
 import {
   getOctokit,
   iterateIterator,
@@ -34,27 +31,14 @@ interface VersionComparison {
 }
 
 const dependencies: VersionedDependency[] = [
-  new tools.KuberlrAndKubectl(),
-  new tools.Helm(),
   new tools.DockerCLI(),
   new tools.DockerBuildx(),
   new tools.DockerCompose(),
   new tools.DockerProvidedCredHelpers(),
   new tools.GoLangCILint(),
   new tools.CheckSpelling(),
-  new tools.Trivy(),
-  new tools.Steve(),
-  new tools.RancherDashboard(),
   new tools.ECRCredHelper(),
-  new WSLDistro(),
-  new Wix(),
-  new MobyOpenAPISpec(),
-  new Moproxy(),
-  new tools.WasmShims(),
-  new tools.CertManager(),
-  new tools.SpinOperator(),
   new tools.SpinCLI(),
-  new tools.SpinKubePlugin(),
 ];
 
 /**

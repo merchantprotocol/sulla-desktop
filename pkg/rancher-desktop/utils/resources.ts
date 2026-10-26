@@ -11,29 +11,19 @@ import paths from '@pkg/utils/paths';
  * Otherwise, it's an array containing the path to the executable.
  */
 const executableMap: Record<string, string[] | undefined> = {
-  docker:             undefined,
-  kubectl:            undefined,
-  nerdctl:            undefined,
-  spin:               undefined,
-  'setup-spin':       [paths.resources, 'setup-spin'],
-  'wsl-helper':       [paths.resources, process.platform, 'internal', platformBinary('wsl-helper')],
-  'wsl-helper-linux': [paths.resources, 'linux', 'internal', 'wsl-helper'],
+  docker: undefined,
+  spin:   undefined,
 };
 
-function platformBinary(name: string): string {
-  return process.platform === 'win32' ? `${ name }.exe` : name;
-}
-
 /**
- * Gets the absolute path to an executable. Adds ".exe" to the end
- * if running on Windows.
+ * Gets the absolute path to an executable.
  * @param name The name of the binary, without file extension.
  */
 function _executable(name: keyof typeof executableMap): string {
   const parts = executableMap[name];
 
   if (parts === undefined) {
-    return path.join(paths.resources, process.platform, 'bin', platformBinary(name));
+    return path.join(paths.resources, process.platform, 'bin', name);
   }
 
   return path.join(...parts);

@@ -22,7 +22,6 @@ import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import yaml from 'yaml';
 
 import LonghornProvider, { hasQueuedUpdate, LonghornUpdateInfo, setHasQueuedUpdate } from './LonghornProvider';
-import MsiUpdater from './MSIUpdater';
 import { updateEvents } from './UpdateManager';
 
 import { Settings } from '@pkg/config/settings';
@@ -131,10 +130,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     }
 
     switch (os.platform()) {
-    case 'win32': {
-      updater = new MsiUpdater(options);
-      break;
-    }
     case 'darwin':
       updater = new MacUpdater(options);
       break;

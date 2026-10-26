@@ -13,7 +13,7 @@ ARGS=(
     # https://github.com/cncf/foundation/blob/main/allowed-third-party-license-policy.md#approved-licenses-for-allowlist
     "--allowed_licenses=Apache-2.0,BSD-2-Clause,BSD-2-Clause-FreeBSD,BSD-3-Clause,MIT,ISC,Python-2.0,PostgreSQL,X11,Zlib"
     # skipping our own modules because we only have a LICENSE file in the root of the repo
-    "--ignore=github.com/rancher-sandbox/rancher-desktop"
+    "--ignore=github.com/merchantprotocol/sulla-desktop"
     # CNCF has approved several exceptions for MPL-2 licensed modules, including those below
     # https://github.com/cncf/foundation/blob/1e80c35/license-exceptions/cncf-exceptions-2019-11-01.spdx
     "--ignore=github.com/hashicorp/hcl"
@@ -21,7 +21,7 @@ ARGS=(
     "--ignore=github.com/hashicorp/go-multierror"
 )
 
-find src/go -mindepth 1 -maxdepth 1 -type d | while IFS= read -r DIR; do
+for DIR in src/runtime-agent; do
     pushd "$DIR"
     "$(go env GOPATH)/bin/go-licenses" check "${ARGS[@]}" ./...
     popd >/dev/null

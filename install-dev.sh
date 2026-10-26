@@ -24,7 +24,7 @@
 #               Use this if you want bleeding-edge features (may be unstable).
 #
 # Idempotent — safe to run multiple times.
-# Supports macOS (arm64/x86_64), Linux (apt/dnf/pacman), and Windows (Git Bash / MSYS2).
+# Supports macOS (arm64/x86_64) and Linux (apt/dnf/pacman).
 #
 # Architecture:
 #   Phase 1 (this file): Bootstrap — detect OS, install git/curl, clone repo.
@@ -161,7 +161,6 @@ _detect_os() {
   case "$(uname -s)" in
     Darwin*)  echo "macos"  ;;
     Linux*)   echo "linux"  ;;
-    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
     *)        _step_fail "Unsupported OS: $(uname -s)" ;;
   esac
 }
@@ -184,9 +183,6 @@ _bootstrap_install_curl() {
       else
         _step_fail "Cannot install curl — no supported package manager found. Install curl manually and re-run."
       fi
-      ;;
-    windows)
-      _step_fail "curl not found — please install Git for Windows: https://git-scm.com/download/win"
       ;;
     macos)
       _step_fail "curl not found on macOS — this should never happen. Is your system corrupt?"
@@ -218,9 +214,6 @@ _bootstrap_install_git() {
       else
         _step_fail "Cannot install git — no supported package manager found. Install git manually and re-run."
       fi
-      ;;
-    windows)
-      _step_fail "git not found — please install Git for Windows: https://git-scm.com/download/win"
       ;;
   esac
   _command_exists git || _step_fail "git installation failed"

@@ -29,7 +29,6 @@ import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
-import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -62,21 +61,6 @@ const isDockerDaemonRunning = (): boolean => {
     execSync('docker info', { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
     return true;
   } catch {
-    return false;
-  }
-};
-
-const checkDockerMode = async() => {
-  try {
-    const vmRunning = isSullaRuntimeActive();
-
-    // Check if Kubernetes is enabled
-    const k8sEnabled = await SullaSettingsModel.get('kubernetes.enabled', false);
-
-    // We're in Docker mode if VM is not running OR Kubernetes is not enabled
-    return !vmRunning || !k8sEnabled;
-  } catch (err) {
-    // If we can't determine state, do NOT assume Docker mode — nothing to tear down
     return false;
   }
 };

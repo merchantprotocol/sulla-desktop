@@ -33,7 +33,7 @@ export class NoMainEventsHandlerError extends Error {
  */
 interface MainEventNames {
   /**
-   * Emitted when the Kubernetes backend state has changed.
+   * Emitted when the VM backend state has changed.
    */
   'k8s-check-state'(mgr: VMBackend): void;
 
@@ -91,14 +91,6 @@ interface MainEventNames {
    * @param connected The new network state.
    */
   'update-network-status'(connected: boolean): void;
-
-  /**
-   * Emitted when the integration state has changed.
-   *
-   * @param state A mapping of WSL distributions to the current state, or a
-   * string if there is an error.
-   */
-  'integration-update'(state: Record<string, boolean | string>): void;
 
   /**
    * Fetch the API credentials that can be used for HTTP basic auth on localhost

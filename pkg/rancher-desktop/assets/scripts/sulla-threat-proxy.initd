@@ -1,6 +1,6 @@
 #!/sbin/openrc-run
 # OpenRC init script for sulla-threat-proxy (mitmdump wrapper).
-# Installed into the Lima VM by LimaBackend.installThreatProxy().
+# Not installed by the Sulla runtime yet (the removed Lima backend installed it).
 
 name="sulla-threat-proxy"
 description="Sulla Desktop threat scanning proxy (mitmproxy)"

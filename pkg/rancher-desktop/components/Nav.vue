@@ -58,11 +58,6 @@
       </li>
     </ul>
     <div class="nav-button-container">
-      <dashboard-button
-        data-testid="dashboard-button"
-        class="nav-button"
-        @open-dashboard="openDashboard"
-      />
       <button
         type="button"
         data-testid="preferences-button"
@@ -76,20 +71,17 @@
 </template>
 
 <script lang="ts">
-import os from 'os';
 
 import { BadgeState } from '@rancher/components';
 import { PropType, defineComponent } from 'vue';
 import { RouteRecordPublic } from 'vue-router';
 
-import DashboardButton from '@pkg/components/DashboardOpen.vue';
 import router from '@pkg/entry/router';
 
 export default defineComponent({
   name:       'Nav',
   components: {
     BadgeState,
-    DashboardButton,
   },
   props: {
     items: {
@@ -120,9 +112,6 @@ export default defineComponent({
       // their names based on the paths given.
       routes: this.$router.getRoutes().reduce((paths: Record<string, RouteRecordPublic>, route) => {
         paths[route.path] = route;
-        if (route.name === 'Supporting Utilities' && os.platform() === 'win32') {
-          route.name = 'WSL Integrations';
-        }
 
         return paths;
       }, {}),
@@ -174,9 +163,6 @@ export default defineComponent({
     },
     openPreferences(): void {
       this.$emit('open-preferences');
-    },
-    openDashboard(): void {
-      this.$emit('open-dashboard');
     },
   },
   mounted() {

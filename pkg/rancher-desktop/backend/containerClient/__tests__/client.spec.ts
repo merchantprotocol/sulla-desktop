@@ -18,19 +18,15 @@ const modules = mockModules({
 });
 
 const { default: MockBackend } = await import('@pkg/backend/mock');
-const { NerdctlClient } = await import('@pkg/backend/containerClient/nerdctlClient');
 const { MobyClient } = await import('@pkg/backend/containerClient/mobyClient');
 
-describe.each(['nerdctl', 'moby'] as const)('%s', (clientName) => {
+describe.each(['moby'] as const)('%s', (clientName) => {
   let subject: ContainerEngineClient;
 
   beforeEach(() => {
     const executor = new MockBackend() as jest.Mocked<InstanceType<typeof MockBackend>>;
 
     switch (clientName) {
-    case 'nerdctl':
-      subject = new NerdctlClient(executor);
-      break;
     case 'moby':
       subject = new MobyClient(executor, '');
       break;

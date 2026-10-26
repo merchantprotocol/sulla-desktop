@@ -19,14 +19,12 @@ clean:
     rm -rf ~/Library/Caches/rancher-desktop
     rm -rf ~/Library/Logs/rancher-desktop
     rm -rf ~/.rd
-    rm -rf ~/.kube/config
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
     rm -rf resources/spin-operator*
-    rm -rf resources/win32/
     @echo "Cleanup complete. Run 'just build' for a fresh install."
 
 # Clean all caches and generated files for a fresh install (WIPES VM AND IMAGES)
@@ -42,14 +40,12 @@ clean-hard:
     rm -rf ~/Library/Caches/rancher-desktop
     rm -rf ~/Library/Logs/rancher-desktop
     rm -rf ~/.rd
-    rm -rf ~/.kube/config
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
     rm -rf resources/spin-operator*
-    rm -rf resources/win32/
     @echo "Cleanup complete. Run 'just build' for a fresh install."
 
 nvm:
@@ -242,64 +238,14 @@ restart hard="":
     fi
     just start
 
-pods:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl get pods -n sulla
-
-apply-yaml:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl apply -f /Users/jonathonbyrdziak/Sites/sulla/sulla-desktop/pkg/rancher-desktop/assets/sulla-deployments.yaml -n sulla
-
 ping-memory:
     @echo "Pinging memory health endpoint..."
     resources/darwin/sulla-runtime/sulla-runtime exec -- \
     curl -s -m 5 http://localhost:30115/api/v2/heartbeat || echo "memory unreachable (timeout or 410)"
 
-# Port-forward PostgreSQL to localhost:5432 for external access (e.g., pgAdmin, DBeaver)
-# Connection: host=localhost, port=5432, user=sulla, password=sulla_dev_password, database=sulla
-pg-forward:
-    @echo "Port-forwarding PostgreSQL to localhost:5432..."
-    @echo "Connect with: host=localhost, port=5432, user=sulla, password=sulla_dev_password, database=sulla"
-    @echo "Press Ctrl+C to stop"
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl port-forward -n sulla svc/postgres 30116:30116 --address=0.0.0.0
-
-pg-connect:
-    @echo "Starting port-forward in background (auto-stops on exit)..."
-    @trap 'kill 0' EXIT; \
-     just pg-forward & \
-        sleep 3 && \
-        echo "Connecting to psql..." && \
-        PGPASSWORD=sulla_dev_password psql -h localhost -p 30116 -U sulla -d sulla
-
 pg-conn:
      echo "Connecting to psql..." && \
      PGPASSWORD=sulla_dev_password psql -h localhost -p 30116 -U sulla -d sulla
-
-# Port-forward Redis to localhost:6379 for external access
-redis:
-    @echo "Port-forwarding Redis to localhost:6379..."
-    @echo "Press Ctrl+C to stop"
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl port-forward -n sulla svc/redis 6379:6379 --address=0.0.0.0
-
-# Query PostgreSQL conversations table (summary)
-pg-conversations:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl exec -n sulla deploy/postgres -- \
-    psql -U sulla -c "SELECT thread_id, jsonb_array_length(messages) as msg_count, updated_at FROM conversations ORDER BY updated_at DESC LIMIT 10;"
-
-# Query PostgreSQL conversations with full messages
-pg-messages thread_id="":
-    #!/usr/bin/env bash
-    if [ -z "{{thread_id}}" ]; then
-        echo "Usage: just pg-messages <thread_id>"
-        echo "Get thread IDs with: just pg-conversations"
-        exit 1
-    fi
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl exec -n sulla deploy/postgres -- \
-    psql -U sulla -c "SELECT jsonb_pretty(messages) FROM conversations WHERE thread_id = '{{thread_id}}';"
 
 # Login to Docker Hub inside the VM (bypasses rate limiting for image pulls)
 docker-login:
@@ -311,46 +257,6 @@ docker-login:
 docker-status:
     @echo "Checking Docker login status..."
     resources/darwin/sulla-runtime/sulla-runtime exec -- docker info 2>/dev/null | grep -E "Username|Registry" || echo "Not logged in"
-
-# Query PostgreSQL calendar_events table
-pg-events:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl exec -n sulla deploy/postgres -- \
-    psql -U sulla -c "SELECT id, title, start_time, end_time, location, description FROM calendar_events ORDER BY start_time;"
-
-logs image:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl logs -n sulla deployment/{{image}} -f
-
-kill-pod image:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl delete pod -n sulla -l app={{image}} --force --grace-period=0
-
-watch-pod image:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl get pods -n sulla -l app={{image}} -w
-
-describe image:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl describe pod -n sulla {{image}}
-
-describe-default image:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl describe pod -n kube-system {{image}}
-
-monitor:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo k3s kubectl get pods -n kube-system -w
-
-nerd:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- bash ./wait-k8s-ready.sh
-
-k3s-health:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- curl -kfsS --unix-socket /run/k3s/server.sock https://localhost:6444/healthz
-
-pull-ollama:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- \
-    sudo nerdctl --address /var/run/docker/containerd/containerd.sock --namespace k8s.io pull ollama/ollama:latest
 
 chat-ping:
     curl http://localhost:3000/health
@@ -465,41 +371,6 @@ test-nodes:
     npx jest pkg/rancher-desktop/agent/nodes/__tests__/InputHandlerNode.mock.test.ts
     npx jest pkg/rancher-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
     npx jest pkg/rancher-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
-
-# ============================================================================
-# KUBERNETES COMMANDS (legacy; the Sulla runtime guest has no k3s)
-# ============================================================================
-
-nodes:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get nodes
-
-# Watch pod events in real time (shows scheduling, image pulls, crashes)
-watch-events:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get events -A --watch
-
-# Quick check: is API server responding?
-k3s-ready:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo k3s kubectl get --raw=/readyz || echo "API not ready"
-
-k3s-restart:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo systemctl restart k3s
-
-# Tail live k3s server logs inside the VM (most useful for startup hangs)
-k3s-logs:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo tail -f /var/log/k3s.log
-
-# Tail k3s agent logs (if using agent mode, less common in single-node)
-k3s-agent-logs:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo journalctl -u k3s-agent -f
-
-# Show last 100 lines of k3s logs + follow
-k3s-tail:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo journalctl -u k3s -n 100 -f
-
-# Check if k3s process is even running inside VM
-k3s-status:
-    resources/darwin/sulla-runtime/sulla-runtime exec -- sudo systemctl status k3s
-
 
 # Build whisper-cli from source (requires cmake). Builds a static binary with Metal acceleration.
 build-whisper:

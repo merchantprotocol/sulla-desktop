@@ -357,7 +357,7 @@ onMounted(async() => {
       <PrefRow
         v-if="isMac"
         title="Command-line tools"
-        subtitle="docker, kubectl and nerdctl in Terminal."
+        subtitle="docker and its plugins in Terminal."
       >
         <select
           class="sel"

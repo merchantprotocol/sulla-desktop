@@ -8,7 +8,6 @@
 -->
 
 <script setup lang="ts">
-import os from 'os';
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useStore } from 'vuex';
@@ -20,31 +19,23 @@ import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
 import { openDockerWindow } from '@pkg/composables/preferences/openInMain';
-import { confirmFactoryReset, confirmResetKubernetes } from '@pkg/composables/preferences/resets';
+import { confirmFactoryReset } from '@pkg/composables/preferences/resets';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const store = useStore();
 const { get, set, isLocked } = useEngineSettings();
 
-const isWindows = os.platform() === 'win32';
 const alwaysDebugging = ref(false);
-const wslDistros = ref<Record<string, boolean | string>>({});
 const extensionError = ref('');
 const removing = ref('');
 const newAllowed = ref('');
 
 const installed = computed(() => Object.entries(get<Record<string, string>>('application.extensions.installed') ?? {}));
 const allowedList = computed(() => get<string[]>('application.extensions.allowed.list') ?? []);
-const k8sOn = computed(() => !!get('kubernetes.enabled'));
-const noproxy = computed(() => get<string[]>('experimental.virtualMachine.proxy.noproxy') ?? []);
 
 function onAlwaysDebugging(_event: unknown, status: boolean) {
   alwaysDebugging.value = status;
-}
-
-function onIntegrations(_event: unknown, integrations: Record<string, boolean | string>) {
-  wslDistros.value = integrations;
 }
 
 function addAllowed() {
@@ -78,26 +69,13 @@ async function removeExtension(id: string) {
   }
 }
 
-function inputValue(event: Event) {
-  return (event.target as HTMLInputElement).value;
-}
-
-function linesOf(event: Event) {
-  return (event.target as HTMLTextAreaElement).value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-}
-
 onMounted(() => {
   ipcRenderer.on('always-debugging', onAlwaysDebugging);
   ipcRenderer.send('get-debugging-statuses');
-  if (isWindows) {
-    ipcRenderer.on('k8s-integrations', onIntegrations);
-    ipcRenderer.send('k8s-integrations');
-  }
 });
 
 onBeforeUnmount(() => {
   ipcRenderer.removeListener('always-debugging', onAlwaysDebugging);
-  ipcRenderer.removeListener('k8s-integrations', onIntegrations);
 });
 </script>
 
@@ -255,118 +233,7 @@ onBeforeUnmount(() => {
       </PrefRow>
     </PrefCard>
 
-    <PrefCard
-      title="Windows (WSL)"
-      :subtitle="isWindows ? '' : 'Only used on Windows.'"
-    >
-      <PrefRow
-        title="WSL distributions"
-        subtitle="Make docker and kubectl available inside these distributions."
-        :layout="isWindows && Object.keys(wslDistros).length ? 'col' : undefined"
-        :off="!isWindows"
-      >
-        <span
-          v-if="!isWindows || !Object.keys(wslDistros).length"
-          class="dimc"
-        >None found</span>
-        <div
-          v-else
-          class="lst"
-        >
-          <div
-            v-for="(value, name) in wslDistros"
-            :key="name"
-          >
-            <span class="grow"><b>{{ name }}</b><small v-if="typeof value === 'string'">{{ value }}</small></span>
-            <PrefToggle
-              :model-value="value === true"
-              :disabled="typeof value === 'string' || isLocked(`WSL.integrations.${ name }`)"
-              :label="`Integrate with ${ name }`"
-              @update:model-value="set(`WSL.integrations.${ name }`, $event); wslDistros[name] = $event"
-            />
-          </div>
-        </div>
-      </PrefRow>
-      <PrefRow
-        title="Proxy"
-        subtitle="Address, port, username, password and bypass list."
-        :off="!isWindows"
-      >
-        <PrefToggle
-          :model-value="!!get('experimental.virtualMachine.proxy.enabled')"
-          :disabled="!isWindows || isLocked('experimental.virtualMachine.proxy.enabled')"
-          label="Use a proxy"
-          @update:model-value="set('experimental.virtualMachine.proxy.enabled', $event)"
-        />
-      </PrefRow>
-      <PrefMore
-        v-if="isWindows"
-        label="Proxy settings"
-      >
-        <PrefRow title="Address">
-          <input
-            class="inp"
-            aria-label="Proxy address"
-            :value="get('experimental.virtualMachine.proxy.address')"
-            @change="set('experimental.virtualMachine.proxy.address', inputValue($event))"
-          >
-        </PrefRow>
-        <PrefRow title="Port">
-          <input
-            class="inp sm"
-            type="number"
-            aria-label="Proxy port"
-            :value="get('experimental.virtualMachine.proxy.port')"
-            @change="set('experimental.virtualMachine.proxy.port', Number(inputValue($event)))"
-          >
-        </PrefRow>
-        <PrefRow title="Username">
-          <input
-            class="inp"
-            aria-label="Proxy username"
-            :value="get('experimental.virtualMachine.proxy.username')"
-            @change="set('experimental.virtualMachine.proxy.username', inputValue($event))"
-          >
-        </PrefRow>
-        <PrefRow title="Password">
-          <input
-            class="inp"
-            type="password"
-            aria-label="Proxy password"
-            :value="get('experimental.virtualMachine.proxy.password')"
-            @change="set('experimental.virtualMachine.proxy.password', inputValue($event))"
-          >
-        </PrefRow>
-        <PrefRow
-          title="Bypass list"
-          subtitle="One address or range per line."
-          layout="col"
-        >
-          <textarea
-            class="ta"
-            rows="4"
-            aria-label="Proxy bypass list"
-            :value="noproxy.join('\n')"
-            @change="set('experimental.virtualMachine.proxy.noproxy', linesOf($event))"
-          />
-        </PrefRow>
-      </PrefMore>
-    </PrefCard>
-
     <PrefCard title="Reset">
-      <PrefRow
-        title="Reset Kubernetes"
-        subtitle="Deletes all workloads and starts a fresh cluster."
-      >
-        <button
-          type="button"
-          class="btn sm danger"
-          :disabled="!k8sOn"
-          @click="confirmResetKubernetes"
-        >
-          Reset Kubernetes…
-        </button>
-      </PrefRow>
       <PrefRow
         title="Factory reset"
         subtitle="Removes all containers, images, settings and Sulla data on this Mac."

@@ -1,12 +1,9 @@
 import events from 'events';
 import fs from 'fs';
-import os from 'os';
 import util from 'util';
 
-import semver from 'semver';
-
 import {
-  BackendEvents, BackendSettings, execOptions, RestartReasons, State, VMExecutor,
+  BackendError, BackendEvents, BackendSettings, execOptions, RestartReasons, State, VMExecutor,
 } from './backend';
 import {
   ContainerBasicOptions,
@@ -19,10 +16,8 @@ import {
   ContainerStopOptions,
   ReadableProcess,
 } from './containerClient';
-import { KubernetesBackend, KubernetesBackendEvents, KubernetesError } from './k8s';
 import ProgressTracker from './progressTracker';
 
-import K3sHelper from '@pkg/backend/k3sHelper';
 import { Settings } from '@pkg/config/settings';
 import { ChildProcess } from '@pkg/utils/childProcess';
 import Logging, { Log } from '@pkg/utils/logging';
@@ -31,11 +26,10 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 const console = Logging.mock;
 
 export default class MockBackend extends events.EventEmitter implements VMExecutor {
-  readonly kubeBackend: KubernetesBackend = new MockKubernetesBackend();
   readonly executor = this;
   readonly backend = 'mock';
-  cfg:                  BackendSettings | undefined;
-  state:                State = State.STOPPED;
+  cfg:   BackendSettings | undefined;
+  state: State = State.STOPPED;
   readonly cpus = Promise.resolve(1);
   readonly memory = Promise.resolve(1);
   progress = { current: 0, max: 0 };
@@ -48,7 +42,7 @@ export default class MockBackend extends events.EventEmitter implements VMExecut
 
   containerEngineClient = new MockContainerEngineClient();
 
-  getBackendInvalidReason(): Promise<KubernetesError | null> {
+  getBackendInvalidReason(): Promise<BackendError | null> {
     return Promise.resolve(null);
   }
 
@@ -69,7 +63,6 @@ export default class MockBackend extends events.EventEmitter implements VMExecut
       await util.promisify(setTimeout)(1_000);
     }
     this.progressTracker.numeric('Starting mock backend', 10, 10);
-    await this.kubeBackend.start(config, new semver.SemVer('1.0.0'));
     this.setState(State.STARTED);
     console.log('Mock backend started');
   }
@@ -108,23 +101,7 @@ export default class MockBackend extends events.EventEmitter implements VMExecut
   async handleSettingsUpdate(_: BackendSettings): Promise<void> {}
 
   requiresRestartReasons(config: RecursivePartial<BackendSettings>): Promise<RestartReasons> {
-    if (!this.cfg) {
-      return Promise.resolve({});
-    }
-
-    return this.kubeBackend.requiresRestartReasons(this.cfg, config);
-  }
-
-  listIntegrations(): Promise<Record<string, string | boolean>> {
-    if (os.platform() !== 'win32') {
-      throw new Error('This is only expected on Windows');
-    }
-
-    return Promise.resolve({
-      alpha: true,
-      beta:  false,
-      gamma: 'some error',
-    });
+    return Promise.resolve({});
   }
 
   // #region VMExecutor
@@ -181,80 +158,6 @@ export default class MockBackend extends events.EventEmitter implements VMExecut
     event: eventName,
   ): BackendEvents[eventName][] {
     return super.rawListeners(event) as BackendEvents[eventName][];
-  }
-  // #endregion
-}
-
-class MockKubernetesBackend extends events.EventEmitter implements KubernetesBackend {
-  readonly availableVersions = Promise.resolve([]);
-  version = '';
-  desiredPort = 9443;
-
-  readonly k3sHelper = new K3sHelper('x86_64');
-
-  cachedVersionsOnly(): Promise<boolean> {
-    return Promise.resolve(false);
-  }
-
-  listServices() {
-    return [];
-  }
-
-  forwardPort(namespace: string, service: string, k8sPort: number | string, hostPort: number): Promise<number | undefined> {
-    return Promise.resolve(12345);
-  }
-
-  cancelForward(namespace: string, service: string, k8sPort: number | string): Promise<void> {
-    return Promise.resolve();
-  }
-
-  download() {
-    return Promise.resolve([undefined, false] as const);
-  }
-
-  deleteIncompatibleData() {
-    return Promise.resolve();
-  }
-
-  install() {
-    return Promise.resolve();
-  }
-
-  start() {
-    return Promise.resolve();
-  }
-
-  stop() {
-    return Promise.resolve();
-  }
-
-  cleanup() {
-    return Promise.resolve();
-  }
-
-  reset() {
-    return Promise.resolve();
-  }
-
-  requiresRestartReasons() {
-    return Promise.resolve({});
-  }
-
-  // #region Events
-  eventNames(): (keyof KubernetesBackendEvents)[] {
-    return super.eventNames() as (keyof KubernetesBackendEvents)[];
-  }
-
-  listeners<eventName extends keyof KubernetesBackendEvents>(
-    event: eventName,
-  ): KubernetesBackendEvents[eventName][] {
-    return super.listeners(event) as KubernetesBackendEvents[eventName][];
-  }
-
-  rawListeners<eventName extends keyof KubernetesBackendEvents>(
-    event: eventName,
-  ): KubernetesBackendEvents[eventName][] {
-    return super.rawListeners(event) as KubernetesBackendEvents[eventName][];
   }
   // #endregion
 }

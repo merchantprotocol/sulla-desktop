@@ -12,7 +12,6 @@
 import Electron from 'electron';
 import semver from 'semver';
 
-import type { ServiceEntry } from '@pkg/backend/k8s';
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -67,14 +66,10 @@ export interface IpcMainEvents {
   'backend-state-check':   () => string;
   'k8s-restart':           () => void;
   'settings-read':         () => void;
-  'k8s-versions':          () => void;
   'k8s-reset':             (mode: 'fast' | 'wipe') => void;
   'k8s-state':             () => void;
   'k8s-current-engine':    () => void;
-  'k8s-current-port':      () => void;
   'k8s-progress':          () => void;
-  'k8s-integrations':      () => void;
-  'k8s-integration-set':   (name: string, newState: boolean) => void;
   'factory-reset':         (keepSystemImages: boolean) => void;
   'get-app-version':       () => void;
   'update-network-status': (status: boolean) => void;
@@ -132,8 +127,7 @@ export interface IpcMainEvents {
 
   'show-logs': () => void;
 
-  'dashboard-open':  () => void;
-  'dashboard-close': () => void;
+  'dashboard-open': () => void;
 
 
   /** Only for the preferences window */
@@ -264,8 +258,6 @@ export interface IpcMainInvokeEvents {
   'settings-write':            (arg: RecursivePartial<import('@pkg/config/settings').Settings>) => void;
   'transient-settings-fetch':  () => import('@pkg/config/transientSettings').TransientSettings;
   'transient-settings-update': (arg: RecursivePartial<import('@pkg/config/transientSettings').TransientSettings>) => void;
-  'service-fetch':             (namespace?: string) => import('@pkg/backend/k8s').ServiceEntry[];
-  'service-forward':           (service: ServiceEntry, state: boolean) => void;
   'get-app-version':           () => string;
   'show-message-box':          (options: Electron.MessageBoxOptions) => Electron.MessageBoxReturnValue;
   'show-message-box-rd':       (options: Electron.MessageBoxOptions, modal?: boolean) => any;
@@ -1270,22 +1262,14 @@ export interface IpcRendererEvents {
     }>
   ) => void;
   'startup-progress':   (snapshot: import('@pkg/utils/startupProgress').StartupProgressSnapshot) => void;
-  'k8s-check-state':    (state: import('@pkg/backend/k8s').State) => void;
+  'k8s-check-state':    (state: import('@pkg/backend/backend').State) => void;
   'k8s-current-engine': (
     engine: import('@pkg/config/settings').ContainerEngine
   ) => void;
-  'k8s-current-port': (port: number) => void;
-  'k8s-versions': (
-    versions: import('@pkg/utils/kubeVersions').VersionEntry[],
-    cachedOnly: boolean
-  ) => void;
-  'k8s-integrations':          (integrations: Record<string, boolean | string>) => void;
-  'service-changed':           (services: ServiceEntry[]) => void;
-  'service-error':             (service: ServiceEntry, errorMessage: string) => void;
   'kubernetes-errors-details': (
     titlePart: string,
     mainMessage: string,
-    failureDetails: import('@pkg/backend/k8s').FailureDetails
+    failureDetails: import('@pkg/backend/backend').FailureDetails
   ) => void;
   'update-network-status': (status: boolean) => void;
 

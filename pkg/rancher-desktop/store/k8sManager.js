@@ -1,4 +1,4 @@
-import { State as EngineStates } from '@pkg/backend/k8s';
+import { State as EngineStates } from '@pkg/backend/backend';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export const state = () => ({ k8sState: ipcRenderer.sendSync('k8s-state') });

@@ -25,12 +25,6 @@ export default defineComponent({
   components: { BackendProgress, StatusBarItem },
   computed:   {
     ...mapGetters('preferences', ['getPreferences']),
-    kubernetesVersion(): string {
-      return this.getPreferences.kubernetes.version;
-    },
-    kubernetesEnabled(): boolean {
-      return this.getPreferences.kubernetes.enabled;
-    },
     containerEngine(): string {
       return this.getPreferences.containerEngine.name;
     },
@@ -40,16 +34,6 @@ export default defineComponent({
           name: 'version', component: 'Version', icon: 'icon icon-rancher-desktop',
         }, {
           name: 'network', component: 'NetworkStatus', icon: 'icon icon-globe',
-        }, {
-          name: 'kubernetesVersion',
-          icon: 'kubernetes-black.svg',
-          data: {
-            label: {
-              bar:     'product.kubernetesVersion',
-              tooltip: 'product.kubernetesVersion',
-            },
-            value: this.kubernetesEnabled ? this.kubernetesVersion : this.t('product.deactivated'),
-          },
         }, {
           name: 'containerEngine',
           icon: 'icon icon-init_container',

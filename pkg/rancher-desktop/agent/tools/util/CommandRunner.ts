@@ -145,15 +145,6 @@ export async function runCommand(
   }
 
   if (commandExecutionTarget(false, options.runInGuest) === 'vm') {
-    // The Sulla runtime only exists on macOS; paths.sullaRuntime is a throwing
-    // getter on Windows. Fail with a clear message instead of crashing the caller.
-    if (process.platform === 'win32') {
-      return {
-        stdout:   '',
-        stderr:   'VM command execution requires the Sulla runtime, which is not available on Windows. This feature currently supports macOS only.',
-        exitCode: 127,
-      };
-    }
     const rawScript = args.length === 0
       ? command
       : [command, ...args.map(arg => quoteShellArg(arg))].join(' ');

@@ -13,7 +13,7 @@ import { readDependencyVersions } from './lib/dependencies';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 
-type SupportedPlatform = Extract<NodeJS.Platform, 'darwin' | 'linux' | 'win32'>;
+type SupportedPlatform = Extract<NodeJS.Platform, 'darwin' | 'linux'>;
 
 const fix = process.argv.includes('--fix');
 
@@ -30,14 +30,10 @@ async function getModules(): Promise<string[]> {
 /**
  * Modules whose version depends on a different module.  The top level key is
  * the directory containing `go.mod`, relative to the top of the source tree;
- * for example, `src/go/wsl-helper`.  The second level is the go module to
+ * for example, `src/runtime-agent`.  The second level is the go module to
  * modify; the value is the go module in the same `go.mod` to refer to.
  */
-const linkedModules: Record<string, Record<string, string>> = {
-  'src/go/wsl-helper': {
-    'github.com/go-openapi/swag': 'github.com/go-swagger/go-swagger',
-  },
-};
+const linkedModules: Record<string, Record<string, string>> = {};
 
 /**
  * The subset of `go mod edit -json` output that we care about.
@@ -172,7 +168,6 @@ async function runGoLangCILint(platform: SupportedPlatform, ...args: string[]): 
     const os = ({
       darwin: 'darwin',
       linux:  'linux',
-      win32:  'windows',
     } as const)[platform];
 
     commandLine.push('-exec', `/usr/bin/env GOOS=${ os }`);
@@ -193,11 +188,9 @@ async function runGoLangCILint(platform: SupportedPlatform, ...args: string[]): 
 }
 
 function getGoLangCISupportedPlatforms(): SupportedPlatform[] {
-  // On Windows, we can't pretend to be other platforms (due to a lack of
-  // /usr/bin/env).  Also don't do that in CI, because we run all platforms
-  // natively.
-  if (!process.env.CI && process.platform !== 'win32') {
-    return ['darwin', 'linux', 'win32'];
+  // Don't emulate other platforms in CI, because we run all platforms natively.
+  if (!process.env.CI) {
+    return ['darwin', 'linux'];
   }
 
   return [process.platform] as SupportedPlatform[];

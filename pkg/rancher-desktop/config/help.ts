@@ -38,10 +38,6 @@ class PreferencesHelp {
     'Virtual Machine-emulation':       'ui/preferences/virtual-machine/emulation',
     'Container Engine-general':        'ui/preferences/container-engine/general',
     'Container Engine-allowed-images': 'ui/preferences/container-engine/allowed-images',
-    'WSL-integrations':                'ui/preferences/wsl/integrations',
-    'WSL-network':                     'ui/preferences/wsl/network',
-    'WSL-proxy':                       'ui/preferences/wsl/proxy',
-    Kubernetes:                        'ui/preferences/kubernetes',
   });
 
   openUrl(version: string): void {

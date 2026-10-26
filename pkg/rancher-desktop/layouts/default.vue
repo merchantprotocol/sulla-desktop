@@ -18,7 +18,6 @@
     <rd-nav
       class="nav"
       :items="routes"
-      @open-dashboard="openDashboard"
       @open-preferences="openPreferences"
     />
     <the-title ref="title" />
@@ -151,9 +150,6 @@ export default {
       await this.$store.dispatch('preferences/fetchPreferences');
     },
 
-    openDashboard() {
-      ipcRenderer.send('dashboard-open');
-    },
     openPreferences() {
       ipcRenderer.send('preferences-open');
     },

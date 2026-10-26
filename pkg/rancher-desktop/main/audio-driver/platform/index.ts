@@ -7,9 +7,8 @@
 
 import * as darwin from './darwin';
 import * as linux from './linux';
-import * as win32 from './win32';
 
-const backends: Record<string, any> = { darwin, linux, win32 };
+const backends: Record<string, any> = { darwin, linux };
 const backend = backends[process.platform];
 if (!backend) throw new Error(`Unsupported platform: ${ process.platform }`);
 

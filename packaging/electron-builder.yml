@@ -48,8 +48,6 @@ electronLanguages: [ en-US ]
 extraResources:
   - resources/
   - '!resources/sulla-console/**'
-  - '!resources/linux/staging/'
-  - '!resources/win32/staging/'
   - '!resources/host/'
   - '!resources/**/*.js.map'
 files:
@@ -60,9 +58,7 @@ files:
 # Register the sulla:// custom URL scheme so the OS hands off deep
 # links (e.g. the "Open in Sulla Desktop" CTA on sulladesktop.com)
 # to this app. electron-builder writes CFBundleURLTypes into the
-# signed Info.plist on macOS and the per-user registry keys on Win.
-# Linux registration still requires app.setAsDefaultProtocolClient()
-# at runtime — handled in background.ts.
+# signed Info.plist on macOS.
 protocols:
   - name: Sulla Desktop
     schemes: [ sulla ]
@@ -101,18 +97,3 @@ mac:
   # codesign to abort with "code object is not signed at all / In
   # subcomponent: Contents/electron-builder.yml". Inline signing doesn't
   # need those files, so they're gone from the app bundle entirely.
-win:
-  files:
-    - '!**/node_modules/sherpa-onnx-@(darwin|linux)-*{,/**}'
-  icon: ./pkg/rancher-desktop/pages/assets/sulla-icon.ico
-  target: [ zip ]
-  artifactName: Sulla-Desktop-${version}-win.${ext}
-  signtoolOptions:
-    signingHashAlgorithms: [ sha256 ] # We only support Windows 10 + WSL2
-  requestedExecutionLevel: asInvoker # The _app_ doesn't need privileges
-  extraFiles:
-    - build/wix/*
-    - build/license.rtf
-    - build/signing-config-win.yaml
-    - { from: dist/wix-custom-action.dll, to: wix-custom-action.dll }
-    - { from: dist/electron-builder.yaml, to: electron-builder.yml }

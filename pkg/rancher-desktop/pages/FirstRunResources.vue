@@ -87,18 +87,6 @@
               <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
             </label>
           </div>
-
-          <div class="mb-3">
-            <label class="flex items-center">
-              <input
-                v-model="enableKubernetes"
-                type="checkbox"
-                class="mr-2"
-                @change="onKubernetesChange"
-              >
-              <span class="text-sm fr-muted">Enable Kubernetes Mode (requires more resources)</span>
-            </label>
-          </div>
         </div>
       </Transition>
 
@@ -133,7 +121,6 @@ import SystemPreferences from '@pkg/components/SystemPreferences.vue';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
 import { Settings } from '@pkg/config/settings';
 import { PathManagementStrategy } from '@pkg/integrations/pathManager';
-import { highestStableVersion, VersionEntry } from '@pkg/utils/kubeVersions';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 const settings = inject<Ref<Settings>>('settings')!;
@@ -150,9 +137,6 @@ const props = defineProps<{
 // Reactive ref for telemetry
 const enableTelemetry = ref(false);
 
-// Reactive ref for kubernetes mode
-const enableKubernetes = ref(false);
-
 // Reactive ref for options accordion
 const isOptionsOpen = ref(false);
 
@@ -162,40 +146,22 @@ const resourceError = ref('');
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
 settings.value.application.telemetry = { enabled: true };
-settings.value.kubernetes.enabled = false;
 
 onMounted(() => {
   ipcRenderer.invoke('settings-read' as any).then((loadedSettings: Settings) => {
     settings.value = loadedSettings;
     // Ensure defaults are set after loading
     settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
-    settings.value.kubernetes.enabled = false;
 
     applyRecommendedResources();
 
     // Set checkbox state from loaded settings
     enableTelemetry.value = settings.value.application.telemetry.enabled;
-    enableKubernetes.value = settings.value.kubernetes.enabled;
 
     // Save the initial settings
     commitChanges({
       application: { pathManagementStrategy: PathManagementStrategy.RcFiles, telemetry: { enabled: enableTelemetry.value } },
-      kubernetes:  { enabled: enableKubernetes.value },
     });
-  });
-
-  ipcRenderer.send('k8s-versions');
-  ipcRenderer.on('k8s-versions', (event, versions: VersionEntry[]) => {
-    const recommendedVersions = versions.filter((v: VersionEntry) => !!v.channels);
-    const bestVersion = highestStableVersion(recommendedVersions) ?? versions[0];
-
-    if (bestVersion) {
-      settings.value.kubernetes.version = bestVersion.version;
-      // Save the kubernetes version
-      commitChanges({
-        kubernetes: { version: bestVersion.version },
-      });
-    }
   });
 });
 
@@ -233,12 +199,6 @@ const onMemoryChange = (value: number) => {
 
 const onCpuChange = (value: number) => {
   settings.value.virtualMachine.numberCPUs = value;
-};
-
-const onKubernetesChange = async() => {
-  await commitChanges({
-    kubernetes: { enabled: enableKubernetes.value },
-  });
 };
 
 const onTelemetryChange = async() => {

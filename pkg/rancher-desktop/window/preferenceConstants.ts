@@ -11,9 +11,7 @@ interface NavItems {
   name:  NavItemName;
   tabs?: string[];
 }
-const wslTabs: string[] = ['integrations', 'network', 'proxy'];
-const vmLinuxTabs: string[] = ['hardware', 'volumes'];
-const vmDarwinTabs: string[] = vmLinuxTabs.concat(['network', 'emulation']);
+const vmTabs: string[] = ['hardware', 'volumes', 'network', 'emulation'];
 
 export const preferencesNavItems: NavItems[] = [
   {
@@ -23,12 +21,11 @@ export const preferencesNavItems: NavItems[] = [
   { name: 'Appearance' },
   { name: 'Files' },
   {
-    name: process.platform === 'win32' ? 'WSL' : 'Virtual Machine',
-    tabs: process.platform === 'win32' ? wslTabs : ( process.platform === 'linux' ? vmLinuxTabs : vmDarwinTabs ),
+    name: 'Virtual Machine',
+    tabs: vmTabs,
   },
   {
     name: 'Container Engine',
     tabs: ['general', 'allowed-images'],
   },
-  { name: 'Kubernetes' },
 ];

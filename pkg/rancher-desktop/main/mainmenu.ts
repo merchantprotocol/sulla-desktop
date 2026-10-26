@@ -9,20 +9,14 @@ import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, ip
 
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
-import { VMBackend } from '@pkg/backend/backend';
-import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openDockerDashboard, openMain, getWindow, openUrlInApp } from '@pkg/window';
-import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 import { openProcessManager } from '@pkg/window/processManager';
 
 const console = Logging.mainmenu;
-
-// State for dynamic menu updates
-let kubernetesState: State = State.STOPPED;
 
 /**
  * Current routine-surface context, pushed from the renderer via
@@ -69,11 +63,6 @@ export default function buildApplicationMenu(): void {
   Menu.setApplicationMenu(menu);
 
   // Set up event listeners for dynamic menu updates
-  mainEvents.on('k8s-check-state', (mgr: VMBackend) => {
-    kubernetesState = mgr.state;
-    rebuildMenu();
-  });
-
   // Rebuild history menu when history changes
   mainEvents.on('conversation-history:changed' as any, () => {
     rebuildMenu();
@@ -110,8 +99,6 @@ function getApplicationMenu(): MenuItem[] {
   case 'darwin':
     return getMacApplicationMenu();
   case 'linux':
-    return getWindowsApplicationMenu();
-  case 'win32':
     return getWindowsApplicationMenu();
   default:
     throw new Error(`Unsupported platform: ${ process.platform }`);
@@ -329,11 +316,6 @@ function getFileMenu(): MenuItem {
       {
         label:   'Open Docker Dashboard',
         click:   openDockerDashboard,
-      },
-      {
-        label:   'Open Cluster Dashboard',
-        click:   openDashboard,
-        enabled: kubernetesState === State.STARTED,
       },
       { type: 'separator' },
       {
@@ -770,11 +752,6 @@ function getWindowsApplicationMenu(): MenuItem[] {
         {
           label: 'Open Docker Dashboard',
           click: openDockerDashboard,
-        },
-        {
-          label:   'Open Cluster Dashboard',
-          click:   openDashboard,
-          enabled: kubernetesState === State.STARTED,
         },
         { type: 'separator' },
         {

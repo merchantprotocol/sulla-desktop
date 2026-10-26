@@ -23,7 +23,6 @@ import DockerSection from '@pkg/components/settings/sections/DockerSection.vue';
 import FilesSection from '@pkg/components/settings/sections/FilesSection.vue';
 import GeneralSection from '@pkg/components/settings/sections/GeneralSection.vue';
 import HeartbeatSection from '@pkg/components/settings/sections/HeartbeatSection.vue';
-import KubernetesSection from '@pkg/components/settings/sections/KubernetesSection.vue';
 import ModelsSection from '@pkg/components/settings/sections/ModelsSection.vue';
 import PersonalitySection from '@pkg/components/settings/sections/PersonalitySection.vue';
 import PrivacySection from '@pkg/components/settings/sections/PrivacySection.vue';
@@ -54,7 +53,6 @@ const SECTIONS: Record<PreferencesSectionId, unknown> = {
   files:       FilesSection,
   privacy:     PrivacySection,
   docker:      DockerSection,
-  kubernetes:  KubernetesSection,
   advanced:    AdvancedSection,
 };
 
@@ -72,8 +70,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   privacy:     'host access admin administrator telemetry usage',
   docker:      'memory cpu disk rosetta virtual machine vz qemu virtiofs 9p sshfs engine moby containerd path images ' +
     'network port',
-  kubernetes:  'k8s cluster version traefik flannel spin port',
-  advanced:    'debug logs troubleshooting health extensions experimental vault wsl proxy reset factory',
+  advanced: 'debug logs troubleshooting health extensions experimental vault proxy reset factory',
 };
 
 const STORAGE_KEY = 'sulla.preferences.section';
@@ -101,7 +98,6 @@ const nav = computed(() => {
 });
 
 const sectionComponent = computed(() => SECTIONS[current.value]);
-const kubernetesOn = computed(() => !!engine.settings.value?.kubernetes?.enabled);
 
 function go(id: PreferencesSectionId) {
   current.value = id;
@@ -191,10 +187,6 @@ function reload() {
             @click.prevent="go(item.id)"
           >
             <span class="sv"><PrefIcon :name="item.icon" /></span>{{ item.label }}
-            <span
-              v-if="item.id === 'kubernetes' && loaded"
-              class="cnt"
-            >{{ kubernetesOn ? 'On' : 'Off' }}</span>
           </a>
         </template>
         <div
@@ -267,7 +259,7 @@ function reload() {
         v-else
         class="msg"
       >{{ engine.held.value === 'reset'
-        ? 'These changes reset Kubernetes. Its workloads are deleted.'
+        ? 'These changes reset the virtual machine. Its data is deleted.'
         : 'These changes restart Docker. Running containers stop for a moment.' }}</span>
       <div class="r">
         <button
@@ -1278,7 +1270,7 @@ function reload() {
   .diff .dl.del { background: color-mix(in srgb, var(--bad) 10%, transparent); }
   .diff .dl.del i { color: var(--bad); }
 
-  /* modal (Kubernetes setup) */
+  /* modal */
   .scrim {
     position: absolute;
     inset: 40px 0 0 0;

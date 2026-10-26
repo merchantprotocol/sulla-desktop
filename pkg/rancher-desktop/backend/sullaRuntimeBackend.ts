@@ -17,13 +17,10 @@ import path from 'path';
 import Electron, { ipcMain } from 'electron';
 import merge from 'lodash/merge';
 import omit from 'lodash/omit';
-import semver from 'semver';
 import yaml from 'yaml';
 
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
-import { KubernetesBackend } from './k8s';
-import DisabledKubernetesBackend from './kube/disabled';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
@@ -99,7 +96,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   constructor(arch: Architecture) {
     super();
     this.arch = arch;
-    this.kubeBackend = new DisabledKubernetesBackend();
 
     this.progressTracker = new ProgressTracker((progress) => {
       this.progress = progress;
@@ -107,7 +103,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }, console);
   }
 
-  readonly kubeBackend:   KubernetesBackend;
   readonly executor = this;
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
@@ -176,9 +171,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** The current architecture. */
   protected readonly arch: Architecture;
 
-  /** The version of Kubernetes currently running. */
-  protected activeVersion: semver.SemVer | null = null;
-
   /** Whether we can prompt the user for administrative access - this setting persists in the config. */
   #adminAccess = false;
 
@@ -214,20 +206,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     return this.internalState;
   }
 
-  protected async setState(state: State) {
+  protected setState(state: State): Promise<void> {
     this.internalState = state;
     this.emit('state-changed', this.state);
-    switch (this.state) {
-    case State.STOPPING:
-    case State.STOPPED:
-    case State.ERROR:
-    case State.DISABLED:
-      await this.kubeBackend.cleanup();
-      break;
-    case State.STARTING:
-    case State.STARTED:
-      /* nothing */
-    }
+
+    return Promise.resolve();
   }
 
   progress: BackendProgress = { current: 0, max: 0 };
@@ -491,9 +474,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
   /** Boot the Sulla runtime through Docker-ready, then bring up the managed services. A failure fails the backend start. */
   protected async startOnSullaRuntime(config: BackendSettings, generation: number, backendStartTotal: number): Promise<void> {
-    if (config.kubernetes.enabled) {
-      console.warn('[sulla-runtime] Kubernetes is not available on the Sulla runtime yet; starting without it');
-    }
     const shares = this.sullaRuntimeShares();
 
     try {
@@ -674,16 +654,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const { resetAgentContainerImageResolution } = await import('@pkg/agent/services/AgentContainerLauncher');
 
       resetAgentContainerImageResolution();
-      if (config.kubernetes.enabled) {
-        await this.kubeBackend.sullaStepCustomEnvironment?.(
-          () => this.assertManagedServicesGeneration(generation),
-        );
-      } else {
-        await this.reconcileSullaDockerEnvironment(generation);
-        markSullaDockerServicesStarted();
-        getSullaFilesBackups().configureGuest(this);
-        getSullaFilesMountManager().configureGuest(this, () => this.recoverSullaFilesGuestMount());
-      }
+      await this.reconcileSullaDockerEnvironment(generation);
+      markSullaDockerServicesStarted();
+      getSullaFilesBackups().configureGuest(this);
+      getSullaFilesMountManager().configureGuest(this, () => this.recoverSullaFilesGuestMount());
       this.assertManagedServicesGeneration(generation);
       await instantiateSullaStart(() => this.assertManagedServicesGeneration(generation));
       this.assertManagedServicesGeneration(generation);
@@ -701,7 +675,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   /**
-   * Deploys Sulla services using Docker Compose when Kubernetes is disabled.
+   * Deploys Sulla services using Docker Compose.
    * Handles preparation of compose file, deployment, health checks, and model pulling.
    */
   private async reconcileSullaDockerEnvironment(generation: number): Promise<void> {
@@ -1123,7 +1097,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     // Desktop is a single-node Sulla Server. The manager and its ephemeral
     // runners use the same image that the server deployment will use; only
-    // the launcher driver differs (Docker here, Kubernetes on k3s).
+    // the launcher driver differs (Docker here, Kubernetes on the server).
     const workflowImage = resolveSullaServiceImage(
       'sulla-workflows', process.cwd(), Electron.app.getVersion(), process.env.SULLA_WORKFLOW_IMAGE,
     );
@@ -1903,7 +1877,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   reset(_config: BackendSettings): Promise<void> {
-    return Promise.reject(new SullaRuntimeUnsupportedError('Kubernetes'));
+    return Promise.reject(new SullaRuntimeUnsupportedError('Resetting the virtual machine'));
   }
 
   async handleSettingsUpdate(_: BackendSettings): Promise<void> {}

@@ -24,14 +24,11 @@ import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/
 import { getServiceLifecycleManager } from './pkg/rancher-desktop/agent/services/ServiceLifecycleManager';
 
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
-import { State } from '@pkg/backend/backend';
-import BackendHelper from '@pkg/backend/backendHelper';
+import { BackendError, FailureDetails, State } from '@pkg/backend/backend';
 import K8sFactory from '@pkg/backend/factory';
 import { getImageProcessor } from '@pkg/backend/images/imageFactory';
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
-import * as K8s from '@pkg/backend/k8s';
 import { isSullaRuntimeActive, suspendSullaRuntimeOnNextStop } from '@pkg/backend/sullaRuntime/state';
-import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
 import { getStartupProgressHub as getStartupProgressHubInstance } from '@pkg/main/startupProgressHub';
@@ -53,7 +50,6 @@ import { getPathManagerFor } from '@pkg/integrations/pathManagerImpl';
 import { BackendState, CommandWorkerInterface, HttpCommandServer } from '@pkg/main/commandServer/httpCommandServer';
 import SettingsValidator from '@pkg/main/commandServer/settingsValidator';
 import { HttpCredentialHelperServer } from '@pkg/main/credentialServer/httpCredentialHelperServer';
-import { DashboardServer } from '@pkg/main/dashboardServer';
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
 import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
@@ -87,9 +83,7 @@ import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
-import getWSLVersion from '@pkg/utils/wslVersion';
 import * as window from '@pkg/window';
-import { closeDashboard, openDashboard } from '@pkg/window/dashboard';
 import { openPreferences, preferencesSetDirtyFlag } from '@pkg/window/preferences';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
 
@@ -159,7 +153,6 @@ let backendStarted = false;
 let imageEventHandler: ImageEventHandler | null = null;
 let currentContainerEngine = settings.ContainerEngine.NONE;
 let currentImageProcessor: ImageProcessor | null = null;
-let enabledK8s: boolean;
 let pathManager: PathManager;
 const integrationManager: IntegrationManager = getIntegrationManager();
 let noModalDialogs = false;
@@ -171,7 +164,7 @@ let deploymentProfiles: settings.DeploymentProfileType = { defaults: {}, locked:
 /**
  * pendingRestartContext is needed because with the CLI it's possible to change
  * the state of the system without using the UI.  This can push the system out
- * of sync, for example setting kubernetes-enabled=true while it's disabled.
+ * of sync, for example changing a setting that needs a VM restart.
  * Normally the code restarts the system when processing the SET command, but if
  * the backend is currently starting up or shutting down, we have to wait for it
  * to finish.  This module gets a `state-changed` event when that happens,
@@ -199,9 +192,6 @@ Electron.protocol.registerSchemesAsPrivileged([
 ]);
 
 process.on('unhandledRejection', (reason: any, promise: any) => {
-  if (reason?.code === 'ECONNREFUSED' && reason.port === cfg.kubernetes.port) {
-    return;
-  }
   if (reason?.code === '57P01') {
     console.warn('[Unhandled] Ignored Postgres admin termination');
     return;
@@ -335,18 +325,13 @@ firstRunCoordinator.registerStep(
 );
 
 firstRunCoordinator.registerStep(
-  'legacyDeploy',
+  'mockDeploy',
   ['backendBooted', 'credentialsSet'],
   async() => {
-    // WSL has not adopted Lima's per-start managed-service generation yet.
-    // Preserve its existing coordinator-owned deployment until that backend
-    // has an equivalent engine-ready lifecycle hook.
+    // The Sulla runtime backend signals deployCompleted itself through
+    // 'sulla-managed-services-ready'. Backends without that lifecycle hook
+    // (the mock backend used for tests) have nothing to deploy.
     if (typeof (k8smanager as any).setSullaCredentialsReady === 'function') return;
-    if (!cfg.kubernetes.enabled && (k8smanager as any).sullaStepDockerEnvironment) {
-      await (k8smanager as any).sullaStepDockerEnvironment();
-    } else if (cfg.kubernetes.enabled && k8smanager.kubeBackend.sullaStepCustomEnvironment) {
-      await k8smanager.kubeBackend.sullaStepCustomEnvironment();
-    }
     await firstRunCoordinator.setCondition('deployCompleted');
   },
 );
@@ -388,7 +373,7 @@ firstRunCoordinator.registerStep(
   },
 );
 
-// Backend boot event from lima.ts
+// Backend boot event from the Sulla runtime backend
 mainEvents.on('first-run-backend-booted', async() => {
   console.log('[FirstRunCoordinator] first-run-backend-booted event received');
   // Check if credentials were already set before backend finished
@@ -540,8 +525,6 @@ Electron.app.whenReady().then(async() => {
     // Check for required OS versions and features
     await checkPrerequisites();
 
-    DashboardServer.getInstance().init();
-
     await setupNetworking();
 
     try {
@@ -606,7 +589,7 @@ Electron.app.whenReady().then(async() => {
     initChromeApiIpc();
 
     // Start the capability-token-based secrets HTTP server for runtime
-    // containers (reachable from the Lima VM at host.sulla.internal:30121).
+    // containers (reachable from the VM at host.sulla.internal:30121).
     try {
       const { startSullaSecretsServer } = await import('@pkg/main/sullaSecretsServer');
       await startSullaSecretsServer();
@@ -797,7 +780,7 @@ async function initUI() {
 
   // Initialize threat-proxy subsystem (URL filtering + prompt-injection scanning
   // via in-VM mitmproxy). Host side owns settings + URLhaus blocklist refresh;
-  // the actual proxy is installed into the Lima VM by LimaBackend.installThreatProxy().
+  // nothing installs the in-VM proxy on the Sulla runtime yet.
   try {
     threatProxy.initialize();
     console.log('[Threat Proxy] Initialized');
@@ -912,29 +895,9 @@ async function checkForRootPrivs() {
 async function checkPrerequisites() {
   const osPlatform = os.platform();
   let messageId: window.reqMessageId = 'ok';
-  let args: any[] = [];
+  const args: any[] = [];
 
   switch (osPlatform) {
-  case 'win32': {
-    // Required: Windows 10-1909(build 18363) or newer
-    const winRel = os.release().split('.');
-
-    if (Number(winRel[0]) < 10 || (Number(winRel[0]) === 10 && Number(winRel[2]) < 18363)) {
-      messageId = 'win32-release';
-    } else {
-      try {
-        const version = await getWSLVersion();
-
-        if (version.outdated_kernel) {
-          messageId = 'win32-kernel';
-          args = [version];
-        }
-      } catch (ex) {
-        console.error(`Failed to check WSL version, ignoring:`, ex);
-      }
-    }
-    break;
-  }
   case 'linux': {
     // TODO: This whole testing for nested virtualization is wrong. All we should test for is if
     // hardware acceleration is available, e.g. checking /proc/cpuinfo for "vmx" (Intel) or "svm" (AMD).
@@ -990,21 +953,19 @@ async function checkBackendValid() {
 }
 
 /**
- * Start the Kubernetes backend.
- *
- * @precondition cfg.kubernetes.version is set.
+ * Start the VM backend.
  */
 async function startBackend() {
   await checkBackendValid();
 
   // A string describing why we're ignoring the request.
   const ignoreReason = {
-    [K8s.State.STOPPED]:  undefined, // Normal start is accepted.
-    [K8s.State.STARTING]: 'Ignoring duplicate attempt to start backend while starting backend.',
-    [K8s.State.STARTED]:  'Ignoring attempt to start already-started backend.',
-    [K8s.State.STOPPING]: 'Ignoring attempt to start backend while stopping.',
-    [K8s.State.ERROR]:    undefined, // Attempting start from error state is fine.
-    [K8s.State.DISABLED]: 'Ignoring attempt to start already-started backend (Kubernetes disabled).',
+    [State.STOPPED]:  undefined, // Normal start is accepted.
+    [State.STARTING]: 'Ignoring duplicate attempt to start backend while starting backend.',
+    [State.STARTED]:  'Ignoring attempt to start already-started backend.',
+    [State.STOPPING]: 'Ignoring attempt to start backend while stopping.',
+    [State.ERROR]:    undefined, // Attempting start from error state is fine.
+    [State.DISABLED]: 'Ignoring attempt to start already-started backend.',
   }[k8smanager.state];
 
   if (ignoreReason) {
@@ -1030,7 +991,6 @@ async function startK8sManager() {
   const changedContainerEngine = currentContainerEngine !== cfg.containerEngine.name;
 
   currentContainerEngine = cfg.containerEngine.name;
-  enabledK8s = cfg.kubernetes.enabled;
 
   if (changedContainerEngine) {
     setupImageProcessor();
@@ -1202,7 +1162,7 @@ Electron.app.on('before-quit', async(event) => {
   }
 
   // Shut down threat-proxy host-side refresh timer. The in-VM mitmproxy service
-  // lives with the VM and is stopped by Lima's own shutdown path.
+  // lives with the VM and stops when the VM stops.
   try {
     await withTimeout('threatProxy.shutdown', 2_000, threatProxy.shutdown());
     console.log('[Shutdown] Threat proxy shut down');
@@ -1439,17 +1399,14 @@ ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any
 /// /////////////////////////////////////////////////////////////////////////////
 
 ipcMainProxy.on('images-namespaces-read', (event) => {
-  if ([K8s.State.STARTED, K8s.State.DISABLED].includes(k8smanager.state)) {
+  if ([State.STARTED, State.DISABLED].includes(k8smanager.state)) {
     currentImageProcessor?.relayNamespaces();
   }
 });
 
+// Preferences' "Open" links for snapshots and Docker land on the Docker window.
 ipcMainProxy.on('dashboard-open', () => {
-  openDashboard();
-});
-
-ipcMainProxy.on('dashboard-close', () => {
-  closeDashboard();
+  window.openDockerDashboard();
 });
 
 ipcMainProxy.on('preferences-open', (_event, section) => {
@@ -1531,11 +1488,6 @@ ipcMainProxy.handle('settings-write', (event, arg) => {
   try {
     writeSettings(arg);
 
-    // dashboard requires kubernetes, so we want to close it if kubernetes is disabled
-    if (arg?.kubernetes?.enabled === false) {
-      closeDashboard();
-    }
-
     event.sender.sendToFrame(event.frameId, 'settings-update', cfg);
   } catch (err) {
     console.error('[Background] Error in settings-write handler:', err);
@@ -1567,10 +1519,6 @@ ipcMainProxy.on('k8s-current-engine', () => {
   window.send('k8s-current-engine', currentContainerEngine);
 });
 
-ipcMainProxy.on('k8s-current-port', () => {
-  window.send('k8s-current-port', k8smanager.kubeBackend.desiredPort);
-});
-
 ipcMainProxy.on('k8s-reset', async(_, arg) => {
   await doK8sReset(arg, { interactive: true });
 });
@@ -1580,7 +1528,7 @@ ipcMainProxy.handle('api-get-credentials', () => mainEvents.invoke('api-get-cred
 ipcMainProxy.handle('get-locked-fields', () => settingsImpl.getLockedSettings());
 
 function backendIsBusy() {
-  return [K8s.State.STARTING, K8s.State.STOPPING].includes(k8smanager.state);
+  return [State.STARTING, State.STOPPING].includes(k8smanager.state);
 }
 
 async function doK8sReset(arg: 'fast' | 'wipe' | 'fullRestart', context: CommandWorkerInterface.CommandContext): Promise<void> {
@@ -1598,7 +1546,7 @@ async function doK8sReset(arg: 'fast' | 'wipe' | 'fullRestart', context: Command
       break;
     case 'fullRestart':
       await k8smanager.stop();
-      console.log(`Stopped Kubernetes backend cleanly.`);
+      console.log(`Stopped the backend cleanly.`);
       await startK8sManager();
       break;
     case 'wipe':
@@ -1618,17 +1566,14 @@ async function doK8sReset(arg: 'fast' | 'wipe' | 'fullRestart', context: Command
 }
 
 ipcMainProxy.on('k8s-restart', async() => {
-  if (cfg.kubernetes.port !== k8smanager.kubeBackend.desiredPort) {
-    // On port change, we need to wipe the VM.
-    return doK8sReset('wipe', { interactive: true });
-  } else if (cfg.containerEngine.name !== currentContainerEngine || cfg.kubernetes.enabled !== enabledK8s) {
+  if (cfg.containerEngine.name !== currentContainerEngine) {
     return doK8sReset('fullRestart', { interactive: true });
   }
   try {
     switch (k8smanager.state) {
-    case K8s.State.STOPPED:
-    case K8s.State.STARTED:
-    case K8s.State.DISABLED:
+    case State.STOPPED:
+    case State.STARTED:
+    case State.DISABLED:
       // Calling start() will restart the backend, possible switching versions
       // as a side-effect.
       await startK8sManager();
@@ -1636,18 +1581,6 @@ ipcMainProxy.on('k8s-restart', async() => {
     }
   } catch (ex) {
     handleFailure(ex);
-  }
-});
-
-ipcMainProxy.on('k8s-versions', async() => {
-  try {
-    const versions = await k8smanager.kubeBackend.availableVersions;
-    const cachedOnly = await k8smanager.kubeBackend.cachedVersionsOnly();
-
-    window.send('k8s-versions', versions.map(v => v.versionEntry), cachedOnly);
-  } catch (ex) {
-    console.error(`Error handling k8s-versions: ${ ex }`);
-    window.send('k8s-versions', [], true);
   }
 });
 
@@ -1661,42 +1594,6 @@ ipcMainProxy.handle('k8s-progress', () => {
 
 ipcMainProxy.handle('startup-progress', () => {
   return getStartupProgressHub().snapshot();
-});
-
-ipcMainProxy.handle('service-fetch', (_, namespace) => {
-  return k8smanager.kubeBackend.listServices(namespace);
-});
-
-ipcMainProxy.handle('service-forward', async(_, service, state) => {
-  const namespace = service.namespace ?? 'default';
-
-  if (state) {
-    const hostPort = service.listenPort ?? 0;
-
-    await doForwardPort(namespace, service.name, service.port, hostPort);
-  } else {
-    await doCancelForward(namespace, service.name, service.port);
-  }
-});
-
-async function doForwardPort(namespace: string, service: string, k8sPort: string | number, hostPort: number) {
-  return await k8smanager.kubeBackend.forwardPort(namespace, service, k8sPort, hostPort);
-}
-
-async function doCancelForward(namespace: string, service: string, k8sPort: string | number) {
-  return await k8smanager.kubeBackend.cancelForward(namespace, service, k8sPort);
-}
-
-ipcMainProxy.on('k8s-integrations', async() => {
-  mainEvents.emit('integration-update', await integrationManager.listIntegrations() ?? {});
-});
-
-ipcMainProxy.on('k8s-integration-set', (event, name, newState) => {
-  writeSettings({ WSL: { integrations: { [name]: newState } } });
-});
-
-mainEvents.on('integration-update', (state) => {
-  window.send('k8s-integrations', state);
 });
 
 /** Stop the backend and remove application state without an external helper. */
@@ -1996,7 +1893,7 @@ async function handleFailure(payload: any) {
   let message = 'There was an unknown error starting Sulla Desktop';
   let secondaryMessage = '';
 
-  if (payload instanceof K8s.KubernetesError) {
+  if (payload instanceof BackendError) {
     ({ name: titlePart, message } = payload);
   } else if (payload instanceof LockedFieldError) {
     showErrorDialog(titlePart, payload.message, true);
@@ -2019,7 +1916,7 @@ async function handleFailure(payload: any) {
     titlePart = payload.context || titlePart;
   }
   console.log(`Sulla Desktop was unable to start:`, payload);
-  await reportFailureUnlessShuttingDown<K8s.FailureDetails>({
+  await reportFailureUnlessShuttingDown<FailureDetails>({
     isShuttingDown:    () => shuttingDown || gone,
     // getFailureDetails is going to read from existing log files.
     // Wait 1 second before reading them to allow recent writes to appear in them.
@@ -2045,7 +1942,7 @@ async function handleFailure(payload: any) {
         gone = true;
         Electron.app.quit();
       } else {
-        showErrorDialog(titlePart, message, payload instanceof K8s.KubernetesError && payload.fatal);
+        showErrorDialog(titlePart, message, payload instanceof BackendError && payload.fatal);
       }
     },
     onFailureDetailsError: e => console.log(`Failed to get failure details: `, e),
@@ -2068,29 +1965,16 @@ function newK8sManager() {
   const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
   const mgr = K8sFactory(arch);
 
-  mgr.on('state-changed', async(state: K8s.State) => {
+  mgr.on('state-changed', (state: State) => {
     getStartupProgressHub().onBackendState(String(state));
     try {
       mainEvents.emit('k8s-check-state', mgr);
 
-      if ([K8s.State.STARTED, K8s.State.DISABLED].includes(state)) {
-        if (!cfg.kubernetes.version) {
-          writeSettings({ kubernetes: { version: mgr.kubeBackend.version } });
-        }
+      if ([State.STARTED, State.DISABLED].includes(state)) {
         currentImageProcessor?.relayNamespaces();
-
-        if (enabledK8s) {
-          await Steve.getInstance().start();
-        }
       }
 
-      // Notify UI after Steve is ready, so the dashboard button is only enabled
-      // when Steve can accept connections.
       window.send('k8s-check-state', state);
-
-      if (state === K8s.State.STOPPING) {
-        Steve.getInstance().stop();
-      }
 
       if (pendingRestartContext !== undefined && !backendIsBusy()) {
         // If we restart immediately the QEMU process in the VM doesn't always respond to a shutdown messages
@@ -2111,37 +1995,11 @@ function newK8sManager() {
     (new Electron.Notification(notificationOptions)).show();
   });
 
-  mgr.kubeBackend.on('current-port-changed', (port: number) => {
-    window.send('k8s-current-port', port);
-  });
-
-  mgr.kubeBackend.on('service-changed', (services: K8s.ServiceEntry[]) => {
-    console.debug(`service-changed: ${ JSON.stringify(services) }`);
-    window.send('service-changed', services);
-  });
-
-  mgr.kubeBackend.on('service-error', (service: K8s.ServiceEntry, errorMessage: string) => {
-    console.debug(`service-error: ${ errorMessage }, ${ JSON.stringify(service) }`);
-    window.send('service-error', service, errorMessage);
-  });
-
-  mgr.kubeBackend.on('versions-updated', async() => {
-    const versions = await mgr.kubeBackend.availableVersions;
-    const cachedOnly = await mgr.kubeBackend.cachedVersionsOnly();
-
-    window.send('k8s-versions', versions.map(v => v.versionEntry), cachedOnly);
-  });
-
   return mgr;
 }
 
 function validateEarlySettings(cfg: settings.Settings, newSettings: RecursivePartial<settings.Settings>, lockedFields: settings.LockedSettingsType): void {
-  // RD hasn't loaded the supported k8s versions yet, so have it defer actually checking the specified version.
-  // If it can't find this version, it will silently move to the closest version.
-  // We'd have to add more code to report that.
-  // It isn't worth adding that code yet. It might never be needed.
-  const newSettingsForValidation = _.omit(newSettings, 'kubernetes.version');
-  const [, errors] = new SettingsValidator().validateSettings(cfg, newSettingsForValidation, lockedFields);
+  const [, errors] = new SettingsValidator().validateSettings(cfg, newSettings, lockedFields);
 
   if (errors.length > 0) {
     throw new LockedFieldError(`Error in deployment profiles:\n${ errors.join('\n') }`);
@@ -2164,33 +2022,8 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
    * Use the settings validator to validate settings after doing any
    * initialization.
    */
-  protected async validateSettings(existingSettings: settings.Settings, newSettings: RecursivePartial<settings.Settings>) {
-    let clearVersionsAfterTesting = false;
-
-    if (newSettings.kubernetes?.version && this.settingsValidator.k8sVersions.length === 0) {
-      // If we're starting up (by running the command API) we probably haven't loaded all the k8s versions yet.
-      // We don't want to verify if the proposed version makes sense (if it doesn't, we'll assign the default version later).
-      // Here we just want to make sure that if we're changing the version to a different value from the current one,
-      // the field isn't locked.
-      let currentK8sVersions = (await k8smanager.kubeBackend.availableVersions).map(entry => entry.version.version);
-
-      if (currentK8sVersions.length === 0) {
-        clearVersionsAfterTesting = true;
-        currentK8sVersions = [newSettings.kubernetes.version];
-        if (existingSettings.kubernetes.version) {
-          currentK8sVersions.push(existingSettings.kubernetes.version);
-        }
-      }
-      this.settingsValidator.k8sVersions = currentK8sVersions;
-    }
-
-    const result = this.settingsValidator.validateSettings(existingSettings, newSettings, settingsImpl.getLockedSettings());
-
-    if (clearVersionsAfterTesting) {
-      this.settingsValidator.k8sVersions = [];
-    }
-
-    return result;
+  protected validateSettings(existingSettings: settings.Settings, newSettings: RecursivePartial<settings.Settings>) {
+    return this.settingsValidator.validateSettings(existingSettings, newSettings, settingsImpl.getLockedSettings());
   }
 
   getSettings() {
@@ -2213,33 +2046,10 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
     return await doK8sReset(mode, context);
   }
 
-  async forwardPort(namespace: string, service: string, k8sPort: string | number, hostPort: number) {
-    return await doForwardPort(namespace, service, k8sPort, hostPort);
-  }
-
-  async cancelForward(namespace: string, service: string, k8sPort: string | number) {
-    return await doCancelForward(namespace, service, k8sPort);
-  }
-
   /**
    * Execute the preference update for services that don't require a backend restart.
    */
   async handleSettingsUpdate(newConfig: settings.Settings): Promise<void> {
-    const allowedImagesConf = '/usr/local/openresty/nginx/conf/allowed-images.conf';
-    const rcService = k8smanager.backend === 'wsl' ? 'wsl-service' : 'rc-service';
-
-    // Update image allow list patterns, just in case the backend doesn't need restarting
-    // TODO: review why this block is needed at all
-    if (cfg.containerEngine.allowedImages.enabled) {
-      const allowListConf = BackendHelper.createAllowedImageListConf(cfg.containerEngine.allowedImages);
-
-      await k8smanager.executor.writeFile(allowedImagesConf, allowListConf, 0o644);
-      await k8smanager.executor.execCommand({ root: true }, rcService, '--ifstarted', 'rd-openresty', 'reload');
-    } else {
-      await k8smanager.executor.execCommand({ root: true }, rcService, '--ifstarted', 'rd-openresty', 'stop');
-      await k8smanager.executor.execCommand({ root: true }, 'rm', '-f', allowedImagesConf);
-    }
-
     await k8smanager.handleSettingsUpdate(newConfig);
   }
 
@@ -2259,7 +2069,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
 
     try {
       newSettings = settingsImpl.migrateSpecifiedSettingsToCurrentVersion(specifiedNewSettings, false);
-      [needToUpdate, errors] = await this.validateSettings(cfg, newSettings);
+      [needToUpdate, errors] = this.validateSettings(cfg, newSettings);
     } catch (ex: any) {
       errors.push(ex.message);
     }
@@ -2301,7 +2111,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
   }
 
   async proposeSettings(context: CommandWorkerInterface.CommandContext, newSettings: RecursivePartial<settings.Settings>): Promise<[string, string]> {
-    const [, errors] = await this.validateSettings(cfg, newSettings);
+    const [, errors] = this.validateSettings(cfg, newSettings);
 
     if (errors.length > 0) {
       return ['', `Errors in proposed settings:\n${ errors.join('\n') }`];

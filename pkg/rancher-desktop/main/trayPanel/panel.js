@@ -71,12 +71,6 @@ document.getElementById('btn-open-docker').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-docker');
 });
 
-document.getElementById('btn-open-dashboard').addEventListener('click', () => {
-  const btn = document.getElementById('btn-open-dashboard');
-  if (btn.classList.contains('disabled')) return;
-  ipcRenderer.send('tray-panel:open-dashboard');
-});
-
 document.getElementById('btn-secretary-mode').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:secretary-mode');
 });
@@ -180,26 +174,6 @@ ipcRenderer.on('tray-panel:state-update', (_event, state) => {
       document.getElementById('docker-status'),
       state.docker,
     );
-  }
-
-  if (state.k8s) {
-    updateDot(
-      document.getElementById('k8s-dot'),
-      document.getElementById('k8s-status'),
-      state.k8s,
-    );
-
-    // Enable Cluster Dashboard only when Kubernetes is running
-    const dashBtn = document.getElementById('btn-open-dashboard');
-    if (state.k8s === 'STARTED') {
-      dashBtn.classList.remove('disabled');
-    } else {
-      dashBtn.classList.add('disabled');
-    }
-  }
-
-  if (state.k8sContext) {
-    document.getElementById('k8s-status').textContent += ` (${ state.k8sContext })`;
   }
 
 });

@@ -17,7 +17,7 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 // Import heartbeat prompt from TypeScript file
 
-export const CURRENT_SETTINGS_VERSION = 18 as const;
+export const CURRENT_SETTINGS_VERSION = 19 as const;
 
 export enum VMType {
   QEMU = 'qemu',
@@ -72,12 +72,8 @@ export class SettingsError extends Error {
 export const defaultSettings = {
   version:     CURRENT_SETTINGS_VERSION,
   application: {
-    // Default to true so first-launch prompts the user for admin access,
-    // which socket_vmnet needs to give QEMU a network on Intel macOS.
-    // With this false, updateConfig() drops networks entirely (see
-    // backend/lima.ts "Administrator access disallowed") and QEMU exits
-    // immediately, breaking the whole VM startup. Users can flip it off
-    // in settings if they don't want sudo prompts.
+    // Whether Sulla Desktop may ask for administrator access when it needs it.
+    // Users can turn it off in settings if they don't want sudo prompts.
     adminAccess: true,
     // Gates the agent's access to the host machine's shell (the
     // AppleScript→Terminal bridge and any host-exec path). Default OFF —
@@ -93,7 +89,7 @@ export const defaultSettings = {
       /** Installed extensions, mapping to the installed version (tag). */
       installed: { } as Record<string, string>,
     },
-    pathManagementStrategy: process.platform === 'win32' ? PathManagementStrategy.Manual : PathManagementStrategy.RcFiles,
+    pathManagementStrategy: PathManagementStrategy.RcFiles,
     telemetry:              { enabled: true },
     /** Whether we should check for updates and apply them. */
     updater:                { enabled: true },
@@ -129,17 +125,7 @@ export const defaultSettings = {
       type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
     },
   },
-  WSL:        { integrations: {} as Record<string, boolean> },
-  kubernetes: {
-    /** The version of Kubernetes to launch, as a semver (without v prefix). */
-    version: '',
-    port:    6443,
-    enabled: false,
-    options: { traefik: true, flannel: true },
-    ingress: { localhostOnly: false },
-  },
-  portForwarding: { includeKubernetesServices: false },
-  images:         {
+  images: {
     showAll:   true,
     namespace: 'default',
   },
@@ -152,8 +138,6 @@ export const defaultSettings = {
    */
   experimental: {
     containerEngine:           { webAssembly: { enabled: false } },
-    /** can only be enabled if containerEngine.webAssembly.enabled is true */
-    kubernetes:                { options: { spinkube: false } },
     /** Override for agent/prompts/soul.md (empty string uses default soul.md). */
     soulPrompt:                '',
     /** Bot name (default: Sulla) */
@@ -218,7 +202,7 @@ export const defaultSettings = {
         noproxy:  ['0.0.0.0/8', '10.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16',
           '224.0.0.0/4', '240.0.0.0/4'],
       },
-      /** Lima only: use SSH port forwarding instead of gRPC. */
+      /** Unused by the Sulla runtime; kept so existing settings files still validate. */
       sshPortForwarder: true,
     },
   },

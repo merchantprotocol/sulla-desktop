@@ -135,12 +135,6 @@ export function load(deploymentProfiles: DeploymentProfileType): Settings {
     return finishConfiguringSettings(loadFromDisk(), deploymentProfiles);
   } catch (err: any) {
     if (err.code === 'ENOENT') {
-      // See the migrateSettingsLocationOnWindows code to understand how it's impossible to
-      // end up in an infinite loop of recursive calls to `load()`
-      if (migrateSettingsLocationOnWindows()) {
-        return load(deploymentProfiles);
-      }
-
       return createSettings(deploymentProfiles);
     } else {
       // JSON problems in the settings file will be caught, and we let any
@@ -282,40 +276,6 @@ function fileIsWritable(path: string) {
   } catch (_) {
     return false;
   }
-}
-
-/*
- * The purpose of this function is to let RD stop using AppData\Roaming on Windows, and store almost everything
- * in AppData\Local. The only file it needs to preserve is `AppData\Roaming\rancher-desktop\settings.json`.
- * This is called by the loader when it doesn't find that file in `Local\...`. So it looks to see if it's
- * in `Roaming\...`, and if it is, will move it to `Local\...` and then load it.
- */
-function migrateSettingsLocationOnWindows(): boolean {
-  if (process.platform !== 'win32') {
-    return false;
-  }
-  const appData = process.env['APPDATA'];
-  const rdAppHomeDir = paths.appHome;
-
-  if (!appData || !rdAppHomeDir) {
-    return false;
-  }
-  const oldConfigPath = join(appData, 'rancher-desktop', 'settings.json');
-  const newConfigPath = join(rdAppHomeDir, 'settings.json');
-
-  if (!fileExists(oldConfigPath) || fileExists(newConfigPath)) {
-    return false;
-  }
-  try {
-    fs.copyFileSync(oldConfigPath, newConfigPath);
-
-    // If the copy actually failed to create `newConfigPath`, return false, so the caller will create new settings.
-    return fileExists(newConfigPath);
-  } catch {
-    // Ignore any other problems, so create a new settings file.
-  }
-
-  return false;
 }
 
 /**
@@ -461,11 +421,7 @@ export const updateTable: Record<number, (settings: any, locked : boolean) => vo
   },
   7: (settings) => {
     if (_.get(settings, 'application.pathManagementStrategy') === 'notset') {
-      if (process.platform === 'win32') {
-        settings.application.pathManagementStrategy = PathManagementStrategy.Manual;
-      } else {
-        settings.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
-      }
+      settings.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
     }
   },
   8: (settings) => {
@@ -535,6 +491,14 @@ export const updateTable: Record<number, (settings: any, locked : boolean) => vo
   17: (settings) => {
     // The Sulla runtime is always the VM on macOS now; its opt-in setting is gone.
     _.unset(settings, 'experimental.sullaRuntime');
+  },
+  18: (settings) => {
+    // Sulla Desktop is macOS only and has no Kubernetes: drop the WSL,
+    // Kubernetes and Kubernetes port-forwarding settings.
+    _.unset(settings, 'WSL');
+    _.unset(settings, 'kubernetes');
+    _.unset(settings, 'portForwarding');
+    _.unset(settings, 'experimental.kubernetes');
   },
 };
 

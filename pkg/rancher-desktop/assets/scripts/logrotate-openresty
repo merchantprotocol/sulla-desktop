@@ -1,7 +1,0 @@
-/var/log/openresty/*.log {
-	missingok
-	sharedscripts
-	postrotate
-		/etc/init.d/rd-openresty --quiet --ifstarted reopen
-	endscript
-}

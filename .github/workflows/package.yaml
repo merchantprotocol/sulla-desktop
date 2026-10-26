@@ -14,7 +14,7 @@ defaults:
 
 jobs:
   # The mac app embeds the native runtime (macOS VM). It is rebuilt from this
-  # commit on every release; win does not wait on its success.
+  # commit on every release.
   runtime:
     uses: ./.github/workflows/sulla-runtime.yml
     with:
@@ -24,9 +24,8 @@ jobs:
     needs: runtime
     if: ${{ !cancelled() }}
     strategy:
-      # One platform's intermittent electron-extract failure must not cancel
-      # the others — without this, a single unlucky runner nukes all four
-      # legs and produces zero artifacts. Each platform stands on its own.
+      # One leg's intermittent electron-extract failure must not cancel
+      # the other — each architecture stands on its own.
       fail-fast: false
       matrix:
         include:
@@ -36,13 +35,6 @@ jobs:
         - platform: mac
           arch: aarch64
           runs-on: macos-15
-        - platform: win
-          # Pinned: windows-latest drifted to an image with VS 18, which the
-          # bundled node-gyp reports as version "undefined" and rejects ("could
-          # not find VS 2017 or newer") — failing native-addon compiles. VS 2022
-          # on windows-2022 is node-gyp-recognized. (Durable follow-up: upgrade
-          # node-gyp instead of pinning the runner.)
-          runs-on: windows-2022
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -145,20 +137,6 @@ jobs:
         name: Sulla Desktop-mac.${{ matrix.arch }}.zip
         path: dist/Sulla-Desktop*.zip
         if-no-files-found: error
-    - name: Upload Windows installer
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      if: matrix.platform == 'win'
-      with:
-        name: Sulla Desktop Setup.msi
-        path: dist/Sulla.Desktop*.msi
-        if-no-files-found: error
-    - name: Upload Windows zip
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      if: matrix.platform == 'win'
-      with:
-        name: Sulla Desktop-win.zip
-        path: dist/Sulla-Desktop-*-win.zip
-        if-no-files-found: error
 
   release:
     name: Create GitHub Release
@@ -179,7 +157,7 @@ jobs:
       run: |
         mkdir -p release
         # Flatten artifacts into release directory
-        find artifacts -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.zip' \) \
+        find artifacts -type f \( -name '*.dmg' -o -name '*.zip' \) \
           -exec cp {} release/ \;
         ls -lh release/
     - name: Create release

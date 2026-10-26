@@ -2,13 +2,12 @@ import os from 'os';
 import path from 'path';
 
 import UnixIntegrationManager from '@pkg/integrations/unixIntegrationManager';
-import WindowsIntegrationManager from '@pkg/integrations/windowsIntegrationManager';
 import paths from '@pkg/utils/paths';
 
 /**
  * An IntegrationManager is a class that manages integrations for a particular
  * platform. An "integration" is a tool that is used with Rancher Desktop, such
- * as kubectl, nerdctl, docker CLI plugins and so on. These tools are included
+ * as the docker CLI and its plugins. These tools are included
  * in the Rancher Desktop installation, but extra steps are usually needed to
  * make them available to the user. Carrying out these steps, as well as reversing
  * them when desired, is what an IntegrationManager is for.
@@ -28,16 +27,6 @@ export interface IntegrationManager {
    * different location every run. Idempotent.
    */
   removeSymlinksOnly(): Promise<void>
-
-  /**
-   * On Windows only, list the integrations available; returns a mapping of WSL
-   * distribution to:
-   * - true: integration is enabled
-   * - false: integration is disabled
-   * - (string): error with given details
-   * On non-Windows platforms, returns null.
-   */
-  listIntegrations(): Promise<Record<string, boolean | string> | null>;
 }
 
 export function getIntegrationManager(): IntegrationManager {
@@ -52,8 +41,6 @@ export function getIntegrationManager(): IntegrationManager {
     return new UnixIntegrationManager({
       binDir, integrationDir: paths.integration, dockerCLIPluginSource, dockerCLIPluginDest,
     });
-  case 'win32':
-    return WindowsIntegrationManager.getInstance();
   default:
     throw new Error(`OS ${ platform } is not supported`);
   }

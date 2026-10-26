@@ -1,4 +1,4 @@
-<!-- This is the Kubernetes backend progress notification in the bottom left
+<!-- This is the VM backend progress notification in the bottom left
    - corner of the default layout.
    -->
 
@@ -35,7 +35,7 @@ export default defineComponent({
   components: { RdProgress },
   data() {
     return {
-      /** Current Kubernetes backend action progress. */
+      /** Current VM backend action progress. */
       progress: { current: 1, max: 1 } as {
         /** The current progress, from 0 to max. */
         readonly current:         number;

@@ -15,7 +15,7 @@ export type PreferencesSectionId =
   'general' | 'appearance' |
   'models' | 'personality' | 'heartbeat' | 'voice' | 'workflows' |
   'account' | 'files' | 'privacy' |
-  'docker' | 'kubernetes' |
+  'docker' |
   'advanced';
 
 export interface PreferencesNavItem {
@@ -60,7 +60,6 @@ export const PREFERENCES_NAV: PreferencesNavGroup[] = [
     title: 'Containers',
     items: [
       { id: 'docker', icon: 'box', label: 'Docker' },
-      { id: 'kubernetes', icon: 'helm', label: 'Kubernetes' },
     ],
   },
   {
@@ -80,7 +79,6 @@ const LEGACY_SECTION_NAMES: Record<string, PreferencesSectionId> = {
   application:          'general',
   'virtual machine':    'docker',
   'container engine':   'docker',
-  wsl:                  'advanced',
   'language model':     'models',
   'language-model':     'models',
   'system-prompt':      'personality',
@@ -135,7 +133,7 @@ export interface ProposalSeverities {
  * What to do with a proposed change to the engine settings:
  * - `apply`: nothing restarts, so save it right away.
  * - `restart`: Docker restarts; hold it until the user confirms.
- * - `reset`: Kubernetes is wiped; hold it until the user confirms.
+ * - `reset`: the backend's data is wiped; hold it until the user confirms.
  * - `invalid`: the backend rejected the value; don't save.
  */
 export type ApplyDecision = 'apply' | 'restart' | 'reset' | 'invalid';

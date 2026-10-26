@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { defineComponent } from 'vue';
 import { mapGetters } from 'vuex';
 
-import { State as EngineStates } from '@pkg/backend/k8s';
+import { State as EngineStates } from '@pkg/backend/backend';
 import { Snapshot } from '@pkg/main/snapshots/types';
 import { currentTime } from '@pkg/utils/dateUtils';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';

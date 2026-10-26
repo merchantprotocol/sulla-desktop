@@ -14,9 +14,9 @@ import YAML from 'yaml';
 
 import { getResource } from './download';
 
-export type DependencyPlatform = 'wsl' | 'linux' | 'darwin' | 'win32';
-export type Platform = 'linux' | 'darwin' | 'win32';
-export type GoPlatform = 'linux' | 'darwin' | 'windows';
+export type DependencyPlatform = 'linux' | 'darwin';
+export type Platform = 'linux' | 'darwin';
+export type GoPlatform = 'linux' | 'darwin';
 
 export interface DownloadContext {
   versions:           DependencyVersions;
@@ -38,27 +38,13 @@ export interface DownloadContext {
 type Version = string;
 
 export interface DependencyVersions {
-  WSLDistro:                       string;
-  kuberlr:                         string;
-  helm:                            string;
   dockerCLI:                       string;
   dockerBuildx:                    string;
   dockerCompose:                   string;
   'golangci-lint':                 string;
-  trivy:                           string;
-  steve:                           string;
-  guestAgent:                      string;
-  rancherDashboard:                string;
   dockerProvidedCredentialHelpers: string;
   ECRCredentialHelper:             string;
-  mobyOpenAPISpec:                 string;
-  wix:                             string;
-  moproxy:                         string;
-  spinShim:                        string;
-  certManager:                     string;
-  spinOperator:                    string;
   spinCLI:                         string;
-  spinKubePlugin:                  string;
   'check-spelling':                string;
 }
 
@@ -119,7 +105,7 @@ export interface Dependency {
   get name(): string,
   /**
    * Other dependencies this one requires.
-   * This must be in the form <name>:<platform>, e.g. "kuberlr:linux"
+   * This must be in the form <name>:<platform>, e.g. "dockerCLI:darwin"
    */
   dependencies?: (context: DownloadContext) => string[],
   /**

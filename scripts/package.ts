@@ -18,7 +18,7 @@ import * as path from 'path';
 
 import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
 import { findIdentity } from 'app-builder-lib/out/codeSign/macCodeSign';
-import { executeAppBuilder, log } from 'builder-util';
+import { log } from 'builder-util';
 import {
   AfterPackContext, Arch, build, CliOptions, Configuration,
 } from 'electron-builder';
@@ -27,7 +27,6 @@ import plist from 'plist';
 import yaml from 'yaml';
 
 import buildUtils from './lib/build-utils';
-import buildInstaller, { buildCustomAction } from './lib/installer-win32';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 import { ReadWrite } from '@pkg/utils/typeUtils';
@@ -93,7 +92,6 @@ class Builder {
   protected get electronBinary() {
     const platformPath = {
       darwin: [`mac-${ buildUtils.arch }`, 'Sulla Desktop.app/Contents/MacOS/Sulla Desktop'],
-      win32:  ['win-unpacked', 'Sulla Desktop.exe'],
     }[process.platform as string];
 
     if (!platformPath) {
@@ -110,7 +108,6 @@ class Builder {
   protected async flipFuses(context: AfterPackContext) {
     const extension = {
       darwin: '.app',
-      win32:  '.exe',
     }[context.electronPlatformName] ?? '';
     const exeName = `${ context.packager.appInfo.productFilename }${ extension }`;
     const exePath = path.join(context.appOutDir, exeName);
@@ -300,7 +297,7 @@ class Builder {
     const root = process.cwd();
     const runtimeRoot = path.join(buildUtils.distDir, 'sulla-console-runtime');
     const serviceRoot = path.join(root, 'services', 'sulla-console');
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const npm = 'npm';
 
     await fs.promises.rm(runtimeRoot, { recursive: true, force: true });
     await fs.promises.mkdir(runtimeRoot, { recursive: true });
@@ -352,21 +349,11 @@ class Builder {
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;
-    const distDir = path.join(process.cwd(), 'dist');
-    const electronPlatform = ({
-      darwin: 'mac',
-      win32:  'win',
-    } as const)[process.platform as string];
 
-    if (!electronPlatform) {
+    if (process.platform !== 'darwin') {
       throw new Error(`Packaging for ${ process.platform } is not supported`);
     }
-
-    switch (electronPlatform) {
-    case 'win':
-      await this.createWindowsResources(distDir);
-      break;
-    }
+    const electronPlatform = 'mac' as const;
 
     // When there are files (e.g., extraFiles or extraResources) specified at both
     // the top-level and platform-specific levels, we need to combine them
@@ -385,7 +372,7 @@ class Builder {
       delete section[key];
     }
 
-    if (electronPlatform === 'mac') await this.configureMacProvisioning(config);
+    await this.configureMacProvisioning(config);
     _.set(config, 'extraMetadata.version', finalBuildVersion);
     await fs.promises.writeFile(configPath, yaml.stringify(config), 'utf-8');
 
@@ -398,15 +385,13 @@ class Builder {
       x64:     buildUtils.arch === 'x64',
     };
 
-    if (electronPlatform) {
-      if (process.argv.includes('--zip')) {
-        options[electronPlatform] = ['zip'];
-      } else {
-        const rawTarget = config[electronPlatform]?.target ?? [];
-        const target = Array.isArray(rawTarget) ? rawTarget : [rawTarget];
+    if (process.argv.includes('--zip')) {
+      options[electronPlatform] = ['zip'];
+    } else {
+      const rawTarget = config[electronPlatform]?.target ?? [];
+      const target = Array.isArray(rawTarget) ? rawTarget : [rawTarget];
 
-        options[electronPlatform] = target.map(t => typeof t === 'string' ? t : t.target);
-      }
+      options[electronPlatform] = target.map(t => typeof t === 'string' ? t : t.target);
     }
 
     await build(options);
@@ -414,57 +399,8 @@ class Builder {
     return options;
   }
 
-  async buildInstaller(config: CliOptions) {
-    const appDir = path.join(buildUtils.distDir, 'win-unpacked');
-    const { version } = (config.config as any).extraMetadata;
-    const installerPath = path.join(buildUtils.distDir, `Sulla.Desktop.Setup.${ version }.msi`);
-
-    if (config.win && !process.argv.includes('--zip')) {
-      // Only build installer if we're not asked not to.
-      await buildInstaller(buildUtils.distDir, appDir, installerPath);
-    }
-  }
-
-  protected async createWindowsResources(workDir: string) {
-    // Create stub executable with the correct icon (for the installer)
-    const imageFile = path.join(process.cwd(), 'resources', 'icons', 'sulla-app-icon.png');
-    const iconArgs = ['icon', '--format', 'ico', '--out', workDir, '--input', imageFile];
-    const iconResult = await this.executeAppBuilderAsJson(iconArgs);
-    const iconFile = iconResult.icons[0].file;
-    const executable = path.join(process.cwd(), 'resources', 'win32', 'bin', 'wsl-helper.exe');
-    const rceditArgs = [executable, '--set-icon', iconFile];
-
-    await executeAppBuilder(['rcedit', '--args', JSON.stringify(rceditArgs)], undefined, undefined, 3);
-
-    // Create the custom action for the installer
-    log.info('building Windows Installer custom action...');
-    const customActionFile = await buildCustomAction();
-
-    // Wait for the virus scanner to be done with the new DLL file
-    for (let i = 0; i < 30; i++) {
-      try {
-        await fs.promises.readFile(customActionFile);
-        break;
-      } catch {
-        await buildUtils.sleep(5_000);
-      }
-    }
-  }
-
-  protected async executeAppBuilderAsJson(...args: Parameters<typeof executeAppBuilder>) {
-    const result = JSON.parse(await executeAppBuilder(...args));
-
-    if (result.error) {
-      throw new Error(result.error);
-    }
-
-    return result;
-  }
-
   async run() {
-    const options = await this.package();
-
-    await this.buildInstaller(options);
+    await this.package();
   }
 }
 
