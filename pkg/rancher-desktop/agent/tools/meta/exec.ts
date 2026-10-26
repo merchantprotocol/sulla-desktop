@@ -4,7 +4,7 @@ import { runCommand } from '../util/CommandRunner';
 /**
  * Exec Tool - Worker class for execution
  *
- * Commands run inside an isolated Lima VM, so destructive operations
+ * Commands run inside an isolated Sulla VM, so destructive operations
  * (rm -rf, package installs, service management, etc.) are safe —
  * they cannot affect the host machine.
  */
@@ -53,7 +53,7 @@ export class ExecWorker extends BaseTool {
       const res = await runCommand(finalCommand, [], {
         timeoutMs,
         maxOutputChars: 160_000,
-        runInLimaShell: true,
+        runInGuest: true,
         stdin,
       });
 

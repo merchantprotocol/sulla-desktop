@@ -3,7 +3,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Diff Tool - Show changes between working tree, staging area, or commits.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitDiffWorker extends BaseTool {
   name = '';
@@ -17,7 +17,7 @@ export class GitDiffWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -40,7 +40,7 @@ export class GitDiffWorker extends BaseTool {
         cmd += ` -- "${ filePath }"`;
       }
 
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 60_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 60_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Git diff failed: ${ result.stderr || result.stdout }` };

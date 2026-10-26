@@ -525,6 +525,10 @@ export const updateTable: Record<number, (settings: any, locked : boolean) => vo
       _.set(settings, 'containerEngine.mobyStorageDriver', 'auto');
     }
   },
+  17: (settings) => {
+    // The Sulla runtime is always the VM on macOS now; its opt-in setting is gone.
+    _.unset(settings, 'experimental.sullaRuntime');
+  },
 };
 
 function migrateSettingsToCurrentVersion(settings: Record<string, any>): Settings {

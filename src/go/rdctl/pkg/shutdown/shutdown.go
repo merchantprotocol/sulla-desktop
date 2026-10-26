@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -35,7 +34,6 @@ import (
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/factoryreset"
 	p "github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/paths"
 	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/process"
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/utils"
 )
 
 type shutdownData struct {
@@ -53,7 +51,7 @@ const (
 	appKillWaitInterval = 2 * time.Second
 )
 
-var limaCtlPath string
+var sullaRuntimePath string
 
 func newShutdownData(waitForShutdown bool) *shutdownData {
 	return &shutdownData{waitForShutdown: waitForShutdown}
@@ -67,49 +65,21 @@ func FinishShutdown(ctx context.Context, waitForShutdown bool, initiatingCommand
 	if runtime.GOOS == "windows" {
 		return s.waitForAppToDieOrKillIt(ctx, factoryreset.CheckProcessWindows, factoryreset.KillRancherDesktop, false, "the app")
 	}
-	paths, err := p.GetPaths()
+	runtimePath, err := directories.GetSullaRuntimePath()
 	if err != nil {
-		logrus.Errorf("Ignoring error trying to get application paths: %s", err)
-	} else if err = directories.SetupLimaHome(paths.Lima); err != nil {
-		logrus.Errorf("Ignoring error trying to get lima directory: %s", err)
+		logrus.Errorf("Ignoring error trying to get path to sulla-runtime: %s", err)
 	} else {
-		limaCtlPath, err = directories.GetLimactlPath()
-		if err != nil {
-			logrus.Errorf("Ignoring error trying to get path to limactl: %s", err)
-		} else {
-			switch initiatingCommand {
-			case Shutdown:
-				err = s.waitForAppToDieOrKillIt(ctx, checkLima, stopLima, false, "lima")
-				if err != nil {
-					logrus.Errorf("Ignoring error trying to stop lima: %s", err)
-				}
-				// Check once more to see if lima is still running, and if so, run `limactl stop --force 0`
-				err = s.waitForAppToDieOrKillIt(ctx, checkLima, stopLimaWithForce, true, "lima")
-				if err != nil {
-					logrus.Errorf("Ignoring error trying to force-stop lima: %s", err)
-				}
-			case FactoryReset:
-				err = s.waitForAppToDieOrKillIt(ctx, checkLima, deleteLima, false, "lima")
-				if err != nil {
-					logrus.Errorf("Ignoring error trying to delete lima subtree: %s", err)
-				}
-			default:
-				return fmt.Errorf("internal error: unknown shutdown initiating command of %q", initiatingCommand)
+		sullaRuntimePath = runtimePath
+		switch initiatingCommand {
+		case Shutdown, FactoryReset:
+			// The runtime's data disk is user data; neither command deletes it.
+			err = s.waitForAppToDieOrKillIt(ctx, checkSullaRuntime, stopSullaRuntime, false, "the Sulla runtime")
+			if err != nil {
+				logrus.Errorf("Ignoring error trying to stop the Sulla runtime: %s", err)
 			}
+		default:
+			return fmt.Errorf("internal error: unknown shutdown initiating command of %q", initiatingCommand)
 		}
-	}
-	qemuExecutable, err := getQemuExecutable()
-	if err != nil {
-		return fmt.Errorf("failed to find qemu executable: %w", err)
-	}
-	err = s.waitForAppToDieOrKillIt(
-		ctx,
-		isExecutableRunningFunc(qemuExecutable),
-		terminateExecutableFunc(qemuExecutable),
-		false,
-		"qemu")
-	if err != nil {
-		logrus.Errorf("Ignoring error trying to kill qemu: %s", err)
 	}
 	appDir, err := directories.GetApplicationDirectory(ctx)
 	if err != nil {
@@ -153,38 +123,6 @@ func (s *shutdownData) waitForAppToDieOrKillIt(ctx context.Context, checkFunc fu
 	return killFunc(ctx)
 }
 
-func getQemuExecutable() (string, error) {
-	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("qemu not installed on Windows")
-	}
-	resourcesDir, err := p.GetResourcesPath()
-	if err != nil {
-		return "", fmt.Errorf("failed to get resources directory: %w", err)
-	}
-	var arch string
-	switch runtime.GOARCH {
-	case "amd64":
-		arch = "x86_64"
-	case "arm64":
-		arch = "aarch64"
-	default:
-		arch = runtime.GOARCH
-	}
-	qemuName := fmt.Sprintf("qemu-system-%s", arch)
-	candidates := []string{
-		filepath.Join(resourcesDir, runtime.GOOS, "lima", "bin", qemuName),
-	}
-	if runtime.GOOS == "linux" {
-		// On Linux, we may be running in AppImage; in that case, we need to check
-		// the bundled qemu.
-		candidates = append(
-			candidates,
-			filepath.Join(utils.GetParentDir(resourcesDir, 4), "usr", "bin", qemuName),
-		)
-	}
-	return p.FindFirstExecutable(candidates...)
-}
-
 func isExecutableRunningFunc(executablePath string) func(context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
 		pid, err := process.FindPidOfProcess(executablePath)
@@ -214,14 +152,16 @@ func terminateExecutableFunc(executablePath string) func(context.Context) error 
 	}
 }
 
-func checkLima(ctx context.Context) (bool, error) {
-	cmd := exec.CommandContext(ctx, limaCtlPath, "ls", "--format", "{{.Status}}", "0")
-	cmd.Stderr = os.Stderr
+// checkSullaRuntime reports whether the runtime's control socket answers with
+// a state other than "stopped".
+func checkSullaRuntime(ctx context.Context) (bool, error) {
+	cmd := exec.CommandContext(ctx, sullaRuntimePath, "status")
 	result, err := cmd.Output()
 	if err != nil {
-		return false, err
+		// No control socket: the runtime is not running.
+		return false, nil
 	}
-	return strings.HasPrefix(string(result), "Running"), nil
+	return !strings.Contains(string(result), `"state":"stopped"`), nil
 }
 
 func runCommandIgnoreOutput(cmd *exec.Cmd) error {
@@ -231,16 +171,8 @@ func runCommandIgnoreOutput(cmd *exec.Cmd) error {
 	return cmd.Run()
 }
 
-func stopLima(ctx context.Context) error {
-	return runCommandIgnoreOutput(exec.CommandContext(ctx, limaCtlPath, "stop", "0"))
-}
-
-func stopLimaWithForce(ctx context.Context) error {
-	return runCommandIgnoreOutput(exec.CommandContext(ctx, limaCtlPath, "stop", "--force", "0"))
-}
-
-func deleteLima(ctx context.Context) error {
-	return runCommandIgnoreOutput(exec.CommandContext(ctx, limaCtlPath, "delete", "--force", "0"))
+func stopSullaRuntime(ctx context.Context) error {
+	return runCommandIgnoreOutput(exec.CommandContext(ctx, sullaRuntimePath, "stop"))
 }
 
 func terminateRancherDesktopFunc(appDir string) func(context.Context) error {

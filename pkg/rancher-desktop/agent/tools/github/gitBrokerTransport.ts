@@ -142,18 +142,18 @@ export async function withGitHubBrokerRemote<T>(
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    // Git commands always run in Lima (or an agent container inside Lima), so
+    // Git commands always run in the Sulla VM (or an agent container inside the Sulla VM), so
     // host loopback is unreachable even when there is no container binding.
     server.listen(0, '0.0.0.0', resolve);
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('github.git broker did not bind a TCP port');
   try {
-    // The callback always runs through runCommand's Lima shell, regardless of
+    // The callback always runs through runCommand's guest shell, regardless of
     // whether the caller itself has a pod id.  Container callers reach the tool
-    // over MCP, but git still runs in Lima, where the Desktop broker is exposed
-    // through host.lima.internal rather than the container-only named relay.
-    return await run(`http://host.lima.internal:${ address.port }${ scopedPath }`);
+    // over MCP, but git still runs in the Sulla VM, where the Desktop broker is exposed
+    // through host.sulla.internal rather than the container-only named relay.
+    return await run(`http://host.sulla.internal:${ address.port }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

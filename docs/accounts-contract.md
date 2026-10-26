@@ -148,7 +148,7 @@ The packaged realm has two distinct clients: public native client `sulla-desktop
 authorization-code plus PKCE S256 and allowing only the Desktop loopback callback above; and
 confidential hosted client `sulla-web`, whose redirects are separately deployment-configured.
 The packaged Desktop integration must bind or forward host loopback port `3020` to the Accounts
-listener before launching the system browser; Lima reachability is not assumed by this contract.
+listener before launching the system browser; Sulla VM reachability is not assumed by this contract.
 The base login token carries only the explicit `sulla-membership` audience. Each resource
 audience is attached to a separate optional client scope named `sulla-audience-<audience>`;
 clients request only the scope needed for that operation. No client receives every resource

@@ -24,6 +24,10 @@ const SAFE_REQUEST_HEADERS = new Set([
 const BLOCKED_RESPONSE_HEADERS = new Set([
   'authorization',
   'connection',
+  // Node fetch transparently decompresses the broker response body but keeps
+  // the upstream content-encoding header. Forwarding it makes provider CLIs
+  // try to decompress plain SSE bytes and terminate the stream.
+  'content-encoding',
   'content-length',
   'keep-alive',
   'proxy-authenticate',
@@ -125,6 +129,12 @@ export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
    */
   authorize(identity: Readonly<ProviderCliBridgeIdentity>):
     boolean | ToolExecutionContext | Promise<boolean | ToolExecutionContext>;
+  /**
+   * Optional credential upkeep run once per request before the upstream call
+   * (e.g. refreshing an expiring OAuth session inside the vault). It must not
+   * return or expose credential material; failures should be handled inside.
+   */
+  beforeUpstream?(identity: Readonly<ProviderCliBridgeIdentity>): Promise<void>;
   /** Abort owned by the job/process lifecycle. Aborting it revokes the lease and active stream. */
   signal?:         AbortSignal;
   broker?:         Pick<LocalVaultBrokerClient, 'executeStream' | 'requestFor'>;
@@ -358,6 +368,7 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         headers['session-id'] = context.thread_id!;
         headers['thread-id'] = context.thread_id!;
       }
+      await options.beforeUpstream?.(identity);
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
         ref:          { integrationId: definition.integration, accountId: options.accountId },
@@ -368,6 +379,11 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
         injections:   [...definition.injections],
         responseType: 'stream',
       }), requestAbort.signal);
+      if (upstream.status >= 400) {
+        // The CLI often reports these as a bare stream/send failure, so record the
+        // status here. Status and route only: never headers or body.
+        console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
+      }
       response.writeHead(upstream.status, responseHeaders(upstream.headers));
       if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
       else response.end();

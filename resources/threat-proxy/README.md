@@ -1,7 +1,7 @@
 # Sulla Desktop Threat Proxy
 
 This directory bundles the mitmproxy addons and blocklist data that get synced
-into the Lima VM at `/opt/sulla-proxy/` during startup.
+into the Sulla VM at `/opt/sulla-proxy/` during startup.
 
 ## Layout
 
@@ -12,7 +12,7 @@ into the Lima VM at `/opt/sulla-proxy/` during startup.
 
 ## Runtime layout inside the VM
 
-Addons and config are copied by `LimaBackend.installThreatProxy()` to:
+Addons and config are copied by `Sulla VMBackend.installThreatProxy()` to:
 
 - `/opt/sulla-proxy/addons/*.py` — the Python addon modules.
 - `/opt/sulla-proxy/blocklist/urlhaus.txt` — domain blocklist (refreshed every 6h).
@@ -24,7 +24,7 @@ Addons and config are copied by `LimaBackend.installThreatProxy()` to:
 
 ## How it fits together
 
-1. Quad9 DNS (9.9.9.9) is the zero-cost baseline — configured in `lima-config.yaml`.
+1. Quad9 DNS (9.9.9.9) is the zero-cost baseline — configured in the runtime guest image.
 2. mitmdump runs as an OpenRC service on `127.0.0.1:8888`.
 3. `/etc/claude-env` exports `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` + CA bundle paths.
 4. Claude Code + every npm/pip/curl request in the VM flows through the proxy.

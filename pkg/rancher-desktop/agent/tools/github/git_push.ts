@@ -6,7 +6,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Push Tool - Push commits to a remote repository.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  *
  * Auth: the GitHub PAT is supplied via an ephemeral credential helper reading
  * `GH_PAT` from the env — NOT embedded in the remote URL — so git's error/status
@@ -31,7 +31,7 @@ export class GitPushWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -46,7 +46,7 @@ export class GitPushWorker extends BaseTool {
         const branchResult = await runCommand(
           `git -C "${ repoRoot }" rev-parse --abbrev-ref HEAD`,
           [],
-          { runInLimaShell: true, timeoutMs: 30_000 },
+          { runInGuest: true, timeoutMs: 30_000 },
         );
         targetBranch = branchResult.stdout.trim();
       }
@@ -67,7 +67,7 @@ export class GitPushWorker extends BaseTool {
         const remoteUrlResult = await runCommand(
           `git -C "${ repoRoot }" remote get-url ${ remote }`,
           [],
-          { runInLimaShell: true, timeoutMs: 10_000 },
+          { runInGuest: true, timeoutMs: 10_000 },
         );
         const rawUrl = remoteUrlResult.stdout.trim();
 
@@ -95,7 +95,7 @@ export class GitPushWorker extends BaseTool {
         const leaseResult = await runCommand(
           `git -C "${ repoRoot }" rev-parse --verify refs/remotes/${ remote }/${ targetBranch }`,
           [],
-          { runInLimaShell: true, timeoutMs: 10_000 },
+          { runInGuest: true, timeoutMs: 10_000 },
         );
         if (leaseResult.exitCode !== 0) {
           return {
@@ -110,16 +110,16 @@ export class GitPushWorker extends BaseTool {
         : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
       const result = localAuthority
         ? await (async() => {
-          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrl.exitCode !== 0) return remoteUrl;
           return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), (proxyUrl) => {
             const brokerCommand = tags
               ? `git -C "${ repoRoot }" push "${ proxyUrl }" --tags${ forceFlag }`
               : `git -C "${ repoRoot }" push "${ proxyUrl }" ${ targetBranch }${ forceFlag }`;
-            return runCommand(brokerCommand, [], { runInLimaShell: true, timeoutMs: 120_000 });
+            return runCommand(brokerCommand, [], { runInGuest: true, timeoutMs: 120_000 });
           });
         })()
-        : await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+        : await runCommand(cmd, [], { runInGuest: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: redact(`Git push failed: ${ result.stderr || result.stdout }`, token) };

@@ -12,6 +12,7 @@ import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { assertSystemAreaWritable } from './systemAreas.js';
 
 import { resolveFilesUiSession } from './accountsAuth.js';
+import { ROLE_LEVEL, requireOrganizationScope, resolveCollectionAccess } from './acl.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
@@ -51,6 +52,7 @@ import type { IndexingQueue } from './indexing.js';
 import type { FileSearch } from './search.js';
 import type { CloudSyncService } from './cloudSync/service.js';
 import { registerCloudSyncRoutes } from './cloudSync/routes.js';
+import { homeQuery } from './sullaCollectionMigration.js';
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
@@ -149,10 +151,10 @@ export function createApp(
   cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
-  app.locals.catalogSync = new CatalogSyncService(db, config);
+  const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
+  app.locals.catalogSync = new CatalogSyncService(db, config, ready);
   app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
   const bootstrapJsonParser = express.json({ limit: '32kb' });
-  const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
   app.disable('x-powered-by');
   if (config.mode === 'server' || config.fuseExperiment) app.use('/ui', serverUi());
   if (config.mode === 'server') app.get('/files', (_request, response) => response.redirect(308, '/ui/'));
@@ -189,7 +191,7 @@ export function createApp(
           JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
           WHERE ai.issuer=$1 AND ai.subject=$2`, [context.issuer, context.subject, context.organizationId]);
         if (!mapped.rows[0]?.user_id) return response.status(403).json({ error:'organization access denied' });
-        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, groupIds:context.groups };
+        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, orgRoles:context.roles, groupIds:context.groups };
         next();
       }).catch((error:unknown) => response.status(Number((error as { status?:number }).status) || 401).json({ error:'unauthorized' }));
       return;
@@ -251,12 +253,22 @@ export function createApp(
     if (!result.rows[0]) throw new HttpError(404, 'collection not found');
     return result.rows[0];
   }
-  async function collectionAccess(_request:RequestWithIdentity, collectionId:string, queryable:pg.Pool | pg.PoolClient = db) {
-    return {collection:await collectionRow(collectionId,queryable)};
+  async function collectionAccess(
+    request:RequestWithIdentity,
+    collectionId:string,
+    queryable:pg.Pool | pg.PoolClient = db,
+  ) {
+    return resolveCollectionAccess(queryable, identity(request), collectionId);
   }
-  async function requireCollection(request:RequestWithIdentity, collectionId:string, right:Right, _allowShared = false, _allowExactFiles = false) {
-    identity(request);
+  async function requireCollection(
+    request:RequestWithIdentity,
+    collectionId:string,
+    right:Right,
+    _allowShared = false,
+    _allowExactFiles = false,
+  ) {
     const access = await collectionAccess(request, collectionId);
+    if (ROLE_LEVEL[access.role] < ROLE_LEVEL[right]) throw new HttpError(403, 'access denied');
     if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;
   }
@@ -551,8 +563,7 @@ export function createApp(
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
     // The 'sulla' ingest lane (bundled Docs) now writes into the owner's home collection.
     response.json((await db.query(`SELECT id,system_area AS "systemArea" FROM collections WHERE system_area IN ('logs','training-data')
-      UNION ALL (SELECT id,'sulla' FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE
-      ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1)`,[config.userId])).rows);
+      UNION ALL (SELECT home.id,'sulla' FROM (${ homeQuery }) home)`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
@@ -738,13 +749,14 @@ export function createApp(
   // lookups now pay for a scalar revision read and receive 304, rather than
   // rebuilding and transferring the complete multi-megabyte tree every second.
   const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
-  let fuseTreeSnapshotRequest:Promise<{ body:Buffer; revision:string }> | undefined;
+  // In-flight builds are per area: sharing one let a Logs refresh answer the home mount.
+  const fuseTreeSnapshotRequests=new Map<string,Promise<{ body:Buffer; revision:string }>>();
   const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
     const revision=await fuseTreeRevision();
     const cached=fuseTreeSnapshots.get(area); if (cached?.revision===revision) return cached;
-    if (fuseTreeSnapshotRequest) return fuseTreeSnapshotRequest;
-    fuseTreeSnapshotRequest=(async()=>{
+    const pending=fuseTreeSnapshotRequests.get(area); if (pending) return pending;
+    const request=(async()=>{
       // One consistent database snapshot avoids retry starvation during active
       // ingestion and labels the tree with precisely the revision it represents.
       const client=await db.connect();
@@ -752,14 +764,14 @@ export function createApp(
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
         const revision=String((await client.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0].revision);
         const [collections,files,folders]=await Promise.all([
-          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
+          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
             AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
             ORDER BY explorer_path,id`,[area,config.userId]),
           client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
             f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
+            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
             ORDER BY f.collection_id,f.path`,[area,config.userId]),
-          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY h.is_default DESC,(h.explorer_path='') DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
+          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
         ]);
 
         // Each mount serves exactly one collection at its root (home, Logs or Training Data).
@@ -769,21 +781,23 @@ export function createApp(
         await client.query('COMMIT');
         const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
       } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-    })().finally(()=>{fuseTreeSnapshotRequest=undefined});
-    return fuseTreeSnapshotRequest;
+    })().finally(()=>{fuseTreeSnapshotRequests.delete(area)});
+    fuseTreeSnapshotRequests.set(area,request);
+    return request;
   };
   app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
     requireFuseExperiment();
     mountIdentity(request, 'list');
     const currentRevision=await fuseTreeRevision();
-    const etag=`"${ currentRevision }"`;
+    const area=String(request.query.systemArea??'');
+    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
+    // The ETag names the area, so a mount never accepts another area's tree as unchanged.
+    const etag=`"${ area || 'home' }:${ currentRevision }"`;
     response.setHeader('Cache-Control', 'private, no-cache');
     response.setHeader('ETag', etag);
     if (request.header('if-none-match')===etag) return response.status(304).end();
-    const area=String(request.query.systemArea??'');
-    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
     const snapshot=await loadFuseTreeSnapshot(area);
-    response.setHeader('ETag', `"${ snapshot.revision }"`);
+    response.setHeader('ETag', `"${ area || 'home' }:${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
@@ -1145,14 +1159,114 @@ export function createApp(
   app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body)) } catch (error) { next(error) } });
   app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
 
-  app.get('/v1/collections', async(_request, response, next) => { try {
-    if (_request.query.changesOnly === 'true') {
+  app.get('/v1/shared', async(request:RequestWithIdentity, response, next) => { try {
+    const actor = identity(request);
+    if (actor.kind !== 'server-session' || !actor.orgId) throw new HttpError(403, 'organization access denied');
+    const principals = [actor.userId, ...(actor.groupIds ?? [])];
+    const direct = await db.query(`SELECT s.id::text,f.id::text AS file_id,f.path,f.mime,s.role,s.created_by,s.created_at,c.org_id
+      FROM file_shares s
+      JOIN files f ON f.id=s.file_id AND f.deleted_at IS NULL
+      JOIN collections c ON c.id=f.collection_id
+      WHERE c.workspace_scope='organization' AND c.org_id=$1
+        AND ((s.principal_type='user' AND s.principal_id=$2)
+          OR (s.principal_type='group' AND s.principal_id=ANY($3::text[])))
+      ORDER BY s.created_at DESC`, [actor.orgId, actor.userId, actor.groupIds ?? []]);
+    const folders = await db.query(`SELECT s.id::text,s.folder_path,s.role,s.created_by,s.created_at,c.id::text AS collection_id,c.org_id
+      FROM folder_shares s
+      JOIN collections c ON c.id=s.collection_id
+      WHERE c.workspace_scope='organization' AND c.org_id=$1
+        AND ((s.principal_type='user' AND s.principal_id=$2)
+          OR (s.principal_type='group' AND s.principal_id=ANY($3::text[])))
+      ORDER BY s.created_at DESC`, [actor.orgId, actor.userId, actor.groupIds ?? []]);
+    const granted = [
+      ...direct.rows.map(row => ({
+        name: row.path.split('/').at(-1) || row.path,
+        sharedByName: row.created_by,
+        orgName: '',
+        itemType: row.mime === 'text/markdown' ? 'document' : 'file',
+        targetId: row.file_id,
+        orgId: row.org_id,
+        createdAt: row.created_at,
+        cameFrom: { type: 'server' },
+      })),
+      ...folders.rows.map(row => ({
+        name: row.folder_path.split('/').at(-1) || row.folder_path,
+        sharedByName: row.created_by,
+        orgName: '',
+        itemType: 'folder',
+        targetId: row.collection_id,
+        orgId: row.org_id,
+        createdAt: row.created_at,
+        cameFrom: { type: 'server' },
+      })),
+    ];
+    const links = await shares.list({ user: actor.userId, device: actor.deviceId || '' });
+    const allowedLinks = await db.query(`SELECT l.id
+      FROM file_share_links l
+      LEFT JOIN files f ON f.id=l.file_id
+      JOIN collections c ON c.id=COALESCE(l.collection_id,f.collection_id)
+      WHERE l.owner_user_id=$1 AND c.workspace_scope='organization' AND c.org_id=$2`, [actor.userId, actor.orgId]);
+    const allowedLinkIds = new Set(allowedLinks.rows.map(row => row.id));
+    const sharedByMe = links.filter((link:any) => allowedLinkIds.has(link.id)).map((link:any) => ({
+      kind: 'link',
+      id: link.id,
+      name: link.file_path?.split('/').at(-1) ?? link.folder_path?.split('/').at(-1) ?? 'Shared item',
+      url: link.public_url ?? null,
+      access: link.access_mode ?? 'view',
+      availability: link.served_from === 'cloud' ? 'kept-in-cloud' : 'cloud-native',
+      views: link.view_count ?? 0,
+      cameFrom: link.device_id ? { type: 'device', deviceId: link.device_id } : { type: 'server' },
+    }));
+    const grantsByMe = await db.query(`SELECT s.id::text,f.id::text AS file_id,f.path,s.role,s.created_at
+      FROM file_shares s
+      JOIN files f ON f.id=s.file_id
+      JOIN collections c ON c.id=f.collection_id
+      WHERE c.workspace_scope='organization' AND c.org_id=$1 AND s.created_by=$2
+      ORDER BY s.created_at DESC`, [actor.orgId, actor.userId]);
+    sharedByMe.push(...grantsByMe.rows.map(row => ({
+      kind: 'grant',
+      id: row.id,
+      name: row.path.split('/').at(-1) || row.path,
+      url: null,
+      access: row.role,
+      availability: 'cloud-native',
+      views: null,
+      cameFrom: { type: 'server' },
+    })));
+    response.json({ sharedByMe, sharedWithMe: granted, grantee: { userId: actor.userId, principalIds: principals } });
+  } catch (error) { next(error) } });
+
+  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try {
+    const actor = identity(request);
+    if (request.query.changesOnly === 'true' && actor.kind !== 'server-session') {
       const rows = await db.query("SELECT id,name,explorer_path,system_area FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY id");
       response.json(rows.rows);
       return;
     }
-    const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY explorer_path,name");
-    response.json(rows.rows.map(row => ({...row, systemArea:row.system_area ?? null, access_role:'manage',shared_folders:[],shared_files:[]})));
+    const params:unknown[] = [];
+    let where = "published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla'";
+    if (actor.kind === 'server-session') {
+      where += " AND workspace_scope='organization' AND org_id=$1";
+      params.push(actor.orgId);
+    }
+    const rows = await db.query(`SELECT * FROM collections WHERE ${ where } ORDER BY explorer_path,name`, params);
+    const visible = [];
+    for (const collection of rows.rows) {
+      try {
+        const access = await collectionAccess(request, collection.id);
+        visible.push({
+          ...collection,
+          systemArea: collection.system_area ?? null,
+          account_display_name: collection.workspace_scope === 'organization' ? 'Organization workspace' : collection.account_display_name,
+          access_role: access.role,
+          shared_folders: access.paths,
+          shared_files: access.files,
+        });
+      } catch (error) {
+        if ((error as HttpError).status !== 403) throw error;
+      }
+    }
+    response.json(visible);
   } catch (error) { next(error) } });
   app.post('/v1/collections/default', async(request:RequestWithIdentity, response, next) => {
     const client = await db.connect();
@@ -1160,20 +1274,26 @@ export function createApp(
       if (config.mode !== 'server' || !identityDb) throw new HttpError(404, 'default collection provisioning is unavailable');
       const actor = identity(request); const orgId = typeof request.body.orgId === 'string' ? request.body.orgId : '';
       if (!orgId) throw new HttpError(400, 'orgId is required');
+      requireOrganizationScope(actor, orgId);
+      const membership = await identityDb.query(`SELECT om.role FROM org_members om
+        JOIN users u ON u.id=om.user_id
+        WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL`, [orgId, actor.userId]);
+      if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:${ actor.userId }:default-files`]);
-      let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND owner_user_id=$2 AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId, actor.userId])).rows[0];
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:organization-files`]);
+      let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND workspace_scope='organization' AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId])).rows[0];
       if (!collection) {
         const id = randomUUID();
         collection = (await client.query(`INSERT INTO collections
-          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default)
-          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE) RETURNING *`, [id, orgId, actor.userId, {}, {}, { trashDays: 90 }])).rows[0];
+          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,is_default,workspace_scope)
+          VALUES($1,$2,$3,'Files','knowledge','synced',$4,$5,$6,TRUE,'organization') RETURNING *`, [id, orgId, `org:${ orgId }`, {}, {}, { trashDays: 90 }])).rows[0];
         const wrapped = await config.keyring!.create(id, client);
         await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
         collection = { ...collection, encrypted_data_key: wrapped.data, dedup_key_ciphertext: wrapped.dedup };
       }
       await client.query('COMMIT');
-      response.status(201).json({ ...collection, access_role: 'manage', shared_folders: [], shared_files: [] });
+      const access = await resolveCollectionAccess(db, actor, collection.id);
+      response.status(201).json({ ...collection, account_display_name: 'Organization workspace', access_role: access.role, shared_folders: [], shared_files: [] });
     } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
   });
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
@@ -1276,7 +1396,7 @@ export function createApp(
   // Agents write Use Case drafts into the home collection; /v1/local/* is desktop-only.
   app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
     identity(request);
-    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC,(explorer_path='') DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
+    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
     if (!row) throw new HttpError(404, 'Home collection is not initialized');
     response.json({ collectionId: row.id });
   } catch (error) { next(error) } });
@@ -1623,13 +1743,18 @@ export function createApp(
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
-    const params:any[] = [collectionId, path ? `${ path }/` : '']; let filter = '';
+    const params:any[] = [collectionId, path ? `${ path }/` : ''];
+    let filter = '';
+    if (typeof request.query.deviceId === 'string' && request.query.deviceId) {
+      params.push(request.query.deviceId);
+      filter = ` AND v.device_id=$${ params.length }`;
+    }
     const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
       WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2))${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path`, params);
     const actor = identity(request); const visible = [];
     for (const row of rows.rows.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
-      const role = 'manage';
+      const role = access.role;
       const versionId = row.current_version_id;
       if (!versionId) continue;
       const version = row;
@@ -1674,8 +1799,9 @@ export function createApp(
   } catch (error) { next(error) } });
   app.get('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await requireFile(request, request.params.id, 'view');
-    const effectiveRole = 'manage';
-    const draftVisible = true;
+    const access = await collectionAccess(request, file.collection_id);
+    const effectiveRole = access.role;
+    const draftVisible = effectiveRole === 'manage';
     // A trashed file points at a deleted tombstone. Detail remains available for
     // retention and disposal decisions, but it must not use that tombstone to
     // broaden version/content visibility.

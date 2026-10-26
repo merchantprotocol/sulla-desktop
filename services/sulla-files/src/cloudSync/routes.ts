@@ -48,6 +48,12 @@ export function registerCloudSyncRoutes(app:express.Express, config:Pick<Config,
     response.json(await service.status());
   }));
 
+  app.get('/v1/desktop/cloud-sync/finder-badges', route(async(service, request, response) => {
+    const collectionId = String(request.query.collectionId ?? '');
+    if (!/^[0-9a-f-]{36}$/i.test(collectionId)) throw new RouteError(400, 'collectionId is required');
+    response.json(await service.finderBadges(collectionId));
+  }));
+
   app.post('/v1/desktop/cloud-sync/collections/:collectionId/enable', route(async(service, request, response) => {
     if (typeof request.body?.enabled !== 'boolean') throw new RouteError(400, 'enabled must be boolean');
     response.json(await service.enable(String(request.params.collectionId), request.body.enabled));
@@ -81,5 +87,9 @@ export function registerCloudSyncRoutes(app:express.Express, config:Pick<Config,
 
   app.post('/v1/desktop/cloud-sync/restore', route(async(service, request, response) => {
     response.json(await service.restore(request.body));
+  }));
+
+  app.post('/v1/desktop/cloud-sync/restore-all', route(async(service, request, response) => {
+    response.json(await service.restoreAll(request.body));
   }));
 }

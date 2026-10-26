@@ -60,7 +60,7 @@ test('streams a provider request through an exact identity-bound vault operation
       executeStream: (request) => {
         captured = request;
         return Promise.resolve(new Response('data: synthetic\n\n', {
-          status: 200, headers: { 'content-type': 'text/event-stream' },
+          status: 200, headers: { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' },
         }));
       },
     },
@@ -80,6 +80,7 @@ test('streams a provider request through an exact identity-bound vault operation
     });
     assert.equal(response.status, 200);
     assert.equal(await response.text(), 'data: synthetic\n\n');
+    assert.equal(response.headers.get('content-encoding'), null);
     assert.equal(captured?.operation, 'provider.cli');
     assert.equal(captured?.url, 'https://api.openai.com/v1/responses');
     assert.deepEqual(captured?.ref, { integrationId: 'openai', accountId: 'account-1' });

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The WebSocket Hub is Sulla's internal communication backbone. It is a lightweight WebSocket server deployed as a Kubernetes pod (`byrdziak/sulla-websocket:latest`) inside the Lima VM. The server listens on container port 8080, exposed to the host as a `NodePort` on **port 30118**.
+The WebSocket Hub is Sulla's internal communication backbone. It is a lightweight WebSocket server deployed as a Kubernetes pod (`byrdziak/sulla-websocket:latest`) inside the Sulla VM. The server listens on container port 8080, exposed to the host as a `NodePort` on **port 30118**.
 
 Every major subsystem in Sulla -- the frontend chat UI, the backend agent dispatcher, the heartbeat loop, the scheduler, calendar events, and inter-agent messaging -- communicates through the hub using channel-based pub/sub over a single WebSocket endpoint at `ws://localhost:30118/`.
 
@@ -10,7 +10,7 @@ Every major subsystem in Sulla -- the frontend chat UI, the backend agent dispat
 
 ```
  ┌─────────────────────────────────────────────────────────────┐
- │                    Lima VM (Kubernetes)                      │
+ │                    Sulla VM (Kubernetes)                      │
  │                                                             │
  │   ┌─────────────────────────────────┐                       │
  │   │  ws-server pod (port 8080)      │                       │

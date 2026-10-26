@@ -782,6 +782,7 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:cloud-collections', () => FilesSyncV1.cloudCollections({kind:'human'}));
   ipcMain.handle('files-ui:restore-cloud-collection', (_event,input:{collectionId:string;name:string}) => FilesSyncV1.restore(input.collectionId,input.name,{kind:'human'}));
+  ipcMain.handle('files-ui:restore-all-cloud-collections', () => FilesSyncV1.restoreAll({kind:'human'}));
   ipcMain.handle('files-ui:set-collection-cloud-sync', async(_event,input:{collectionId:string;enabled:boolean}) => {
     if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');
     await json(`/v1/collections/${encodeURIComponent(input.collectionId)}/cloud-sync`,{method:'PATCH',body:JSON.stringify({enabled:input.enabled===true})});

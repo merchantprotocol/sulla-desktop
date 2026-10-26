@@ -618,7 +618,7 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
-  // Cmd+` (backtick): open a terminal tab (PTY into the Lima VM)
+  // Cmd+` (backtick): open a terminal tab (PTY into the Sulla VM)
   if (meta && e.key === '`') {
     e.preventDefault();
     openModeTab('terminal');

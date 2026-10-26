@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { adminRoutes, bootstrapRoutes, errorHandler, ownerRoutes, privateRoutes, publicAuthorityRoutes, webRoutes } from './routes.js';
+import { desktopRoutes, deviceAdminRoutes, deviceErrorHandler, serverDiscoveryRoutes } from './serverDevices.js';
 
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
@@ -22,14 +23,16 @@ export function createApp(db: Database, config: AccountsConfig) {
   });
 
   app.use(publicAuthorityRoutes(db, config));
+  if (config.mode === 'server') { app.use(serverDiscoveryRoutes(config)); app.use('/desktop/v1', desktopRoutes(db, config)); }
   if (config.mode === 'server') {
     app.use('/ui', express.static('/opt/sulla-accounts/console', { fallthrough: false, index: 'index.html' }));
     app.use('/v1/web', webRoutes(db, config));
   }
   if (config.mode === 'desktop') app.use('/v1/private', bootstrapRoutes(db, config));
   app.use('/v1/private', privateRoutes(db, config));
-  if (config.mode === 'server') app.use('/v1/admin', adminRoutes(db, config));
+  if (config.mode === 'server') app.use('/v1/admin', adminRoutes(db, config), deviceAdminRoutes(db));
   app.use('/v1', ownerRoutes(db, config));
+  app.use(deviceErrorHandler);
   app.use((_request, response) => response.status(404).json({ error: 'not_found' }));
   app.use(errorHandler);
   return app;

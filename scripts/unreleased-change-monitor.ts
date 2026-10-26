@@ -1,6 +1,5 @@
 import { Octokit } from 'octokit';
 
-import { Lima, Qemu, AlpineLimaISO } from 'scripts/dependencies/lima';
 import * as tools from 'scripts/dependencies/tools';
 import { WSLDistro } from 'scripts/dependencies/wsl';
 import { GitHubDependency, HasUnreleasedChangesResult, getOctokit, RancherDesktopRepository } from 'scripts/lib/dependencies';
@@ -15,13 +14,10 @@ const mainRepo = new RancherDesktopRepository(GITHUB_OWNER, GITHUB_REPO);
 type DependencyState = { dependency: GitHubDependency } & HasUnreleasedChangesResult;
 
 const dependencies: GitHubDependency[] = [
-  new Lima(),
-  new Qemu(),
   new WSLDistro(),
   new tools.DockerCLI(),
   new tools.Steve(),
   new tools.RancherDashboard(),
-  new AlpineLimaISO(),
 ];
 
 type Issue = Awaited<ReturnType<Octokit['rest']['search']['issuesAndPullRequests']>>['data']['items'][0];

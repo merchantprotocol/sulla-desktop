@@ -24,7 +24,7 @@ Ran 50+ live tool calls against the backend. Verified ports, tables, tool signat
 - **Tools API on port 3000** (auth required via `chat-api-token.json`)
 - **Extension API on port 6107** (Basic auth)
 - **Terminal WS on port 6108**
-- **Lima-exposed services** on host:
+- **Sulla VM-exposed services** on host:
   - `30116` Postgres ✓
   - `30117` Redis ✓
   - `30118` python_runtime ✓
@@ -110,8 +110,8 @@ CLI's `sulla --help` lists 18 categories. The backend additionally exposes `func
 
 ### 🔴 High-severity errors fixed
 
-1. **`environment/docker.md` had Lima vs host Docker inverted.**
-   I said docker tools target Lima. They actually target the host Docker daemon. Lima-internal services (sulla_postgres, redis, runtimes) do NOT appear in `docker_ps`. Fixed the whole "two Docker scopes" section.
+1. **`environment/docker.md` had Sulla VM vs host Docker inverted.**
+   I said docker tools target Sulla VM. They actually target the host Docker daemon. Sulla VM-internal services (sulla_postgres, redis, runtimes) do NOT appear in `docker_ps`. Fixed the whole "two Docker scopes" section.
 
 2. **`tools/agents.md` said `spawn_agent` is under `agents/`.**
    Canonical is `sulla meta/spawn_agent`. Only `check_agent_jobs` lives under `agents/`. Fixed.

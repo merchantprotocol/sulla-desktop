@@ -33,7 +33,6 @@
     "build": "node scripts/ts-wrapper.js scripts/build.ts",
     "build:mac": "node scripts/ts-wrapper.js scripts/build.ts --mac",
     "build:win": "node scripts/ts-wrapper.js scripts/build.ts --win",
-    "build:linux": "node scripts/ts-wrapper.js scripts/build.ts --linux",
     "package": "node scripts/ts-wrapper.js scripts/package.ts",
     "sign": "node scripts/ts-wrapper.js scripts/sign.ts",
     "wix": "node scripts/ts-wrapper.js scripts/wix.ts",

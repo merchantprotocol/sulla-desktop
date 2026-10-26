@@ -1,7 +1,7 @@
 /**
  * Mount policy for the Desktop-managed Sulla compose project.
  *
- * The Lima VM does not mount the user's home directory, so a compose bind whose
+ * The Sulla VM does not mount the user's home directory, so a compose bind whose
  * source is a host (macOS) path cannot work and must never be generated. Every
  * service mount is either a named volume or a guest-local path that Desktop
  * provisions inside the VM.
@@ -32,7 +32,7 @@ export function accountsSecretBinds() {
 export interface GuestIO {
   /** Run a command in the VM; resolves stdout. */
   run(command: string[], options?: { root?: boolean }): Promise<string>;
-  /** Copy a host file into the VM (as the unprivileged Lima user). */
+  /** Copy a host file into the VM (as the unprivileged guest user). */
   copyToGuest(hostPath: string, guestPath: string): Promise<void>;
 }
 

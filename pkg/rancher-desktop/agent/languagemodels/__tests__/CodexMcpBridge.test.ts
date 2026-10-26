@@ -8,11 +8,11 @@ import type { RegisteredSession } from '@pkg/main/MCPServerHost';
 describe('CodexService MCP bridge', () => {
   it('injects the graph-bound Sulla MCP server without writing persistent Codex config', () => {
     const overrides = buildCodexMcpOverrides({
-      url: 'http://host.lima.internal:43123/mcp',
+      url: 'http://host.sulla.internal:43123/mcp',
     });
 
     expect(overrides).toEqual([
-      'mcp_servers.sulla-native.url="http://host.lima.internal:43123/mcp"',
+      'mcp_servers.sulla-native.url="http://host.sulla.internal:43123/mcp"',
       'mcp_servers.sulla-native.bearer_token_env_var="SULLA_MCP_SESSION_TOKEN"',
       'mcp_servers.sulla-native.default_tools_approval_mode="approve"',
     ]);

@@ -20,7 +20,7 @@ let cache: { at: number; models: OpenCodeCatalogModel[] } | null = null;
 export async function listOpenCodeModels(opts?: { force?: boolean }): Promise<OpenCodeCatalogModel[]> {
   if (!opts?.force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
   try {
-    const result = await runCommand('export PATH="$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH"; opencode models', [], { runInLimaShell: true, timeoutMs: 30_000, maxOutputChars: 1_000_000 });
+    const result = await runCommand('export PATH="$HOME/.local/bin:/mnt/data/npm-global/bin:$PATH"; opencode models', [], { runInGuest: true, timeoutMs: 30_000, maxOutputChars: 1_000_000 });
     if (result.exitCode !== 0) throw new Error(result.stderr || `exit ${ result.exitCode }`);
     const ids = result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => /^[^\s]+\/[^\s]+$/.test(line));
     const models = [AUTO, ...Array.from(new Set(ids)).map(id => ({ id, name: id }))];

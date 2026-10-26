@@ -14,7 +14,8 @@ export interface FilesSyncStatus {
   collections:FilesSyncCollectionStatus[];
 }
 export interface CloudFilesCollection { collectionId:string;status:string;keyVersion:number;headSeq:number;bytes:number;updatedAt:string;sourceDeviceId:string;local:boolean }
-export interface PreparedFilesSync { handle:string; op:'create'|'escrow'|'upload-open'|'commit'|'delete'; collectionId:string; sha256:string }
+export interface PreparedFilesSync { handle:string; op:'create'|'escrow'|'upload-open'|'commit'|'delete'|'info'; collectionId:string; sha256:string }
+export interface CloudRestoreAllResult { restored:string[]; failed:Array<{collectionId:string;error:string}> }
 export class FilesSyncClientError extends Error {
   constructor(readonly code:string, readonly status:number, message?:string) { super(message || code) }
 }
@@ -43,4 +44,5 @@ export const FilesSyncContainer={
   vaultRestoreKey:(body:{requestId:string;recipientPublicKey:string})=>vaultJson<{vaultId:string;vaultEpoch:number;transport:unknown}>('/v1/files/cloud-escrow/restore-key',body),
   cloudCollections:()=>filesJson<{collections:CloudFilesCollection[]}>('/v1/desktop/cloud-sync/cloud-collections'),
   restore:(body:{collectionId:string;name:string;requestId:string;transport:unknown;vaultId:string;vaultEpoch:number})=>filesJson<{restored:true;collectionId:string}>('/v1/desktop/cloud-sync/restore',{method:'POST',body:JSON.stringify(body)}),
+  restoreAll:(body:{requestId:string;transport:unknown;vaultId:string;vaultEpoch:number})=>filesJson<CloudRestoreAllResult>('/v1/desktop/cloud-sync/restore-all',{method:'POST',body:JSON.stringify(body)}),
 };

@@ -12,6 +12,9 @@ export interface ServerBootstrapMaterial {
   kdf:                 Record<string, unknown>;
   encryptedOrgName:    Record<string, unknown>;
   wrappedOrgKey:       Record<string, unknown>;
+  // Server installs reuse the Accounts organization id so Accounts sessions
+  // resolve to this Vault organization.
+  organizationId?:     string;
 }
 
 export async function bootstrapFirstOwner(
@@ -35,8 +38,8 @@ export async function bootstrapFirstOwner(
         material.encryptedUserKey, material.kdf],
     );
     const org = await client.query<{ id: string }>(
-      'INSERT INTO orgs(encrypted_name, created_by) VALUES ($1,$2) RETURNING id',
-      [material.encryptedOrgName, user.rows[0].id],
+      'INSERT INTO orgs(id, encrypted_name, created_by) VALUES (COALESCE($1::uuid, gen_random_uuid()),$2,$3) RETURNING id',
+      [material.organizationId ?? null, material.encryptedOrgName, user.rows[0].id],
     );
     await client.query(
       `INSERT INTO org_members(org_id,user_id,role,wrapped_org_key,status)

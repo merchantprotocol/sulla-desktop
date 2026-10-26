@@ -12,6 +12,8 @@ import {
   createGuestRuntimeDirectory,
   GUEST_AGENT_DOCS_ROOT,
   GUEST_AGENT_WORKSPACES_ROOT,
+  GUEST_CONVERSATIONS_ROOT,
+  ensureGuestRuntimeDirectory,
   getGuestRuntimeIdentity,
   inspectGuestWorkspaceForCleanup,
   removeGuestPathAtomic,
@@ -40,6 +42,7 @@ import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
@@ -57,6 +60,22 @@ const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
 const LEASE_MS = 15 * 60_000;
+
+/** Boot brings sulla-tools up after Desktop is usable, so agents wait for it instead of failing. */
+const TOOLS_READY_TIMEOUT_MS = 180_000;
+
+async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+      .then(response => response.ok).catch(() => false);
+
+    if (healthy) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+  }
+}
 const RENEW_MS = 5 * 60_000;
 const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
@@ -65,6 +84,9 @@ const AGENT_NETWORK = 'sulla-agents';
 const HOST_RELAY_NAME = 'sulla-host-relay';
 const HOST_RELAY_PORT = 30124;
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
+const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
+// The Mac's loopback as seen from containers on the Sulla runtime.
+const SULLA_RUNTIME_HOST_GATEWAY = '192.168.5.2';
 const cleanupOwner = new AgentContainerCleanupOwner(message => log.error(`[AgentContainer] ${ message }`));
 
 export interface AgentContainerRun {
@@ -101,12 +123,15 @@ export interface AgentContainerLifecycle {
   close(): Promise<AgentContainerCleanupReceipt>;
 }
 
-export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'>;
+export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
+  /** Stable key for long-lived chat state. Workspace and provider homes survive container reaping. */
+  persistenceKey?: string;
+};
 
-/** True when `path` can be listed from the Lima guest; a dead FUSE adapter fails ENOTCONN here. */
+/** True when `path` can be listed from the Sulla guest; a dead FUSE adapter fails ENOTCONN here. */
 async function guestPathUsable(path: string): Promise<boolean> {
   try {
-    await limactl(['sudo', 'ls', '-A', path]);
+    await guestExec(['sudo', 'ls', '-A', path]);
 
     return true;
   } catch {
@@ -136,10 +161,10 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
 }
 
-function limactl(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
+function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', ...args], {
-      env:   { ...process.env, LIMA_HOME: paths.lima },
+    const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
+      env:   { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -147,14 +172,14 @@ function limactl(args: string[], input?: string): Promise<{ stdout: string; stde
     proc.stdout.on('data', chunk => { stdout += String(chunk) });
     proc.stderr.on('data', chunk => { stderr += String(chunk) });
     proc.once('error', reject);
-    proc.once('close', code => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(stderr.trim() || `limactl exited ${ code }`)));
+    proc.once('close', code => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(stderr.trim() || `sulla-runtime exited ${ code }`)));
     if (input !== undefined) proc.stdin.end(input);
     else proc.stdin.end();
   });
 }
 
-/** Docker runtime adapter for Electron, whose Docker daemon lives in Lima. */
-class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
+/** Docker runtime adapter for Electron, whose Docker daemon lives in the Sulla VM. */
+class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
   async create(spec: ContainerSpec): Promise<string> {
     const args = ['docker', 'create'];
     if (spec.autoRemove) args.push('--rm');
@@ -172,13 +197,13 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
     if (spec.workingDir) args.push('--workdir', spec.workingDir);
     if (spec.user) args.push('--user', spec.user);
     args.push(spec.image, ...(spec.command ?? []));
-    return (await limactl(args)).stdout.trim();
+    return (await guestExec(args)).stdout.trim();
   }
 
-  async start(id: string): Promise<void> { await limactl(['docker', 'start', id]) }
-  async inspect(id: string): Promise<any> { return JSON.parse((await limactl(['docker', 'inspect', id])).stdout)[0] }
+  async start(id: string): Promise<void> { await guestExec(['docker', 'start', id]) }
+  async inspect(id: string): Promise<any> { return JSON.parse((await guestExec(['docker', 'inspect', id])).stdout)[0] }
   async remove(id: string, force = true): Promise<void> {
-    await limactl(['docker', 'rm', ...(force ? ['--force'] : []), id]).catch(error => {
+    await guestExec(['docker', 'rm', ...(force ? ['--force'] : []), id]).catch(error => {
       if (!String(error).includes('No such container')) throw error;
     });
   }
@@ -186,7 +211,7 @@ class LimaDockerRuntimeDriver implements ContainerRuntimeDriver {
   async list(label?: string): Promise<any[]> {
     const args = ['docker', 'ps', '--all', '--format', '{{json .}}'];
     if (label) args.push('--filter', `label=${ label }`);
-    const output = (await limactl(args)).stdout.trim();
+    const output = (await guestExec(args)).stdout.trim();
     return output ? output.split('\n').map(line => JSON.parse(line)) : [];
   }
 }
@@ -200,10 +225,18 @@ export function agentContainerRelayUrl(value: string): string {
 
 /**
  * The named Docker endpoint only bridges TCP to a Unix socket.  The process
- * that resolves and reaches host.lima.internal runs in the Lima VM, keeping
+ * that resolves and reaches host.sulla.internal runs in the Sulla VM, keeping
  * host IP addresses and host networking out of every container invocation.
  */
 async function ensureHostRelay(image: string): Promise<void> {
+  // The Sulla runtime guest has no Python for the VM-side relay. There the
+  // container dials the Mac's loopback directly at the SLIRP host gateway,
+  // which the runtime forwards to 127.0.0.1 on the Mac.
+  const nativeRuntime = isSullaRuntimeActive();
+  const upstream = nativeRuntime
+    ? `n.connect(Number(m[2]), '${ SULLA_RUNTIME_HOST_GATEWAY }')`
+    : `n.connect('${ HOST_RELAY_SOCKET }')`;
+  const portLine = nativeRuntime ? '' : `    u.write(m[2] + '\\n');\n`;
   const vmRelay = String.raw`import os,socket,threading
 p='${ HOST_RELAY_SOCKET }'
 os.makedirs(os.path.dirname(p),exist_ok=True)
@@ -223,12 +256,50 @@ def serve(c):
  try:
   line=b''
   while not line.endswith(b'\n') and len(line)<16: line+=c.recv(1)
-  port=int(line.strip());u=socket.create_connection(('host.lima.internal',port),5);u.settimeout(None)
+  port=int(line.strip());u=socket.create_connection(('host.sulla.internal',port),5);u.settimeout(None)
   threading.Thread(target=copy,args=(c,u),daemon=True).start();copy(u,c)
  except Exception: c.close()
 while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).start()`;
-  const bridge = String.raw`const n=require('net');n.createServer(c=>{let b=Buffer.alloc(0),done=false;c.on('data',d=>{if(done)return;b=Buffer.concat([b,d]);const i=b.indexOf('\r\n\r\n');if(i<0)return;const m=b.toString('latin1',0,i).match(/^(\S+)\s+\/_sulla\/(\d+)(\/[^\s]*)\s+(HTTP\/\d\.\d)/);if(!m){c.destroy();return}done=true;const u=n.connect('${ HOST_RELAY_SOCKET }',()=>{u.write(m[2]+'\n');u.write(Buffer.from(b.toString('latin1').replace(m[0],m[1]+' '+m[3]+' '+m[4]),'latin1'))});u.on('data',x=>c.write(x));u.on('end',()=>c.end());u.on('error',()=>c.destroy());c.on('data',x=>u.write(x));c.on('end',()=>u.end())})}).listen(${ HOST_RELAY_PORT },'0.0.0.0');`;
-  // 0711 (not 0700): the relay dir is owned by the Lima user, but the sulla-host-relay
+  // The relay rewrites only the request line it parses, so a reused keep-alive
+  // connection would reach the host with the /_sulla/<port> prefix still on (the
+  // host replies 404 without reading the body, which Codex reports as "stream
+  // disconnected before completion: error sending request"). Force one request
+  // per connection instead of parsing every request on it.
+  const bridge = String.raw`const n = require('net');
+n.createServer(c => {
+  let b = Buffer.alloc(0);
+  const onHead = d => {
+    b = Buffer.concat([b, d]);
+    const i = b.indexOf('\r\n\r\n');
+    if (i < 0) {
+      if (b.length > 65536) c.destroy();
+      return;
+    }
+    c.removeListener('data', onHead);
+    const lines = b.toString('latin1', 0, i).split('\r\n');
+    const m = lines[0].match(/^(\S+)\s+\/_sulla\/(\d+)(\/\S*)\s+(HTTP\/\d\.\d)$/);
+    if (!m) {
+      c.destroy();
+      return;
+    }
+    const headers = lines.slice(1).filter(l => !/^(connection|keep-alive|proxy-connection)\s*:/i.test(l));
+    const head = [m[1] + ' ' + m[3] + ' ' + m[4], ...headers, 'Connection: close'].join('\r\n');
+    // Write the port line and head before any body bytes: writes to a
+    // connecting socket queue in order, but writes made in the connect
+    // callback would land behind body chunks that arrived in the meantime,
+    // which truncates every request bigger than one read.
+    const u = ${ upstream };
+${ portLine }    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
+    u.on('data', x => c.write(x));
+    u.on('end', () => c.end());
+    u.on('error', () => c.destroy());
+    c.on('data', x => u.write(x));
+    c.on('end', () => u.end());
+  };
+  c.on('data', onHead);
+  c.on('error', () => c.destroy());
+}).listen(${ HOST_RELAY_PORT }, '0.0.0.0');`;
+  // 0711 (not 0700): the relay dir is owned by the guest user, but the sulla-host-relay
   // container binds it as uid 10001 and must still be able to traverse into it to reach
   // relay.sock (0666); only the socket itself needs to stay unreadable to other users.
   //
@@ -261,12 +332,19 @@ if [ "$need_restart" = "1" ]; then
 fi
 for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
-  await limactl(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
-  await limactl(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => limactl(['docker', 'network', 'create', AGENT_NETWORK]));
-  const exists = await limactl(['docker', 'inspect', HOST_RELAY_NAME]).then(() => true).catch(() => false);
-  if (!exists) {
-    await limactl(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
-      '--network', AGENT_NETWORK, '--volume', '/run/sulla-host-relay:/run/sulla-host-relay',
+  if (!nativeRuntime) await guestExec(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
+  await guestExec(['docker', 'network', 'inspect', AGENT_NETWORK]).catch(() => guestExec(['docker', 'network', 'create', AGENT_NETWORK]));
+  // Same versioning as the VM relay: a container left by an older build keeps
+  // running its old script, so replace it when the script changes.
+  const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
+  const runningVersion = await guestExec(['docker', 'inspect', '--format', `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}}`, HOST_RELAY_NAME])
+    .then(({ stdout }) => stdout.trim())
+    .catch(() => null);
+  if (runningVersion !== bridgeVersion) {
+    if (runningVersion !== null) await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]);
+    await guestExec(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
+      '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
+      '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   }
 }
@@ -279,7 +357,7 @@ export function resetAgentContainerImageResolution(): void {
 }
 
 async function requireTransportImage(image: string): Promise<void> {
-  const inspection = JSON.parse((await limactl(['docker', 'image', 'inspect', image])).stdout) as Array<{
+  const inspection = JSON.parse((await guestExec(['docker', 'image', 'inspect', image])).stdout) as Array<{
     Config?: { Labels?: Record<string, string> };
   }>;
   const version = inspection[0]?.Config?.Labels?.[TRANSPORT_IMAGE_LABEL];
@@ -305,7 +383,7 @@ async function ensureAgentImage(): Promise<string> {
         await requireTransportImage(resolved.image);
         return resolved.image;
       } catch { /* lazy build below */ }
-      await limactl(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
+      await guestExec(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
       await requireTransportImage(resolved.image);
       return resolved.image;
     }
@@ -318,7 +396,7 @@ async function ensureAgentImage(): Promise<string> {
     }
 
     try {
-      await limactl(['docker', 'pull', resolved.image]);
+      await guestExec(['docker', 'pull', resolved.image]);
       await requireTransportImage(resolved.image);
       return resolved.image;
     } catch (error) {
@@ -334,7 +412,7 @@ async function ensureAgentImage(): Promise<string> {
       try {
         await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
       } catch {
-        await limactl(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+        await guestExec(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
       }
       await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
       return TRANSPORT_COMPATIBILITY_IMAGE;
@@ -370,11 +448,11 @@ async function provisionContainerSecrets(
   identity: GuestRuntimeIdentity,
 ): Promise<string> {
   const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
-  await limactl(['sh', '-c', 'sudo install -d -m 0700 -o "$2" -g "$3" "$1"; [ "$(stat -c %u:%g "$1")" = "$2:$3" ]', 'sh', secretDir, String(identity.uid), String(identity.gid)]);
+  await guestExec(['sh', '-c', 'sudo install -d -m 0700 -o "$2" -g "$3" "$1"; [ "$(stat -c %u:%g "$1")" = "$2:$3" ]', 'sh', secretDir, String(identity.uid), String(identity.gid)]);
   for (const [key, value] of Object.entries(secrets)) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
     const target = `${ secretDir }/${ key }`;
-    await limactl(
+    await guestExec(
       ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', target, String(identity.uid), String(identity.gid)],
       Buffer.from(value).toString('base64'),
     );
@@ -384,12 +462,12 @@ async function provisionContainerSecrets(
 
 async function removeContainerSecrets(secretDir: string): Promise<void> {
   if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to remove an unexpected secret path');
-  await limactl(['sh', '-c', 'if [ -d "$1" ]; then sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1"; fi', 'sh', secretDir]);
+  await guestExec(['sh', '-c', 'if [ -d "$1" ]; then sudo find "$1" -maxdepth 1 -type f -delete; sudo rmdir "$1"; fi', 'sh', secretDir]);
 }
 
 async function registerSullaFilesActor(containerId: string, agentId: string | undefined, jobId: string): Promise<void> {
   if (!agentId || /[\r\n:]/.test(agentId) || /[\r\n:]/.test(jobId) || !/^[a-f0-9]{64}$/.test(containerId)) return;
-  await limactl(
+  await guestExec(
     ['sh', '-c', 'sudo install -d -m 0700 /var/lib/sulla/files-fuse/actors; umask 077; base64 -d | sudo tee "/var/lib/sulla/files-fuse/actors/$1" >/dev/null; sudo chmod 0400 "/var/lib/sulla/files-fuse/actors/$1"', 'sh', containerId],
     Buffer.from(`${ agentId }:${ jobId }`).toString('base64'),
   );
@@ -397,7 +475,7 @@ async function registerSullaFilesActor(containerId: string, agentId: string | un
 
 async function unregisterSullaFilesActor(containerId: string): Promise<void> {
   if (!/^[a-f0-9]{64}$/.test(containerId)) return;
-  await limactl(['sh', '-c', 'sudo rm -f "/var/lib/sulla/files-fuse/actors/$1"', 'sh', containerId]);
+  await guestExec(['sh', '-c', 'sudo rm -f "/var/lib/sulla/files-fuse/actors/$1"', 'sh', containerId]);
 }
 
 async function cleanupContainerResources(
@@ -479,7 +557,7 @@ async function replaceContainerSecret(
   if (!secretDir.startsWith('/dev/shm/sulla-agent-secrets/')) throw new Error('Refusing to update an unexpected secret path');
   if (!/^[A-Z][A-Z0-9_]*$/.test(name)) throw new Error(`Invalid container secret name ${ name }`);
   const target = `${ secretDir }/${ name }`;
-  await limactl(
+  await guestExec(
     ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1.next" >/dev/null; sudo chown "$2:$3" "$1.next"; sudo chmod 0400 "$1.next"; sudo mv "$1.next" "$1"', 'sh', target, String(identity.uid), String(identity.gid)],
     Buffer.from(value).toString('base64'),
   );
@@ -560,7 +638,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     if (!/^[a-zA-Z0-9._/-]+$/.test(command.executable)) throw new Error('Container provider executable is invalid');
     const cwd = assertWorkspacePath(this.options.workspacePath, command.cwd ?? this.options.workspacePath);
     const pidFile = `/tmp/sulla-provider-${ crypto.randomUUID() }.pid`;
-    const args = ['shell', '0', '--', 'docker', 'exec', '--interactive', '--workdir', cwd];
+    const args = ['exec', '--', 'docker', 'exec', '--interactive', '--workdir', cwd];
     const environment: Record<string, string> = {};
     for (const [key, value] of Object.entries(command.env ?? {})) {
       if (!/^[A-Z][A-Z0-9_]*$/.test(key) || typeof value !== 'string' || /[\0\r\n]/.test(value)) {
@@ -583,8 +661,8 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       ].join('; '),
       'sulla-provider', pidFile, command.executable, ...command.args,
     );
-    const proc = childProcess.spawn(paths.limactl, args, {
-      env:   { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+    const proc = childProcess.spawn(paths.sullaRuntime, args, {
+      env:   { ...process.env, TERM: 'dumb' },
       stdio: request.stdio ?? ['pipe', 'pipe', 'pipe'],
     }) as childProcess.ChildProcessWithoutNullStreams;
     proc.stdin.on('error', () => { /* provider may exit during bootstrap */ });
@@ -614,7 +692,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       'kill -"$2" "$pid" 2>/dev/null || true',
       '[ "$2" != KILL ] || rm -f "$1"',
     ].join('; ');
-    await limactl(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
+    await guestExec(['docker', 'exec', this.options.containerName, '/bin/sh', '-c', script, 'sulla-kill', pidFile, signal]).catch(() => {});
   }
 
   private ensureToolConfig(sessionId: string): Promise<{ ref: string; claudePath: string; codexOverrides: readonly string[] }> {
@@ -633,7 +711,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
           'sulla-native': { type: 'http', url: mcpUrl, headers: { Authorization: 'Bearer ${SULLA_MCP_SESSION_TOKEN}' } },
         },
       });
-      await limactl(
+      await guestExec(
         ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', `${ this.options.secretDir }/mcp-${ sessionId }.json`, String(this.options.identity.uid), String(this.options.identity.gid)],
         Buffer.from(payload).toString('base64'),
       );
@@ -659,14 +737,11 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
-  if (!['claude-code', 'codex'].includes(run.provider)) {
-    throw new Error(`Provider "${ run.provider }" cannot run in an agent container yet. Supported providers: claude-code, codex.`);
-  }
   const image = await ensureAgentImage();
   log.info('[AgentContainer] Image ready');
   await ensureHostRelay(image);
   log.info('[AgentContainer] Host relay ready');
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   const capabilityJti = crypto.randomUUID();
   const lifecycleAbort = new AbortController();
@@ -711,14 +786,24 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
-      .then(response => response.ok).catch(() => false);
+    const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
 
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
-    workspacePath = checkout ?? createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    const stableKey = run.persistenceKey
+      ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
+      : undefined;
+    const persistentRoot = stableKey
+      ? ensureGuestRuntimeDirectory(GUEST_CONVERSATIONS_ROOT, stableKey)
+      : undefined;
+    workspacePath = checkout ?? (persistentRoot
+      ? ensureGuestRuntimeDirectory(persistentRoot, 'workspace')
+      : createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`));
+    const providerHome = persistentRoot ? ensureGuestRuntimeDirectory(persistentRoot, 'home') : undefined;
+    const claudeHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'claude') : undefined;
+    const codexHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'codex') : undefined;
     const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
     guestRuntimePaths.push(docsPath);
     chownGuestPath(workspacePath, identity);
@@ -731,8 +816,11 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
+      '/mnt/worktrees:/mnt/worktrees:rw',
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
+      ...(claudeHome ? [`${ claudeHome }:/home/sulla/.claude:rw`] : []),
+      ...(codexHome ? [`${ codexHome }:/home/sulla/.codex:rw`] : []),
       ...await sullaFilesGuestBinds(),
     ];
     containerId = await runtime.create({
@@ -759,7 +847,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       network:     AGENT_NETWORK,
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
-      tmpfs:       {
+      tmpfs:       providerHome ? undefined : {
         '/home/sulla/.claude': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
         '/home/sulla/.codex':  `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
       },
@@ -767,11 +855,11 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       cpuLimit:    CPUS,
     });
     await registerSullaFilesActor(containerId, agentId, run.jobId);
-    await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
+    await guestExec(['docker', 'network', 'connect', 'sulla_default', containerName]);
     await runtime.start(containerId);
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
-    await limactl([
+    await guestExec([
       'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
       `${ mcpUrl.origin }${ mcpUrl.pathname.replace(/\/mcp$/, '/healthz') }`,
     ]).catch(error => {
@@ -873,6 +961,14 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
             return context;
           },
+          // Codex runs on a ChatGPT OAuth session; refresh it in the vault
+          // before it expires instead of letting the upstream call 401.
+          beforeUpstream: integrationId === 'codex'
+            ? async() => {
+              const { getOAuthService } = await import('./OAuthService');
+              await getOAuthService().ensureVaultTokenFresh(integrationId, accountId);
+            }
+            : undefined,
         });
         providerBridgeRefs.add(bridge.config.opaqueConfigRef);
         return bridge;
@@ -981,7 +1077,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
   const image = await ensureAgentImage();
   await ensureHostRelay(image);
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   const session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
   let secretDir: string | undefined;
@@ -1015,8 +1111,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
-      .then(response => response.ok).catch(() => false);
+    const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
     const configuration = containerEnvironment(
       run, issueLease(), session.id, 'http://sulla_tools:3000',
@@ -1061,7 +1156,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       cpuLimit:    CPUS,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
-    await limactl(['docker', 'network', 'connect', 'sulla_default', containerName]);
+    await guestExec(['docker', 'network', 'connect', 'sulla_default', containerName]);
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
       subject,
@@ -1076,10 +1171,10 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
 
     return await new Promise((resolve, reject) => {
       const args = [
-        'shell', '0', '--', 'docker', 'start', '--attach', '--interactive', startedContainerId,
+        'exec', '--', 'docker', 'start', '--attach', '--interactive', startedContainerId,
       ];
-      const proc = childProcess.spawn(paths.limactl, args, {
-        env:   { ...process.env, LIMA_HOME: paths.lima },
+      const proc = childProcess.spawn(paths.sullaRuntime, args, {
+        env:   { ...process.env },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let output = '';
@@ -1263,7 +1358,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
 
 /** Remove agent containers left behind by a Desktop crash/restart. */
 export async function reapOrphanAgentContainers(): Promise<void> {
-  const runtime = new LimaDockerRuntimeDriver();
+  const runtime = new GuestDockerRuntimeDriver();
   let containers: any[];
   try {
     containers = await runtime.list('com.sulla.workload=agent');
@@ -1285,7 +1380,7 @@ export async function reapOrphanAgentContainers(): Promise<void> {
     }
   }
   try {
-    await limactl(['sh', '-c', 'sudo find /dev/shm/sulla-agent-secrets -mindepth 2 -maxdepth 2 -type f -delete 2>/dev/null || true; sudo find /dev/shm/sulla-agent-secrets -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true']);
+    await guestExec(['sh', '-c', 'sudo find /dev/shm/sulla-agent-secrets -mindepth 2 -maxdepth 2 -type f -delete 2>/dev/null || true; sudo find /dev/shm/sulla-agent-secrets -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true']);
   } catch (error) {
     log.error(`[AgentContainer] startup orphan secret cleanup failed: ${ (error as Error).message }`);
   }

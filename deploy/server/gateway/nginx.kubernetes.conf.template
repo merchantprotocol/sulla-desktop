@@ -28,6 +28,8 @@ http {
     set $files_upstream http://sulla-files:8792;
     set $agents_upstream http://sulla-agents:8789;
     set $workflows_upstream http://sulla-workflows:8788;
+    set $relay_upstream http://sulla-relay:8790;
+    set $vault_public_upstream http://sulla-vault:8787;
 
     location /accounts-api/v1/web/ { rewrite ^/accounts-api/(.*)$ /$1 break; proxy_pass $accounts_upstream; include /tmp/sulla-proxy-params.conf; }
     location /accounts-api/ { return 404; }
@@ -46,9 +48,20 @@ http {
     location /services/workflows/api/ { rewrite ^/services/workflows/api/(.*)$ /v1/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
     location /services/workflows/ { rewrite ^/services/workflows/(.*)$ /ui/$1 break; proxy_pass $workflows_upstream; include /tmp/sulla-proxy-params.conf; }
     location = / { return 308 /console/; }
+    location ^~ /api/ { proxy_pass $console_upstream; include /tmp/sulla-proxy-params.conf; }
+    location ^~ /relay/ { proxy_pass $relay_upstream; include /tmp/sulla-proxy-params.conf; }
     location / {
       proxy_pass $console_upstream;
       include /tmp/sulla-proxy-params.conf;
     }
   }
+  server {
+    listen 8787${TLS_DIRECTIVES};
+    server_name ${SULLA_VAULT_HOST};
+    location / {
+      proxy_pass $vault_public_upstream;
+      include /tmp/sulla-proxy-params.conf;
+    }
+  }
+
 }

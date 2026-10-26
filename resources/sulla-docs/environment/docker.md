@@ -1,27 +1,27 @@
-# Docker & Lima
+# Docker & Sulla VM
 
 ## Execution scopes
 
 Docker tools call `runCommand('docker', args)`. With no agent-container runtime,
 CommandRunner spawns the local binary in the Desktop process environment.
 With an active agent-container runtime, it executes the command in that
-container via Lima `docker exec`. The tools do not universally select either
-host Docker or the Lima service daemon. Check the execution context before
+container via Sulla VM `docker exec`. The tools do not universally select either
+host Docker or the Sulla VM service daemon. Check the execution context before
 interpreting container listings; an absent container is not proof it is stopped.
 
-The core services are composed by `backend/lima.ts` inside Lima. To query that
+The core services are composed by `backend/sullaRuntimeBackend.ts` inside Sulla VM. To query that
 daemon explicitly, use `meta/exec` with a VM `docker` command. Do not restart or
 remove core services merely because a different Docker context cannot see them.
 
 ## Host files and VM storage
 
-The host home is not mounted into Lima. `getMounts()` in `backend/lima.ts`
+The host home is not mounted into Sulla VM. `getMounts()` in `backend/sullaRuntimeBackend.ts`
 exposes app-owned cache/log/resource and transport directories only. Managed
 files are available through `/mnt/sulla-files`. Worktrees use `/mnt/worktrees`
 on the persistent data disk. A Docker build context must exist in the tool's
 actual execution environment; a host path is not automatically a VM path.
 
-## Base Lima containers
+## Base Sulla VM containers
 
 `assets/sulla-docker-compose.yaml` defines:
 
@@ -38,7 +38,7 @@ Runtime bindings use VM loopback. Functions mount
 `/mnt/data/sulla/runtime/functions/invocations` at `/var/db-functions:ro`.
 Postgres uses `sulla_postgres_data`. Redis persistence is disabled.
 
-`backend/lima.ts` augments the compose definition with `sulla_accounts`,
+`backend/sullaRuntimeBackend.ts` augments the compose definition with `sulla_accounts`,
 `sulla_vault`, `sulla_workflow_manager`, `sulla_relay`,
 `sulla_tools`, `sulla_files` and `sulla_files_fuse`. Managed service images are
 resolved by the backend's image-selection code, with environment overrides and
@@ -46,7 +46,7 @@ source-build support; do not assume every installed service uses `latest`.
 Files and workflow containers share the Files mount, not host home directories.
 
 ServiceLifecycleManager in `sulla.ts` handles application service startup and
-connection readiness. The Lima backend owns Docker compose reconciliation.
+connection readiness. The Sulla VM backend owns Docker compose reconciliation.
 
 ## Tools
 
@@ -60,10 +60,7 @@ sulla docker/docker_ps '{"all":true}'
 sulla docker/docker_logs '{"container":"container-name","tail":200}'
 ```
 
-Lima tools include `lima_list`, `lima_create`, `lima_start`, `lima_stop`,
-`lima_shell`, and `lima_delete`. Always pass `command` to `lima_shell`; otherwise
-it attempts an interactive session. Stopping/deleting the primary VM interrupts
-Sulla's services. Confirm risky core-system or host changes before execution.
+There are no VM-management tools; use `meta/exec` to run commands in the VM.
 
 ## Diagnostics
 
@@ -79,5 +76,5 @@ remove user data.
 - `pkg/rancher-desktop/agent/tools/lima/`
 - `pkg/rancher-desktop/agent/tools/util/CommandRunner.ts`
 - `pkg/rancher-desktop/assets/sulla-docker-compose.yaml`
-- `pkg/rancher-desktop/backend/lima.ts`
+- `pkg/rancher-desktop/backend/sullaRuntimeBackend.ts`
 - `pkg/rancher-desktop/sulla.ts`

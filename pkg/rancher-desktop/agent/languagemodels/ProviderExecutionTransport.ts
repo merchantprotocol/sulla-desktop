@@ -14,7 +14,7 @@ import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
-export type ProviderRuntime = 'lima' | 'container';
+export type ProviderRuntime = 'guest' | 'container';
 export type ProviderName = 'claude-code' | 'codex';
 
 /**
@@ -23,7 +23,7 @@ export type ProviderName = 'claude-code' | 'codex';
  * services never receive a credential file or token to copy into a container.
  */
 export type ProviderTransportAuth =
-  | { kind: 'lima-host' }
+  | { kind: 'guest-host' }
   | { kind: 'broker'; opaqueConfigRef: string };
 
 export interface ProviderCliOpaqueConfig {
@@ -69,8 +69,8 @@ export interface ProviderProcessLaunch {
   context:         ProviderTransportContext;
   /** Canonical provider command. A container transport executes this form. */
   providerCommand: ProviderCommand;
-  /** Existing Desktop/Lima launch. Omitted entirely for container requests. */
-  limaCommand?:    ProviderCommand;
+  /** Existing Desktop guest launch. Omitted entirely for container requests. */
+  guestCommand?:    ProviderCommand;
   stdio?:          childProcess.StdioOptions;
 }
 
@@ -128,7 +128,7 @@ function assertInside(root: string, candidate: string): void {
   }
 }
 
-class LimaProviderFileTransport implements ProviderFileTransport {
+class GuestProviderFileTransport implements ProviderFileTransport {
   write(request: ProviderFileRequest): ProviderFileRef {
     const dir = createGuestRuntimeDirectory(GUEST_PROVIDER_FILES_ROOT, 'file-');
     const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-');
@@ -148,16 +148,16 @@ class LimaProviderFileTransport implements ProviderFileTransport {
   }
 }
 
-class LimaProviderExecutionTransport implements ProviderExecutionTransport {
-  readonly runtime = 'lima' as const;
-  readonly files = new LimaProviderFileTransport();
+class GuestProviderExecutionTransport implements ProviderExecutionTransport {
+  readonly runtime = 'guest' as const;
+  readonly files = new GuestProviderFileTransport();
 
   context(input: Parameters<ProviderExecutionTransport['context']>[0]): ProviderTransportContext {
     return {
-      runtime:        'lima',
+      runtime:        'guest',
       provider:       input.provider,
       conversationId: input.conversationId,
-      auth:           { kind: 'lima-host' },
+      auth:           { kind: 'guest-host' },
       session:        {
         providerSessionId: input.providerSessionId,
         toolSessionId:     input.toolSessionId,
@@ -166,8 +166,8 @@ class LimaProviderExecutionTransport implements ProviderExecutionTransport {
   }
 
   spawn(request: ProviderProcessLaunch): childProcess.ChildProcessWithoutNullStreams {
-    const command = request.limaCommand;
-    if (!command) throw new Error('Lima provider transport requires a Lima launch command');
+    const command = request.guestCommand;
+    if (!command) throw new Error('Guest provider transport requires a guest launch command');
 
     return childProcess.spawn(command.executable, command.args, {
       cwd:   command.cwd,
@@ -195,8 +195,8 @@ class LimaProviderExecutionTransport implements ProviderExecutionTransport {
         resolve();
       };
       try {
-        const proc = childProcess.spawn(paths.limactl, ['shell', '0', '--', 'sh', '-c', remoteCommand], {
-          env:      { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+        const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', remoteCommand], {
+          env:      { ...process.env, TERM: 'dumb' },
           stdio:    'ignore',
           detached: true,
         });
@@ -211,7 +211,7 @@ class LimaProviderExecutionTransport implements ProviderExecutionTransport {
 }
 
 const transportScope = new AsyncLocalStorage<ProviderExecutionTransport>();
-const limaTransport = new LimaProviderExecutionTransport();
+const guestTransport = new GuestProviderExecutionTransport();
 
 /** Bind one lifecycle-owned transport to a canonical Desktop graph execution. */
 export function withProviderExecutionTransport<T>(transport: ProviderExecutionTransport, action: () => T): T {
@@ -220,7 +220,7 @@ export function withProviderExecutionTransport<T>(transport: ProviderExecutionTr
 
 /** VM behavior remains the default until the container lifecycle owner opts in. */
 export function getProviderExecutionTransport(): ProviderExecutionTransport {
-  return transportScope.getStore() ?? limaTransport;
+  return transportScope.getStore() ?? guestTransport;
 }
 
 export function requireBrokeredContainerAuth(context: ProviderTransportContext): ProviderCliOpaqueConfig | undefined {
