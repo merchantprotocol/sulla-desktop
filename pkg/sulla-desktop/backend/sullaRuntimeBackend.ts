@@ -1710,8 +1710,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         'postgres', 'redis',
       );
       this.assertManagedServicesGeneration(generation);
-      await this.waitForDockerServiceHealthy('sulla_postgres', 300, generation);
-      await this.waitForDockerServiceHealthy('sulla_redis', 300, generation);
+      await Promise.all([
+        this.waitForDockerServiceHealthy('sulla_postgres', 300, generation),
+        this.waitForDockerServiceHealthy('sulla_redis', 300, generation),
+      ]);
 
       this.#activeOptionalSullaServices.clear();
       const optionalServices: Array<{ service: string; container: string }> = [
@@ -1762,17 +1764,53 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         { service: 'tools', container: 'sulla_tools' },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
-        const order = ['threat_proxy', 'sulla_accounts', 'sulla_vault', 'sulla_relay', 'sulla_files',
+        const order = ['sulla_vault', 'threat_proxy', 'sulla_accounts', 'sulla_relay', 'sulla_files',
           'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });
+      // What must be healthy before each optional service starts (the compose
+      // depends_on graph). Every other optional service has no dependency on the
+      // rest, so they start together: the vault, which gates the main window, is
+      // no longer queued behind accounts and the threat proxy.
+      const optionalServiceNeeds: Record<string, string[]> = {
+        sulla_files:                    ['sulla_vault'],
+        sulla_files_fuse:               ['sulla_files'],
+        sulla_files_fuse_logs:          ['sulla_files'],
+        sulla_files_fuse_training_data: ['sulla_files'],
+        tools:                          ['sulla_relay', 'sulla_files', 'sulla_vault'],
+        workflow_manager:               ['sulla_files'],
+      };
       const reconcileInBackground = async(): Promise<void> => {
         const bootStatus = new Map<string, string>();
 
         for (let attempt = 1; attempt <= 3; attempt++) {
-          for (const { service, container } of orderedOptionalServices) {
-            if (this.#activeOptionalSullaServices.has(service)) continue;
+          const runs = new Map<string, Promise<boolean>>();
+          const run = (entry: { service: string; container: string }): Promise<boolean> => {
+            let started = runs.get(entry.service);
+
+            if (!started) {
+              started = reconcileOne(entry);
+              runs.set(entry.service, started);
+            }
+
+            return started;
+          };
+          const reconcileOne = async(entry: { service: string; container: string }): Promise<boolean> => {
+            const { service, container } = entry;
+
+            if (this.#activeOptionalSullaServices.has(service)) return true;
+            for (const dependency of optionalServiceNeeds[service] ?? []) {
+              const dependencyEntry = orderedOptionalServices.find(candidate => candidate.service === dependency);
+
+              // A dependency Desktop is not managing (e.g. the vault when disabled) cannot block.
+              if (!dependencyEntry || this.#activeOptionalSullaServices.has(dependency)) continue;
+              if (!await run(dependencyEntry)) {
+                bootStatus.set(service, `waiting for ${ dependency }`);
+
+                return false;
+              }
+            }
             try {
               // Files can legitimately spend minutes applying a first-start
               // schema upgrade. Do not re-run compose against a live starter;
@@ -1794,14 +1832,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
               if (service === 'sulla_vault') markVaultContainerReady();
+
+              return true;
             } catch (error) {
-              if (error instanceof ManagedServicesReconciliationCancelled) return;
+              if (error instanceof ManagedServicesReconciliationCancelled) throw error;
               const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
 
               bootStatus.set(service, `unhealthy (${ reason })`);
               console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
+
+              return false;
             }
-          }
+          };
+
+          await Promise.all(orderedOptionalServices.map(run));
           if (attempt === 1) {
             console.log(`[Sulla] Boot services: postgres=healthy, redis=healthy, ${
               [...bootStatus].map(([service, status]) => `${ service }=${ status }`).join(', ')
@@ -1908,7 +1952,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    */
   private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300, generation?: number): Promise<void> {
     const start = Date.now();
-    let delayMs = 500;
+    let delayMs = 300;
     let lastStatus = 'not created';
     while (Date.now() - start < timeoutSec * 1000) {
       if (generation !== undefined) this.assertManagedServicesGeneration(generation);
@@ -1926,7 +1970,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // Service not ready yet
       }
       await new Promise(r => setTimeout(r, delayMs));
-      delayMs = Math.min(delayMs * 2, 5_000);
+      delayMs = Math.min(Math.round(delayMs * 1.5), 1_000);
     }
     throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s (last status: ${ lastStatus })`);
   }
