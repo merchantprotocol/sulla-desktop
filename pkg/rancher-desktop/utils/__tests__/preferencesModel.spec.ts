@@ -35,7 +35,7 @@ describe('preferencesModel', () => {
     expect(resolvePreferencesSection('Virtual Machine')).toBe('docker');
     expect(resolvePreferencesSection('Container Engine')).toBe('docker');
     expect(resolvePreferencesSection('Application')).toBe('general');
-    expect(resolvePreferencesSection('Kubernetes')).toBe('kubernetes');
+    expect(resolvePreferencesSection('Kubernetes')).toBeUndefined();
     expect(resolvePreferencesSection('Voice & audio')).toBe('voice');
     expect(resolvePreferencesSection('troubleshooting')).toBe('advanced');
     expect(resolvePreferencesSection('nope')).toBeUndefined();

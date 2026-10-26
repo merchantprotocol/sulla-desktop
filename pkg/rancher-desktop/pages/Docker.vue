@@ -360,14 +360,6 @@
             network.
           </p>
         </div>
-        <label class="nx-check"
-          ><input
-            v-model="includeKubernetes"
-            type="checkbox"
-            @change="saveKubernetesPorts"
-          />
-          Include Kubernetes services</label
-        >
       </div>
       <table class="nx-table">
         <thead>
@@ -651,12 +643,6 @@ const filteredSnapshots = computed(() =>
     JSON.stringify(s).toLowerCase().includes(query.value.toLowerCase()),
   ),
 );
-const includeKubernetes = computed({
-  get: () => settings.value?.portForwarding?.includeKubernetesServices ?? false,
-  set: (v) => {
-    settings.value.portForwarding.includeKubernetesServices = v;
-  },
-});
 const statCards = computed(() => [
   {
     label: 'CPU',
@@ -771,11 +757,6 @@ async function refresh() {
   } finally {
     loading.value = false;
   }
-}
-async function saveKubernetesPorts() {
-  await ipcRenderer.invoke('settings-write', {
-    portForwarding: { includeKubernetesServices: includeKubernetes.value },
-  });
 }
 function openDockerPreferences() {
   // Lands on Preferences › Docker once the new Preferences window (#1493) is in.

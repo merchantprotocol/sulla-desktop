@@ -1,8 +1,7 @@
 import path from 'path';
 
-import { VMBackend } from '@pkg/backend/backend';
+import { State, VMBackend } from '@pkg/backend/backend';
 import * as imageProcessor from '@pkg/backend/images/imageProcessor';
-import * as K8s from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
@@ -17,7 +16,7 @@ export default class MobyImageProcessor extends imageProcessor.ImageProcessor {
       if (!this.active) {
         return;
       }
-      this.isK8sReady = mgr.state === K8s.State.STARTED || mgr.state === K8s.State.DISABLED;
+      this.isK8sReady = mgr.state === State.STARTED || mgr.state === State.DISABLED;
       this.updateWatchStatus();
     });
   }

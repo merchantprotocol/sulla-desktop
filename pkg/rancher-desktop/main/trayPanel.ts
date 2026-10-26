@@ -25,7 +25,6 @@ import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openMain, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
-import { openDashboard } from '@pkg/window/dashboard';
 
 const console = Logging.background;
 
@@ -259,9 +258,7 @@ export function toggleTrayPanel(trayBounds: Electron.Rectangle): void {
  * Send a state update to the panel renderer.
  */
 export function sendPanelState(state: {
-  docker?:     string;
-  k8s?:        string;
-  k8sContext?: string;
+  docker?: string;
 }): void {
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.webContents.send('tray-panel:state-update', state);
@@ -363,11 +360,6 @@ function registerPanelIpc(): void {
 
   ipcMain.on('tray-panel:open-docker', () => {
     openDockerDashboard();
-    panelWindow?.hide();
-  });
-
-  ipcMain.on('tray-panel:open-dashboard', () => {
-    openDashboard();
     panelWindow?.hide();
   });
 

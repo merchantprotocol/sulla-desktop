@@ -7,7 +7,6 @@ import EventEmitter from '@pkg/utils/eventEmitter';
 import { RecursiveKeys, RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 
 import type { ContainerEngineClient } from './containerClient';
-import type { KubernetesBackend } from './k8s';
 
 export enum State {
   STOPPED = 'STOPPED', // The engine is not running.
@@ -15,7 +14,7 @@ export enum State {
   STARTED = 'STARTED', // The engine is started; the dashboard is not yet ready.
   STOPPING = 'STOPPING', // The engine is attempting to stop.
   ERROR = 'ERROR', // There is an error and we cannot recover automatically.
-  DISABLED = 'DISABLED', // The container backend is ready but the Kubernetes engine is disabled.
+  DISABLED = 'DISABLED', // The container backend is ready (the Sulla runtime reports this once started).
 }
 
 export class BackendError extends Error {
@@ -49,8 +48,8 @@ export interface FailureDetails {
 }
 
 /**
- * KubernetesBackendEvents describes the events that may be emitted by a
- * Kubernetes backend (as an EventEmitter).  Each property name is the name of
+ * BackendEvents describes the events that may be emitted by a
+ * VM backend (as an EventEmitter).  Each property name is the name of
  * an event, and the property type is the type of the callback function expected
  * for the given event.
  */
@@ -73,7 +72,7 @@ export interface BackendEvents {
 }
 
 /**
- * Settings that KubernetesBackend can access.
+ * Settings that a VM backend can access.
  */
 export type BackendSettings = RecursiveReadonly<Settings>;
 
@@ -106,7 +105,7 @@ export type RestartReasons = Partial<Record<RecursiveKeys<Settings>, {
  */
 export interface VMBackend extends EventEmitter<BackendEvents> {
   /** The name of the VM backend */
-  readonly backend: 'wsl' | 'sulla-runtime' | 'mock';
+  readonly backend: 'sulla-runtime' | 'mock';
 
   readonly state: State;
 
@@ -133,18 +132,18 @@ export interface VMBackend extends EventEmitter<BackendEvents> {
   getBackendInvalidReason(): Promise<BackendError | null>;
 
   /**
-   * Start the Kubernetes cluster.  If it is already started, it will be
+   * Start the VM backend.  If it is already started, it will be
    * restarted.
    */
   start(config: BackendSettings): Promise<void>;
 
-  /** Stop the Kubernetes cluster.  If applicable, shut down the VM. */
+  /** Stop the backend and shut down the VM. */
   stop(): Promise<void>;
 
-  /** Delete the Kubernetes cluster, returning the exit code. */
+  /** Delete the VM. */
   del(): Promise<void>;
 
-  /** Reset the Kubernetes cluster, removing all workloads. */
+  /** Reset the VM, removing all workloads. */
   reset(config: BackendSettings): Promise<void>;
 
   /**
@@ -180,7 +179,6 @@ export interface VMBackend extends EventEmitter<BackendEvents> {
   noModalDialogs: boolean;
 
   readonly executor:              VMExecutor;
-  readonly kubeBackend:           KubernetesBackend;
   readonly containerEngineClient: ContainerEngineClient;
 }
 
@@ -194,7 +192,6 @@ export type execOptions = childProcess.CommonOptions & {
   logStream?:     stream.Writable;
   /**
    * If set, ensure that the command is run as the privileged user.
-   * @note The command is always run as root on WSL.
    */
   root?:          boolean;
 };

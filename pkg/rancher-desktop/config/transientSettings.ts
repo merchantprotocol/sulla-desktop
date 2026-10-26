@@ -13,10 +13,8 @@ export const navItemNames = [
   'Application',
   'Appearance',
   'Files',
-  'WSL',
   'Virtual Machine',
   'Container Engine',
-  'Kubernetes',
 ] as const;
 
 export type NavItemName = typeof navItemNames[number];
@@ -31,7 +29,6 @@ export const defaultTransientSettings = {
         Files:              undefined,
         'Virtual Machine':  'hardware',
         'Container Engine': 'general',
-        ...(process.platform === 'win32' && { WSL: 'integration' }),
       } as Record<NavItemName, string | undefined>,
     },
   },

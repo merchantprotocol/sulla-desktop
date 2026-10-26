@@ -70,7 +70,6 @@ type SettingsValidationMap = SettingsValidationMapEntry<Settings, Settings>;
 type TransientSettingsValidationMap = SettingsValidationMapEntry<TransientSettings, TransientSettings>;
 
 export default class SettingsValidator {
-  k8sVersions:              string[] = [];
   allowedSettings:          SettingsValidationMap | null = null;
   allowedTransientSettings: TransientSettingsValidationMap | null = null;
   synonymsTable:            settingsLike | null = null;
@@ -138,7 +137,6 @@ export default class SettingsValidator {
       },
       experimental: {
         containerEngine:           { webAssembly: { enabled: this.checkMulti(this.checkBoolean, this.checkWASMWithMobyStorage) } },
-        kubernetes:                { options: { spinkube: this.checkMulti(this.checkBoolean, this.checkSpinkube) } },
         soulPrompt:                this.checkString,
         botName:                   this.checkString,
         primaryUserName:           this.checkString,
@@ -175,26 +173,17 @@ export default class SettingsValidator {
             },
           },
           proxy: {
-            enabled:  this.checkPlatform('win32', this.checkBoolean),
-            address:  this.checkPlatform('win32', this.checkString),
-            password: this.checkPlatform('win32', this.checkString),
-            port:     this.checkPlatform('win32', this.checkNumber(1, 65535)),
-            username: this.checkPlatform('win32', this.checkString),
-            noproxy:  this.checkPlatform('win32', this.checkUniqueStringArray),
+            enabled:  this.checkUnchanged,
+            address:  this.checkUnchanged,
+            password: this.checkUnchanged,
+            port:     this.checkUnchanged,
+            username: this.checkUnchanged,
+            noproxy:  this.checkUnchanged,
           },
           sshPortForwarder: this.checkMac(this.checkBoolean),
         },
       },
-      WSL:        { integrations: this.checkPlatform('win32', this.checkBooleanMapping) },
-      kubernetes: {
-        version: this.checkKubernetesVersion,
-        port:    this.checkNumber(1, 65535),
-        enabled: this.checkBoolean,
-        options: { traefik: this.checkBoolean, flannel: this.checkBoolean },
-        ingress: { localhostOnly: this.checkPlatform('win32', this.checkBoolean) },
-      },
-      portForwarding: { includeKubernetesServices: this.checkBoolean },
-      images:         {
+      images: {
         showAll:   this.checkBoolean,
         namespace: this.checkString,
       },
@@ -256,7 +245,7 @@ export default class SettingsValidator {
    * @param currentSettings - The current preferences object
    * @param newSettings - User's proposed new settings
    * @param errors - Builds this list up as new errors are encountered, so multiple errors can be reported.
-   * @param prefix - For error messages only, e.g. '' for root, 'kubernetes.options', etc.
+   * @param prefix - For error messages only, e.g. '' for root, 'application.extensions', etc.
    * @returns boolean - true if there are changes that need to be applied.
    */
   protected checkProposedSettings<S>(
@@ -283,7 +272,7 @@ export default class SettingsValidator {
         }
       } else if (typeof (newSettings[k]) === 'object') {
         if (typeof allowedSettings[k] === 'function') {
-          // Special case for things like `.WSLIntegrations` which have unknown fields.
+          // Special case for mappings like `.extensions.installed` which have unknown fields.
           const validator: ValidatorFunc<S, any, any, any> = allowedSettings[k];
 
           changeNeededHere = validator.call(this, mergedSettings, currentSettings[k], newSettings[k], errors, fqname);
@@ -409,19 +398,6 @@ export default class SettingsValidator {
       this.isFatal = true;
 
       return false;
-    }
-
-    return currentValue !== desiredValue;
-  }
-
-  protected checkSpinkube(mergedSettings: Settings, currentValue: boolean, desiredValue: boolean, errors: string[], fqname: string): boolean {
-    if (mergedSettings.kubernetes.enabled && desiredValue) {
-      if (!mergedSettings.experimental.containerEngine.webAssembly.enabled) {
-        errors.push(`Setting ${ fqname } can only be set when experimental.container-engine.web-assembly.enabled is set as well.`);
-        this.isFatal = true;
-
-        return false;
-      }
     }
 
     return currentValue !== desiredValue;
@@ -596,55 +572,16 @@ export default class SettingsValidator {
     return false;
   }
 
-  protected checkKubernetesVersion(mergedSettings: Settings, currentValue: string, desiredVersion: string, errors: string[], _: string): boolean {
-    /**
-     * desiredVersion can be an empty string when Kubernetes is disabled, but otherwise it must be a valid version.
-    */
-    if ((mergedSettings.kubernetes.enabled || desiredVersion !== '') && !this.k8sVersions.includes(desiredVersion)) {
-      errors.push(`Kubernetes version "${ desiredVersion }" not found.`);
-
-      return false;
-    }
-
-    return currentValue !== desiredVersion;
-  }
-
   protected notSupported(fqname: string) {
     return `Changing field "${ fqname }" via the API isn't supported.`;
   }
 
   protected checkUnchanged<S>(mergedSettings: S, currentValue: any, desiredValue: any, errors: string[], fqname: string): boolean {
-    if (currentValue !== desiredValue) {
+    if (!_.isEqual(currentValue, desiredValue)) {
       errors.push(this.notSupported(fqname));
     }
 
     return false;
-  }
-
-  /**
-   * Ensures settings that are objects adhere to their type of
-   * Record<string, boolean>. This is useful for checking that values other than
-   * booleans are not unintentionally added to settings like WSLIntegrations
-   * and mutedChecks.
-   */
-  protected checkBooleanMapping<S>(mergedSettings: S, currentValue: Record<string, boolean>, desiredValue: Record<string, boolean>, errors: string[], fqname: string): boolean {
-    if (typeof (desiredValue) !== 'object') {
-      errors.push(`Proposed field "${ fqname }" should be an object, got <${ desiredValue }>.`);
-
-      return false;
-    }
-
-    let changed = Object.keys(currentValue).some(k => !(k in desiredValue));
-
-    for (const [key, value] of Object.entries(desiredValue)) {
-      if (typeof value !== 'boolean' && value !== null) {
-        errors.push(this.invalidSettingMessage(`${ fqname }.${ key }`, desiredValue[key]));
-      } else {
-        changed ||= currentValue[key] !== value;
-      }
-    }
-
-    return errors.length === 0 && changed;
   }
 
   protected checkUniqueStringArray<S>(mergedSettings: S, currentValue: string[], desiredValue: string[], errors: string[], fqname: string): boolean {
@@ -797,7 +734,6 @@ export default class SettingsValidator {
   canonicalizeSynonyms(newSettings: settingsLike): void {
     this.synonymsTable ||= {
       containerEngine: { name: this.canonicalizeContainerEngine },
-      kubernetes:      { version: this.canonicalizeKubernetesVersion },
     };
     this.canonicalizeSettings(this.synonymsTable, newSettings, []);
   }
@@ -813,16 +749,6 @@ export default class SettingsValidator {
       } else if (typeof _.get(defaultSettings, prefix.concat(k)) === 'number') {
         this.canonicalizeNumber(newSettings, k);
       }
-    }
-  }
-
-  protected canonicalizeKubernetesVersion(newSettings: settingsLike, index: string): void {
-    const desiredValue: string = newSettings[index];
-    const ptn = /^(v?)(\d+\.\d+\.\d+)((?:\+k3s\d+)?)$/;
-    const m = ptn.exec(desiredValue);
-
-    if (m && (m[1] || m[3])) {
-      newSettings[index] = m[2];
     }
   }
 
