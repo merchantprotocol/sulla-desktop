@@ -740,3 +740,13 @@ html, body {
 .meter-section.disabled .meter-peak {
   opacity: 0;
 }
+
+/* ─── Hidden panel ───────────────────────────────────────── */
+/* The panel window stays alive while hidden (it hosts mic capture) with
+   background throttling off, so its infinite pulses and spinners would keep
+   the compositor busy. Main toggles this class on show/hide. */
+body.panel-hidden *,
+body.panel-hidden *::before,
+body.panel-hidden *::after {
+  animation-play-state: paused !important;
+}

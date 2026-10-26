@@ -23,4 +23,8 @@ DOCKER_HOST="unix://$HOME/Library/Application Support/Sulla/runtime/docker.sock"
 
 `--usr-image` is attached read-only as the guest's second disk and mounted at `/usr`; the data disk is the first. The data disk is created as a 64 GiB sparse raw file and formatted by the guest. Run the benchmark in `bench/` for repeatable boot measurements.
 
+## Memory
+
+`--memory-mib` is the most the guest can ever have, not what it holds. Virtualization.framework only offers the traditional virtio balloon (a host-set target; no free-page reporting, no deflate-on-OOM), so `BalloonController.swift` sets that target from the guest's own numbers: every 2 s it reads the agent's `status` (MemAvailable, cache, shmem, PSI) and sizes the guest at what it uses plus a headroom of a quarter of that (768 MiB to 2 GiB), never below 1 GiB. It grows the guest at once when under half the headroom is left, when memory pressure (PSI some avg10) reaches 10%, or when the agent sends `memory-low` (it checks every 250 ms); it shrinks only 2 minutes after the last growth, at least 512 MiB at a time, under 1% pressure, after the previous step has settled, and evicts at most 512 MiB of cache per step (cgroup `memory.reclaim`, LRU order). The first shrink waits 2 minutes after the guest comes up. `sulla-runtime reclaim` asks the guest to drop its clean page cache once, which Desktop does after loading bundled images. Decisions print as `balloon ...` lines and a `memory ...` line goes to the runtime log every minute, with the VM process's macOS footprint. `SULLA_RUNTIME_BALLOON=off` leaves the guest at its configured size.
+
 Real VM boot, socket proxy, shutdown, Rosetta, and performance testing require macOS and the matching guest artifact.

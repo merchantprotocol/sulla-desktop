@@ -22,13 +22,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, defineAsyncComponent } from 'vue';
 import type { Artifact, WorkflowPayload, HtmlPayload, CodePayload, MarkdownPayload } from '../../models/Artifact';
 
-import WorkflowArtifact from './panes/WorkflowArtifact.vue';
 import HtmlArtifact     from './panes/HtmlArtifact.vue';
 import CodeArtifact     from './panes/CodeArtifact.vue';
 import MarkdownArtifact from './panes/MarkdownArtifact.vue';
+
+// The workflow pane pulls in the whole routines canvas (Vue Flow); load it
+// only when a workflow artifact is actually shown.
+const WorkflowArtifact = defineAsyncComponent(() => import('./panes/WorkflowArtifact.vue'));
 
 const props = defineProps<{ artifact: Artifact }>();
 

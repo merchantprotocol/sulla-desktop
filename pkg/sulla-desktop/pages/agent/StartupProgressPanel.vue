@@ -173,6 +173,13 @@ export default defineComponent({
       lastFrame = ts;
       lastFrameWall = Date.now();
       advance(dt);
+      // Once startup has settled (ready or failed) the bar has nowhere left to
+      // ease to; the 1 s ticker keeps the clock. Stop drawing every frame.
+      if (props.snapshot?.ready || props.snapshot?.error) {
+        frame = null;
+
+        return;
+      }
       frame = requestAnimationFrame(loop);
     }
 
@@ -207,6 +214,12 @@ export default defineComponent({
     // A new startup (backend restart) is the one time the bar may start over.
     watch(() => props.snapshot?.startedAt, (next, prev) => {
       if (next && prev && next !== prev) displayed.value = target.value;
+    });
+
+    // A startup that becomes unsettled again (backend restart) resumes the
+    // frame loop the settled state stopped.
+    watch(() => !!(props.snapshot?.ready || props.snapshot?.error), (settled) => {
+      if (!settled && frame === null && typeof document !== 'undefined' && document.visibilityState !== 'hidden') startLoop();
     });
 
     // Real events jump the reduced-motion display straight to the new target.

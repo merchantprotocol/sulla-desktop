@@ -359,13 +359,48 @@ function getChild(): Electron.UtilityProcess {
   return proc;
 }
 
+/**
+ * The sidecar holds the ~350 MB Kokoro model in memory. Once nothing has been
+ * spoken for this long, stop it; the next utterance boots it again
+ * (sidecar start + ~1 s model load, the same cost as the first reply).
+ */
+const SIDECAR_IDLE_MS = 10 * 60_000;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearIdleTimer(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = null;
+}
+
+function armIdleTimer(): void {
+  clearIdleTimer();
+  if (!child || pending.size > 0) return;
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (!child || pending.size > 0) return;
+    console.log(`[Kokoro] sidecar idle for ${ SIDECAR_IDLE_MS / 60_000 } min — stopping it to free the model`);
+    const proc = child;
+
+    child = null;
+    try { proc.kill() } catch { /* already gone */ }
+  }, SIDECAR_IDLE_MS);
+  idleTimer.unref?.();
+}
+
 function request(msg: Record<string, unknown>): Promise<{ samples: Float32Array; sampleRate: number }> {
   const id = nextId++;
 
-  return new Promise((resolve, reject) => {
+  clearIdleTimer();
+
+  const result = new Promise<{ samples: Float32Array; sampleRate: number }>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     getChild().postMessage({ ...msg, id });
   });
+
+  // Re-arm once this request settles; the timer only fires with nothing pending.
+  result.then(armIdleTimer, armIdleTimer);
+
+  return result;
 }
 
 /** Load the model ahead of the first reply (sidecar boot + ~1s model load + graph warm-up). */
@@ -408,6 +443,7 @@ export async function synthesizeKokoro(text: string, voiceKey?: string | null, s
 }
 
 export function disposeKokoro(): void {
+  clearIdleTimer();
   if (child) {
     try { child.kill() } catch { /* already gone */ }
     child = null;

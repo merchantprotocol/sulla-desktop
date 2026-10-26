@@ -414,11 +414,6 @@
   display: none !important;
 }
 
-.theme-protocol-light .chat-glow.a,
-.theme-protocol-light .chat-glow.b {
-  opacity: 0.15 !important;
-}
-
 /* Page root backgrounds */
 .theme-protocol-light .chat-root,
 .theme-protocol-light .page-root,
