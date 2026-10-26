@@ -227,9 +227,12 @@ export function threatProxyComposeService(image: Record<string, unknown>): Recor
     mem_limit:    '512m',
     healthcheck:  {
       test:     ['CMD', 'python3', '-c', `import socket; socket.create_connection(('127.0.0.1', ${ THREAT_PROXY_PORT }), 2).close()`],
-      interval: '5s',
-      timeout:  '3s',
-      retries:  10,
+      interval:       '5s',
+      timeout:        '3s',
+      retries:        10,
+      // Started on demand by the agent launcher, which waits for healthy.
+      start_period:   '30s',
+      start_interval: '1s',
     },
   };
 }

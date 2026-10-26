@@ -32,9 +32,7 @@ import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
-import {
-  ensureAgentNetworkCommand, provisionStateCommand, THREAT_PROXY_CONTAINER, threatProxyComposeService,
-} from './threatProxyEgress';
+import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
@@ -677,9 +675,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.waitForSullaCredentials(generation);
       this.assertManagedServicesGeneration(generation);
 
-      const { resetAgentContainerImageResolution } = await import('@pkg/agent/services/AgentContainerLauncher');
+      const { resetAgentContainerImageResolution, keepThreatProxyForRunningAgents } = await import('@pkg/agent/services/AgentContainerLauncher');
 
       resetAgentContainerImageResolution();
+      keepThreatProxyForRunningAgents();
       await this.reconcileSullaDockerEnvironment(generation);
       markSullaDockerServicesStarted();
       getSullaFilesBackups().configureGuest(this);
@@ -1792,15 +1791,17 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
         expectVaultContainer();
       }
+      // The threat proxy is on demand too: the agent launcher starts it (and
+      // waits for it) before any agent runs; until then the egress rules
+      // refuse agent web traffic rather than let it out unscanned.
       optionalServices.push(
-        { service: 'threat_proxy', container: THREAT_PROXY_CONTAINER },
         { service: 'sulla_relay', container: 'sulla_relay' },
         { service: 'sulla_files', container: 'sulla_files' },
         { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'tools', container: 'sulla_tools' },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
-        const order = ['sulla_vault', 'threat_proxy', 'sulla_accounts', 'sulla_relay', 'sulla_files',
+        const order = ['sulla_vault', 'sulla_accounts', 'sulla_relay', 'sulla_files',
           'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);

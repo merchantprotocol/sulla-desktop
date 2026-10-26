@@ -49,6 +49,7 @@ import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
+import { ensureOnDemandService, setOnDemandServiceDemand } from '@pkg/backend/onDemandServices';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
@@ -376,6 +377,10 @@ async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<stri
 
   await guestExec(egressPolicyCommand(enforce));
   if (!enforce) return { binds: [], env: {} };
+  // The proxy runs only while agents do. Start it and wait until it accepts
+  // connections; if it cannot start, the launch fails here. (Even without this
+  // the redirect fails closed: a stopped proxy means refused connections.)
+  await ensureOnDemandService('threat_proxy');
   const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
 
   while (!await guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false)) {
@@ -387,6 +392,20 @@ async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<stri
   const trust = agentCaTrust();
 
   return { binds: [trust.bind], env: trust.env };
+}
+
+/**
+ * Keep the on-demand threat proxy up while any agent container runs with
+ * scanning on (this also starts it within a minute when scanning is turned on
+ * under running agents); with no agents it stops after its idle period.
+ */
+export function keepThreatProxyForRunningAgents(): void {
+  setOnDemandServiceDemand('threat_proxy', async() => {
+    if (!await egressEnforced()) return false;
+    const { stdout } = await guestExec(['docker', 'ps', '--quiet', '--filter', 'label=com.sulla.workload=agent']);
+
+    return stdout.trim().length > 0;
+  });
 }
 
 let imageReady: Promise<string> | null = null;
