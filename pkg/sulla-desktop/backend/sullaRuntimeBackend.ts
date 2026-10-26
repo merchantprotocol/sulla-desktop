@@ -23,7 +23,7 @@ import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSett
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages } from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
-import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
+import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
@@ -1096,7 +1096,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         });
       }
       compose.services.sulla_accounts = {
-        ...accountsImage,
+        ...composeImageFields(accountsImage),
         image:          resolvedAccountsImage,
         container_name: 'sulla_accounts',
         depends_on:     { postgres: { condition: 'service_healthy' } },
@@ -1154,7 +1154,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         });
       }
       compose.services.sulla_vault = {
-        ...vaultImage,
+        ...composeImageFields(vaultImage),
         image,
         container_name: 'sulla_vault',
         labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
@@ -1204,7 +1204,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       });
     }
     compose.services.workflow_manager = {
-      ...workflowImage,
+      ...composeImageFields(workflowImage),
       image,
       // Source checkouts retain their Dockerfile build; published images are
       // refreshed by the common managed-image reconciliation path.
@@ -1257,7 +1257,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       });
     }
     compose.services.sulla_relay = {
-      ...relayImage,
+      ...composeImageFields(relayImage),
       image: resolvedRelayImage,
       container_name: 'sulla_relay',
       depends_on: { redis: { condition: 'service_healthy' } },
@@ -1289,7 +1289,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       });
     }
     compose.services.tools = {
-      ...toolsImage,
+      ...composeImageFields(toolsImage),
       image: resolvedToolsImage,
       container_name: 'sulla_tools',
       labels: {
@@ -1340,7 +1340,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.#managedSullaRefreshImages.set('sulla_files', filesImage.image);
     }
     compose.services.sulla_files = {
-      ...filesImage,
+      ...composeImageFields(filesImage),
       image: resolvedFilesImage,
       container_name: 'sulla_files',
       labels: {
@@ -1429,7 +1429,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         for (const service of ['sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data']) this.#managedSullaRefreshImages.set(service, fuseImage.image);
       }
       compose.services.sulla_files_fuse = {
-        ...fuseImage,
+        ...composeImageFields(fuseImage),
         image:          resolvedFuseImage,
         container_name: 'sulla_files_fuse',
         environment: {

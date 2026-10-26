@@ -22,6 +22,16 @@ export interface SullaServiceImage {
   bundled?: true;
 }
 
+/**
+ * The fields of a resolved image that belong in a compose service definition.
+ * `bundled` (and any future internal marker) is Desktop bookkeeping: spreading
+ * the whole object into a service makes `docker compose` reject the file with
+ * "additional properties 'bundled' not allowed".
+ */
+export function composeImageFields(image: SullaServiceImage): Pick<SullaServiceImage, 'build' | 'image'> {
+  return image.build ? { build: image.build, image: image.image } : { image: image.image };
+}
+
 export function resolveSullaServiceImage(
   name: SullaServiceImageName,
   sourceRoot: string,
