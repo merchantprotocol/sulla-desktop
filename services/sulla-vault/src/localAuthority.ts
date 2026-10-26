@@ -1411,6 +1411,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     callerId: string, token: string | undefined, integrationId: string, accountFilter?: string,
   ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
     this.requireBrokerIdentity(callerId, token);
+    return this.readIntegrationMetadata(integrationId, accountFilter);
+  }
+
+  private async readIntegrationMetadata(
+    integrationId: string, accountFilter?: string,
+  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId)) {
       throw new LocalVaultError('invalid_operation', 400, 'Integration identifier is invalid');
     }
@@ -1538,7 +1544,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         this.requireGeneration(generation);
       }));
     }
-    return this.integrationMetadata(this.config.brokerServiceId, this.config.brokerServiceToken, integrationId, accountId);
+    return this.readIntegrationMetadata(integrationId, accountId);
   }
 
   /**
