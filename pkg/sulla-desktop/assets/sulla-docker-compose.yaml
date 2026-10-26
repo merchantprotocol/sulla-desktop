@@ -67,9 +67,13 @@ services:
     container_name: sulla_redis
     ports:
       - "127.0.0.1:30117:6379"
-    command: redis-server --save "" --appendonly no
+    # Cache and coordination only: no persistence. maxmemory bounds growth;
+    # noeviction because some keys (workflow stop/pause flags, settings cache,
+    # agent registry) carry no TTL and must not silently disappear: past the
+    # cap writes fail loudly instead.
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy noeviction
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 192m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
