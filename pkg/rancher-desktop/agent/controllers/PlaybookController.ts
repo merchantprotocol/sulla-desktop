@@ -1508,7 +1508,7 @@ export class PlaybookController<TState = any> {
             shell:  'http://127.0.0.1:30119',
             node:   'http://127.0.0.1:30120',
           };
-          const SECRETS_HOST_URL = 'http://host.lima.internal:30121';
+          const SECRETS_HOST_URL = 'http://host.sulla.internal:30121';
 
           // SECURITY: `refs` lives only in this local const + the capability
           // service's in-memory map. It is NEVER passed to saveCheckpoint /

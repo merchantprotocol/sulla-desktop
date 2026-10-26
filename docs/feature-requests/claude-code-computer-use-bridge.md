@@ -2,7 +2,7 @@
 
 ## Overview
 
-Let Claude Code — Anthropic's CLI — drive the macOS host even though it runs inside Sulla Desktop's Lima VM. The bridge is an MCP server hosted by the Electron main process that exposes the `computer_20251124` tool surface (screenshot, click, type, scroll, zoom) to the guest. Capture Studio provides the screenshot path; a small native addon provides input injection; the guest connects over `host.lima.internal` loopback.
+Let Claude Code — Anthropic's CLI — drive the macOS host even though it runs inside Sulla Desktop's Lima VM. The bridge is an MCP server hosted by the Electron main process that exposes the `computer_20251124` tool surface (screenshot, click, type, scroll, zoom) to the guest. Capture Studio provides the screenshot path; a small native addon provides input injection; the guest connects over `host.sulla.internal` loopback.
 
 This is a distinct feature from the generic Computer Use Agent (`computer-use-agent.md`). That feature builds a Sulla-native agent loop with grid overlays. This feature wires Claude Code specifically into the host desktop and reuses Sulla's capture pipeline as the substrate.
 
@@ -54,7 +54,7 @@ Lima VM (Linux)                        macOS Host
 │  ├─ MCP client ─────┼─ stdio over ──►│  ├─ MCP server: computer_use     │
 │  │                  │  limactl SSH   │  │  ├─ screenshot ← Capture Studio│
 │  │                  │  or TCP over   │  │  ├─ click/type ← CGEventPost   │
-│  │                  │  host.lima     │  │  └─ zoom/scroll ← native      │
+│  │                  │  host.sulla    │  │  └─ zoom/scroll ← native      │
 │  └─ agent loop      │  .internal     │  ├─ Capture Studio (screen/audio)│
 │                     │                │  └─ Audio Driver (mic/speaker)   │
 └─────────────────────┘                └──────────────────────────────────┘
@@ -65,7 +65,7 @@ Lima VM (Linux)                        macOS Host
 Two viable options for guest ↔ host MCP:
 
 1. **stdio over `limactl shell`** — the host launches the guest's Claude Code with an MCP server entry that pipes stdio back out through `limactl shell`. Simplest auth (process inheritance) but couples the MCP server lifecycle to the shell session.
-2. **TCP on `host.lima.internal:PORT`** (recommended) — host MCP server listens on `127.0.0.1:PORT`, Lima forwards the guest's `host.lima.internal:PORT` to it. Auth is a pre-shared HMAC token written into the guest's `~/.mcp.json` at Lima provisioning time. Decoupled lifecycle, survives shell reconnects, and the same server can serve Path A clients.
+2. **TCP on `host.sulla.internal:PORT`** (recommended) — host MCP server listens on `127.0.0.1:PORT`, Lima forwards the guest's `host.sulla.internal:PORT` to it. Auth is a pre-shared HMAC token written into the guest's `~/.mcp.json` at Lima provisioning time. Decoupled lifecycle, survives shell reconnects, and the same server can serve Path A clients.
 
 ### MCP Server Shape
 
@@ -208,7 +208,7 @@ Prioritize this first. The MCP scaffolding is boring; `CGEventPost` has the real
 
 ### Phase 3 — Guest Wiring
 
-- Lima provisioning writes `~/.mcp.json` with `host.lima.internal:PORT` and current HMAC token
+- Lima provisioning writes `~/.mcp.json` with `host.sulla.internal:PORT` and current HMAC token
 - Token rotation on Sulla Desktop launch (re-sync to guest before spawning Claude Code)
 - Replace `claudeCodeTest.ts` test harness with a production Claude Code manager
 - Streaming NDJSON output into Sulla's chat UI

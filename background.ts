@@ -598,7 +598,7 @@ Electron.app.whenReady().then(async() => {
     initChromeApiIpc();
 
     // Start the capability-token-based secrets HTTP server for runtime
-    // containers (reachable from the Lima VM at host.lima.internal:30121).
+    // containers (reachable from the Lima VM at host.sulla.internal:30121).
     try {
       const { startSullaSecretsServer } = await import('@pkg/main/sullaSecretsServer');
       await startSullaSecretsServer();

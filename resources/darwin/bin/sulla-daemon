@@ -4,7 +4,7 @@
 # sulla CLI connects to the socket; socat reuses the TCP connection.
 
 SOCKET="/tmp/sulla-tools.sock"
-HOST="${SULLA_HOST:-host.lima.internal}"
+HOST="${SULLA_HOST:-host.sulla.internal}"
 PORT="${SULLA_PORT:-3000}"
 PIDFILE="/tmp/sulla-daemon.pid"
 
