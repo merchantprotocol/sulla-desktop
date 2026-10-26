@@ -28,6 +28,9 @@ import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
+import {
+  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
+} from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
 import {
   ensureAgentNetworkCommand, provisionStateCommand, THREAT_PROXY_CONTAINER, threatProxyComposeService,
@@ -627,6 +630,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
     void import('@pkg/main/threat-proxy').then(threatProxy => threatProxy.clearGuest(this)).catch(() => undefined);
+    clearOnDemandServices();
     setSullaRuntimeActive(false);
     this.#containerEngineClient = undefined;
     try {
@@ -1742,11 +1746,17 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       ]);
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices: Array<{ service: string; container: string }> = [
-        { service: 'python_runtime', container: 'sulla_python_runtime' },
-        { service: 'shell_runtime', container: 'sulla_shell_runtime' },
-        { service: 'node_runtime', container: 'sulla_node_runtime' },
-      ];
+      // The function runtimes start on first use (backend/onDemandServices.ts)
+      // and stop again when idle; boot leaves them alone.
+      const onDemandRefreshImages: Partial<Record<OnDemandServiceName, string>> = {};
+
+      for (const service of Object.keys(ON_DEMAND_SERVICES) as OnDemandServiceName[]) {
+        const image = this.#managedSullaRefreshImages.get(service);
+
+        if (image) onDemandRefreshImages[service] = image;
+      }
+      configureOnDemandServices(args => this.execCommand({ capture: true, root: true }, ...args), onDemandRefreshImages);
+      const optionalServices: Array<{ service: string; container: string }> = [];
 
       const configuredServices = await this.execCommand(
         { capture: true, root: true }, ...composeCommand, 'config', '--services',
@@ -1791,7 +1801,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
         const order = ['sulla_vault', 'threat_proxy', 'sulla_accounts', 'sulla_relay', 'sulla_files',
-          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
+          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });

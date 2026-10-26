@@ -80,6 +80,8 @@ services:
       timeout: 3s
       retries: 3
 
+  # The function runtimes start on first use and stop when idle
+  # (backend/onDemandServices.ts); boot does not start them.
   python_runtime:
     image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
     container_name: sulla_python_runtime
@@ -96,6 +98,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
   shell_runtime:
     image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
@@ -112,6 +117,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
   node_runtime:
     image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
@@ -131,6 +139,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
 volumes:
   sulla_postgres_data:
