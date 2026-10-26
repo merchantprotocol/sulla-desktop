@@ -11,6 +11,7 @@
 
 import { normalizeVaultCredentialValues, type VaultCredentialReadResult } from './vaultCredentialSchema';
 import {
+  getConfiguredApprovalClient,
   requireConfiguredCredentialBroker,
   usesContainerVaultAuthority,
   type BrokerIntegrationMetadataResponse,
@@ -229,6 +230,24 @@ export class IntegrationService {
       property:       'account_label',
       value:          label,
     });
+  }
+
+  /** Name the account an OAuth sign-in will connect. In vault mode the vault
+   *  creates the empty account itself, since Desktop cannot write vault values. */
+  async prepareOAuthAccount(integrationId: string, accountId: string, label: string): Promise<void> {
+    if (!usesContainerVaultAuthority()) {
+      await this.setAccountLabel(integrationId, accountId, label);
+      return;
+    }
+    this.validateLocalMetadataIds(integrationId, accountId);
+    if (this.isRendererProcess()) {
+      const { ipcRenderer } = require('electron');
+      await ipcRenderer.invoke('vault:integration-oauth-account', { integrationId, accountId, label });
+      return;
+    }
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault service is unavailable');
+    await client.ensureOAuthAccount(integrationId, accountId, label);
   }
 
   /** Get the label for an account */
