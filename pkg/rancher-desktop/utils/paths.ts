@@ -183,6 +183,28 @@ function getDefaultPaths(): Partial<Paths> {
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
   }
+  case 'win32': {
+    // Same layout the removed rdctl `paths` command reported on Windows.
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const appHome = path.join(localAppData, 'rancher-desktop');
+    const resources = process.resourcesPath
+      ? path.join(process.resourcesPath, 'resources')
+      : path.join(process.cwd(), 'resources');
+
+    return {
+      appHome,
+      altAppHome:      appHome,
+      config:          appHome,
+      logs:            process.env.RD_LOGS_DIR || path.join(appHome, 'logs'),
+      cache:           path.join(appHome, 'cache'),
+      resources,
+      wslDistro:       path.join(appHome, 'distro'),
+      wslDistroData:   path.join(appHome, 'distro-data'),
+      extensionRoot:   path.join(appHome, 'extensions'),
+      snapshots:       path.join(appHome, 'snapshots'),
+      containerdShims: path.join(appHome, 'containerd-shims'),
+    };
+  }
   default:
     return {};
   }
