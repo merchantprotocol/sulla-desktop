@@ -152,8 +152,8 @@ export async function withGitHubBrokerRemote<T>(
     // The callback always runs through runCommand's guest shell, regardless of
     // whether the caller itself has a pod id.  Container callers reach the tool
     // over MCP, but git still runs in the Sulla VM, where the Desktop broker is exposed
-    // through host.lima.internal rather than the container-only named relay.
-    return await run(`http://host.lima.internal:${ address.port }${ scopedPath }`);
+    // through host.sulla.internal rather than the container-only named relay.
+    return await run(`http://host.sulla.internal:${ address.port }${ scopedPath }`);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

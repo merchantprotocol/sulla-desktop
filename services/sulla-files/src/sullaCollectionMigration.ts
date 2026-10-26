@@ -8,7 +8,7 @@ export interface SullaCollectionMigrationSummary { moved:number; collisions:numb
 export const homeQuery = `SELECT c.* FROM collections c LEFT JOIN file_roots r ON r.collection_id=c.id
   WHERE c.owner_user_id=$1 AND c.published=TRUE AND c.legacy_source=FALSE AND c.system_area IS NULL
     AND (r.id IS NULL OR r.id='default')
-  ORDER BY (r.id='default') DESC NULLS LAST,c.is_default DESC,c.created_at LIMIT 1`;
+  ORDER BY (r.id='default') DESC NULLS LAST,EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=c.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,c.is_default DESC,c.created_at LIMIT 1`;
 
 async function occupied(client:pg.PoolClient, collectionId:string, path:string):Promise<boolean> {
   return Boolean((await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND path=$2

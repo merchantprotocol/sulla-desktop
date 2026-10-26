@@ -19,23 +19,7 @@
       ref="body"
       class="body main-preferences"
     >
-      <header
-        v-if="activeMainTab"
-        class="docker-page-intro"
-      >
-        <div class="docker-page-eyebrow">
-          {{ activePageCopy.eyebrow }}
-        </div>
-        <h1>{{ activePageCopy.headline }}</h1>
-        <p>{{ activePageCopy.lead }}</p>
-      </header>
-      <!-- Main tabs are always mounted, toggled with v-show to preserve state -->
-      <Containers v-show="activeMainTab === '/Containers'" />
-      <Volumes v-show="activeMainTab === '/Volumes'" />
-      <PortForwarding v-show="activeMainTab === '/PortForwarding'" />
-      <Images v-show="activeMainTab === '/Images'" />
-      <Snapshots v-show="activeMainTab === '/Snapshots'" />
-      <Troubleshooting v-show="activeMainTab === '/Troubleshooting'" />
+      <Docker v-if="activeMainTab" />
       <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
       <RouterView v-if="!activeMainTab" />
     </main>
@@ -60,13 +44,8 @@ import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
-import { mapTypedState } from '@pkg/entry/store';
-import Containers from '@pkg/pages/Containers.vue';
-import Images from '@pkg/pages/Images.vue';
-import PortForwarding from '@pkg/pages/PortForwarding.vue';
-import Snapshots from '@pkg/pages/Snapshots.vue';
+import Docker from '@pkg/pages/Docker.vue';
 import Troubleshooting from '@pkg/pages/Troubleshooting.vue';
-import Volumes from '@pkg/pages/Volumes.vue';
 import initExtensions from '@pkg/preload/extensions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
@@ -78,12 +57,8 @@ export default {
     ActionMenu,
     rdNav: Nav,
     TheTitle,
-    Containers,
-    Volumes,
-    PortForwarding,
-    Images,
-    Snapshots,
     Troubleshooting,
+    Docker,
   },
 
   setup() {
@@ -117,28 +92,6 @@ export default {
       const currentPath = this.$route.path;
 
       return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
-    },
-    activePageCopy() {
-      return ({
-        '/Containers': {
-          eyebrow: 'Containers', headline: 'Everything running, at a glance.', lead: 'Start, stop, inspect, and clean up local workloads.',
-        },
-        '/Volumes': {
-          eyebrow: 'Volumes', headline: 'Persistent data, accounted for.', lead: 'Browse storage, inspect mount points, and remove what is no longer needed.',
-        },
-        '/PortForwarding': {
-          eyebrow: 'Port forwarding', headline: 'Local services, within reach.', lead: 'Expose Kubernetes services on local ports and control every active forward.',
-        },
-        '/Images': {
-          eyebrow: 'Images', headline: 'The layers behind every workload.', lead: 'Pull, scan, push, and prune the images stored by your local runtime.',
-        },
-        '/Snapshots': {
-          eyebrow: 'Snapshots', headline: 'A safe point to return to.', lead: 'Capture the current runtime state and restore it when you need to rewind.',
-        },
-        '/Troubleshooting': {
-          eyebrow: 'Troubleshooting', headline: 'When the engine needs attention.', lead: 'Open logs, reset Kubernetes, or return the runtime to a clean state.',
-        },
-      })[this.activeMainTab] ?? { eyebrow: '', headline: '', lead: '' };
     },
     ...mapState('credentials', ['credentials']),
     ...mapGetters('extensions', ['installedExtensions']),
@@ -604,8 +557,6 @@ export default {
     font-size: 14px;
     font-weight: 600;
   }
-
-
 
   .status-bar {
     border-color: var(--docker-hairline);

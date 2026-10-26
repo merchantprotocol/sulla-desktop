@@ -17,8 +17,8 @@
  *   - Started once at app boot (main-process singleton).
  *   - Binds to 0.0.0.0 on a random high port; Lima's portForwards rule
  *     (hostIP 0.0.0.0, guestPortRange 1–65535) plus the VM's built-in
- *     `host.lima.internal` DNS entry means the VM can reach it at
- *     `http://host.lima.internal:<port>/mcp`.
+ *     `host.sulla.internal` DNS entry means the VM can reach it at
+ *     `http://host.sulla.internal:<port>/mcp`.
  *   - Transport is stateless StreamableHTTP — one transport per request. We
  *     do NOT use MCP's own session mechanism; session-binding for tools (so
  *     a handler knows which graph it's running for) is layered on top via an
@@ -61,7 +61,7 @@ const LOG = '[MCPServerHost]';
 
 // Hostname the Sulla VM uses to reach the host it's running on. Lima adds
 // this to the VM's /etc/hosts automatically.
-const LIMA_HOST_DNS = 'host.lima.internal';
+const SULLA_HOST_DNS = 'host.sulla.internal';
 
 // Sweep frequency for expired sessions. Fast enough that crashes don't leak
 // sessions for long, slow enough that it's negligible overhead.
@@ -105,7 +105,7 @@ export class MCPServerHost {
    */
   getVmReachableUrl(): string {
     if (!this.port) throw new Error(`${ LOG } not started`);
-    return `http://${ LIMA_HOST_DNS }:${ this.port }/mcp`;
+    return `http://${ SULLA_HOST_DNS }:${ this.port }/mcp`;
   }
 
   // ── Session registry ───────────────────────────────────────────

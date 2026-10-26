@@ -112,8 +112,6 @@ export default async function buildInstaller(workDir: string, appDir: string, ou
     '-sice:ICE61',
     `-dappDir=${ appDir }`,
     `-dlicenseFile=${ path.join(appDir, 'build', 'license.rtf') }`,
-    `-dWixUIBannerBmp=${ path.join(appDir, 'build', 'wix', 'bannrbmp.png') }`,
-    `-dWixUIDialogBmp=${ path.join(appDir, 'build', 'wix', 'dlgbmp.png') }`,
     '-ext', 'WixUIExtension',
     '-ext', 'WixUtilExtension',
     '-ext', 'WixFirewallExtension',

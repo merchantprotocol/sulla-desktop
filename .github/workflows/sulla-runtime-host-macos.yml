@@ -4,10 +4,6 @@ name: Sulla runtime host (macOS)
 # calls this workflow; this one runs on its own for pull requests and by hand.
 on:
   workflow_call:
-  pull_request:
-    paths:
-      - src/runtime-host/macos/**
-      - .github/workflows/sulla-runtime-host-macos.yml
   workflow_dispatch:
 
 permissions:
