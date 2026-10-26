@@ -23,6 +23,7 @@ import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
+import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 
 const console = Logging.background;
 
@@ -131,6 +132,9 @@ function onShow(
   win.on('blur', () => {
     if (!showGuard) _close();
   });
+
+  // Let the renderer go once the menu has been hidden for a while.
+  releaseWhenHidden(win);
 
   win.on('closed', () => {
     win = null;
