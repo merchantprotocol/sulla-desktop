@@ -326,25 +326,9 @@
                   </p>
                 </div>
 
-                <div
-                  v-if="integration.properties && integration.properties.length > 0"
-                  class="mb-6 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4"
-                >
-                  <p class="mb-3 text-sm text-slate-300">
-                    Credential values are edited only inside the isolated local vault.
-                  </p>
-                  <button
-                    type="button"
-                    class="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
-                    @click="openSecureVault(editingAccountId || undefined)"
-                  >
-                    {{ editingAccountId ? 'Edit in secure vault' : 'Open secure vault' }}
-                  </button>
-                </div>
-
                 <!-- OAuth sign-in section (completely independent of credentials form) -->
                 <div
-                  v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount && (!integration.properties || integration.properties.length === 0)"
+                  v-if="(integration.authType === 'oauth' || integration.oauth) && !isEditingAccount"
                   class="space-y-2 mb-6"
                 >
                   <button
@@ -406,12 +390,28 @@
 
                 <!-- Divider when both OAuth and credentials are available -->
                 <div
-                  v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount && (!integration.properties || integration.properties.length === 0)"
+                  v-if="integration.oauth && integration.authType !== 'oauth' && !isEditingAccount && integration.properties?.some(p => p.key !== 'llm_access')"
                   class="flex items-center gap-3 mb-6"
                 >
                   <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
                   <span class="text-xs text-slate-400 dark:text-slate-500 uppercase">or connect with credentials</span>
                   <div class="flex-1 border-t border-slate-300 dark:border-slate-600" />
+                </div>
+
+                <div
+                  v-if="integration.properties && integration.properties.length > 0"
+                  class="mb-6 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4"
+                >
+                  <p class="mb-3 text-sm text-slate-300">
+                    Credential values are edited only inside the isolated local vault.
+                  </p>
+                  <button
+                    type="button"
+                    class="w-full rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-500"
+                    @click="openSecureVault(editingAccountId || undefined)"
+                  >
+                    {{ editingAccountId ? 'Edit in secure vault' : 'Open secure vault' }}
+                  </button>
                 </div>
 
                 <!-- Credentials section (account label + properties + connect button) -->
@@ -1571,7 +1571,8 @@ onMounted(async() => {
   integration.value = mergedIntegrations.value[integrationId] || null;
 
   // Inject llm_access property into all integrations so users can control AI access per account
-  if (integration.value?.properties) {
+  // OAuth-only cards (Codex) have no fields; giving them one would hide their sign-in.
+  if (integration.value?.properties?.length) {
     const hasLlmAccess = integration.value.properties.some(p => p.key === 'llm_access');
     if (!hasLlmAccess) {
       integration.value = {
