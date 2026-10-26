@@ -147,7 +147,7 @@ describe('StartupProgressModel percent', () => {
     model.onLifecycleStep({ name: 'a', status: 'start' });
     model.onLifecycleStep({ name: 'a', status: 'ready', durationMs: 1 });
     model.onLifecycleAllReady();
-    expect(model.snapshot()).toMatchObject({ ready: false, stepLabel: 'Finishing up' });
+    expect(model.snapshot()).toMatchObject({ ready: false, stepLabel: 'Starting app services' });
     expect(model.snapshot().percent).toBeLessThan(100);
 
     model.onBackendState('DISABLED');

@@ -48,7 +48,7 @@
               Starting Sulla
             </h2>
             <p class="sulla-startup-subtitle">
-              {{ snapshot?.ready ? 'Ready for you' : 'Getting everything ready for you' }}
+              Getting everything ready for you
             </p>
           </div>
         </div>
@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 
 import StartupProgressPanel from './StartupProgressPanel.vue';
 import StartupShowcase from './StartupShowcase.vue';
@@ -109,6 +109,11 @@ const snapshot = ref<StartupProgressSnapshot | null>(null);
 function onStartupProgress(_event: unknown, next: StartupProgressSnapshot) {
   snapshot.value = next;
 }
+
+// Clear the screen the moment the model reaches 100%, instead of waiting for the next readiness poll.
+watch(() => snapshot.value?.ready, (ready) => {
+  if (ready) showOverlay.value = false;
+});
 
 onMounted(() => {
   start();
