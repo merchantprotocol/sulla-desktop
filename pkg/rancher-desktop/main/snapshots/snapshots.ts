@@ -1,6 +1,7 @@
 import { exec } from 'child_process';
 import util from 'util';
 
+import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { Snapshot, SpawnResult } from '@pkg/main/snapshots/types';
 import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
@@ -36,6 +37,18 @@ class SnapshotsError {
   }
 }
 
+/** Snapshots copy VM disks; the Sulla runtime has none to copy yet. */
+class SnapshotsUnsupportedError {
+  readonly isSnapshotError = true;
+  message = 'Snapshots are not supported on the Sulla runtime yet';
+}
+
+function assertSnapshotsSupported(): void {
+  if (isSullaRuntimeActive()) {
+    throw new SnapshotsUnsupportedError();
+  }
+}
+
 class SnapshotsImpl {
   private async rdctl(commandArgs: string[]): Promise<SpawnResult> {
     try {
@@ -62,6 +75,7 @@ class SnapshotsImpl {
   }
 
   async create(snapshot: Snapshot) : Promise<void> {
+    assertSnapshotsSupported();
     const args = [
       'snapshot',
       'create',
@@ -81,6 +95,7 @@ class SnapshotsImpl {
   }
 
   async restore(name: string) : Promise<void> {
+    assertSnapshotsSupported();
     const args = ['snapshot', 'restore', name, '--json'];
     const response = await this.rdctl(args);
 
@@ -90,6 +105,7 @@ class SnapshotsImpl {
   }
 
   async delete(name: string) : Promise<void> {
+    assertSnapshotsSupported();
     const args = ['snapshot', 'delete', name, '--json'];
     const response = await this.rdctl(args);
 

@@ -1,11 +1,11 @@
 // sullaSecretsServer
 //
 // A tiny HTTP server hosted by the Electron main process. Runtime containers
-// running inside the Lima VM reach this server via `host.lima.internal:30121`
+// running inside the Sulla VM reach this server via `host.lima.internal:30121`
 // during a single function invocation to fetch secrets, using a short-lived
 // capability token that the playbook minted for that exact invocation.
 //
-// Binding: 127.0.0.1 only. The Lima VM has `host.lima.internal` mapped to the
+// Binding: 127.0.0.1 only. The Sulla VM has `host.lima.internal` mapped to the
 // host loopback, so this endpoint is reachable from the VM but not from any
 // other host on the network. DO NOT bind to 0.0.0.0.
 //

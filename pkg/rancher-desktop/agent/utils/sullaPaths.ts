@@ -55,7 +55,7 @@ export function resolveSullaResourcesDir(): string {
  *
  * Runs in the Electron main process (where the Tools API handlers live), so
  * `fs.readFileSync` against the returned path works regardless of whether the
- * agent is executing inside Lima — the file reads happen on the host.
+ * agent is executing inside the Sulla VM — the file reads happen on the host.
  */
 export function resolveSullaDocsDir(): string {
   const envPath = String(process.env[SULLA_DOCS_DIR_ENV] || '').trim();
@@ -339,7 +339,7 @@ rules table (add_rule).
 - \`vault_list\` exposes usernames/slugs only — never attempt to surface passwords.
 
 ## Host Machine & Systems
-- Everyday work runs in the Lima VM (\`exec\`) where destruction is safe.
+- Everyday work runs in the Sulla VM (\`exec\`) where destruction is safe.
 - Confirm with the human before host execution (\`exechost\`), Kubernetes/k3s,
   or core system config changes — those affect the real machine.
 - Flag destructive shell before it runs: \`rm -rf\`, \`chmod 777\`, force pushes,

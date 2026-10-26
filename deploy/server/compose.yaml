@@ -1,3 +1,4 @@
+name: ${SULLA_COMPOSE_PROJECT:-server}
 services:
   postgres:
     image: postgres:16.14-alpine
@@ -24,7 +25,7 @@ services:
       - sh
       - -ec
       - >-
-        for database in sulla_files sulla_accounts keycloak sulla_agents sulla_workflows sulla_tools; do
+        for database in sulla_files sulla_accounts keycloak sulla_agents sulla_workflows sulla_tools sulla_console; do
         if [ "$(psql -h postgres -U sulla -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$$database'")" != 1 ]; then
         createdb -h postgres -U sulla -O sulla "$$database"; fi; done
   vault:
@@ -48,8 +49,18 @@ services:
       SULLA_VAULT_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-vault-token
       SULLA_VAULT_ACCOUNTS_AUDIENCE: sulla-vault
       SULLA_VAULT_ACCOUNTS_REQUIRED_ROLES: member
+      # Passwords page on its own hostname (vault.<host>) and /cloud-vault-sync.
+      SULLA_PUBLIC_URL: ${SULLA_PUBLIC_URL}
+      SULLA_VAULT_BROWSER_HOST: ${SULLA_VAULT_HOST}
+      SULLA_VAULT_BROWSER_ORIGIN: ${SULLA_VAULT_URL}
+      SULLA_VAULT_DASHBOARD_URL: ${SULLA_PUBLIC_URL}/console/
+      # Provider keys are sealed to the Agents broker key; only Agents can open them.
+      SULLA_VAULT_PROVIDERS_RECIPIENT_PUBLIC_KEY: ${SULLA_AGENTS_BROKER_PUBLIC_KEY}
+      SULLA_VAULT_PROVIDERS_SERVICE_ID: sulla-agents
+      SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE: /run/secrets/vault-providers-token
     secrets:
       - accounts-vault-token
+      - vault-providers-token
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/healthz"]
       interval: 5s
@@ -127,7 +138,7 @@ services:
       SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_ID: sulla-web
       SULLA_ACCOUNTS_KEYCLOAK_WEB_REDIRECT_URIS: ${SULLA_ACCOUNTS_WEB_REDIRECT_URIS}
       SULLA_ACCOUNTS_KEYCLOAK_MEMBERSHIP_AUDIENCE: sulla-membership
-      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-vault,sulla-files,sulla-agents,sulla-workflows
+      SULLA_ACCOUNTS_KEYCLOAK_RESOURCE_AUDIENCES: sulla-accounts,sulla-console,sulla-vault,sulla-files,sulla-agents,sulla-workflows
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_URL: jdbc:postgresql://postgres:5432/keycloak
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_USERNAME_FILE: /run/secrets/postgres-username
       SULLA_ACCOUNTS_KEYCLOAK_DATABASE_PASSWORD_FILE: /run/secrets/postgres-password
@@ -135,6 +146,8 @@ services:
       SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak-admin-password
       SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE: /run/secrets/keycloak-web-client-secret
       SULLA_ACCOUNTS_TRUSTED_PROXY: "1"
+      # Set only when the installer's local CA signs the gateway certificate.
+      NODE_EXTRA_CA_CERTS: ${SULLA_NODE_EXTRA_CA_CERTS:-}
     secrets:
       - postgres-username
       - postgres-password
@@ -147,12 +160,15 @@ services:
       - keycloak-web-client-secret
     tmpfs:
       - /run/sulla-accounts-private:uid=10001,gid=10001,mode=0700
+    volumes:
+      - ${SULLA_DATA_DIR}/tls-ca/public:/run/sulla-ca:ro
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent --show-error --max-time 2 http://127.0.0.1:3020/readyz >/dev/null && curl --fail --silent --show-error --max-time 2 http://127.0.0.1:9000/auth/health/ready >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10m
+      # Keycloak's first start and realm setup can take many minutes on small hosts.
+      start_period: 20m
       start_interval: 5s
   redis:
     image: redis:7.4.11-alpine
@@ -210,9 +226,17 @@ services:
       SULLA_ACCOUNTS_SERVICE_TOKEN_FILE: /run/secrets/accounts-agents-token
       SULLA_AGENT_AUDIENCE: sulla-agents
       SULLA_WORKFLOWS_SERVICE_TOKEN_FILE: /run/secrets/agents-workflows-token
+      # Vault provider-key broker: Agents fetch keys sealed to this X25519 key pair.
+      SULLA_VAULT_PROVIDERS_URL: http://vault:8787
+      SULLA_VAULT_PROVIDERS_SERVICE_ID: sulla-agents
+      SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE: /run/secrets/vault-providers-token
+      SULLA_AGENTS_BROKER_PUBLIC_KEY: ${SULLA_AGENTS_BROKER_PUBLIC_KEY}
+      SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE: /run/secrets/agents-broker-private-key
     secrets:
       - accounts-agents-token
       - agents-workflows-token
+      - vault-providers-token
+      - agents-broker-private-key
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts: ["host.docker.internal:host-gateway"]
@@ -263,20 +287,133 @@ services:
       timeout: 3s
       retries: 30
   console:
-    profiles: [standalone-console]
     image: sulla-console:${SULLA_IMAGE_TAG}
     build:
       context: ${SULLA_SOURCE_DIR}
       dockerfile: services/sulla-console/Dockerfile
     restart: unless-stopped
+    depends_on:
+      postgres-init: { condition: service_completed_successfully }
+      accounts: { condition: service_healthy }
+      vault: { condition: service_healthy }
+      files: { condition: service_healthy }
+      agents: { condition: service_healthy }
+      workflows: { condition: service_healthy }
     environment:
-      SULLA_CONSOLE_HOST: 0.0.0.0
       SULLA_CONSOLE_PORT: "8786"
+      SULLA_CONSOLE_TRUSTED_PROXY: "1"
+      SULLA_CONSOLE_DATABASE_URL_FILE: /run/secrets/console-database-url
+      SULLA_ACCOUNTS_ADMIN_SECRET_FILE: /run/secrets/console-accounts-admin
+      SULLA_CONSOLE_ACCOUNTS_URL: http://accounts:3020
+      SULLA_CONSOLE_FILES_URL: http://files:8792
+      SULLA_CONSOLE_VAULT_URL: http://vault:8787
+      SULLA_CONSOLE_AGENTS_URL: http://agents:8789
+      SULLA_CONSOLE_WORKFLOWS_URL: http://workflows:8788
+      SULLA_SERVER_LICENSE_PUBLIC_KEY: ${SULLA_SERVER_LICENSE_PUBLIC_KEY:-}
+      SULLA_CLOUD_API_URL: ${SULLA_CLOUD_API_URL:-https://api.sulladesktop.com}
+      SULLA_SERVER_LICENSE_STATE_FILE: /var/lib/sulla-console/license.json
+      SULLA_SERVER_ID: ${SULLA_SERVER_ID}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      SULLA_BACKUP_CONTAINER: ${SULLA_COMPOSE_PROJECT:-server}-backup-1
+    # Both files are copies owned by the console's user (uid 10001), mode 0600.
+    secrets:
+      - console-database-url
+      - console-accounts-admin
+    networks: [default, control]
+    volumes:
+      - ${SULLA_DATA_DIR}:/var/lib/sulla-server:ro
+      - ${SULLA_DATA_DIR}/console:/var/lib/sulla-console
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8786/healthz"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8786/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 30
+  relay:
+    image: sulla-relay:${SULLA_IMAGE_TAG}
+    build:
+      context: ${SULLA_SOURCE_DIR}
+      dockerfile: services/sulla-relay/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      PORT: "8790"
+      SULLA_REDIS_URL: redis://redis:6379
+      SULLA_RELAY_DEVICE_TOKEN_SECRET: ${SULLA_RELAY_DEVICE_TOKEN_SECRET}
+      SULLA_RELAY_INTERNAL_TOKEN: ${SULLA_RELAY_INTERNAL_TOKEN}
+      SULLA_RELAY_MAX_IN_FLIGHT: "16"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8790/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  docker-socket-proxy:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    environment:
+      SULLA_BACKUP_CONTAINER: ${SULLA_COMPOSE_PROJECT:-server}-backup-1
+    entrypoint: ["sh", "-ec"]
+    command:
+      - >-
+        envsubst '$$SULLA_BACKUP_CONTAINER' </etc/sulla/socket-proxy.conf.template >/tmp/nginx.conf;
+        exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+    volumes:
+      - ${SULLA_SOURCE_DIR}/deploy/server/socket-proxy/nginx.conf.template:/etc/sulla/socket-proxy.conf.template:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks: [control]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2375/_ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  # One-shot backup. The installer creates this container without starting it;
+  # the console starts it through the socket proxy.
+  backup:
+    image: sulla-files:${SULLA_IMAGE_TAG}
+    profiles: [backup]
+    restart: "no"
+    # The Files entrypoint chowns its data dir, which is read-only here.
+    entrypoint: ["su-exec", "node:node"]
+    depends_on:
+      files: { condition: service_healthy }
+    environment:
+      SULLA_FILES_MODE: server
+      SULLA_FILES_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla_files
+      SULLA_FILES_VAULT_DATABASE_URL: postgresql://sulla:${SULLA_POSTGRES_PASSWORD}@postgres:5432/sulla
+      SULLA_FILES_MASTER_KEY: ${SULLA_FILES_MASTER_KEY:?Files master is required}
+      SULLA_API_TOKEN: ${SULLA_AGENT_API_TOKEN}
+      SULLA_FILES_BACKUP_TARGET: /backup
+    volumes:
+      - ${SULLA_DATA_DIR}/files:/var/lib/sulla-files:ro
+      - ${SULLA_DATA_DIR}/files-backup:/backup
+    command: ["node", "dist/index.js", "backup"]
+  # Renews the Let's Encrypt certificate (DNS-01 through Cloudflare) when the
+  # installer was given --cloudflare-token-file. The gateway reloads it.
+  tls-renew:
+    image: goacme/lego:v4.25.2
+    profiles: [acme]
+    restart: unless-stopped
+    environment:
+      CLOUDFLARE_DNS_API_TOKEN_FILE: /run/secrets/cloudflare-dns-token
+      SULLA_ACME_EMAIL: ${SULLA_ADMIN_EMAIL}
+      SULLA_ACME_HOST: ${SULLA_HOSTNAME:-}
+      SULLA_ACME_VAULT_HOST: ${SULLA_VAULT_HOST}
+    secrets:
+      - cloudflare-dns-token
+    volumes:
+      - ${SULLA_TLS_DIR}/acme:/data
+    entrypoint: ["sh", "-ec"]
+    command:
+      - >-
+        while true; do
+        /lego --path /data --email "$$SULLA_ACME_EMAIL" --accept-tos
+        --dns cloudflare --dns.resolvers 1.1.1.1:53
+        --domains "$$SULLA_ACME_HOST" --domains "$$SULLA_ACME_VAULT_HOST" renew --days 30 || true;
+        sleep 43200;
+        done
   gateway:
     image: nginx:1.29-alpine
     restart: unless-stopped
@@ -285,6 +422,9 @@ services:
       SULLA_TLS_KEY_CONTAINER_PATH: ${SULLA_TLS_KEY_CONTAINER_PATH:-}
       SULLA_CONSOLE_UPSTREAM: ${SULLA_CONSOLE_UPSTREAM}
       SULLA_PUBLIC_SCHEME: ${SULLA_PUBLIC_SCHEME}
+      SULLA_VAULT_HOST: ${SULLA_VAULT_HOST}
+      SULLA_RELAY_UPSTREAM: http://relay:8790
+      SULLA_VAULT_UPSTREAM: http://vault:8787
     entrypoint: ["sh", "/etc/sulla/entrypoint.sh"]
     ports:
       - "${SULLA_BIND_ADDRESS}:${SULLA_PORT}:8787"
@@ -318,6 +458,8 @@ secrets:
     file: ${SULLA_ACCOUNTS_KEYCLOAK_ADMIN_PASSWORD_FILE}
   keycloak-web-client-secret:
     file: ${SULLA_ACCOUNTS_KEYCLOAK_WEB_CLIENT_SECRET_FILE}
+  accounts-console-token:
+    file: ${SULLA_ACCOUNTS_CONSOLE_TOKEN_FILE}
   accounts-vault-token:
     file: ${SULLA_ACCOUNTS_VAULT_TOKEN_FILE}
   accounts-files-token:
@@ -328,7 +470,21 @@ secrets:
     file: ${SULLA_ACCOUNTS_WORKFLOWS_TOKEN_FILE}
   agents-workflows-token:
     file: ${SULLA_AGENTS_WORKFLOWS_SERVICE_TOKEN_FILE}
+  console-database-url:
+    file: ${SULLA_CONSOLE_DATABASE_URL_FILE}
+  console-accounts-admin:
+    file: ${SULLA_CONSOLE_ACCOUNTS_ADMIN_FILE}
+  vault-providers-token:
+    file: ${SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE}
+  agents-broker-private-key:
+    file: ${SULLA_AGENTS_BROKER_PRIVATE_KEY_FILE}
+  cloudflare-dns-token:
+    file: ${SULLA_CLOUDFLARE_DNS_TOKEN_FILE:-/dev/null}
 
 networks:
   default:
     name: ${SULLA_DOCKER_NETWORK}
+  # Agent and workflow runners join the default network. The socket proxy sits
+  # on this separate network so only the console can reach it.
+  control:
+    internal: true

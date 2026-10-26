@@ -3,7 +3,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * GitHub Init Tool - Initialize a git repository at the specified path.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  */
 export class GitHubInitWorker extends BaseTool {
   name = '';
@@ -17,7 +17,7 @@ export class GitHubInitWorker extends BaseTool {
       const checkResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --git-dir`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (checkResult.exitCode === 0) {
@@ -28,7 +28,7 @@ export class GitHubInitWorker extends BaseTool {
       const mkdirResult = await runCommand(
         `mkdir -p "${ absolutePath }"`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (mkdirResult.exitCode !== 0) {
@@ -37,7 +37,7 @@ export class GitHubInitWorker extends BaseTool {
 
       // Initialize the repository
       const cmd = `git -C "${ absolutePath }" init`;
-      const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 30_000 });
+      const result = await runCommand(cmd, [], { runInGuest: true, timeoutMs: 30_000 });
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: `Failed to initialize repository: ${ result.stderr || result.stdout }` };

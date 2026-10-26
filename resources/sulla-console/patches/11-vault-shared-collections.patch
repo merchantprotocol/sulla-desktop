@@ -1,0 +1,279 @@
+Subject: 11-vault-shared-collections: Passwords: shared collections on a server, read-only for now
+
+diff --git a/js/cloud/passwords/sync-envelope.js b/js/cloud/passwords/sync-envelope.js
+index df5c73559cae5119a2de49ebe84eac2818e41303..4b21c472736e8a63b2ec139d07cb1607b384697d 100644
+--- a/js/cloud/passwords/sync-envelope.js
++++ b/js/cloud/passwords/sync-envelope.js
+@@ -295,6 +295,48 @@ export function createSyncEnvelope(sodium) {
+     }
+   }
+ 
++  /**
++   * Sulla Server shared collections. The member's org key is sealed to their
++   * key pair; it opens each collection key and name. Returns a Map of
++   * collectionId → { key, name }; a collection whose key doesn't open is left
++   * out. The caller owns the keys and must zero them.
++   */
++  function openCollectionKeys({ bundle, wrappedOrgKey, collections }, userKey) {
++    if (wrappedOrgKey?.version !== 1 || wrappedOrgKey?.algorithm !== 'x25519-sealed-box' || typeof wrappedOrgKey?.ciphertext !== 'string') {
++      throw new EnvelopeError('envelope_shape', 'Organization key envelope is malformed');
++    }
++    const privateKey = open(bundle.encryptedPrivateKey, userKey, 'sulla:user-private-key:v1');
++    let orgKey;
++    try {
++      orgKey = sodium.crypto_box_seal_open(unb64(wrappedOrgKey.ciphertext), unb64(bundle.publicKey), privateKey);
++    } catch {
++      throw new EnvelopeError('decrypt_failed', 'The organization key could not be opened');
++    } finally {
++      privateKey.fill(0);
++    }
++    const out = new Map();
++    try {
++      for (const c of collections) {
++        let key;
++        try {
++          key = open(c.wrappedCollectionKey, orgKey, 'sulla:collection-key:v1');
++        } catch {
++          continue;
++        }
++        let name = 'Shared collection';
++        try {
++          name = dec.decode(open(c.encryptedName, orgKey, 'sulla:collection-name:v1'));
++        } catch {
++          // keep the generic name
++        }
++        out.set(c.collectionId, { key, name });
++      }
++    } finally {
++      orgKey.fill(0);
++    }
++    return out;
++  }
++
+   function contentHash(record) {
+     if (record.deleted) return '';
+     return sha256(record.kind === 'item' ? record.item : record.encryptedName);
+@@ -412,7 +454,7 @@ export function createSyncEnvelope(sodium) {
+   }
+ 
+   return {
+-    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey,
++    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unwrapUserKey, openCollectionKeys,
+     buildBundle, verifyBundle, buildRecord, verifyRecord, stateHash, buildHead, verifyHead,
+     encryptItem, decryptItem,
+     encryptFolderName: (name, ownerKey, ownerId, folderId) => seal(enc.encode(name), ownerKey, folderAad(ownerId, folderId)),
+diff --git a/js/cloud/passwords/vault-app.js b/js/cloud/passwords/vault-app.js
+index cc1dea84d85a5b5dc062ef1ebc33ee9b98439c65..0e7652775c13a109ff373e66c3da4ae0d87ce615 100644
+--- a/js/cloud/passwords/vault-app.js
++++ b/js/cloud/passwords/vault-app.js
+@@ -364,7 +364,7 @@ function renderDetail(d) {
+   for (const lf of d.legacyFields) f += lf.hidden ? field(d.id, lf.name, '', { secret: true, path: `field:${lf.index}` }) : field(d.id, lf.name, lf.value);
+   if (d.notes) f += `<div class="detail-field"><span class="k">Notes</span><span class="v multiline">${esc(d.notes)}</span></div>`;
+   const ladderOn = ag ? { metadata: 1, autofill: 2, full: 3 }[p.level] : 0;
+-  const ro = paused();
++  const ro = paused() || d.readOnly;
+   return `<div id="detail-content"><div class="dhead"><span class="tile xl${tint(d.name)}">${esc(initials(d.name))}</span><div class="grow"><h2 id="detail-name">${esc(d.name)}</h2><div class="small muted">${esc(typeLabel(d.type))}${d.folder ? ` · ${esc(d.folder)}` : ''}</div></div>
+       <button class="btn sm" type="button" data-act="edit" ${ro ? 'disabled' : ''}>Edit</button><button class="btn sm" type="button" data-act="delete" title="Delete item" aria-label="Delete item" ${ro ? 'disabled' : ''}>${vism(VP.trash)}</button></div>
+     <div class="field-stack">${f || '<div class="honest-state">This item has no fields yet.</div>'}</div>
+diff --git a/js/cloud/passwords/vault-client.js b/js/cloud/passwords/vault-client.js
+index 310cf8986465b2ccd548ea28a6489652a65be057..13766f6335ab9f341cd40b61592acc87ddeebc9e 100644
+--- a/js/cloud/passwords/vault-client.js
++++ b/js/cloud/passwords/vault-client.js
+@@ -109,12 +109,12 @@ export function createVaultClient({
+     } catch { /* storage blocked: rollback detection falls back to first use */ }
+   }
+ 
+-  async function fetchRecords(vaultId, since) {
++  async function fetchRecords(vaultId, since, scope = 'personal') {
+     const out = [];
+     let head = null;
+     let cursor = '';
+     for (let page = 0; page < 200; page++) {
+-      const q = new URLSearchParams({ scope: 'personal', since: String(since) });
++      const q = new URLSearchParams({ scope, since: String(since) });
+       if (cursor) q.set('cursor', cursor);
+       const res = await http('GET', `/vaults/${encodeURIComponent(vaultId)}/records?${q}`);
+       if (head && res.head?.seq !== head.seq) throw new VaultClientError('head_moved', 'The vault changed while loading. Try again.');
+@@ -142,10 +142,20 @@ export function createVaultClient({
+   /** Fetch the ciphertext before the password is typed. */
+   async function prefetch() {
+     if (!status?.enabled) throw new VaultClientError('sync_off', 'Vault sync is off');
+-    const bundle = await http('GET', `/vaults/${encodeURIComponent(status.vaultId)}/bundle`);
++    // A Sulla Server answers ?include=collections with { bundle, wrappedOrgKey, collections };
++    // Sulla Cloud ignores it and returns the bundle itself.
++    const res = await http('GET', `/vaults/${encodeURIComponent(status.vaultId)}/bundle?include=collections`);
++    const withShared = !!res?.bundle;
++    const bundle = withShared ? res.bundle : res;
++    const collections = [];
++    for (const c of withShared && Array.isArray(res.collections) ? res.collections : []) {
++      const page = c.headSeq > 0 ? await fetchRecords(status.vaultId, 0, c.collectionId) : { records: [], head: null };
++      collections.push({ ...c, records: page.records, head: page.head, minSeq: storedSeq(`${status.vaultId}:${c.collectionId}`) });
++    }
++    const shared = withShared ? { wrappedOrgKey: res.wrappedOrgKey, collections } : null;
+     const { records, head } = await fetchRecords(status.vaultId, 0);
+     if (!head) throw new VaultClientError('empty', 'The vault has no records yet');
+-    await rpc('load', { bundle, records, head, minSeq: storedSeq(status.vaultId) });
++    await rpc('load', { bundle, records, head, minSeq: storedSeq(status.vaultId), shared });
+     return { count: records.length };
+   }
+ 
+@@ -172,6 +182,7 @@ export function createVaultClient({
+     const result = await rpc('unlock', password);
+     unlocked = true;
+     rememberSeq(status.vaultId, result.seq);
++    for (const [collectionId, seq] of Object.entries(result.sharedSeqs || {})) rememberSeq(`${status.vaultId}:${collectionId}`, seq);
+     return result;
+   }
+ 
+diff --git a/js/cloud/passwords/vault-core.js b/js/cloud/passwords/vault-core.js
+index 7c724326a497dd25dba7932ce6309a867de480e2..8d78448dc22187c7752b90b6c8599f7d47ef767d 100644
+--- a/js/cloud/passwords/vault-core.js
++++ b/js/cloud/passwords/vault-core.js
+@@ -53,28 +53,34 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+   let userKey = null;
+   let pending = new Map(); // token → { writes, head, plain: Map(id → item | null) }
+   const keyBuffers = [];
++  // Sulla Server shared collections (read-only for now): what load() received, and the
++  // verified, decrypted items: id → { collectionId, name, record, item }.
++  let shared = { wrappedOrgKey: null, collections: [] };
++  let sharedItems = new Map();
+ 
+   const requireUnlocked = () => {
+     if (!userKey) throw new VaultError('locked', 'The vault is locked');
+   };
+   const requireItem = (id) => {
+-    const item = items.get(id);
++    const item = items.get(id) ?? sharedItems.get(id)?.item;
+     if (!item) throw new VaultError('not_found', 'That item is not in the vault');
+     return item;
+   };
+ 
+   function listFields(id, item) {
+-    const record = records.get(id);
++    const s = sharedItems.get(id);
++    const record = records.get(id) ?? s?.record;
+     return {
+       id, name: item.name, type: item.type, username: item.username || '', host: hostOf(item.uris?.[0]?.uri || ''),
+-      favorite: !!item.favorite, folder: item.folder || '', agentMode: item.agentPolicy?.mode || 'only_me',
++      favorite: !!item.favorite, folder: s ? s.name : item.folder || '', readOnly: !!s, collection: s?.name || '', agentMode: item.agentPolicy?.mode || 'only_me',
+       agentLevel: item.agentPolicy?.level || 'metadata', generation: record?.generation || 0,
+     };
+   }
+ 
+   function list() {
+     requireUnlocked();
+-    return [...items].map(([id, item]) => listFields(id, item));
++    const sharedList = [...sharedItems].map(([id, s]) => [id, s.item]);
++    return [...items, ...sharedList].map(([id, item]) => listFields(id, item));
+   }
+ 
+   function decryptRecord(record) {
+@@ -126,6 +132,10 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+     head = input.head;
+     minSeq = Number.isSafeInteger(input.minSeq) ? input.minSeq : 0;
+     records = new Map(input.records.map((r) => [r.id, r]));
++    shared = {
++      wrappedOrgKey: input.shared?.wrappedOrgKey ?? null,
++      collections: Array.isArray(input.shared?.collections) ? input.shared.collections : [],
++    };
+     return { count: records.size };
+   }
+ 
+@@ -161,9 +171,63 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+       if (item) items.set(record.id, item);
+       else unreadable++;
+     }
+-    return { list: list(), seq: head.seq, unreadable };
++    const opened = openShared(key);
++    return { list: list(), seq: head.seq, unreadable: unreadable + opened.unreadable, sharedSeqs: opened.seqs };
+   }
+ 
++  // Verify and decrypt each shared collection the member can read. A collection that fails a
++  // check is left out (counted as unreadable); unverified data is never shown.
++  function openShared(key) {
++    sharedItems = new Map();
++    const seqs = {};
++    if (!shared.wrappedOrgKey || !shared.collections.length) return { unreadable: 0, seqs };
++    let keys;
++    try {
++      keys = env.openCollectionKeys({ bundle, wrappedOrgKey: shared.wrappedOrgKey, collections: shared.collections }, key);
++    } catch {
++      return { unreadable: shared.collections.length, seqs };
++    }
++    let unreadable = 0;
++    for (const c of shared.collections) {
++      const opened = keys.get(c.collectionId);
++      if (!opened) {
++        unreadable++;
++        continue;
++      }
++      keyBuffers.push(opened.key);
++      const recs = Array.isArray(c.records) ? c.records : [];
++      try {
++        if (c.head) {
++          const scope = { vaultId: bundle.vaultId, scope: c.collectionId };
++          env.verifyHead(c.head, opened.key, { ...scope, records: recs, minSeq: Number(c.minSeq) || 0 });
++          for (const r of recs) env.verifyRecord(r, opened.key, scope);
++        } else if (recs.length) {
++          throw new VaultError('state_mismatch', 'Collection records arrived without a head');
++        }
++      } catch {
++        unreadable++;
++        continue;
++      }
++      seqs[c.collectionId] = c.head?.seq ?? 0;
++      for (const r of recs) {
++        if (r.deleted || r.kind !== 'item') continue;
++        let item = null;
++        try {
++          item = validateItem(JSON.parse(env.decryptItem(r.item, opened.key, c.collectionId, r.id)));
++        } catch {
++          item = null;
++        }
++        if (item) sharedItems.set(r.id, { collectionId: c.collectionId, name: opened.name, record: r, item });
++        else unreadable++;
++      }
++    }
++    return { unreadable, seqs };
++  }
++
++  const requireOwn = (id) => {
++    if (id && sharedItems.has(id)) throw new VaultError('read_only', 'Shared collection items are read-only here for now');
++  };
++
+   // File-sync roots and verified manifests never leave this worker.
+   const fileRoots = new Map(); // collectionId -> { root, keyVersion }
+   const fileManifests = new Map(); // collectionId -> Map(fileId -> manifest)
+@@ -298,6 +362,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+   /** Full plaintext for the editor (the owner asked to edit this item). */
+   function editable(id) {
+     requireUnlocked();
++    requireOwn(id);
+     return structuredClone(requireItem(id));
+   }
+ 
+@@ -313,6 +378,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+   /** Encrypt one item under a fresh item key and stage a commit. */
+   function prepareSave({ id = null, item }) {
+     requireUnlocked();
++    requireOwn(id);
+     const clean = validateItem(structuredClone(item));
+     const itemId = id || randomUUID();
+     const prior = records.get(itemId);
+@@ -325,6 +391,7 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+ 
+   function prepareDelete(id) {
+     requireUnlocked();
++    requireOwn(id);
+     const prior = records.get(id);
+     if (!prior || prior.deleted) throw new VaultError('not_found', 'That item is not in the vault');
+     const record = env.buildRecord({ vaultId: bundle.vaultId, scope: SCOPE, kind: 'item', id, generation: prior.generation + 1, deleted: true }, userKey);
+@@ -401,6 +468,8 @@ export function createVaultCore(sodium, { randomUUID = () => crypto.randomUUID()
+     keyBuffers.length = 0;
+     userKey = null;
+     items = new Map();
++    sharedItems = new Map();
++    shared = { wrappedOrgKey: null, collections: [] };
+     pending = new Map();
+     records = new Map();
+     bundle = null;

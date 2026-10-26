@@ -2,8 +2,6 @@ package factoryreset
 
 import (
 	"context"
-	"errors"
-	"os"
 
 	"github.com/sirupsen/logrus"
 
@@ -16,9 +14,6 @@ import (
 func DeleteData(ctx context.Context, appPaths *paths.Paths, removeKubernetesCache bool) error {
 	if err := autostart.EnsureAutostart(ctx, false); err != nil {
 		logrus.Errorf("Failed to remove autostart configuration: %s", err)
-	}
-	if err := deleteLimaVM(ctx); err != nil && !errors.Is(err, os.ErrNotExist) {
-		logrus.Errorf("Failed to delete Lima VM: %s", err)
 	}
 	w := wsl.WSLImpl{}
 	if err := w.UnregisterDistros(ctx); err != nil {

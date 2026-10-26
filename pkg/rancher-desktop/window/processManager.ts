@@ -16,11 +16,11 @@ let confirming = false;
 async function probe<T>(request = {}): Promise<T> {
   // Deliberately no host-shell fallback: these controls may only touch the VM.
   if (process.platform === 'win32') {
-    throw new Error('Process Manager currently requires the Lima VM on macOS or Linux.');
+    throw new Error('Process Manager currently requires the Sulla runtime on macOS.');
   }
   try {
-    const { stdout } = await execute(paths.limactl, ['shell', '0', '--', 'python3', '-c', VM_PROBE, JSON.stringify(request)], {
-      env: { ...process.env, LIMA_HOME: paths.lima }, timeout: 10000, maxBuffer: 4 * 1024 * 1024,
+    const { stdout } = await execute(paths.sullaRuntime, ['exec', '--', 'python3', '-c', VM_PROBE, JSON.stringify(request)], {
+      env: { ...process.env }, timeout: 10000, maxBuffer: 4 * 1024 * 1024,
     });
 
     return JSON.parse(stdout);

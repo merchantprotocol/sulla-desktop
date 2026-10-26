@@ -10,8 +10,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
-
-	"github.com/rancher-sandbox/rancher-desktop/src/go/rdctl/pkg/lima"
 )
 
 type WSL interface {
@@ -41,7 +39,7 @@ func (wsl WSLImpl) UnregisterDistros(ctx context.Context) error {
 	}
 	distrosToKill := []string{}
 	for _, s := range strings.Fields(string(rawBytes)) {
-		if slices.Contains([]string{DistributionName, DataDistributionName, lima.InstanceFullName}, s) {
+		if slices.Contains([]string{DistributionName, DataDistributionName}, s) {
 			distrosToKill = append(distrosToKill, s)
 		}
 	}

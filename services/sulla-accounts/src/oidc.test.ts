@@ -17,6 +17,8 @@ const config: AccountsConfig = {
   serviceTokens: new Map(),
   keycloakIssuer: 'https://authority.example/auth/realms/sulla',
   keycloakResourceAudiences: new Set(),
+  serverId: 'local-desktop',
+  serverDisplayName: 'Sulla Desktop',
   secureCookies: false,
   trustedProxy: false,
 };

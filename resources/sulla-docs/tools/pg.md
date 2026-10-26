@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and project items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
+Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Sulla VM. Workflow, calendar, chat, settings, credentials, observations, rules, and project items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
 
 ## Connection
 

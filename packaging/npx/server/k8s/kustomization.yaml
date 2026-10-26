@@ -5,6 +5,14 @@ resources:
   - namespace.yaml
   - storage.yaml
   - postgres.yaml
+  - redis.yaml
+  - relay.yaml
+  - db-init.yaml
+  - sulla-accounts.yaml
+  - sulla-console.yaml
   - sulla-vault.yaml
   - sulla-files.yaml
+  - sulla-agents.yaml
+  - sulla-workflows.yaml
+  - sulla-tools.yaml
   - sulla-gateway.yaml

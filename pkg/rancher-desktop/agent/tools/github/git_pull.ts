@@ -6,7 +6,7 @@ import { runCommand } from '../util/CommandRunner';
 
 /**
  * Git Pull Tool - Pull commits from a remote repository.
- * Runs inside the Lima VM for filesystem consistency with exec tool.
+ * Runs inside the Sulla VM for filesystem consistency with exec tool.
  *
  * Auth: the GitHub PAT is supplied to git via an ephemeral credential helper
  * that reads it from the `GH_PAT` env var (set inline on the git invocation).
@@ -34,7 +34,7 @@ export class GitPullWorker extends BaseTool {
       const rootResult = await runCommand(
         `git -C "${ absolutePath }" rev-parse --show-toplevel`,
         [],
-        { runInLimaShell: true, timeoutMs: 30_000 },
+        { runInGuest: true, timeoutMs: 30_000 },
       );
 
       if (rootResult.exitCode !== 0) {
@@ -59,7 +59,7 @@ export class GitPullWorker extends BaseTool {
         const remoteUrlResult = await runCommand(
           `git -C "${ repoRoot }" remote get-url ${ remote }`,
           [],
-          { runInLimaShell: true, timeoutMs: 10_000 },
+          { runInGuest: true, timeoutMs: 10_000 },
         );
         const rawUrl = remoteUrlResult.stdout.trim();
 
@@ -89,22 +89,22 @@ export class GitPullWorker extends BaseTool {
 
       const result = localAuthority
         ? await (async() => {
-          const remoteUrlResult = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInLimaShell: true, timeoutMs: 10_000 });
+          const remoteUrlResult = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrlResult.exitCode !== 0) return remoteUrlResult;
           return withGitHubBrokerRemote(this.executionContext, remoteUrlResult.stdout.trim(), (proxyUrl) => {
             let brokerCommand = `git -C "${ repoRoot }" pull --no-rebase --no-edit "${ proxyUrl }"`;
             if (branch) brokerCommand += ` ${ branch }`;
-            return runCommand(brokerCommand, [], { runInLimaShell: true, timeoutMs: 120_000 });
+            return runCommand(brokerCommand, [], { runInGuest: true, timeoutMs: 120_000 });
           });
         })()
-        : await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
+        : await runCommand(cmd, [], { runInGuest: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
         // Check for merge conflicts
         const conflictCheck = await runCommand(
           `git -C "${ repoRoot }" diff --name-only --diff-filter=U`,
           [],
-          { runInLimaShell: true, timeoutMs: 30_000 },
+          { runInGuest: true, timeoutMs: 30_000 },
         );
 
         if (conflictCheck.stdout.trim()) {

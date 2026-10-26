@@ -182,7 +182,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     ]);
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
     const availableCollections = collections.map(collection => ({ id: collection.id,
-      name: collection.explorer_path || roots.find(root => root.collectionId === collection.id)?.name || collection.name,
+      name: collection.name || roots.find(root => root.collectionId === collection.id)?.name || collection.explorer_path || '',
       systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
       treePath: collection.explorer_path ?? '' }));
     const collection = collections.find(item => item.id === this.collectionId) ??
@@ -326,6 +326,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async setCloudBackup(collectionId:string, enabled:boolean):Promise<void> { await ipcRenderer.invoke('files-ui:set-cloud-backup', { collectionId, enabled }) }
   listCloudCollections():Promise<{ collectionId:string; bytes:number; updatedAt:string }[]> { return ipcRenderer.invoke('files-ui:cloud-collections') }
   async restoreCloudCollection(collectionId:string, name:string):Promise<void> { await ipcRenderer.invoke('files-ui:restore-cloud-collection', { collectionId, name }) }
+  restoreAllCloudCollections():Promise<{ restored:string[]; failed:Array<{ collectionId:string; error:string }> }> { return ipcRenderer.invoke('files-ui:restore-all-cloud-collections') }
   createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
   deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
   keepConflictCopies(file:FilesItem):Promise<void> {

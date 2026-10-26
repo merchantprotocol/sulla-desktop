@@ -1,13 +1,12 @@
 import os from 'os';
 
 import { Architecture, VMBackend } from './backend';
-import LimaKubernetesBackend from './kube/lima';
-import WSLKubernetesBackend from './kube/wsl';
-import LimaBackend from './lima';
 import MockBackend from './mock';
+import SullaRuntimeBackend from './sullaRuntimeBackend';
+import WSLKubernetesBackend from './kube/wsl';
 import WSLBackend from './wsl';
 
-import { LimaKubernetesBackendMock, WSLKubernetesBackendMock } from '@pkg/backend/mock_screenshots';
+import { WSLKubernetesBackendMock } from '@pkg/backend/mock_screenshots';
 
 export default function factory(arch: Architecture): VMBackend {
   const platform = os.platform();
@@ -17,15 +16,8 @@ export default function factory(arch: Architecture): VMBackend {
   }
 
   switch (platform) {
-  case 'linux':
   case 'darwin':
-    return new LimaBackend(arch, (backend: LimaBackend) => {
-      if (process.env.RD_MOCK_FOR_SCREENSHOTS) {
-        return new LimaKubernetesBackendMock(arch, backend);
-      } else {
-        return new LimaKubernetesBackend(arch, backend);
-      }
-    });
+    return new SullaRuntimeBackend(arch);
   case 'win32':
     return new WSLBackend((backend: WSLBackend) => {
       if (process.env.RD_MOCK_FOR_SCREENSHOTS) {
@@ -35,6 +27,6 @@ export default function factory(arch: Architecture): VMBackend {
       }
     });
   default:
-    throw new Error(`OS "${ platform }" is not supported.`);
+    throw new Error(`OS "${ platform }" is not supported; Sulla Desktop runs on macOS and Windows.`);
   }
 }

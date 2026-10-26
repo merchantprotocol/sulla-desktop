@@ -159,7 +159,7 @@ Always inspect `successBoolean` before using `responseString`. Common failure mo
 
 - For **macOS Calendar specifically:** `sulla calendar/*` writes to Sulla's own DB, not macOS Calendar. AppleScript writes to macOS Calendar. Pick based on user intent.
 - For **browser automation:** use `sulla browser/*` tools (CDP-based) instead of AppleScript controlling Safari/Chrome — far more reliable.
-- For **shell commands inside Lima:** use `exec` directly. AppleScript runs on the **host macOS**, not in Lima.
+- For **shell commands inside Sulla VM:** use `exec` directly. AppleScript runs on the **host macOS**, not in Sulla VM.
 
 ## Reference
 

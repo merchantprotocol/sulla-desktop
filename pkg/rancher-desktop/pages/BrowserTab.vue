@@ -348,7 +348,7 @@
       </div>
     </template>
 
-    <!-- Terminal: xterm.js PTY into the Lima VM (limactl shell 0) -->
+    <!-- Terminal: xterm.js PTY into the Sulla VM (sulla-runtime exec 0) -->
     <template v-else-if="tabMode === 'terminal'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <TerminalTab :tab-id="props.tabId" />
