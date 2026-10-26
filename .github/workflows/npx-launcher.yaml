@@ -1,11 +1,6 @@
 name: npx launcher
 
 on:
-  pull_request:
-    paths:
-    - 'packaging/npx/**'
-    - '.github/workflows/npx-launcher.yaml'
-    - '.github/workflows/npx-publish.yaml'
   push:
     branches: [ main ]
     paths:
