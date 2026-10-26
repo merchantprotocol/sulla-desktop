@@ -124,6 +124,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   readonly executor = this;
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
+  /** Settles when the background start of the optional services finishes. */
+  #optionalServicesSettled: Promise<void> = Promise.resolve();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
   /** Services running an image bundled with the app: the exact reference they must run. */
@@ -724,9 +726,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.loadBundledImages(image => !image.onDemand);
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
-      // Images used later (agent containers) load in the background.
-      void this.loadBundledImages(image => !!image.onDemand, false)
-        .catch(error => console.warn('[bundled-images] background load failed:', error));
     });
 
     await this.progressTracker.action('Preparing the threat proxy', 40, async() => {
@@ -743,6 +742,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
     });
+
+    // Images used later (agent containers) load in the background, after the
+    // services have started, so a large docker load does not land on top of
+    // the boot peak. An agent launched before then loads its image itself.
+    void this.#optionalServicesSettled
+      .then(() => this.loadBundledImages(image => !!image.onDemand, false))
+      .catch(error => console.warn('[bundled-images] background load failed:', error));
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
@@ -1659,6 +1665,23 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     });
   }
 
+  /**
+   * How many optional services may be starting at once: a few on a guest
+   * under 3 GiB, otherwise all of them.
+   */
+  private async optionalServiceStartSlots(): Promise<number> {
+    try {
+      const meminfo = await this.execCommand({ capture: true, expectFailure: true }, 'cat', '/proc/meminfo');
+      const totalKiB = Number(/^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo)?.[1]);
+
+      if (totalKiB > 0 && totalKiB < 3 * 1024 * 1024) return 3;
+    } catch {
+      // Unknown size: keep the full parallel start.
+    }
+
+    return Number.POSITIVE_INFINITY;
+  }
+
   private async applySullaCompose(generation: number): Promise<void> {
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Verifying compose file', 62.5, async() => {
@@ -1818,6 +1841,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         tools:                          ['sulla_relay', 'sulla_files', 'sulla_vault'],
         workflow_manager:               ['sulla_files'],
       };
+      // Every Node service peaks while it loads code and runs migrations. On a
+      // small guest, starting them all at once stacks those peaks; limit how
+      // many are between "start" and "healthy" at a time. A service takes a
+      // slot only after its dependencies are healthy, so slots cannot deadlock.
+      let freeStartSlots = await this.optionalServiceStartSlots();
+      const startSlotWaiters: Array<() => void> = [];
+      const takeStartSlot = async(): Promise<void> => {
+        while (freeStartSlots <= 0) await new Promise<void>(resolve => startSlotWaiters.push(resolve));
+        freeStartSlots -= 1;
+      };
+      const releaseStartSlot = (): void => {
+        freeStartSlots += 1;
+        startSlotWaiters.shift()?.();
+      };
       const reconcileInBackground = async(): Promise<void> => {
         const bootStatus = new Map<string, string>();
 
@@ -1848,6 +1885,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                 return false;
               }
             }
+            await takeStartSlot();
             try {
               // Files can legitimately spend minutes applying a first-start
               // schema upgrade. Do not re-run compose against a live starter;
@@ -1879,6 +1917,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
 
               return false;
+            } finally {
+              releaseStartSlot();
             }
           };
 
@@ -1896,7 +1936,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // Optional services must never hold the backend STARTED/unlock transition.
       // Compose health dependencies preserve ordering; bounded retries repair a
       // cold or transiently broken service after Desktop is already usable.
-      void reconcileInBackground().catch(error => {
+      this.#optionalServicesSettled = reconcileInBackground().catch(error => {
         if (!(error instanceof ManagedServicesReconciliationCancelled)) {
           console.warn('[Sulla] Optional service background reconciliation stopped:', error);
         }
