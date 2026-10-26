@@ -92,6 +92,11 @@ jobs:
       with:
         name: sulla-runtime-bundle-${{ matrix.arch == 'aarch64' && 'arm64' || 'x86_64' }}
         path: ${{ runner.temp }}/sulla-runtime
+    # Service container images, whisper and the audio driver go inside the app
+    # so it downloads nothing after install (yarn package checks they are there).
+    - name: Embed bundled assets
+      if: matrix.platform == 'mac'
+      run: node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts ${{ matrix.arch == 'aarch64' && 'arm64' || 'x86_64' }}
     - run: yarn package
       env:
         SULLA_RUNTIME_ARTIFACTS_DIR: ${{ matrix.platform == 'mac' && format('{0}/sulla-runtime', runner.temp) || '' }}

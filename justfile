@@ -21,6 +21,7 @@ clean:
     rm -rf ~/.rd
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
+    rm -rf resources/darwin/images resources/darwin/whisper
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
@@ -42,6 +43,7 @@ clean-hard:
     rm -rf ~/.rd
     rm -rf resources/cert-manager*
     rm -rf resources/darwin/_output
+    rm -rf resources/darwin/images resources/darwin/whisper
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
@@ -60,7 +62,14 @@ install:
 runtime:
     ./scripts/fetch-sulla-runtime.sh
 
-build: runtime
+# Embed the service container images, whisper (model + whisper-cli) and the
+# audio loopback driver in resources/darwin/ so the app downloads nothing after
+# install. Only changed parts are downloaded. SULLA_BUNDLE_SKIP=all (or a
+# comma list of images,whisper,audio) skips them for quick dev builds.
+assets:
+    node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts
+
+build: runtime assets
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
 
 package: runtime
@@ -372,56 +381,9 @@ test-nodes:
     npx jest pkg/sulla-desktop/agent/nodes/__tests__/PlanRetrievalNode.mock.test.ts
     npx jest pkg/sulla-desktop/agent/nodes/__tests__/ActivePlanManager.mock.test.ts
 
-# Build whisper-cli from source (requires cmake). Builds a static binary with Metal acceleration.
+# Build whisper-cli from its pinned source (requires cmake); `just assets` runs this too.
 build-whisper:
-    #!/usr/bin/env bash
-    set -e
-    VERSION="v1.8.4"
-    ARCH=$(uname -m)  # arm64 or x86_64
-    DEST="resources/darwin/bin/whisper-cli"
-    TMP=$(mktemp -d)
-    trap "rm -rf $TMP" EXIT
-
-    echo "Building whisper-cli $VERSION for darwin-$ARCH..."
-    git clone --depth 1 --branch "$VERSION" https://github.com/ggml-org/whisper.cpp.git "$TMP"
-    cmake -B "$TMP/build" -S "$TMP" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DWHISPER_BUILD_TESTS=OFF \
-        -DWHISPER_BUILD_EXAMPLES=ON \
-        -DGGML_METAL=ON
-    cmake --build "$TMP/build" --config Release -j$(sysctl -n hw.ncpu) -- whisper-cli
-
-    mkdir -p resources/darwin/bin
-    cp "$TMP/build/bin/whisper-cli" "$DEST"
-    chmod +x "$DEST"
-    echo "Built: $DEST ($(du -h "$DEST" | cut -f1))"
-
-# Upload pre-built whisper-cli to a GitHub release so `just build` can download it.
-# Run after `just build-whisper` on each architecture (arm64 and x86_64).
-upload-whisper:
-    #!/usr/bin/env bash
-    set -e
-    VERSION="v1.8.4"
-    ARCH=$(uname -m)
-    SRC="resources/darwin/bin/whisper-cli"
-    TAG="whisper-cli-$VERSION"
-    ASSET="whisper-cli-darwin-$ARCH"
-
-    if [ ! -f "$SRC" ]; then
-        echo "No binary at $SRC. Run 'just build-whisper' first."
-        exit 1
-    fi
-
-    # Create the release tag if it doesn't exist yet
-    gh release view "$TAG" &>/dev/null || \
-        gh release create "$TAG" --title "whisper-cli $VERSION" --notes "Pre-built whisper-cli static binaries (Metal + Accelerate)."
-
-    # Upload (overwrite if re-running)
-    cp "$SRC" "/tmp/$ASSET"
-    gh release upload "$TAG" "/tmp/$ASSET" --clobber
-    rm "/tmp/$ASSET"
-    echo "Uploaded $ASSET to release $TAG"
+    bash scripts/build-whisper-cli.sh
 
 # Build the macOS .app launcher (double-clickable icon, no packaging needed)
 app:
