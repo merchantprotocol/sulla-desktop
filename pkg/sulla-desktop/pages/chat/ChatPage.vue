@@ -59,8 +59,8 @@
         <!--
           Composer backdrop: same fade trick at the bottom so transcript
           content scrolling up doesn't fight the composer. Masked on the
-          right so Canvas's bottom-right steel-blue glow (chat-glow.b)
-          keeps breathing through.
+          right (left over from the removed Canvas glow; kept so the
+          bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
         <StatusBadges />
@@ -746,8 +746,8 @@ onBeforeUnmount(() => {
  * Composer backdrop — mirror of the header fade at the bottom of .main.
  * Sits below the Composer (z-15) and above the Transcript so messages
  * scrolling up fade out under the input row. Masked horizontally on
- * the right so Canvas's bottom-right steel-blue glow (chat-glow.b) is
- * preserved and still breathes through.
+ * the right: left over from the removed Canvas glow, kept so the bottom
+ * edge looks the same.
  */
 .composer-backdrop {
   position: absolute;
@@ -766,8 +766,8 @@ onBeforeUnmount(() => {
   /* Two-axis mask:
      - fade out toward the top so the transcript emerges smoothly into
        the fade instead of ending at a hard line;
-     - fade out toward the RIGHT so chat-glow.b (around 78% x / 80% y)
-       keeps breathing through unmuted. */
+     - fade out toward the RIGHT (originally so the Canvas glow showed
+       through; the glow is gone, the fade is kept as it was). */
   mask-image:
     linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
     linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);

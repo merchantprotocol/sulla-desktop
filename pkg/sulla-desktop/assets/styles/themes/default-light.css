@@ -366,11 +366,6 @@
   display: none !important;
 }
 
-.theme-default-light .chat-glow.a,
-.theme-default-light .chat-glow.b {
-  opacity: 0.15 !important;
-}
-
 /* Page root backgrounds */
 .theme-default-light .chat-root,
 .theme-default-light .page-root,
