@@ -72,6 +72,12 @@ const log = Logging.background;
 const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
+/**
+ * On a small guest the 4g limit is larger than the guest itself, so the guest
+ * kernel's OOM killer is what bounds an agent. Make it pick the agent (whose
+ * job fails and can be retried) before Postgres, the vault or Files.
+ */
+const AGENT_OOM_SCORE_ADJ = 500;
 const LEASE_MS = 15 * 60_000;
 
 /** Boot brings sulla-tools up after Desktop is usable, so agents wait for it instead of failing. */
@@ -201,6 +207,7 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
     for (const host of spec.extraHosts ?? []) args.push('--add-host', host);
     if (spec.memoryLimit) args.push('--memory', spec.memoryLimit);
     if (spec.cpuLimit) args.push('--cpus', spec.cpuLimit);
+    if (spec.oomScoreAdj !== undefined) args.push('--oom-score-adj', String(spec.oomScoreAdj));
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const [key, value] of Object.entries(spec.env ?? {})) args.push('--env', `${ key }=${ value }`);
     for (const bind of spec.binds ?? []) args.push('--volume', bind);
@@ -927,6 +934,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+      oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, agentId, run.jobId);
     await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
@@ -1230,6 +1238,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+      oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
     await guestExec(connectServiceNetworkCommand('sulla_default', containerName));

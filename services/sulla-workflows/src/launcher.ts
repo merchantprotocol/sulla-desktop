@@ -59,6 +59,8 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       network:    config.dockerNetwork,
       autoRemove: true,
       memoryBytes: RUNNER_MEMORY_BYTES,
+      // Under guest memory pressure a runner goes before the core services.
+      oomScoreAdj: 300,
       // Docker rejects an rslave bind of a non-shared path, so the Files mount
       // is bound only when Desktop confirmed its anchor.
       binds:      [

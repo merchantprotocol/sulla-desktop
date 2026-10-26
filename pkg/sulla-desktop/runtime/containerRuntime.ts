@@ -28,6 +28,8 @@ export interface ContainerSpec {
   memoryLimit?: string;
   cpuLimit?:    string;
   tmpfs?:       Record<string, string>;
+  /** -1000..1000; higher means the kernel OOM killer picks this container first. */
+  oomScoreAdj?: number;
 }
 
 interface DockerResponse<T> {
@@ -99,6 +101,7 @@ export class DockerRuntimeDriver implements ContainerRuntimeDriver {
         Memory:      spec.memoryBytes,
         NanoCpus:    spec.nanoCpus,
         Tmpfs:       spec.tmpfs,
+        OomScoreAdj: spec.oomScoreAdj,
       },
     });
     return response.body.Id;
