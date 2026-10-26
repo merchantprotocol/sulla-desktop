@@ -39,15 +39,65 @@ COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
 # prefix to /usr/local (checked below).
 COPY assets/runtime/guest/config/pip.conf /image/rootfs/usr/pip.conf
 COPY assets/runtime/guest/config/sulla-usr-local.pth /image/rootfs/usr/sulla-usr-local.pth
-RUN chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-sulla-desktop /usr/local/bin/make-artifact \
-    && mv /image/rootfs/usr/sulla-usr-local.pth /image/rootfs/usr/lib/python3.*/site-packages/ \
-    && grep -qx 'prefix=/usr/local' /image/rootfs/usr/lib/node_modules/npm/npmrc \
-    && /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img \
-    && printf 'sulla-runtime-guest=0.2.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION \
-    && cd /image && sha256sum vmlinuz initramfs.img VERSION > SHA256SUMS
+# Only what PID 1 needs before /usr is mounted stays in the initramfs, which
+# the kernel unpacks into RAM that is never reclaimed. Everything under /usr,
+# kernel modules included, goes into usr.erofs, a read-only disk the agent
+# mounts under a RAM overlay at /usr: only the pages actually read are cached,
+# as clean page cache the guest drops under memory pressure, and /usr stays
+# writable as before. To reach that disk (and the console, to report a
+# failure) the agent loads a few modules itself, since kmod's libraries live
+# in /usr/lib: lib/sulla-boot-modules, in file-name order (dependency order).
+RUN set -eu; \
+    chmod 0755 /image/rootfs/init /image/rootfs/usr/bin/sudo /image/rootfs/usr/bin/docker-credential-sulla-desktop /usr/local/bin/make-artifact; \
+    mv /image/rootfs/usr/sulla-usr-local.pth /image/rootfs/usr/lib/python3.*/site-packages/; \
+    grep -qx 'prefix=/usr/local' /image/rootfs/usr/lib/node_modules/npm/npmrc; \
+    kver=$(ls /lib/modules); \
+    [ -d "/lib/modules/$kver" ]; \
+    boot=/image/rootfs/lib/sulla-boot-modules; \
+    mkdir -p "$boot"; \
+    n=0; \
+    for module in virtio_pci virtio_blk virtio_console erofs overlay; do \
+      modprobe -S "$kver" --show-depends "$module" > /tmp/deps; \
+      for file in $(awk '$1 == "insmod" { print $2 }' /tmp/deps); do \
+        name=$(basename "$file" .gz); \
+        if ls "$boot" | grep -q -- "-$name\$"; then continue; fi; \
+        n=$((n + 1)); \
+        gzip -dc "$file" > "$boot/$(printf '%02d' "$n")-$name"; \
+      done; \
+    done; \
+    ls "$boot"; \
+    ls "$boot" | grep -q -- '-virtio_pci\.ko$'; \
+    ls "$boot" | grep -q -- '-virtio_blk\.ko$'; \
+    ls "$boot" | grep -q -- '-virtio_console\.ko$'; \
+    ls "$boot" | grep -q -- '-erofs\.ko$'; \
+    ls "$boot" | grep -q -- '-overlay\.ko$'; \
+    mv /image/rootfs/lib/modules /image/rootfs/usr/lib/modules; \
+    ln -s ../usr/lib/modules /image/rootfs/lib/modules; \
+    mkdir -p /image/rootfs/usr/local; \
+    mv /image/rootfs/usr /image/usr; \
+    mkdir -m 0755 /image/rootfs/usr; \
+    chroot /image/rootfs /bin/busybox true; \
+    /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img; \
+    printf 'sulla-runtime-guest=0.3.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION
+
+# A filesystem image does not depend on the CPU, so mkfs.erofs runs natively
+# instead of under emulation. erofs with LZ4HC because the guest kernel
+# decompresses it fast and in parallel (Alpine builds squashfs with a single
+# decompressor, and this mkfs.erofs has no zstd). The bind mount keeps hard
+# links and modes exactly as the image stage left them.
+FROM --platform=$BUILDPLATFORM alpine:${ALPINE_VERSION} AS usr
+ARG SOURCE_DATE_EPOCH=0
+RUN apk add --no-cache erofs-utils
+RUN --mount=type=bind,from=image,source=/image,target=/image \
+    set -eu; \
+    mkdir /out; \
+    mkfs.erofs -b 4096 -zlz4hc,12 -C 65536 -E ztailpacking -T "$SOURCE_DATE_EPOCH" -U clear --all-root \
+      -L sulla-usr /out/usr.erofs /image/usr; \
+    [ $(( $(stat -c %s /out/usr.erofs) % 4096 )) -eq 0 ]; \
+    cp /image/vmlinuz /image/initramfs.img /image/VERSION /out/; \
+    cd /out; \
+    ls -l; \
+    sha256sum vmlinuz initramfs.img usr.erofs VERSION > SHA256SUMS
 
 FROM scratch
-COPY --from=image /image/vmlinuz /vmlinuz
-COPY --from=image /image/initramfs.img /initramfs.img
-COPY --from=image /image/VERSION /VERSION
-COPY --from=image /image/SHA256SUMS /SHA256SUMS
+COPY --from=usr /out/ /

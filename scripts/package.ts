@@ -223,7 +223,7 @@ class Builder {
       await fs.promises.cp(source, target, { recursive: true });
     }
     const binary = path.join(target, 'sulla-runtime');
-    const required = [binary, path.join(target, 'guest', 'vmlinuz'), path.join(target, 'guest', 'initramfs.img')];
+    const required = [binary, ...['vmlinuz', 'initramfs.img', 'usr.erofs'].map(file => path.join(target, 'guest', file))];
     const missing: string[] = [];
 
     for (const file of required) {

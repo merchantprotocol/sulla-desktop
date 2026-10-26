@@ -10,7 +10,8 @@
 # where Desktop (dev and packaged) looks for it:
 #   sulla-runtime              host binary (swift build -c release)
 #   guest/vmlinuz              guest kernel      (assets/runtime/guest/build.sh, needs Docker buildx)
-#   guest/initramfs.img        guest initramfs
+#   guest/initramfs.img        guest initramfs (what runs before /usr is mounted)
+#   guest/usr.erofs            guest /usr, a read-only disk image
 #
 # Usage: scripts/build-sulla-runtime.sh [arm64|x86_64]   (default: this Mac's architecture)
 #
@@ -38,7 +39,7 @@ codesign --force --sign - --entitlements "$root/src/runtime-host/macos/sulla-run
 guest_out=$(mktemp -d)
 trap 'rm -rf "$guest_out"' EXIT
 "$root/assets/runtime/guest/build.sh" "$guest_arch" "$guest_out"
-cp "$guest_out/vmlinuz" "$guest_out/initramfs.img" "$out/guest/"
+cp "$guest_out/vmlinuz" "$guest_out/initramfs.img" "$guest_out/usr.erofs" "$out/guest/"
 touch "$out/.local-build"
 rm -f "$out/.manifest"
 echo "build-sulla-runtime: wrote $out"

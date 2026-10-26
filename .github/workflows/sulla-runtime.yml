@@ -1,6 +1,6 @@
 name: Sulla runtime
 
-# Builds the native macOS runtime (host binary + guest kernel/initramfs) and
+# Builds the native macOS runtime (host binary + guest kernel/initramfs/usr image) and
 # bundles one tarball per Mac architecture.
 #
 #   push to main  -> build, bundle, and publish to the rolling `sulla-runtime-latest`
@@ -10,7 +10,7 @@ name: Sulla runtime
 #   dispatch      -> same as a push; use it to republish by hand.
 #
 # Bundle layout (what Desktop and scripts/package.ts expect under
-# resources/darwin/sulla-runtime/):  sulla-runtime, guest/vmlinuz, guest/initramfs.img
+# resources/darwin/sulla-runtime/):  sulla-runtime, guest/vmlinuz, guest/initramfs.img, guest/usr.erofs
 
 on:
   push:
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           cd bundle
           chmod 0755 sulla-runtime
-          test -s sulla-runtime && test -s guest/vmlinuz && test -s guest/initramfs.img
+          test -s sulla-runtime && test -s guest/vmlinuz && test -s guest/initramfs.img && test -s guest/usr.erofs
           # The newest commit that changed anything inside the runtime. Local builds
           # compare against it to tell whether the published bundle is current.
           git -C "$GITHUB_WORKSPACE" log -1 --format=%H -- \
@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           name="sulla-runtime-darwin-${{ matrix.arch }}"
           mkdir -p out
-          tar -czf "out/$name.tar.gz" -C bundle sulla-runtime guest/vmlinuz guest/initramfs.img SOURCE
+          tar -czf "out/$name.tar.gz" -C bundle sulla-runtime guest/vmlinuz guest/initramfs.img guest/usr.erofs SOURCE
           sha=$(sha256sum "out/$name.tar.gz" | cut -d' ' -f1)
           # Small file the local fetch reads to decide whether anything changed.
           printf 'sha256 %s\nsource %s\n' "$sha" "$(cat bundle/SOURCE)" > "out/$name.manifest"

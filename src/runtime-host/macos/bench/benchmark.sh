@@ -47,8 +47,8 @@ fi
 
 KERNEL=${KERNEL:-$GUEST_DIR/vmlinuz}
 INITRD=${INITRD:-$GUEST_DIR/initramfs.img}
-ROOTFS=${ROOTFS:-$GUEST_DIR/rootfs.raw}
-[[ -f "$KERNEL" && -f "$INITRD" ]] || { echo "guest artifact must contain vmlinuz and initramfs" >&2; exit 1; }
+USR_IMAGE=${USR_IMAGE:-$GUEST_DIR/usr.erofs}
+[[ -f "$KERNEL" && -f "$INITRD" && -f "$USR_IMAGE" ]] || { echo "guest artifact must contain vmlinuz, initramfs.img and usr.erofs" >&2; exit 1; }
 
 SOCKET="$HOME/Library/Application Support/Sulla/runtime/docker.sock"
 DATA="$SCRATCH/data.raw"
@@ -57,8 +57,7 @@ touch "$RESULTS"
 
 run_once() {
   local class=$1 iteration=$2; local log="$SCRATCH/${class}-${iteration}.log"
-  local args=(start --kernel "$KERNEL" --initrd "$INITRD" --data-disk "$DATA")
-  [[ -f "$ROOTFS" ]] && args+=(--rootfs "$ROOTFS")
+  local args=(start --kernel "$KERNEL" --initrd "$INITRD" --usr-image "$USR_IMAGE" --data-disk "$DATA")
   [[ "$class" == cold ]] && rm -f "$DATA"
   "$RUNTIME" "${args[@]}" >"$log" 2>&1 &
   local pid=$!
