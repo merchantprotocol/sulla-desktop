@@ -427,6 +427,13 @@ function onAgentCommand(_event: any, args: any) {
     if (args.focus === true) router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'vault-integration-saved': {
+    // The vault saved a new integration account; the visible tab confirms it and opens its edit screen.
+    window.dispatchEvent(new CustomEvent('sulla:vault-integration-saved', {
+      detail: { integrationId: String(args.integrationId || ''), accountId: String(args.accountId || '') },
+    }));
+    break;
+  }
   case 'new-chat-tab': {
     const tab = createTab('about:blank', { mode: 'chat' });
 

@@ -970,10 +970,40 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
   });
 
+  const sanitizeVaultConnectSpec = (raw: unknown) => {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const spec = raw as Record<string, any>;
+    const str = (value: unknown, max: number) => typeof value === 'string' ? value.slice(0, max) : '';
+    const fields = (Array.isArray(spec.fields) ? spec.fields : []).slice(0, 20)
+      .filter((field: any) => typeof field?.key === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(field.key))
+      .map((field: any) => ({
+        key:         field.key,
+        title:       str(field.title, 120),
+        hint:        str(field.hint, 400),
+        type:        ['password', 'url'].includes(field.type) ? field.type : 'text',
+        required:    field.required === true,
+        placeholder: str(field.placeholder, 200),
+      }));
+    const guide = spec.guide && typeof spec.guide === 'object' ? spec.guide : {};
+
+    return {
+      name:        str(spec.name, 120),
+      description: str(spec.description, 400),
+      formGuide:   str(spec.formGuide, 2000),
+      fields,
+      guide:       {
+        title:       str(guide.title, 200),
+        description: str(guide.description, 1000),
+        steps:       (Array.isArray(guide.steps) ? guide.steps : []).slice(0, 20).map((step: any) => ({ title: str(step?.title, 200), content: str(step?.content, 2000) })),
+        notes:       (Array.isArray(guide.notes) ? guide.notes : []).slice(0, 20).map((note: unknown) => str(note, 1000)),
+      },
+    };
+  };
+
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown },
   ) => {
     requireTrustedVaultRenderer(event);
     const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
@@ -1008,6 +1038,13 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (integrationId) target.searchParams.set('integration', integrationId);
     if (accountId) target.searchParams.set('account', accountId);
     if (hint?.restoreFiles === true) target.searchParams.set('restoreFiles', '1');
+    // Public form layout for the vault's guided "Connect" screen (labels, hints, setup notes; no values).
+    const connect = integrationId && !accountId ? sanitizeVaultConnectSpec(hint?.connect) : undefined;
+    if (connect) {
+      const fragment = new URLSearchParams(target.hash.slice(1));
+      fragment.set('connect', Buffer.from(JSON.stringify(connect)).toString('base64url'));
+      target.hash = fragment.toString();
+    }
     if (hint?.surface === 'popup') {
       target.pathname = '/vault/popup.html';
       if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
