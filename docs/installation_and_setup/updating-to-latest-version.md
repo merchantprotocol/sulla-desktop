@@ -37,6 +37,8 @@ Sulla Desktop update delivery is based on the Electron auto-update flow.
 
 This provides a standard desktop experience for checking, notifying, downloading, and applying updates.
 
+Updates are downloaded from `https://releases.sulladesktop.com`. Versions released before updates moved there check GitHub instead and can't find the newer releases, so download the latest version once by hand; after that, updates arrive automatically again.
+
 ## If updates are disabled
 
 If you disabled update checks, re-enable them in Preferences to resume update notifications.

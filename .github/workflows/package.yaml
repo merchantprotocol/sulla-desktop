@@ -1,7 +1,9 @@
 name: Package
 
 on:
-  # Tag push → full matrix build + GitHub Release publication
+  # Tag push → full matrix build, zips + update feed uploaded to the releases
+  # bucket (https://releases.sulladesktop.com), draft GitHub Release with notes.
+  # Publishing that draft makes the build live (update-feed.yaml). See docs/releasing.md.
   push:
     tags:
     - 'v*'
@@ -136,39 +138,127 @@ jobs:
         done
     # DMG upload removed — see packaging/electron-builder.yml mac.target
     # for context. We ship a signed+notarized ZIP instead, which works.
+    # The .blockmap next to each zip lets electron-updater download only the
+    # changed blocks of the next update.
     - name: Upload mac zip
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'mac'
       with:
         name: Sulla Desktop-mac.${{ matrix.arch }}.zip
-        path: dist/Sulla-Desktop*.zip
+        path: |
+          dist/Sulla-Desktop*.zip
+          dist/Sulla-Desktop*.zip.blockmap
         if-no-files-found: error
 
+  # The zips (~2.9 GB each) are over GitHub's 2 GiB release-asset limit, so they
+  # go to the releases R2 bucket through the uploader Worker
+  # (infra/release-uploader) instead of the GitHub Release. Layout:
+  #   releases/v<version>/<zip>, <zip>.blockmap   immutable
+  #   releases/v<version>/latest.json             manifest (version, per-arch url/size/sha512/sha256)
+  #   releases/v<version>/latest-mac.yml          feed for this version
+  # Nothing here touches channels/latest/: update-feed.yaml promotes the build
+  # there when the draft release is published, so a tag never reaches users
+  # before someone publishes its release.
   release:
-    name: Create GitHub Release
+    name: Publish release files
     needs: package
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    # Two ~2.9 GB zips: artifact download, upload in 64 MiB parts and a
+    # public HEAD check. Generous, but bounded well under the 6 h job limit.
+    timeout-minutes: 150
     permissions:
       contents: write
+    env:
+      RELEASES_UPLOAD_URL: ${{ vars.RELEASES_UPLOAD_URL }}
+      RELEASES_BASE_URL: ${{ vars.RELEASES_BASE_URL }}
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version: '22'
+    - name: Require release upload configuration
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
+      run: |
+        missing=()
+        for name in RELEASES_UPLOAD_URL RELEASES_UPLOAD_TOKEN RELEASES_BASE_URL; do
+          if [[ -z "${!name}" ]]; then
+            missing+=("$name")
+          fi
+        done
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error::Cannot publish release files; missing ${missing[*]}. Set the RELEASES_UPLOAD_URL and RELEASES_BASE_URL repository variables and the RELEASES_UPLOAD_TOKEN secret (docs/releasing.md)."
+          exit 1
+        fi
+    - name: Test the release scripts
+      run: node --test 'scripts/release/test/*.test.mjs'
     - name: Download all artifacts
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         path: artifacts
-    - name: Prepare release assets
+    - name: Upload zips and block maps
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
       run: |
-        mkdir -p release
-        # Flatten artifacts into release directory
-        find artifacts -type f \( -name '*.dmg' -o -name '*.zip' \) \
-          -exec cp {} release/ \;
-        ls -lh release/
-    - name: Create release
+        set -euo pipefail
+        version="${GITHUB_REF_NAME#v}"
+        shopt -s nullglob globstar
+        files=( artifacts/**/Sulla-Desktop-*-mac.zip artifacts/**/Sulla-Desktop-*-mac.zip.blockmap )
+        if (( ${#files[@]} == 0 )); then
+          echo "::error::No macOS zips in the build artifacts."
+          exit 1
+        fi
+        for file in "${files[@]}"; do
+          name="$(basename "$file")"
+          key="releases/v${version}/${name}"
+          # The URL is cached as immutable: never replace it with different bytes.
+          node scripts/release/publish-to-releases.mjs "$file" "$key" \
+            --cache-control 'public, max-age=31536000, immutable' \
+            --skip-if-identical-at "${RELEASES_BASE_URL%/}/${key}"
+        done
+    - name: Build and upload the release manifest and feed
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
+      run: |
+        set -euo pipefail
+        version="${GITHUB_REF_NAME#v}"
+        shopt -s nullglob globstar
+        zips=( artifacts/**/Sulla-Desktop-*-mac.zip )
+        mkdir -p feed
+        node scripts/release/release-feed.mjs manifest \
+          --version "$version" \
+          --base-url "$RELEASES_BASE_URL" \
+          --notes-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+          --out feed/manifest.json \
+          "${zips[@]}"
+        node scripts/release/release-feed.mjs verify --manifest feed/manifest.json
+        node scripts/release/release-feed.mjs feed --manifest feed/manifest.json --out-dir feed
+        cat feed/latest-mac.yml
+        for name in latest.json latest-mac.yml; do
+          node scripts/release/publish-to-releases.mjs "feed/$name" "releases/v${version}/$name" \
+            --cache-control 'public, max-age=300'
+        done
+    - name: Write release notes header
+      run: |
+        set -euo pipefail
+        version="${GITHUB_REF_NAME#v}"
+        base="${RELEASES_BASE_URL%/}/releases/v${version}"
+        {
+          echo "## Download"
+          echo
+          echo "- Apple Silicon: ${base}/Sulla-Desktop-${version}-arm64-mac.zip"
+          echo "- Intel: ${base}/Sulla-Desktop-${version}-x64-mac.zip"
+          echo
+          echo "Checksums and sizes: ${base}/latest.json"
+        } > release-header.md
+    # The zips stay out of the release (GitHub caps assets at 2 GiB). It is a
+    # draft: publishing it promotes this version to the update channel.
+    - name: Create draft release
       uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
       with:
         draft: true
         generate_release_notes: true
-        files: release/*
+        body_path: release-header.md

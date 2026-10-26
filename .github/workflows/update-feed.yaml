@@ -1,11 +1,18 @@
 name: Update feed
 
-# The packaged macOS app checks for updates with electron-updater's GitHub
-# provider, which reads latest-mac.yml from the newest published release.
-# The Package workflow only uploads the zips, so this job builds
-# latest-mac.yml from the zips in the release and attaches it.
+# Promotes a release to the update channel in the releases bucket
+# (https://releases.sulladesktop.com, see docs/releasing.md):
+#   channels/latest/latest.json     manifest for the website and installers
+#   channels/latest/latest-mac.yml  electron-updater feed the app reads
 #
-# Runs when a release is published; run it by hand to backfill an older tag.
+# Runs when a release is published. The Package workflow already uploaded the
+# zips and releases/v<version>/latest.json; this job checks every zip is there
+# with the right size, adds the release notes, and writes the channel files,
+# the feed last, so the app never sees a feed that points at a missing file.
+#
+# Run it by hand to re-promote a version (for example to roll back) or to
+# rebuild the manifest from zips already in the bucket: "rehash" downloads
+# them from RELEASES_BASE_URL and recomputes sizes and checksums.
 
 on:
   release:
@@ -13,57 +20,140 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to (re)build latest-mac.yml for, e.g. v1.6.1'
+        description: 'Release tag to promote, e.g. v1.7.0'
         required: true
+      rehash:
+        description: 'Download the zips from the bucket and rebuild releases/v<version>/latest.json'
+        type: boolean
+        default: true
+      allow_older:
+        description: 'Allow promoting a version older than the one on the channel (rollback)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: update-feed
+  cancel-in-progress: false
 
 jobs:
   mac-feed:
-    # The rolling sulla-runtime-latest release carries runtime bundles, not app zips.
-    if: ${{ !startsWith(inputs.tag || github.event.release.tag_name, 'sulla-runtime') }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    # The rolling sulla-runtime-latest release carries runtime bundles, not app
+    # zips, and prereleases never go to the latest channel.
+    if: >-
+      ${{ !startsWith(inputs.tag || github.event.release.tag_name, 'sulla-runtime')
+      && !(github.event_name == 'release' && github.event.release.prerelease) }}
+    runs-on: ubuntu-24.04
+    # A rehash downloads two ~2.9 GB zips.
+    timeout-minutes: 60
+    env:
+      RELEASES_UPLOAD_URL: ${{ vars.RELEASES_UPLOAD_URL }}
+      RELEASES_BASE_URL: ${{ vars.RELEASES_BASE_URL }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
-    - name: Build and attach latest-mac.yml
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version: '22'
+    - name: Require release upload configuration
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
+      run: |
+        missing=()
+        for name in RELEASES_UPLOAD_URL RELEASES_UPLOAD_TOKEN RELEASES_BASE_URL; do
+          if [[ -z "${!name}" ]]; then
+            missing+=("$name")
+          fi
+        done
+        if (( ${#missing[@]} > 0 )); then
+          echo "::error::Cannot update the feed; missing ${missing[*]}. Set the RELEASES_UPLOAD_URL and RELEASES_BASE_URL repository variables and the RELEASES_UPLOAD_TOKEN secret (docs/releasing.md)."
+          exit 1
+        fi
+        if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::'$TAG' is not a release tag like v1.7.0."
+          exit 1
+        fi
+    - name: Rebuild the manifest from the zips in the bucket
+      if: ${{ github.event_name == 'workflow_dispatch' && inputs.rehash }}
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
+      run: |
+        set -euo pipefail
+        version="${TAG#v}"
+        base="${RELEASES_BASE_URL%/}/releases/${TAG}"
+        mkdir -p zips feed
+        for arch in x64 arm64; do
+          name="Sulla-Desktop-${version}-${arch}-mac.zip"
+          echo "Downloading $base/$name"
+          curl -fL --retry 5 --retry-all-errors -sS -o "zips/$name" "$base/$name"
+        done
+        node scripts/release/release-feed.mjs manifest \
+          --version "$version" \
+          --base-url "$RELEASES_BASE_URL" \
+          --notes-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+          --out feed/manifest.json \
+          zips/*.zip
+        rm -rf zips
+        node scripts/release/release-feed.mjs feed --manifest feed/manifest.json --out-dir feed/version
+        for name in latest.json latest-mac.yml; do
+          node scripts/release/publish-to-releases.mjs "feed/version/$name" "releases/${TAG}/$name" \
+            --cache-control 'public, max-age=300'
+        done
+    - name: Fetch the release manifest
+      if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.rehash) }}
+      run: |
+        set -euo pipefail
+        mkdir -p feed
+        url="${RELEASES_BASE_URL%/}/releases/${TAG}/latest.json"
+        if ! curl -fsSL --retry 5 -o feed/manifest.json "$url"; then
+          echo "::error::No manifest at $url. Did the Package workflow publish ${TAG}? Re-run this workflow by hand with rehash to rebuild it from the zips."
+          exit 1
+        fi
+    - name: Add release notes
       env:
         GH_TOKEN: ${{ github.token }}
         REPO: ${{ github.repository }}
-        TAG: ${{ inputs.tag || github.event.release.tag_name }}
       run: |
         set -euo pipefail
-        work="$(mktemp -d)"
-        cd "$work"
-        gh release download "$TAG" --repo "$REPO" --pattern '*-mac.zip'
-        shopt -s nullglob
-        zips=( *-mac.zip )
-        if (( ${#zips[@]} == 0 )); then
-          echo "::error::Release $TAG has no macOS zips."
-          exit 1
+        # Notes and date come from the GitHub Release when there is one; the
+        # feed still works without them.
+        if gh release view "$TAG" --repo "$REPO" --json body,publishedAt > release.json 2>/dev/null; then
+          jq -r '.body // ""' release.json > feed/notes.md
+          jq -r '.publishedAt // ""' release.json > feed/published-at
+        else
+          echo "::warning::No GitHub Release for $TAG; publishing the feed without release notes."
+          : > feed/notes.md
+          : > feed/published-at
         fi
-        # Intel first: older updaters read the top-level path/sha512, and
-        # electron-updater picks the arm64 entry on Apple Silicon by name.
-        ordered=()
-        for z in "${zips[@]}"; do [[ "$z" != *arm64* ]] && ordered+=("$z"); done
-        for z in "${zips[@]}"; do [[ "$z" == *arm64* ]] && ordered+=("$z"); done
-
-        version="${TAG#v}"
-        released="$(gh release view "$TAG" --repo "$REPO" --json publishedAt --jq '.publishedAt // empty')"
-        released="${released:-$(date -u +%Y-%m-%dT%H:%M:%S.000Z)}"
-        {
-          echo "version: $version"
-          echo "files:"
-          for z in "${ordered[@]}"; do
-            echo "  - url: $z"
-            echo "    sha512: $(openssl dgst -sha512 -binary "$z" | base64 -w0)"
-            echo "    size: $(stat -c %s "$z")"
-          done
-          first="${ordered[0]}"
-          echo "path: $first"
-          echo "sha512: $(openssl dgst -sha512 -binary "$first" | base64 -w0)"
-          echo "releaseDate: '$released'"
-        } > latest-mac.yml
-        cat latest-mac.yml
-        gh release upload "$TAG" latest-mac.yml --repo "$REPO" --clobber
-        rm -rf "$work"
+        node scripts/release/release-feed.mjs feed \
+          --manifest feed/manifest.json \
+          --out-dir feed/channel \
+          --notes-file feed/notes.md \
+          --release-date "$(cat feed/published-at)"
+        cat feed/channel/latest-mac.yml
+    - name: Check every zip is published
+      run: node scripts/release/release-feed.mjs verify --manifest feed/manifest.json
+    - name: Refuse to replace a newer version
+      if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.allow_older) }}
+      run: |
+        set -euo pipefail
+        status=0
+        node scripts/release/release-feed.mjs check-newer \
+          --manifest feed/manifest.json \
+          --current-url "${RELEASES_BASE_URL%/}/channels/latest/latest.json" || status=$?
+        if (( status == 3 )); then
+          echo "::error::${TAG} is older than the version on the channel. Run this workflow by hand with allow_older to roll back."
+        fi
+        exit "$status"
+    - name: Publish the channel (feed last)
+      env:
+        RELEASES_UPLOAD_TOKEN: ${{ secrets.RELEASES_UPLOAD_TOKEN }}
+      run: |
+        set -euo pipefail
+        node scripts/release/publish-to-releases.mjs feed/channel/latest.json channels/latest/latest.json --cache-control no-cache
+        node scripts/release/publish-to-releases.mjs feed/channel/latest-mac.yml channels/latest/latest-mac.yml --cache-control no-cache
+        echo "Promoted ${TAG}: ${RELEASES_BASE_URL%/}/channels/latest/latest-mac.yml"

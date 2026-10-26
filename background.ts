@@ -1623,7 +1623,6 @@ async function doFactoryReset(keepSystemImages: boolean) {
     if (!preserved.has(candidate)) removals.push(candidate);
   }
   if (!keepSystemImages) removals.push(paths.cache);
-  else removals.push(path.join(paths.cache, 'updater-longhorn.json'));
 
   await Promise.allSettled(removals.map(target => fs.promises.rm(target, { recursive: true, force: true })));
   Electron.app.quit();

@@ -13,7 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import timers from 'timers';
 
-import { CustomPublishOptions } from 'builder-util-runtime';
+import { GenericServerOptions } from 'builder-util-runtime';
 import Electron from 'electron';
 import {
   AppImageUpdater, MacUpdater, AppUpdater, ProgressInfo, UpdateInfo,
@@ -21,7 +21,6 @@ import {
 import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import yaml from 'yaml';
 
-import LonghornProvider, { hasQueuedUpdate, LonghornUpdateInfo, setHasQueuedUpdate } from './LonghornProvider';
 import { updateEvents } from './UpdateManager';
 
 import { Settings } from '@pkg/config/settings';
@@ -90,18 +89,20 @@ export function installQueuedUpdate(): void {
 }
 
 /**
- * Update info from either provider: LonghornProvider adds nextUpdateTime and
- * unsupportedUpdateAvailable; electron-updater's GitHub provider (what the
- * packaged mac app uses) sends plain UpdateInfo.
+ * Update info from the feed. The generic provider sends plain UpdateInfo; the
+ * optional fields stay so the renderer's update views keep their shape.
  */
-type AnyUpdateInfo = UpdateInfo & Partial<Pick<LonghornUpdateInfo, 'nextUpdateTime' | 'unsupportedUpdateAvailable'>>;
+type AnyUpdateInfo = UpdateInfo & { nextUpdateTime?: number; unsupportedUpdateAvailable?: boolean };
 
-/** How often to re-check when the provider doesn't say (GitHub provider). */
+/** How often to re-check; the generic feed doesn't say. */
 const DEFAULT_UPDATE_INTERVAL = 6 * 60 * 60 * 1000;
 
 /**
  * Return a new AppUpdater; if no update configuration is available, returns
- * undefined.
+ * undefined. The configuration is app-update.yml, which electron-builder writes
+ * from the publish block in packaging/electron-builder.yml (dev builds read
+ * dev-app-update.yml instead): electron-updater's generic provider reading
+ * latest-mac.yml from the releases bucket.
  */
 async function getUpdater(): Promise<AppUpdater | undefined> {
   let updater: AppUpdater;
@@ -120,14 +121,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
       }
       throw ex;
     }
-    const options: CustomPublishOptions = yaml.parse(fileContents);
-
-    options.updateProvider = LonghornProvider;
-
-    if (process.env.SULLA_UPGRADE_RESPONDER_URL) {
-      console.log(`using custom upgrade responder URL ${ process.env.SULLA_UPGRADE_RESPONDER_URL }`);
-      options.upgradeServer = process.env.SULLA_UPGRADE_RESPONDER_URL;
-    }
+    const options: GenericServerOptions = yaml.parse(fileContents);
 
     switch (os.platform()) {
     case 'darwin':
@@ -162,7 +156,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     console.debug('update: checking for update');
     updateState.available = false;
     updateState.downloaded = false;
-    setHasQueuedUpdate(false);
     updateEvents.emit('checking');
   });
   updater.on('update-available', (info) => {
@@ -178,7 +171,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateState.available = false;
     updateState.info = info;
     updateState.downloaded = false;
-    setHasQueuedUpdate(false);
     window.send('update-state', updateState);
     updateEvents.emit('raw-state', updateState);
   });
@@ -201,7 +193,6 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     // Prevent the updater from downloading the update again; it will clobber
     // the existing download.
     updater.autoDownload = false;
-    setHasQueuedUpdate(true);
     window.send('update-state', updateState);
     updateEvents.emit('raw-state', updateState);
   });
@@ -219,15 +210,14 @@ mainEvent.on('settings-update', (settings: Settings) => {
 });
 
 /**
- * Set up the updater, and possibly run the updater if it has already been
- * downloaded and is ready to install.
+ * Set up the updater and, when enabled, start checking for updates.
+ * Installing a downloaded update is always the user's call (installQueuedUpdate).
  *
  * @param enabled Whether updates are enabled
- * @param doInstall Install updates if available.
- * @returns Whether the update is being installed.
+ * @returns Whether the update is being installed (always false).
  */
-export default async function setupUpdate(enabled: boolean, doInstall = false): Promise<boolean> {
-  console.debug(`Setting up updater... enabled=${ enabled } doInstall=${ doInstall }`);
+export default async function setupUpdate(enabled: boolean): Promise<boolean> {
+  console.debug(`Setting up updater... enabled=${ enabled }`);
   if (state === State.UNCONFIGURED) {
     try {
       const newUpdater = await getUpdater();
@@ -253,7 +243,7 @@ export default async function setupUpdate(enabled: boolean, doInstall = false): 
   }
 
   try {
-    const result = await doInitialUpdateCheck(doInstall);
+    const result = await doInitialUpdateCheck();
 
     state = State.CHECKED;
 
@@ -270,31 +260,9 @@ export default async function setupUpdate(enabled: boolean, doInstall = false): 
 /**
  * Do the initial update check.
  * @precondition autoUpdater has been set up.
- * @param doInstall If true, install the update immediately.
- * @returns Whether the update is being installed.
+ * @returns Whether the update is being installed (always false).
  */
-async function doInitialUpdateCheck(doInstall = false): Promise<boolean> {
-  if (doInstall && await hasQueuedUpdate() && !process.env.SULLA_FORCE_UPDATES_ENABLED) {
-    console.log('Update is cached; forcing re-check to install.');
-
-    return await new Promise((resolve) => {
-      let hasError = false;
-
-      autoUpdater.once('error', (e) => {
-        console.error('Updater got error', e);
-        hasError = true;
-      });
-      autoUpdater.once('update-downloaded', () => {
-        console.log('Update download complete; restarting app');
-        setHasQueuedUpdate(true);
-        autoUpdater.quitAndInstall(true, true);
-        console.log(`Install complete, result: ${ !hasError }`);
-        resolve(!hasError);
-      });
-      autoUpdater.checkForUpdates();
-    });
-  }
-
+async function doInitialUpdateCheck(): Promise<boolean> {
   triggerUpdateCheck();
 
   return false;
