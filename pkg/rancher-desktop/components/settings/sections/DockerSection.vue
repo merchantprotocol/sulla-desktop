@@ -21,7 +21,8 @@ import {
 const { get, set, setMany, isLocked } = useEngineSettings();
 
 const platform = os.platform();
-const usesLima = platform !== 'win32';
+// VM sizing, disk, port forwarding and PATH setup are macOS-only (the Sulla VM); the validator rejects them elsewhere.
+const isMac = platform === 'darwin';
 const maxMemory = Math.max(2, Math.ceil(os.totalmem() / 2 ** 30));
 const maxCpus = Math.max(1, os.cpus().length);
 const isArm = ref(false);
@@ -165,7 +166,7 @@ onMounted(async() => {
     </div>
 
     <PrefCard
-      v-if="usesLima"
+      v-if="isMac"
       title="Performance"
       subtitle="Changes here restart Docker."
     >
@@ -345,7 +346,7 @@ onMounted(async() => {
         />
       </PrefRow>
       <PrefRow
-        v-if="platform !== 'win32'"
+        v-if="isMac"
         title="Command-line tools"
         subtitle="docker, kubectl and nerdctl in Terminal."
       >
@@ -417,7 +418,7 @@ onMounted(async() => {
         />
       </PrefRow>
       <PrefRow
-        v-if="usesLima"
+        v-if="isMac"
         title="Port forwarding"
       >
         <select

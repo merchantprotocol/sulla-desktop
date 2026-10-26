@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import os from 'os';
+
 import PrefCard from '../PrefCard.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
@@ -6,6 +8,8 @@ import PrefToggle from '../PrefToggle.vue';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 
 const { get, set, isLocked } = useEngineSettings();
+// Administrator access is only accepted on macOS.
+const isMac = os.platform() === 'darwin';
 </script>
 
 <template>
@@ -30,6 +34,7 @@ const { get, set, isLocked } = useEngineSettings();
         />
       </PrefRow>
       <PrefRow
+        v-if="isMac"
         title="Allow administrator access"
         subtitle="Sulla asks for your password to set up networking."
       >
