@@ -480,7 +480,7 @@ export class StartupProgressModel {
     // (via onServiceStatus/services[]) already shows it calmly while it retries.
     if (event.status === 'failed' && event.retrying) {
       if (this.step.key === key) {
-        this.step = { key: 'service:waiting', label: 'Moving to the next step', startedAt: this.now() };
+        this.step = { key: 'service:waiting', label: 'Starting app services', startedAt: this.now() };
       }
       this.recomputeServices();
 
@@ -496,7 +496,7 @@ export class StartupProgressModel {
       this.failures = [...this.failures, { key, label, message: event.error || 'This step failed to start.' }];
     }
     if (this.step.key === key) {
-      this.step = { key: 'service:waiting', label: 'Moving to the next step', startedAt: this.now() };
+      this.step = { key: 'service:waiting', label: 'Starting app services', startedAt: this.now() };
     }
     this.recomputeServices();
   }
@@ -506,7 +506,7 @@ export class StartupProgressModel {
     if (stageOrder(this.stage) < stageOrder('services')) this.enterStage('services');
     this.lifecycleDone = true;
     for (const name of this.order) this.completed.add(name);
-    this.step = { key: 'finishing', label: 'Finishing up', startedAt: this.now() };
+    this.step = { key: 'finishing', label: 'Starting app services', startedAt: this.now() };
     this.stepIndex = null;
     this.stepTotal = null;
     this.setStageProgress(1, 1);

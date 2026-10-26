@@ -249,6 +249,6 @@ export class StartupProgressController {
         console.log('[StartupProgressController] readiness poll: system ready — hiding overlay');
         this.markReady();
       }
-    }, 3000);
+    }, 500);
   }
 }

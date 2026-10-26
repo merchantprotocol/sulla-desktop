@@ -114,6 +114,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #activeOptionalSullaServices = new Set<string>();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
+  /** Services running an image bundled with the app: the exact reference they must run. */
+  #pinnedSullaImages = new Map<string, string>();
   #managedServicesReconciliation?: Promise<void>;
   #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
@@ -1046,6 +1048,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
+    this.#pinnedSullaImages.clear();
     // Bundled base images (postgres, redis, the function runtimes) run at
     // their pinned version and are updated with the app, not refreshed.
     const bundledBaseServices = new Set(pinComposeImages(compose, currentBundledImageLock()));
@@ -1340,6 +1343,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     if (shouldRefreshSullaServiceImage(filesImage, process.env.SULLA_FILES_IMAGE)) {
       this.#managedSullaRefreshImages.set('sulla_files', filesImage.image);
+    } else if (filesImage.bundled && !process.env.SULLA_FILES_IMAGE) {
+      this.#pinnedSullaImages.set('sulla_files', filesImage.image);
     }
     compose.services.sulla_files = {
       ...composeImageFields(filesImage),
@@ -1928,7 +1933,24 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   private async sullaServiceImageIsStale(container: string, service: string, generation?: number): Promise<boolean> {
     await this.waitForDockerServiceHealthy(container, 600, generation);
     const refreshImage = this.#managedSullaRefreshImages.get(service);
+    const pinnedImage = this.#pinnedSullaImages.get(service);
 
+    if (!refreshImage && pinnedImage) {
+      // Bundled with this app: the container must run exactly that image, never a
+      // leftover (e.g. :latest from an older build). Nothing to pull: it is loaded.
+      try {
+        const [running, pinned] = await Promise.all([
+          this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
+          this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', pinnedImage),
+        ]);
+
+        return running.trim() !== pinned.trim();
+      } catch (error) {
+        console.warn(`[Sulla] Could not compare ${ container } with its bundled image ${ pinnedImage }; keeping it:`, error);
+
+        return false;
+      }
+    }
     if (!refreshImage) return false;
     try {
       await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
