@@ -779,8 +779,8 @@ async function initUI() {
   }
 
   // Initialize threat-proxy subsystem (URL filtering + prompt-injection scanning
-  // via in-VM mitmproxy). Host side owns settings + URLhaus blocklist refresh;
-  // nothing installs the in-VM proxy on the Sulla runtime yet.
+  // of agent web traffic by the sulla_threat_proxy container). Host side owns
+  // settings + URLhaus blocklist refresh; the backend delivers them to the guest.
   try {
     threatProxy.initialize();
     console.log('[Threat Proxy] Initialized');
@@ -1161,8 +1161,8 @@ Electron.app.on('before-quit', async(event) => {
     console.error('[Shutdown] Preview share shutdown error:', err);
   }
 
-  // Shut down threat-proxy host-side refresh timer. The in-VM mitmproxy service
-  // lives with the VM and stops when the VM stops.
+  // Shut down threat-proxy host-side refresh timer. The proxy container lives
+  // with the Sulla runtime and stops when it stops.
   try {
     await withTimeout('threatProxy.shutdown', 2_000, threatProxy.shutdown());
     console.log('[Shutdown] Threat proxy shut down');

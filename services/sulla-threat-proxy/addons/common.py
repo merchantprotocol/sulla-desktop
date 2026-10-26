@@ -9,27 +9,33 @@
 Sulla Threat Proxy — shared utilities.
 
 Loaded by every addon. Provides:
-  - log()        — append-only structured logger writing to /var/log/sulla-threat-proxy.log
-  - load_env()   — reads /etc/sulla-proxy.env into a dict (shell key=value lines)
-  - VerdictCache — SQLite-backed TTL cache for URL / host verdicts
+  - log()          — one JSON object per line on stdout (read with `docker logs`)
+  - ProxyConfig    — the Desktop-managed JSON config, re-read when it changes
+  - VerdictCache   — SQLite-backed TTL cache for URL / host verdicts
   - is_allowlisted(host) — bypass for internal / development hosts
   - classify_verdict(flags) — collapses multi-source signals into an action
 
-Config file: /etc/sulla-proxy.env — written by Electron side (Sulla VMBackend).
+State lives under SULLA_PROXY_STATE_DIR (the container's bind-mounted state
+directory on the Sulla runtime data disk). Desktop writes config/proxy.json
+and blocklist/urlhaus.txt; the proxy owns mitm/ and cache/.
 """
 
 import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 from typing import Any, Dict, Iterable, Optional
 
-LOG_PATH = "/var/log/sulla-threat-proxy.log"
-ENV_PATH = "/etc/sulla-proxy.env"
-CACHE_DIR = "/opt/sulla-proxy/cache"
+STATE_DIR = os.environ.get("SULLA_PROXY_STATE_DIR", "/var/lib/sulla-threat-proxy")
+CONFIG_PATH = os.path.join(STATE_DIR, "config", "proxy.json")
+CACHE_DIR = os.path.join(STATE_DIR, "cache")
 CACHE_DB = os.path.join(CACHE_DIR, "verdicts.sqlite")
-BLOCKLIST_DIR = "/opt/sulla-proxy/blocklist"
+BLOCKLIST_DIR = os.path.join(STATE_DIR, "blocklist")
+
+# How often addons stat() the config file for changes.
+CONFIG_CHECK_SECS = 5.0
 
 # Sentinel flags returned by per-source scanners.
 FLAG_CLEAN = "clean"
@@ -40,10 +46,10 @@ FLAG_ERROR = "error"
 
 
 def log(component: str, level: str, msg: str, **fields: Any) -> None:
-    """Structured log line. One JSON object per line — easy to tail + grep.
+    """Structured log line on stdout. One JSON object per line — easy to grep.
 
-    Fields are merged into the payload. Never raises; logging failure is swallowed
-    because losing a log line is always preferable to crashing the proxy request.
+    Fields are merged into the payload. Never raises; losing a log line is
+    always preferable to failing the proxied request.
     """
     payload = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -53,39 +59,78 @@ def log(component: str, level: str, msg: str, **fields: Any) -> None:
     }
     payload.update(fields)
     try:
-        with open(LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, default=str) + "\n")
+        sys.stdout.write(json.dumps(payload, default=str) + "\n")
+        sys.stdout.flush()
     except Exception:
-        # Last-resort — write to stderr so mitmdump captures something.
-        try:
-            sys.stderr.write(f"[sulla-threat-proxy:{component}] {msg}\n")
-        except Exception:
-            pass
+        pass
 
 
-def load_env() -> Dict[str, str]:
-    """Read /etc/sulla-proxy.env into a flat dict. Shell-safe key=value lines.
+def load_config(path: Optional[str] = None) -> Dict[str, Any]:
+    """Read the Desktop-managed JSON config. Raises on a missing or invalid file."""
+    with open(path or CONFIG_PATH, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("config root must be an object")
+    return data
 
-    Unlike `source`, we don't execute anything — just parse KEY=VALUE (quoted or not).
-    Missing file returns {} so the proxy degrades to URLhaus-only mode.
+
+def split_list(value: Any) -> list:
+    """Accept a list or a comma-separated string; return trimmed, non-empty strings."""
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
+class ProxyConfig:
+    """The current config plus change detection by mtime.
+
+    Desktop replaces the file atomically (write + rename), so a stat() every
+    few seconds is enough to pick up new settings and API keys without
+    restarting mitmdump. A file that is missing or unreadable keeps the last
+    good config (or the defaults), so the proxy never stops scanning because
+    of a bad write.
     """
-    env: Dict[str, str] = {}
-    try:
-        with open(ENV_PATH, "r", encoding="utf-8") as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key:
-                    env[key] = value
-    except FileNotFoundError:
-        log("common", "warn", "env file missing, running with defaults", path=ENV_PATH)
-    except Exception as ex:
-        log("common", "error", "env parse failed", error=str(ex))
-    return env
+
+    def __init__(self, path: Optional[str] = None, check_secs: float = CONFIG_CHECK_SECS) -> None:
+        self.path = path or CONFIG_PATH
+        self.check_secs = check_secs
+        self.values: Dict[str, Any] = {}
+        self.generation = 0
+        self._mtime: Optional[float] = None
+        self._checked_at = 0.0
+        self._lock = threading.Lock()
+        self.refresh(force=True)
+
+    def refresh(self, force: bool = False) -> bool:
+        """Re-read the file if it changed. Returns True when values changed."""
+        now = time.monotonic()
+        with self._lock:
+            if not force and now - self._checked_at < self.check_secs:
+                return False
+            self._checked_at = now
+            try:
+                mtime = os.stat(self.path).st_mtime
+            except FileNotFoundError:
+                if force:
+                    log("common", "warn", "config missing, running with defaults", path=self.path)
+                return False
+            if not force and mtime == self._mtime:
+                return False
+            try:
+                values = load_config(self.path)
+            except Exception as ex:
+                log("common", "error", "config unreadable, keeping previous values", path=self.path, error=str(ex))
+                return False
+            self._mtime = mtime
+            self.values = values
+            self.generation += 1
+            return True
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self.values.get(key, default)
+        return default if value is None else value
 
 
 def is_allowlisted(host: str, extra: Optional[Iterable[str]] = None) -> bool:
@@ -93,7 +138,7 @@ def is_allowlisted(host: str, extra: Optional[Iterable[str]] = None) -> bool:
 
     The user explicitly accepted the privacy tradeoff (memory: sulla-desktop URL
     filter) so we keep this list minimal — only loopback, link-local, and RFC1918
-    bypass by default. The user can extend via SULLA_PROXY_ALLOWLIST (comma-separated).
+    bypass by default. The user can extend it with the `allowlist` config value.
     """
     if not host:
         return True
