@@ -745,6 +745,20 @@ onUnmounted(() => {
   z-index: 0;
 }
 
+/*
+ * visibility:hidden (unlike display:none) does not stop CSS animations, so
+ * every parked tab kept ticking its spinners, pulses and backdrop glows on
+ * every frame. Freeze them until the tab is shown again; they resume where
+ * they stopped. Vue <Transition> has its own timeout fallback, so a leave
+ * transition in a hidden tab still completes.
+ */
+.browser-tab-hidden,
+.browser-tab-hidden :deep(*),
+.browser-tab-hidden :deep(*::before),
+.browser-tab-hidden :deep(*::after) {
+  animation-play-state: paused !important;
+}
+
 /* Status Bar Footer */
 .agent-footer {
   display: flex;
