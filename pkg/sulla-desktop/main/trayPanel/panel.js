@@ -97,7 +97,19 @@ async function refreshFilesStatus() {
   label.title = status.lastError || '';
   document.getElementById('files-action-label').textContent = filesPaused ? 'Resume sync' : 'Pause sync';
 }
-refreshFilesStatus(); setInterval(() => refreshFilesStatus(), 5_000);
+// This window runs with backgroundThrottling off (it hosts mic capture), so
+// document.hidden stays false while it is hidden. Main tells us when the panel
+// is actually on screen; poll and animate only then.
+let panelShown = false;
+ipcRenderer.on('tray-panel:visibility', (_event, shown) => {
+  panelShown = shown === true;
+  document.body.classList.toggle('panel-hidden', !panelShown);
+  if (!panelShown) return;
+  refreshFilesStatus().catch(() => undefined);
+  if (document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard();
+});
+document.body.classList.add('panel-hidden');
+refreshFilesStatus(); setInterval(() => { if (panelShown) refreshFilesStatus().catch(() => undefined) }, 5_000);
 
 // Settings panel buttons
 document.getElementById('btn-support').addEventListener('click', () => {
@@ -368,8 +380,13 @@ async function refreshFilesDashboard() {
 // Files is the default view: load it now and keep it fresh while the panel is open.
 selectPanel('files');
 document.addEventListener('visibilitychange', () => { if (!document.hidden && document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); });
-window.addEventListener('focus', () => { if (document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); });
-setInterval(() => { if (!document.hidden && document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); }, 10_000);
+window.addEventListener('focus', () => {
+  // The panel hides on blur, so focus means it is on screen (covers a show
+  // that happened before this page finished loading).
+  panelShown = true; document.body.classList.remove('panel-hidden');
+  if (document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard();
+});
+setInterval(() => { if (panelShown && document.getElementById('panel-files').classList.contains('active')) refreshFilesDashboard(); }, 10_000);
 
 function selectUploadMode(mode) {
   filesUploadMode = mode;

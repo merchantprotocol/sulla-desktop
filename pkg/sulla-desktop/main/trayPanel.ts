@@ -214,6 +214,15 @@ export function createTrayPanel(): BrowserWindow {
     }
   });
 
+  // The renderer cannot see its own visibility (background throttling is
+  // off, so document.hidden stays false). Tell it, so it polls and animates
+  // only while the panel is on screen.
+  const sendVisibility = (shown:boolean) => {
+    if (panelWindow && !panelWindow.isDestroyed()) panelWindow.webContents.send('tray-panel:visibility', shown);
+  };
+  panelWindow.on('show', () => sendVisibility(true));
+  panelWindow.on('hide', () => sendVisibility(false));
+
   // Hide on blur — click anywhere else to dismiss
   panelWindow.on('blur', () => {
     panelWindow?.hide();

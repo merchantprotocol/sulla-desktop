@@ -372,15 +372,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
 
 import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
-import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
-import FileEditorTab from './FileEditorTab.vue';
 import FilesPage from './FilesPage.vue';
 import DocumentPage from './DocumentPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
@@ -390,7 +388,6 @@ import NewTabWelcome from './NewTabWelcome.vue';
 import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
-import TerminalTab from './TerminalTab.vue';
 import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
@@ -404,6 +401,13 @@ import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+// Heavy, rarely-open tab bodies load on first use instead of with the main
+// window: Monaco (file editor), xterm (terminal) and Vue Flow (routines
+// canvas). Each is only rendered inside its own v-if branch below.
+const AgentRoutines = defineAsyncComponent(() => import('./AgentRoutines.vue'));
+const FileEditorTab = defineAsyncComponent(() => import('./FileEditorTab.vue'));
+const TerminalTab = defineAsyncComponent(() => import('./TerminalTab.vue'));
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
   welcome:       'New Tab',

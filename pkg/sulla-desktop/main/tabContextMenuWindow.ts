@@ -26,6 +26,7 @@ import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
+import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const console = Logging.background;
@@ -135,6 +136,9 @@ async function onShow(
   win.on('blur', () => {
     _close();
   });
+
+  // Let the renderer go once the menu has been hidden for a while.
+  releaseWhenHidden(win);
 
   win.on('closed', () => {
     win = null;
