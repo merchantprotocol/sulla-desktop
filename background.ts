@@ -614,7 +614,7 @@ Electron.app.whenReady().then(async() => {
     // to the new centralized IPC surface (and auto-open the Updates window
     // when a background download completes).
     updateManager.initialize(cfg.application.updater.enabled);
-    if (await setupUpdate(cfg.application.updater.enabled, true)) {
+    if (await setupUpdate(cfg.application.updater.enabled)) {
       gone = true;
       // The update code will trigger a restart; don't do it here, as it may not
       // be ready yet.
