@@ -91,6 +91,7 @@ jest.unstable_mockModule('@pkg/main/MCPServerHost', () => ({
   getMCPServerHost: () => ({ registerSession: () => new Proxy({ id: 'session-1' }, { get: (t: any, k) => t[k] ?? any }) }),
 }));
 jest.unstable_mockModule('@pkg/main/chatCompletionsServer', () => ({ getChatCompletionsServer: () => ({ getApiToken: () => 'x'.repeat(48) }) }));
+jest.unstable_mockModule('@pkg/main/threat-proxy', () => ({ egressEnforced: () => Promise.resolve(true) }));
 jest.unstable_mockModule('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: () => Promise.resolve('device-1') }));
 jest.unstable_mockModule('@pkg/utils/logging', () => ({ default: new Proxy({}, { get: () => ({ log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} }) }) }));
 jest.unstable_mockModule('@pkg/utils/paths', () => ({ default: { sullaRuntime: 'sulla-runtime' } }));
@@ -127,6 +128,10 @@ describe('agent containers bind the Files guest mount only when its anchor is co
     const binds = volumes(dockerCreates[0]);
 
     expect(binds).toEqual(expect.arrayContaining(['/mnt/data/sulla/agent-docs/job-1:/opt/sulla-docs:ro']));
+    // Threat proxy on: only the public CA directory is mounted, and the clients are pointed at it.
+    expect(binds).toContain('/mnt/data/var/lib/sulla/threat-proxy/public:/run/sulla-threat-proxy-ca:ro');
+    expect(binds.some(bind => bind.includes('/threat-proxy/mitm'))).toBe(false);
+    expect(dockerCreates[0]).toContain('NODE_EXTRA_CA_CERTS=/run/sulla-threat-proxy-ca/ca.crt');
     if (available) expect(binds).toContain(FILES_BIND);
     else expect(binds.some(bind => bind.startsWith('/mnt/sulla-files'))).toBe(false);
   });

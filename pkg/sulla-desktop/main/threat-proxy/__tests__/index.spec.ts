@@ -28,9 +28,9 @@ mockModules({
 });
 
 // Must be a dynamic import so mocks are installed first.
-const { renderEnvFile, SETTINGS_KEYS, INTEGRATION_IDS } = await import('@pkg/main/threat-proxy');
+const { renderConfigFile, SETTINGS_KEYS, INTEGRATION_IDS } = await import('@pkg/main/threat-proxy');
 
-describe('renderEnvFile', () => {
+describe('renderConfigFile', () => {
   const defaultSettings = {
     enabled:       true,
     allowlist:     '',
@@ -43,61 +43,42 @@ describe('renderEnvFile', () => {
     virusTotalApiKey:   '',
   };
 
-  it('produces the expected env-file lines in the right order', () => {
-    const out = renderEnvFile(defaultSettings, emptyKeys);
-    const lines = out.split('\n').filter(l => l.trim() && !l.startsWith('#'));
+  it('produces the keys the proxy addons read', () => {
+    const config = JSON.parse(renderConfigFile(defaultSettings, emptyKeys));
 
-    expect(lines).toEqual([
-      'GOOGLE_SAFE_BROWSING_API_KEY=""',
-      'VT_API_KEY=""',
-      'SULLA_PROXY_ALLOWLIST=""',
-      'SULLA_PROXY_BLOCK_MODE=\'block\'',
-      'SULLA_INJECTION_MODE=\'warn\'',
-      expect.stringContaining('SULLA_INJECTION_SCAN_CONTENT_TYPES='),
-    ]);
+    expect(config).toEqual({
+      managedBy:                 'Sulla Desktop',
+      safeBrowsingApiKey:        '',
+      virusTotalApiKey:          '',
+      allowlist:                 '',
+      blockMode:                 'block',
+      injectionMode:             'warn',
+      injectionScanContentTypes: expect.arrayContaining(['text/html', 'application/json']),
+    });
   });
 
-  it('shell-quotes a simple string with single quotes', () => {
-    const out = renderEnvFile({ ...defaultSettings, allowlist: 'example.com,foo.bar' }, emptyKeys);
-    expect(out).toContain("SULLA_PROXY_ALLOWLIST='example.com,foo.bar'");
-  });
-
-  it('renders empty string values as ""', () => {
-    const out = renderEnvFile(defaultSettings, emptyKeys);
-    expect(out).toContain('GOOGLE_SAFE_BROWSING_API_KEY=""');
-    expect(out).toContain('VT_API_KEY=""');
-    expect(out).toContain('SULLA_PROXY_ALLOWLIST=""');
-  });
-
-  it("escapes embedded single quotes with '\\''", () => {
-    const out = renderEnvFile(
-      defaultSettings,
-      { safeBrowsingApiKey: "it's'weird", virusTotalApiKey: '' },
-    );
-    // Shell quoting: 'it'\''s'\''weird'
-    expect(out).toContain("GOOGLE_SAFE_BROWSING_API_KEY='it'\\''s'\\''weird'");
-  });
-
-  it('includes a managed-by comment header', () => {
-    const out = renderEnvFile(defaultSettings, emptyKeys);
-    expect(out).toContain('# /etc/sulla-proxy.env — managed by Sulla Desktop');
-  });
-
-  it('includes all expected keys', () => {
-    const out = renderEnvFile(
-      { ...defaultSettings, blockMode: 'warn', injectionMode: 'redact', allowlist: 'trusted.com' },
+  it('carries settings and vault keys verbatim', () => {
+    const config = JSON.parse(renderConfigFile(
+      { ...defaultSettings, blockMode: 'warn', injectionMode: 'redact', allowlist: 'trusted.com,foo.bar' },
       { safeBrowsingApiKey: 'sb-key', virusTotalApiKey: 'vt-key' },
-    );
-    expect(out).toContain("GOOGLE_SAFE_BROWSING_API_KEY='sb-key'");
-    expect(out).toContain("VT_API_KEY='vt-key'");
-    expect(out).toContain("SULLA_PROXY_ALLOWLIST='trusted.com'");
-    expect(out).toContain("SULLA_PROXY_BLOCK_MODE='warn'");
-    expect(out).toContain("SULLA_INJECTION_MODE='redact'");
+    ));
+
+    expect(config.safeBrowsingApiKey).toBe('sb-key');
+    expect(config.virusTotalApiKey).toBe('vt-key');
+    expect(config.allowlist).toBe('trusted.com,foo.bar');
+    expect(config.blockMode).toBe('warn');
+    expect(config.injectionMode).toBe('redact');
   });
 
-  it('trailing newline — file ends with \\n so the shell sources it cleanly', () => {
-    const out = renderEnvFile(defaultSettings, emptyKeys);
-    expect(out.endsWith('\n')).toBe(true);
+  it('round-trips values that would need shell quoting', () => {
+    const awkward = `it's"weird\\ $(rm -rf) \n`;
+    const config = JSON.parse(renderConfigFile(defaultSettings, { safeBrowsingApiKey: awkward, virusTotalApiKey: '' }));
+
+    expect(config.safeBrowsingApiKey).toBe(awkward);
+  });
+
+  it('ends with a newline', () => {
+    expect(renderConfigFile(defaultSettings, emptyKeys).endsWith('\n')).toBe(true);
   });
 });
 

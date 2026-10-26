@@ -196,6 +196,21 @@ describe.each([
     }
   });
 
+  test('the threat proxy runs on the guest network with no secrets in compose', async() => {
+    const { compose } = await generate();
+    const proxy = compose.services.threat_proxy;
+
+    expect(proxy).toMatchObject({ container_name: 'sulla_threat_proxy', network_mode: 'host', user: '10010:10010', read_only: true });
+    expect(Object.keys(proxy.environment).sort()).toEqual(['SULLA_PROXY_LISTEN_PORT', 'SULLA_PROXY_MODE', 'SULLA_PROXY_STATE_DIR']);
+    expect(proxy.volumes.map((volume: any) => `${ volume.source }:${ volume.read_only ? 'ro' : 'rw' }`)).toEqual([
+      '/mnt/data/var/lib/sulla/threat-proxy/mitm:rw',
+      '/mnt/data/var/lib/sulla/threat-proxy/cache:rw',
+      '/mnt/data/var/lib/sulla/threat-proxy/public:rw',
+      '/mnt/data/var/lib/sulla/threat-proxy/config:ro',
+      '/mnt/data/var/lib/sulla/threat-proxy/blocklist:ro',
+    ]);
+  });
+
   test('accounts reads its secrets from the guest copy, which Desktop provisions', async() => {
     const { compose, commands, copies } = await generate();
     const accountsVolumes = compose.services.sulla_accounts.volumes;

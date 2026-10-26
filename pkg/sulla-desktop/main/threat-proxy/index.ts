@@ -10,18 +10,18 @@
  *
  * # Sulla Threat Proxy — Electron-side lifecycle
  *
- * The actual proxy runs *inside* the Sulla VM as an OpenRC service
- * (`sulla-threat-proxy`, spawning `mitmdump` on 127.0.0.1:8888). This module
- * is the host-side glue:
+ * The proxy itself is the `sulla_threat_proxy` container on the Sulla runtime
+ * (services/sulla-threat-proxy: mitmdump in transparent mode). The guest
+ * firewall redirects agent web traffic to it; see
+ * backend/threatProxyEgress.ts for the packet path. This module is the
+ * host-side glue:
  *
- *   - Persists user-facing settings (API keys, allowlist, modes) via SullaSettingsModel.
- *   - Exposes IPC handlers so the UI can read status + logs and toggle modes.
- *   - Drives the URLhaus blocklist refresh on a timer (fetched from the host
- *     because the VM's own internet access depends on the proxy working).
- *
- * The installation + start/stop of the in-VM service lives in
- * the backend (see backend/sullaRuntimeBackend.ts). That keeps all
- * VM-touching code inside the backend lifecycle methods where it belongs.
+ *   - Persists user-facing settings via SullaSettingsModel (API keys stay in
+ *     the vault and are read through IntegrationService).
+ *   - Delivers config + the URLhaus blocklist into the proxy's state directory
+ *     on the guest data disk; the proxy re-reads them without a restart.
+ *   - Applies or removes the egress redirect when the user toggles `enabled`.
+ *   - Refreshes the URLhaus blocklist on a timer from the host.
  */
 
 import fs from 'fs';
@@ -34,6 +34,10 @@ import { URL } from 'url';
 import { ipcMain } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import type { VMExecutor } from '@pkg/backend/backend';
+import {
+  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER,
+} from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -79,7 +83,7 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
   injectionMode: 'warn',
 };
 
-/** Host-side cache of the URLhaus blocklist. Refreshed into the VM-mounted resources dir. */
+/** Host-side cache of the URLhaus blocklist, copied into the proxy's state directory in the guest. */
 const URLHAUS_SRC = 'https://urlhaus.abuse.ch/downloads/hostfile/';
 const URLHAUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Hard cap so a pathological server or redirect loop can't blow the Electron
@@ -88,20 +92,18 @@ const URLHAUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // prior file, failing open rather than OOM'ing the app.
 const URLHAUS_MAX_BYTES = 200 * 1024 * 1024; // 200MB
 
-/** Where the VM-facing blocklist lives on the host; paths.altAppHome is writable + mounted into the VM. */
+/** Host-side copy of the blocklist; syncGuest() copies it into the guest. */
 function getBlocklistHostPath(): string {
   return path.join(paths.altAppHome, 'threat-proxy', 'blocklist', 'urlhaus.txt');
 }
 
-/** Path to the in-VM log file, surfaced via mount so we can tail without execing into the VM. */
-function getVmLogHostHint(): string {
-  // The backend mounts /Users + paths.logs; the in-VM /var/log/sulla-threat-proxy.log
-  // isn't directly reachable from the host. The service reads it via sulla-runtime exec.
-  return '/var/log/sulla-threat-proxy.log';
-}
+const INJECTION_SCAN_CONTENT_TYPES = ['text/html', 'text/plain', 'application/json', 'text/markdown', 'text/xml', 'application/xml'];
 
 let initialized = false;
 let refreshTimer: NodeJS.Timeout | null = null;
+/** The running Sulla runtime, set by the backend once the guest is up. */
+let guest: VMExecutor | undefined;
+let guestSync: Promise<void> = Promise.resolve();
 
 // ── Settings helpers ─────────────────────────────────────────────────
 
@@ -148,6 +150,7 @@ export async function setSettings(partial: Partial<ThreatProxySettings>): Promis
     await writeSetting(SETTINGS_KEYS.injectionMode, partial.injectionMode);
   }
   console.log('[threat-proxy] settings updated', Object.keys(partial));
+  await syncGuest().catch(err => console.error('[threat-proxy] could not apply settings in the guest', err));
 
   return readSettings();
 }
@@ -183,31 +186,95 @@ export async function getApiKeys(): Promise<ThreatProxyCredentials> {
 }
 
 /**
- * Render settings + vault-sourced credentials into /etc/sulla-proxy.env.
- * Writing happens inside the VM; this function produces the body text.
+ * Render settings + vault-sourced credentials into the proxy's config file
+ * (config/proxy.json in its state directory). JSON, so values need no quoting.
  */
-export function renderEnvFile(settings: ThreatProxySettings, creds: ThreatProxyCredentials): string {
-  const lines: string[] = [
-    '# /etc/sulla-proxy.env — managed by Sulla Desktop. Do not edit by hand.',
-    '# API keys sourced from the password vault (IntegrationService).',
-    `GOOGLE_SAFE_BROWSING_API_KEY=${ shellQuote(creds.safeBrowsingApiKey) }`,
-    `VT_API_KEY=${ shellQuote(creds.virusTotalApiKey) }`,
-    `SULLA_PROXY_ALLOWLIST=${ shellQuote(settings.allowlist) }`,
-    `SULLA_PROXY_BLOCK_MODE=${ shellQuote(settings.blockMode) }`,
-    `SULLA_INJECTION_MODE=${ shellQuote(settings.injectionMode) }`,
-    `SULLA_INJECTION_SCAN_CONTENT_TYPES=${ shellQuote('text/html,text/plain,application/json,text/markdown,text/xml,application/xml') }`,
-    '',
-  ];
-
-  return lines.join('\n');
+export function renderConfigFile(settings: ThreatProxySettings, creds: ThreatProxyCredentials): string {
+  return `${ JSON.stringify({
+    managedBy:                 'Sulla Desktop',
+    safeBrowsingApiKey:        creds.safeBrowsingApiKey,
+    virusTotalApiKey:          creds.virusTotalApiKey,
+    allowlist:                 settings.allowlist,
+    blockMode:                 settings.blockMode,
+    injectionMode:             settings.injectionMode,
+    injectionScanContentTypes: INJECTION_SCAN_CONTENT_TYPES,
+  }, null, 2) }\n`;
 }
 
-function shellQuote(value: string): string {
-  if (value === '') {
-    return '""';
+// ── Guest delivery ───────────────────────────────────────────────────
+
+/**
+ * Called by the backend after the guest state directories exist, on every
+ * managed-services reconciliation. Later setting changes and blocklist
+ * refreshes are pushed through the same executor.
+ */
+export async function configureGuest(executor: VMExecutor): Promise<void> {
+  guest = executor;
+  await syncGuest();
+}
+
+export function clearGuest(executor: VMExecutor): void {
+  if (guest === executor) guest = undefined;
+}
+
+/** Serialize guest writes so a settings change and a blocklist refresh never interleave. */
+function queueGuestSync(task: (executor: VMExecutor) => Promise<void>): Promise<void> {
+  const executor = guest;
+
+  if (!executor) return Promise.resolve();
+  const next = guestSync.then(() => task(executor));
+
+  guestSync = next.catch(() => undefined);
+
+  return next;
+}
+
+/** Push config, blocklist and egress policy. */
+export function syncGuest(): Promise<void> {
+  return queueGuestSync(async(executor) => {
+    const [settings, creds] = await Promise.all([readSettings(), getApiKeys()]);
+
+    await writeGuestConfig(executor, settings, creds);
+    await copyBlocklistToGuest(executor);
+    await applyEgressPolicy(executor, settings.enabled);
+  });
+}
+
+async function writeGuestConfig(executor: VMExecutor, settings: ThreatProxySettings, creds: ThreatProxyCredentials): Promise<void> {
+  const staged = `${ path.posix.dirname(THREAT_PROXY_CONFIG_PATH) }/.proxy.json.new`;
+
+  // writeFile streams the contents over stdin: the API keys never appear on a
+  // command line or in the exec log. Only the proxy user can read the result.
+  await executor.writeFile(staged, renderConfigFile(settings, creds), 0o600);
+  await executor.execCommand({ root: true }, ...installStagedFileCommand(staged, THREAT_PROXY_CONFIG_PATH, '0600'));
+}
+
+async function copyBlocklistToGuest(executor: VMExecutor): Promise<void> {
+  const source = getBlocklistHostPath();
+
+  try {
+    await fs.promises.access(source, fs.constants.R_OK);
+  } catch {
+    return; // Not fetched yet; refreshBlocklist() pushes it when it arrives.
   }
-  // Simple, conservative quoter — wrap in single quotes and escape existing single quotes.
-  return `'${ value.replace(/'/g, '\'\\\'\'') }'`;
+  const staged = '/tmp/sulla-threat-proxy-urlhaus.txt';
+
+  await executor.copyFileIn(source, staged);
+  await executor.execCommand({ root: true }, ...installStagedFileCommand(staged, THREAT_PROXY_BLOCKLIST_PATH, '0644'));
+}
+
+/**
+ * Install (enabled) or remove (disabled) the guest firewall redirect of agent
+ * web traffic. Exported for the agent launcher, which re-applies it before
+ * every launch so a Docker restart can never leave agents unscanned.
+ */
+export async function applyEgressPolicy(executor: Pick<VMExecutor, 'execCommand'>, enforce: boolean): Promise<void> {
+  await executor.execCommand({ root: true }, ...egressPolicyCommand(enforce));
+}
+
+/** Whether agent containers must go through the proxy (and so trust its CA). */
+export async function egressEnforced(): Promise<boolean> {
+  return (await readSettings()).enabled;
 }
 
 // ── URLhaus blocklist refresh ────────────────────────────────────────
@@ -246,6 +313,7 @@ export async function refreshBlocklist(force = false): Promise<{ ok: boolean; ho
 
     await writeSetting(SETTINGS_KEYS.blocklistUpdatedAt, new Date().toISOString());
     console.log(`[threat-proxy] blocklist refreshed: ${ hostCount } hosts`);
+    await queueGuestSync(copyBlocklistToGuest).catch(err => console.error('[threat-proxy] blocklist delivery to the guest failed', err));
 
     return { ok: true, hostCount, path: target };
   } catch (err: any) {
@@ -358,13 +426,15 @@ export function initialize(): void {
 
   registerIpcHandlers();
 
-  // Kick off an async blocklist fetch — don't await; the VM will read whatever
-  // is there when the proxy starts, and subsequent refreshes update it.
+  // Kick off an async blocklist fetch — don't await; the proxy reloads the
+  // file from its state directory whenever a newer copy is delivered.
   refreshBlocklist(false).catch(err => console.error('[threat-proxy] initial blocklist fetch failed', err));
 
   // Periodic refresh — 6h matches the file's TTL expectation in url_filter.py.
+  // The config is re-delivered too, so rotated vault API keys reach the proxy.
   refreshTimer = setInterval(() => {
     refreshBlocklist(false).catch(err => console.error('[threat-proxy] periodic refresh failed', err));
+    syncGuest().catch(err => console.error('[threat-proxy] periodic config sync failed', err));
   }, URLHAUS_REFRESH_INTERVAL_MS);
 
   console.log('[threat-proxy] initialized');
@@ -389,7 +459,7 @@ function registerIpcHandlers(): void {
     try {
       // We surface which integrations are connected (without leaking keys) so
       // the settings UI can show a status pill. The keys themselves live in the
-      // vault and are read only by the in-VM proxy install path.
+      // vault and only reach the proxy's private config file in the guest.
       const [settings, creds] = await Promise.all([readSettings(), getApiKeys()]);
 
       return {
@@ -441,8 +511,27 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('threat-proxy:vm-log-path', () => {
-    return { path: getVmLogHostHint() };
+  ipcMain.handle('threat-proxy:sync', async() => {
+    try {
+      await syncGuest();
+
+      return { ok: true, guest: !!guest };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err) };
+    }
+  });
+
+  // The proxy logs one JSON line per decision to stdout (`docker logs`).
+  ipcMain.handle('threat-proxy:logs', async(_event, lines = 200) => {
+    if (!guest) return { ok: false, error: 'The Sulla runtime is not running', lines: [] };
+    try {
+      const tail = String(Math.max(1, Math.min(Number(lines) || 200, 2000)));
+      const output = await guest.execCommand({ root: true, capture: true }, 'docker', 'logs', '--tail', tail, THREAT_PROXY_CONTAINER);
+
+      return { ok: true, lines: output.split('\n').filter(Boolean) };
+    } catch (err: any) {
+      return { ok: false, error: err?.message ?? String(err), lines: [] };
+    }
   });
 }
 

@@ -10,7 +10,7 @@ export const VM_PROBE = String.raw`
 import json, os, pwd, signal, sys, time
 from pathlib import Path
 
-CRITICAL = {'init', 'systemd', 'sshd', 'sshd-session', 'dockerd', 'containerd', 'containerd-shim', 'containerd-shim-runc-v2', 'postgres', 'redis-server', 'k3s', 'sulla-proxy', 'sulla'}
+CRITICAL = {'init', 'systemd', 'sshd', 'sshd-session', 'dockerd', 'containerd', 'containerd-shim', 'containerd-shim-runc-v2', 'postgres', 'redis-server', 'k3s', 'mitmdump', 'sulla'}
 
 def text(path):
     return Path(path).read_text()

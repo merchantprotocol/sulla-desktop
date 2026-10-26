@@ -28,6 +28,9 @@ import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import {
+  ensureAgentNetworkCommand, provisionStateCommand, THREAT_PROXY_CONTAINER, threatProxyComposeService,
+} from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
@@ -605,6 +608,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#sullaRuntimeForwarder?.stop();
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
+    void import('@pkg/main/threat-proxy').then(threatProxy => threatProxy.clearGuest(this)).catch(() => undefined);
     setSullaRuntimeActive(false);
     this.#containerEngineClient = undefined;
     try {
@@ -689,6 +693,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.prepareSullaComposeFile();
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
+      t = Date.now();
+      await this.prepareThreatProxyGuest();
+      this.assertManagedServicesGeneration(generation);
+      console.log(`[startup-perf] prepareThreatProxyGuest: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
@@ -945,6 +953,48 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /**
    * Prepares the Docker Compose file for Sulla services by parsing and modifying dynamic values like passwords.
    */
+  /**
+   * The threat proxy scans agent web egress (see threatProxyEgress.ts). It is
+   * always in compose; the user's on/off setting only switches the firewall
+   * redirect, so toggling it never needs a compose regeneration.
+   */
+  private addThreatProxyService(compose: any): void {
+    const image = resolveSullaServiceImage(
+      'sulla-threat-proxy', process.cwd(), Electron.app.getVersion(), process.env.SULLA_THREAT_PROXY_IMAGE,
+    );
+    const resolvedImage = image.build ? image.image : `\${SULLA_THREAT_PROXY_IMAGE:-${ image.image }}`;
+
+    if (shouldRefreshSullaServiceImage(image, process.env.SULLA_THREAT_PROXY_IMAGE)) {
+      this.#managedSullaRefreshImages.set('threat_proxy', image.image);
+    }
+    if (!image.build && !process.env.SULLA_THREAT_PROXY_IMAGE && !image.image.endsWith(':latest')) {
+      this.#optionalSullaFallbackImages.set('threat_proxy', {
+        env: 'SULLA_THREAT_PROXY_IMAGE', image: 'ghcr.io/merchantprotocol/sulla-threat-proxy:latest',
+      });
+    }
+    compose.services.threat_proxy = threatProxyComposeService({ ...image, image: resolvedImage });
+  }
+
+  /**
+   * Guest-side threat proxy setup, before compose starts anything: the state
+   * directories, the config and blocklist from the host, the agent network
+   * with its fixed bridge, and the egress firewall rules (which fail closed
+   * until the proxy container is up). A failure here does not stop the other
+   * services: the agent launcher re-applies the network and rules before every
+   * agent start and refuses to start an agent when that fails.
+   */
+  private async prepareThreatProxyGuest(): Promise<void> {
+    try {
+      await this.execCommand({ root: true }, ...provisionStateCommand());
+      await this.execCommand({ root: true }, ...ensureAgentNetworkCommand());
+      const threatProxy = await import('@pkg/main/threat-proxy');
+
+      await threatProxy.configureGuest(this);
+    } catch (error) {
+      console.error('[Sulla] Threat proxy guest setup failed; agent launches will retry it:', error);
+    }
+  }
+
   private async prepareSullaComposeFile(): Promise<void> {
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
 
@@ -1175,6 +1225,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       mem_limit: '512m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
+
+    this.addThreatProxyService(compose);
 
     const toolsImage = resolveSullaServiceImage(
       'sulla-tools', process.cwd(), Electron.app.getVersion(), process.env.SULLA_TOOLS_IMAGE,
@@ -1653,13 +1705,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         expectVaultContainer();
       }
       optionalServices.push(
+        { service: 'threat_proxy', container: THREAT_PROXY_CONTAINER },
         { service: 'sulla_relay', container: 'sulla_relay' },
         { service: 'sulla_files', container: 'sulla_files' },
         { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'tools', container: 'sulla_tools' },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
-        const order = ['sulla_accounts', 'sulla_vault', 'sulla_relay', 'sulla_files',
+        const order = ['threat_proxy', 'sulla_accounts', 'sulla_vault', 'sulla_relay', 'sulla_files',
           'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
