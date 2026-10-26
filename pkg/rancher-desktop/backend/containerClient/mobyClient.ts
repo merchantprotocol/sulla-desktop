@@ -8,11 +8,9 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import stream from 'stream';
 import util from 'util';
 
 import _ from 'lodash';
-import tar from 'tar-stream';
 
 import {
   ContainerComposeExecOptions, ReadableProcess, ContainerComposeOptions,
@@ -143,228 +141,16 @@ export class MobyClient implements ContainerEngineClient {
     cleanups.push(() => this.runClient(['rm', container], console));
 
     try {
-      if (this.vm.backend === 'wsl') {
-        // On Windows, non-Administrators by default do not have the privileges
-        // to create symlinks.  However, `docker cp --follow-link` doesn't
-        // dereference symlinks it encounters when recursively copying a file.
-        // We work around this by copying it into a tarball in the VM and then
-        // extracting it from there.
-        const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rd-moby-cp-'));
-
-        cleanups.push(() => fs.promises.rm(workDir, {
-          recursive: true, force: true, maxRetries: 3,
-        }));
-        const archive = path.join(workDir, 'archive.tar');
-        const wslArchive = (await this.vm.execCommand({ capture: true }, '/bin/wslpath', '-u', archive)).trim();
-
-        await this.vm.execCommand(
-          '/bin/sh', '-c',
-          `/usr/bin/docker cp '${ container }:${ sourcePath }' - > '${ wslArchive }'`);
-        if (sourcePath.endsWith('/')) {
-          await this.extractArchive(archive, destinationPath, sourcePath);
-        } else {
-          // If we only archived a single file, there is no prefix in the archive.
-          await this.extractArchive(archive, destinationPath);
-        }
-      } else {
-        if (sourcePath.endsWith('/')) {
-          // If we're copying a directory, add "." so we don't create an extra
-          // directory.
-          sourcePath += '.';
-        }
-        await this.runClient(
-          ['cp', '--follow-link', `${ container }:${ sourcePath }`, destinationPath],
-          console);
+      if (sourcePath.endsWith('/')) {
+        // If we're copying a directory, add "." so we don't create an extra
+        // directory.
+        sourcePath += '.';
       }
+      await this.runClient(
+        ['cp', '--follow-link', `${ container }:${ sourcePath }`, destinationPath],
+        console);
     } finally {
       await this.runCleanups(cleanups);
-    }
-  }
-
-  /**
-   * Extract the given archive into the given directory, dereferencing symbolic
-   * links (because they are not supported on Windows).
-   * @param archive The archive to extract, as a host path.
-   * @param destination The destination directory, as a host path.
-   * @param stripPrefix A prefix to strip from the file path.
-   */
-  protected async extractArchive(archive: string, destination: string, stripPrefix = ''): Promise<void> {
-    const stripPrefixWithoutSlash = stripPrefix.replace(/^\/+/, '');
-    // Because tar is a streaming format, we need to go over it twice: first, to
-    // extract the non-linked files, and to collect all links; then again, to
-    // extract any files that were pointed to by links.
-    const links: Record<string, string> = {};
-
-    // Convert a given path to an absolute path, ensuring that it resides
-    // within the destination.  If the name does not start with the prefix to be
-    // stripped, returns `undefined` and this entry should not be processed.
-    const absPath = (rawPath: string): string | undefined => {
-      let mungedPath = rawPath;
-
-      if (stripPrefix) {
-        if (mungedPath.startsWith(stripPrefixWithoutSlash)) {
-          mungedPath = mungedPath.substring(stripPrefixWithoutSlash.length);
-        } else {
-          // A prefix is given, but we found a file that doesn't match; we
-          // should skip this file.
-          return;
-        }
-      }
-      const normalized = path.normalize(path.join(destination, mungedPath));
-
-      if (/[/\\]\.\.[/\\]/.test(path.relative(destination, normalized))) {
-        throw new Error(`Error extracting archive: ${ normalized } is not in ${ destination }`);
-      }
-
-      return normalized;
-    };
-
-    for await (const entry of fs.createReadStream(archive).pipe(tar.extract())) {
-      switch (entry.header.type) {
-      case 'link': case 'symlink': {
-        const linkName = entry.header.name;
-        const realName = entry.header.linkname;
-
-        if (!realName) {
-          throw new Error(`Error extracting archive: ${ linkName } has no destination`);
-        }
-        if (realName.startsWith('/')) {
-          links[linkName] = realName;
-        } else {
-          links[linkName] = path.posix.join(path.posix.dirname(entry.header.name), realName);
-        }
-        await stream.promises.finished(entry.resume() as any);
-        break;
-      }
-      case 'directory': {
-        const dirName = absPath(entry.header.name);
-
-        if (!dirName) {
-          console.warn(`Skipping unexpected directory ${ entry.header.name }`);
-          continue;
-        }
-        await fs.promises.mkdir(dirName, { recursive: true });
-        await stream.promises.finished(entry.resume() as any);
-        console.debug(`Created directory ${ dirName }`);
-
-        break;
-      }
-      case 'file': case 'contiguous-file': {
-        const fileName = absPath(entry.header.name);
-
-        if (!fileName) {
-          console.warn(`Skipping unexpected file ${ entry.header.name }`);
-          continue;
-        }
-        await fs.promises.mkdir(path.dirname(fileName), { recursive: true });
-        await stream.promises.finished(entry.pipe(fs.createWriteStream(fileName)));
-        console.debug(`Wrote ${ fileName }`);
-
-        break;
-      }
-      default:
-        console.info(`Ignoring unsupported file type ${ entry.header.name } (${ entry.header.type })`);
-      }
-    }
-
-    /**
-     * Mapping from link destination to the link name.
-     * @note There can be multiple links pointing to the same file.
-     */
-    const reverseLinks: Record<string, string[]> = {};
-
-    for (const linkName in links) {
-      while (links[links[linkName]] && links[linkName] !== linkName) {
-        // The link points to another link; flatten it.
-        links[linkName] = links[links[linkName]];
-      }
-
-      reverseLinks[links[linkName]] ||= [];
-      reverseLinks[links[linkName]].push(linkName);
-    }
-
-    if (Object.keys(reverseLinks).length === 0) {
-      return;
-    }
-
-    for await (const entry of fs.createReadStream(archive).pipe(tar.extract())) {
-      const linkNames = reverseLinks[entry.header.name] ?? [];
-
-      if (linkNames.length === 0) {
-        // This entry isn't a link target
-        await stream.promises.finished(entry.resume() as any);
-        continue;
-      }
-      switch (entry.header.type) {
-      case 'directory':
-        await Promise.all(linkNames.map(async(linkName) => {
-          const dirName = absPath(linkName);
-
-          if (!dirName) {
-            console.warn(`Skipping unexpected directory ${ entry.header.name } -> ${ linkName }`);
-
-            return;
-          }
-          await fs.promises.mkdir(dirName, { recursive: true });
-          delete links[linkName];
-          console.debug(`Created directory ${ dirName }`);
-        }));
-        break;
-      case 'file': case 'contiguous-file': {
-        const fileNames = linkNames.map((linkName) => {
-          const fileName = absPath(linkName);
-
-          if (!fileName) {
-            console.warn(`Skipping unexpected file ${ entry.header.name } -> ${ linkName }`);
-          }
-
-          return fileName;
-        }).filter(defined);
-
-        await Promise.all(fileNames.map((fileName) => {
-          return fs.promises.mkdir(path.dirname(fileName), { recursive: true });
-        }));
-
-        const writers = fileNames.map(f => fs.createWriteStream(f));
-
-        entry.on('data', async(chunk) => {
-          entry.pause();
-          try {
-            await Promise.all(writers.map(async(writer) => {
-              await new Promise<void>((resolve, reject) => {
-                writer.write(chunk, 'utf-8', (error) => {
-                  if (error) {
-                    reject(error);
-                  } else {
-                    resolve();
-                  }
-                });
-              });
-            }));
-            entry.resume();
-          } catch (ex: any) {
-            entry.destroy(ex);
-          }
-        });
-        entry.on('end', () => {
-          writers.map(writer => writer.end());
-        });
-
-        for (const linkName of linkNames) {
-          delete links[linkName];
-        }
-
-        break;
-      }
-      default:
-        console.info(`Ignoring unsupported file type ${ entry.header.name } (${ entry.header.type })`);
-      }
-      await stream.promises.finished(entry.resume() as any);
-    }
-
-    // Handle symlinks that were not found
-    for (const [linkName, linkTarget] of Object.entries(links)) {
-      console.warn(`Skipping missing link ${ linkName } -> ${ linkTarget }`);
     }
   }
 

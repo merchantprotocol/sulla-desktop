@@ -32,28 +32,6 @@ class Builder {
     };
 
     await Promise.all(dirs.map(dir => fs.rm(dir, options)));
-
-    if (/^win/i.test(os.platform())) {
-      // On Windows, virus scanners (e.g. the default Windows Defender) like to
-      // hold files open upon deletion(!?) and delay the deletion for a second
-      // or two.  Wait for those directories to actually be gone before
-      // continuing.
-      const waitForDelete = async(dir: string) => {
-        while (true) {
-          try {
-            await fs.stat(dir);
-            await buildUtils.sleep(500);
-          } catch (error: any) {
-            if (error?.code === 'ENOENT') {
-              return;
-            }
-            throw error;
-          }
-        }
-      };
-
-      await Promise.all(dirs.map(waitForDelete));
-    }
   }
 
   async buildRenderer() {

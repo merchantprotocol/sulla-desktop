@@ -12,7 +12,7 @@ import Electron, {
   BrowserWindow, app, shell, ipcMain, nativeTheme, screen, WebContentsView,
 } from 'electron';
 
-import * as K8s from '@pkg/backend/k8s';
+import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
@@ -836,28 +836,11 @@ export function openDialog(id: string, opts?: Electron.BrowserWindowConstructorO
     }
   });
 
-  window.webContents.on('preferred-size-changed', async(_event, { width, height }) => {
+  window.webContents.on('preferred-size-changed', (_event, { width, height }) => {
     switch (process.platform) {
     case 'linux':
       resizeWindow(window, width, height);
       break;
-    case 'win32': {
-      // On Windows, if the primary display DPI is not the same as the current
-      // display DPI, or if the DPI has been change since Rancher Desktop
-      // started, we end up getting successively larger heights.  To work around
-      // this, check for the actual height of the body element and jump to the
-      // desired height directly, but only if the current content height is
-      // smaller.  Note that all the units here are already affected by DPI
-      // scaling, so we don't need to do that manually.
-      const scripts = [{ code: `document.body.offsetHeight` }];
-      const bodyHeight = await window.webContents.executeJavaScriptInIsolatedWorld(0, scripts);
-      const [, currentHeight] = window.getContentSize();
-
-      if (currentHeight < bodyHeight) {
-        window.setContentSize(width, bodyHeight);
-      }
-      break;
-    }
     default:
       window.setContentSize(width, height);
     }
@@ -932,7 +915,7 @@ export async function openDenyRootDialog() {
   }));
 }
 
-export type reqMessageId = 'ok' | 'linux-nested' | 'win32-release' | 'win32-kernel' | 'macOS-release';
+export type reqMessageId = 'ok' | 'linux-nested' | 'macOS-release';
 
 /**
  * Open a dialog to show reason Desktop will not start
@@ -954,7 +937,7 @@ export async function openUnmetPrerequisitesDialog(reasonId: reqMessageId, ...ar
 /**
  * Open the error message window as a modal window.
  */
-export async function openKubernetesErrorMessageWindow(titlePart: string, mainMessage: string, failureDetails: K8s.FailureDetails) {
+export async function openKubernetesErrorMessageWindow(titlePart: string, mainMessage: string, failureDetails: FailureDetails) {
   const window = openDialog('KubernetesError', {
     title:  `Sulla Desktop - Error`,
     width:  800,

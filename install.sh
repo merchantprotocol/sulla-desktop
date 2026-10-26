@@ -19,7 +19,7 @@
 # Or if you already cloned the repo:
 #   bash install.sh
 #
-# Supports macOS (arm64/x86_64), Linux, and Windows (Git Bash / MSYS2).
+# Supports macOS (arm64/x86_64) and Linux.
 # ============================================================================
 
 set -euo pipefail
@@ -283,86 +283,6 @@ DESKTOP
     echo ""
 }
 
-# ─── Windows installer (Git Bash / MSYS2) ───────────────────
-
-install_windows() {
-    log "Detected Windows"
-    log "Fetching latest release..."
-
-    local release_json
-    release_json=$(get_latest_release)
-    local version
-    version=$(get_release_tag "$release_json")
-    log "Latest version: $version"
-
-    # Prefer MSI installer
-    local msi_url
-    msi_url=$(get_asset_url "$release_json" "\\.msi")
-
-    if [ -n "$msi_url" ]; then
-        install_windows_msi "$msi_url" "$version"
-    else
-        local zip_url
-        zip_url=$(get_asset_url "$release_json" "win.*\\.zip")
-        if [ -n "$zip_url" ]; then
-            install_windows_zip "$zip_url" "$version"
-        else
-            error "No Windows artifact found in release $version"
-            exit 1
-        fi
-    fi
-}
-
-install_windows_msi() {
-    local url="$1"
-    local version="$2"
-    local tmp_msi="/tmp/SullaDesktop-${version}.msi"
-
-    log "Downloading MSI installer..."
-    curl -fSL -o "$tmp_msi" "$url" || {
-        error "Download failed."
-        exit 1
-    }
-
-    log "Running installer (you may see a UAC prompt)..."
-    # msiexec runs the MSI; /passive shows progress but no interaction
-    cmd.exe /c "msiexec /i \"$(cygpath -w "$tmp_msi")\" /passive" || {
-        warn "Silent install failed. Launching interactive installer..."
-        cmd.exe /c "msiexec /i \"$(cygpath -w "$tmp_msi")\""
-    }
-    rm -f "$tmp_msi"
-
-    echo ""
-    log "Installation complete!"
-    log "Launch Sulla Desktop from the Start menu."
-    echo ""
-}
-
-install_windows_zip() {
-    local url="$1"
-    local version="$2"
-    local tmp_zip="/tmp/SullaDesktop-${version}-win.zip"
-
-    log "Downloading ZIP..."
-    curl -fSL -o "$tmp_zip" "$url" || {
-        error "Download failed."
-        exit 1
-    }
-
-    local install_dir
-    install_dir="$(cygpath "$LOCALAPPDATA")/Programs/Sulla Desktop"
-
-    log "Extracting to ${install_dir}..."
-    mkdir -p "$install_dir"
-    unzip -qo "$tmp_zip" -d "$install_dir"
-    rm -f "$tmp_zip"
-
-    echo ""
-    log "Installation complete!"
-    log "Run: '${install_dir}/Sulla Desktop.exe'"
-    echo ""
-}
-
 # ─── Uninstall ───────────────────────────────────────────────
 
 uninstall() {
@@ -381,10 +301,6 @@ uninstall() {
             sudo rm -f /usr/local/bin/sulla-desktop
             sudo rm -f /usr/share/applications/sulla-desktop.desktop
             log "Uninstall complete."
-            ;;
-        MINGW*|MSYS*|CYGWIN*)
-            log "To uninstall on Windows, use Add/Remove Programs or run:"
-            log '  msiexec /x "Sulla Desktop"'
             ;;
         *)
             error "Unknown OS: $os"
@@ -428,12 +344,9 @@ case "$OS" in
     Linux)
         install_linux
         ;;
-    MINGW*|MSYS*|CYGWIN*|Windows_NT)
-        install_windows
-        ;;
     *)
         error "Unsupported OS: $OS"
-        error "Supported: macOS, Linux, Windows (Git Bash / MSYS2)"
+        error "Supported: macOS, Linux"
         exit 1
         ;;
 esac

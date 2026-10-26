@@ -13,7 +13,6 @@ import semver from 'semver';
 import Logging from '@pkg/utils/logging';
 import { getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
-import getWSLVersion from '@pkg/utils/wslVersion';
 
 const console = Logging.update;
 const gCachePath = path.join(paths.cache, 'updater-longhorn.json');
@@ -89,7 +88,6 @@ export interface UpgradeResponderRequestPayload {
   extraInfo: {
     platform:        string;
     platformVersion: string;
-    wslVersion?:     string,
   },
 }
 
@@ -216,8 +214,6 @@ export async function setHasQueuedUpdate(isQueued: boolean): Promise<void> {
  */
 function getPlatformVersion(): string {
   switch (process.platform) {
-  case 'win32':
-    return os.release();
   case 'darwin': {
     return getMacOsVersion().toString();
   }
@@ -234,28 +230,6 @@ function getPlatformVersion(): string {
 }
 
 /**
- * Get the installed WSL version as a string.  If the inbox version of WSL is
- * installed (rather than the store version), we just hard code "1.0.0" instead.
- * @note This function should never throw;
- */
-export async function getWslVersionString(): Promise<string | undefined> {
-  try {
-    const { installed, inbox, version } = await getWSLVersion();
-
-    if (!installed) {
-      return;
-    }
-    if (inbox) {
-      return '1.0.0';
-    }
-
-    return `${ version.major }.${ version.minor }.${ version.revision }.${ version.build }`;
-  } catch (ex) {
-    console.error('Failed to get WSL version:', ex);
-  }
-}
-
-/**
  * Fetch info on available versions of Rancher Desktop, as well as other
  * things, from the Upgrade Responder server.
  */
@@ -267,14 +241,6 @@ export async function queryUpgradeResponder(url: string, currentVersion: semver.
       platformVersion: getPlatformVersion(),
     },
   };
-
-  if (process.platform === 'win32') {
-    const wslVersion = await getWslVersionString();
-
-    if (wslVersion) {
-      requestPayload.extraInfo.wslVersion = wslVersion;
-    }
-  }
 
   // If we are using anything on `github.io` as the update server, we're
   // trying to run a simplified test.  In that case, break the protocol and do
@@ -400,9 +366,8 @@ export default class LonghornProvider extends Provider<LonghornUpdateInfo> {
       }
       case 'linux':
         return (asset: GitHubReleaseAsset) => asset.name.endsWith('AppImage');
-      case 'win32': {
-        return (asset: GitHubReleaseAsset) => asset.name.endsWith('.msi');
-      }
+      default:
+        return () => false;
       }
     })();
     const wantedAsset = releaseInfo.assets.find(assetFilter);

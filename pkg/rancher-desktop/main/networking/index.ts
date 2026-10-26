@@ -9,11 +9,9 @@ import Electron from 'electron';
 import getLinuxCertificates from './linux-ca';
 import getMacCertificates from './mac-ca';
 import ElectronProxyAgent from './proxy';
-import getWinCertificates from './win-ca';
 
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
-import { windowMapping } from '@pkg/window';
 
 const console = Logging.networking;
 
@@ -40,16 +38,8 @@ export default async function setupNetworking() {
   http.globalAgent = proxyAgent;
   https.globalAgent = proxyAgent;
 
-  // Set up certificate handling for system certificates on Windows and macOS
+  // Set up certificate handling for system certificates on macOS
   Electron.app.on('certificate-error', async(event, webContents, url, error, certificate, callback) => {
-    const tlsPort = 9443;
-    const dashboardUrls = [
-      `https://127.0.0.1:${ tlsPort }`,
-      `wss://127.0.0.1:${ tlsPort }`,
-      'http://127.0.0.1:6120',
-      'ws://127.0.0.1:6120',
-    ];
-
     const pluginDevUrls = [
       `https://localhost:8888`,
       `wss://localhost:8888`,
@@ -60,14 +50,6 @@ export default async function setupNetworking() {
       process.env.RD_ENV_PLUGINS_DEV &&
       pluginDevUrls.some(x => url.startsWith(x))
     ) {
-      event.preventDefault();
-
-      callback(true);
-
-      return;
-    }
-
-    if (dashboardUrls.some(x => url.startsWith(x)) && 'dashboard' in windowMapping) {
       event.preventDefault();
 
       callback(true);
@@ -121,9 +103,7 @@ export default async function setupNetworking() {
 export async function * getSystemCertificates(): AsyncIterable<string> {
   const platform = os.platform();
 
-  if (platform.startsWith('win')) {
-    yield * getWinCertificates();
-  } else if (platform === 'darwin') {
+  if (platform === 'darwin') {
     yield * getMacCertificates();
   } else if (platform === 'linux') {
     yield * getLinuxCertificates();

@@ -52,10 +52,6 @@ export interface Paths {
   deploymentProfileUser:      string;
   /** Directory that will hold extension data. */
   readonly extensionRoot:     string;
-  /** Directory holding the WSL distribution (Windows-specific). */
-  wslDistro:                  string;
-  /** Directory holding the WSL data distribution (Windows-specific). */
-  wslDistroData:              string;
   /** Directory that holds snapshots. */
   snapshots:                  string;
   /** Directory that holds user-managed containerd-shims. */
@@ -83,55 +79,6 @@ export class UnixPaths implements Paths {
 
   constructor(pathsData: Record<string, unknown>) {
     Object.assign(this, pathsData);
-  }
-
-  get wslDistro(): string {
-    throw new Error('wslDistro not available for Unix');
-  }
-
-  get wslDistroData(): string {
-    throw new Error('wslDistroData not available for Unix');
-  }
-}
-
-export class WindowsPaths implements Paths {
-  appHome = '';
-  altAppHome = '';
-  config = '';
-  logs = '';
-  cache = '';
-  resources = '';
-  sullaHome = '';
-  sullaConfig = '';
-  sullaDesktopCodebase = '';
-  extensionRoot = '';
-  wslDistro = '';
-  wslDistroData = '';
-  snapshots = '';
-  containerdShims = '';
-
-  constructor(pathsData: Record<string, unknown>) {
-    Object.assign(this, pathsData);
-  }
-
-  get sullaRuntime(): string {
-    throw new Error('sulla-runtime not available for Windows');
-  }
-
-  get integration(): string {
-    throw new Error('Internal error: integration path not available for Windows');
-  }
-
-  get deploymentProfileSystem(): string {
-    throw new Error('Internal error: Windows profiles will be read from Registry');
-  }
-
-  get altDeploymentProfileSystem(): string {
-    throw new Error('Internal error: Windows profiles will be read from Registry');
-  }
-
-  get deploymentProfileUser(): string {
-    throw new Error('Internal error: Windows profiles will be read from Registry');
   }
 }
 
@@ -190,28 +137,6 @@ function getDefaultPaths(): Partial<Paths> {
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
   }
-  case 'win32': {
-    // Same layout the removed rdctl `paths` command reported on Windows.
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    const appHome = path.join(localAppData, 'rancher-desktop');
-    const resources = process.resourcesPath
-      ? path.join(process.resourcesPath, 'resources')
-      : path.join(process.cwd(), 'resources');
-
-    return {
-      appHome,
-      altAppHome:      appHome,
-      config:          appHome,
-      logs:            process.env.RD_LOGS_DIR || path.join(appHome, 'logs'),
-      cache:           path.join(appHome, 'cache'),
-      resources,
-      wslDistro:       path.join(appHome, 'distro'),
-      wslDistroData:   path.join(appHome, 'distro-data'),
-      extensionRoot:   path.join(appHome, 'extensions'),
-      snapshots:       path.join(appHome, 'snapshots'),
-      containerdShims: path.join(appHome, 'containerd-shims'),
-    };
-  }
   default:
     return {};
   }
@@ -232,7 +157,7 @@ function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
   if (!pathsData.sullaDesktopCodebase) {
     pathsData.sullaDesktopCodebase = path.join(home, '.sulla-desktop');
   }
-  if (!pathsData.sullaRuntime && pathsData.resources && process.platform !== 'win32') {
+  if (!pathsData.sullaRuntime && pathsData.resources) {
     pathsData.sullaRuntime = process.env.SULLA_RUNTIME_BIN ||
       path.join(pathsData.resources, process.platform === 'darwin' ? 'darwin' : 'linux', 'sulla-runtime', 'sulla-runtime');
   }
@@ -254,8 +179,6 @@ function getPaths(): Paths {
     return new UnixPaths(pathsData);
   case 'linux':
     return new UnixPaths(pathsData);
-  case 'win32':
-    return new WindowsPaths(pathsData);
   default:
     throw new Error(`Platform "${ process.platform }" is not supported.`);
   }

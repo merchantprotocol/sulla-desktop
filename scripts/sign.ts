@@ -3,7 +3,7 @@
  *
  * Usage: yarn sign -- blahblah.zip
  *
- * Currently, only Windows is supported; mac support is planned.
+ * Only macOS builds are supported.
  */
 
 import crypto from 'crypto';
@@ -13,7 +13,6 @@ import path from 'path';
 import extract from 'extract-zip';
 
 import * as macos from './lib/sign-macos';
-import * as windows from './lib/sign-win32';
 
 async function signArchive(archive: string): Promise<void> {
   const distDir = path.join(process.cwd(), 'dist');
@@ -31,10 +30,6 @@ async function signArchive(archive: string): Promise<void> {
 
     // Detect the archive type
     for (const file of await fs.promises.readdir(archiveDir)) {
-      if (file.endsWith('.exe')) {
-        artifacts = await windows.sign(workDir);
-        break;
-      }
       if (file.endsWith('.app')) {
         artifacts = await macos.sign(workDir);
         break;

@@ -43,7 +43,6 @@ detect_os() {
   case "$raw" in
     Darwin*)  result="macos"  ;;
     Linux*)   result="linux"  ;;
-    MINGW*|MSYS*|CYGWIN*) result="windows" ;;
     *)
       log PLATFORM "detect_os: FATAL unsupported OS '${raw}'"
       assert_fail "Unsupported OS: ${raw}"
@@ -95,9 +94,6 @@ bootstrap_path() {
     /usr/local/go/bin
     # Go — user GOPATH/bin
     "$HOME/go/bin"
-    # Windows (Git Bash / MSYS2)
-    /c/Go/bin
-    "/c/Program Files/Go/bin"
     # Cargo / Rust (fnm, other tools)
     "$HOME/.cargo/bin"
     # Common Linux paths

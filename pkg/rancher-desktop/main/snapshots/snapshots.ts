@@ -4,7 +4,6 @@ import path from 'path';
 
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { Snapshot } from '@pkg/main/snapshots/types';
-import { spawnFile } from '@pkg/utils/childProcess';
 import paths from '@pkg/utils/paths';
 
 const COMPLETE_FILE = 'complete.txt';
@@ -89,33 +88,9 @@ class SnapshotsImpl {
     // Snapshot operations now run in the main process and are serialized by callers.
   }
 
-  private async copyState(directory: string, restore: boolean): Promise<void> {
-    if (process.platform === 'win32') {
-      await this.copyWindowsState(directory, restore);
-      return;
-    }
-
-    // Lima was the only non-Windows VM whose state snapshots knew how to copy;
-    // the Sulla runtime has no disk layout to snapshot yet.
-    throw new SnapshotsUnsupportedError();
-  }
-
-  private async copyWindowsState(directory: string, restore: boolean): Promise<void> {
-    const distros = [
-      { name: 'rancher-desktop', location: paths.wslDistro },
-      { name: 'rancher-desktop-data', location: paths.wslDistroData },
-    ];
-    if (restore) {
-      for (const distro of distros) {
-        await spawnFile('wsl.exe', ['--unregister', distro.name]).catch(() => undefined);
-        await fs.promises.mkdir(distro.location, { recursive: true });
-        await spawnFile('wsl.exe', ['--import', distro.name, distro.location, path.join(directory, `${ distro.name }.tar`)]);
-      }
-      await fs.promises.copyFile(path.join(directory, 'settings.json'), path.join(paths.config, 'settings.json'));
-    } else {
-      await Promise.all(distros.map(distro => spawnFile('wsl.exe', ['--export', distro.name, path.join(directory, `${ distro.name }.tar`)])));
-      await fs.promises.copyFile(path.join(paths.config, 'settings.json'), path.join(directory, 'settings.json'));
-    }
+  private copyState(_directory: string, _restore: boolean): Promise<void> {
+    // The Sulla runtime has no disk layout to snapshot yet.
+    return Promise.reject(new SnapshotsUnsupportedError());
   }
 }
 

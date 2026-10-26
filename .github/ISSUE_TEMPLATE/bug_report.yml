@@ -40,18 +40,10 @@ body:
     placeholder: "e.g. 1.1.1"
   validations:
     required: true
-- type: input
-  attributes:
-    label: Rancher Desktop K8s Version
-    description: "What version of Kubernetes are you using?"
-    placeholder: "e.g. 1.99.9"
-  validations:
-    required: true
 - type: dropdown
   attributes:
     label: "Which container engine are you using?"
     options:
-      - containerd (nerdctl)
       - moby (docker cli)
   validations:
     required: true
@@ -60,7 +52,6 @@ body:
     label: "What operating system are you using?"
     options:
       - macOS
-      - Windows
       - Ubuntu
       - Other Linux
       - Other (specify below)
@@ -70,7 +61,7 @@ body:
   attributes:
     label: Operating System / Build Version
     description: "What operating system and build version are you using?"
-    placeholder: "e.g. Windows 10 Home 1909, macOS Monterey 12.0.1, Ubuntu 20.04, etc..."
+    placeholder: "e.g. macOS Sequoia 15.1"
   validations:
     required: true
 - type: dropdown
@@ -91,12 +82,5 @@ body:
       - rpm
       - AppImage
       - Flatpak
-  validations:
-    required: false
-- type: textarea
-  attributes:
-    label: Windows User Only
-    description: "Are you using VPN, Proxy, Special Firewall rules, Security Software or custom Activity directory features? if Yes, please describe."
-    placeholder: "e.g. VPN PulseSecure, Kaspersky Total Security 21.2.x, custom proxy configs, activity directory features, or N/A"
   validations:
     required: false

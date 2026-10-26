@@ -19,8 +19,6 @@ interface PreferencesState {
   initialPreferences: Settings;
   preferences:        Settings;
   lockedPreferences:  LockedSettingsType;
-  wslIntegrations:    Record<string, string | boolean>;
-  isPlatformWindows:  boolean;
   hasError:           boolean;
   severities:         Severities;
   preferencesError:   string;
@@ -42,36 +40,13 @@ const settingsUri = (port: number) => uri(port, 'settings');
 const lockedUri = (port: number) => uri(port, 'settings/locked');
 
 /**
- * Normalize WSL integrations configuration.
- * @param integrations The source collection, containing all WSL integrations.
- * @param mode How normalization should take place.
- *    'diff': Normalize for comparing to see if changes need to be applied.
- *    'submit': Normalize for submitting preferences.
- * @returns Returns a new object with normalized WSL configuration.
- */
-const normalizeWslIntegrations = (integrations: Record<string, boolean>, mode: 'diff' | 'submit') => {
-  const normalizeFn = {
-    diff:   (entries: [string, boolean][]) => entries.filter(([, v]) => v),
-    submit: (entries: [string, boolean][]) => entries.map(([k, v]) => [k, v || null] as const),
-  }[mode];
-
-  return Object.fromEntries(normalizeFn(Object.entries(integrations)));
-};
-
-/**
  * Normalizes preferences for consistent usage between API and UI
  * @param preferences The preferences object to normalize.
  * @param mode How the preferences should be normalized.
  * @returns Returns a new object, containing normalized preferences data.
  */
-const normalizePreferences = (preferences: Settings, mode: 'diff' | 'submit') => {
-  return {
-    ...preferences,
-    WSL: {
-      ...preferences.WSL,
-      integrations: normalizeWslIntegrations(preferences.WSL.integrations, mode),
-    },
-  };
+const normalizePreferences = (preferences: Settings, _mode: 'diff' | 'submit') => {
+  return { ...preferences };
 };
 
 export const state: () => PreferencesState = () => (
@@ -79,8 +54,6 @@ export const state: () => PreferencesState = () => (
     initialPreferences: _.cloneDeep(defaultSettings),
     preferences:        _.cloneDeep(defaultSettings),
     lockedPreferences:  { },
-    wslIntegrations:    { },
-    isPlatformWindows:  false,
     hasError:           false,
     severities:         {
       reset: false, restart: false, error: false,
@@ -100,12 +73,6 @@ export const mutations = {
   },
   SET_LOCKED_PREFERENCES(state, preferences) {
     state.lockedPreferences = preferences;
-  },
-  SET_WSL_INTEGRATIONS(state, integrations) {
-    state.wslIntegrations = integrations;
-  },
-  SET_IS_PLATFORM_WINDOWS(state, isPlatformWindows) {
-    state.isPlatformWindows = isPlatformWindows;
   },
   SET_HAS_ERROR(state, hasError) {
     state.hasError = hasError;
@@ -196,7 +163,7 @@ export const actions = {
 
   /**
    * Update a given property for preferences. Propose the new preferences after
-   * each update to check if kubernetes requires a reset or restart.
+   * each update to check if the backend requires a reset or restart.
    * @param context The vuex context object
    * @param args Key, value pair that corresponds to a property and its value
    * in the preferences object
@@ -213,27 +180,6 @@ export const actions = {
       { ...rootState.credentials.credentials as Credentials },
       { root: true },
     );
-  },
-  setWslIntegrations({ commit, state }, integrations: Record<string, string | boolean>) {
-    /**
-     * Merge integrations if they exist during initialization.
-     *
-     * Issue #3232: First-time render of tabs causes the entire DOM tree to
-     * refresh, causing Preferences to initialize more than once.
-     */
-    const updatedIntegrations = _.merge({}, integrations, state.wslIntegrations);
-
-    commit('SET_WSL_INTEGRATIONS', updatedIntegrations);
-  },
-  updateWslIntegrations({ commit, state }, args: { distribution: string, value: boolean }) {
-    const { distribution, value } = args;
-
-    const integrations = _.set(_.cloneDeep(state.wslIntegrations), distribution, value);
-
-    commit('SET_WSL_INTEGRATIONS', integrations);
-  },
-  setPlatformWindows({ commit }, isPlatformWindows: boolean) {
-    commit('SET_IS_PLATFORM_WINDOWS', isPlatformWindows);
   },
   /**
    * Validates the provided preferences object. Commits SET_SEVERITIES and
@@ -303,12 +249,6 @@ export const getters = {
     ipcRenderer.send('preferences-set-dirty', isDirty);
 
     return isDirty;
-  },
-  getWslIntegrations(state) {
-    return state.wslIntegrations;
-  },
-  isPlatformWindows(state) {
-    return state.isPlatformWindows;
   },
   hasError(state) {
     return state.hasError;
