@@ -200,7 +200,17 @@
 
     <template v-else-if="tabMode === 'integrations'">
       <div class="flex-1 min-h-0 overflow-auto">
+        <AgentIntegrationDetail
+          v-if="integrationDetailId"
+          :key="integrationDetailId"
+          embedded
+          :integration-id="integrationDetailId"
+          @back="integrationDetailId = ''"
+          @back-to-vault="onSetMode('vault')"
+          @saved="integrationDetailId = ''"
+        />
         <AgentIntegrations
+          v-else
           embedded
           @switch-to-vault="onSetMode('vault')"
           @create-account="onIntegrationsCreateAccount"
@@ -211,8 +221,10 @@
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
         <VaultPage
+          :key="`${ editorIntegrationId }/${ editorAccountId ?? '' }`"
           :integration-id="editorIntegrationId || undefined"
           :account-id="editorAccountId"
+          :connect="editorConnect"
           :tab-id="props.tabId"
           :active="props.isVisible"
         />
@@ -363,6 +375,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 import AgentCalendar from './AgentCalendar.vue';
+import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
@@ -382,6 +395,7 @@ import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { isStudioSection, type StudioSection } from '@pkg/components/routines/studioSections';
 import { useBookmarks } from '@pkg/composables/useBookmarks';
@@ -502,6 +516,10 @@ async function onNewBlankRoutine() {
 const vaultScreen = ref<'list' | 'picker' | 'detail' | 'editor' | 'generator'>('list');
 const editorIntegrationId = ref('');
 const editorAccountId = ref<string | undefined>(undefined);
+/** Integration form layout for the vault's guided Connect screen (new accounts only). */
+const editorConnect = ref<Record<string, unknown> | undefined>(undefined);
+/** Integration whose create screen is open inside the Integrations tab. */
+const integrationDetailId = ref('');
 const generatorTargetField = ref<string | null>(null);
 const generatedPasswordForEditor = ref('');
 
@@ -583,20 +601,47 @@ function onUseGeneratedPassword(password: string) {
   }
 }
 
-/** Handle "Connect Now" from the standalone Integrations tab — switch to vault flow */
+/** A card in the Integrations tab opens that integration's create screen (notes, setup guide, sign-in). */
 function onIntegrationsCreateAccount(data: { integrationId: string }) {
-  onSetMode('vault');
-  showNewAccountEditor(data);
+  integrationDetailId.value = data.integrationId;
 }
 
 function onOpenSecureVault(event: Event) {
   if (!props.isVisible) return;
-  const detail = (event as CustomEvent<{ integrationId?: string; accountId?: string }>).detail;
+  const detail = (event as CustomEvent<{ integrationId?: string; accountId?: string; connect?: Record<string, unknown> }>).detail;
   if (!detail?.integrationId) return;
   editorIntegrationId.value = detail.integrationId;
   editorAccountId.value = detail.accountId;
+  editorConnect.value = detail.accountId ? undefined : detail.connect;
   onSetMode('vault');
   setVaultTitle(detail.accountId ? 'Edit Credential' : 'New Credential');
+}
+
+/** After the guided Connect screen saves, confirm the account is connected, then show its edit screen. */
+async function onVaultIntegrationSaved(event: Event) {
+  if (!props.isVisible) return;
+  const { integrationId, accountId } = (event as CustomEvent<{ integrationId: string; accountId: string }>).detail;
+  if (!integrationId || !accountId) return;
+  const integrationService = getIntegrationService();
+  let connected = false;
+  for (let attempt = 0; attempt < 10 && !connected; attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      connected = (await integrationService.getAccounts(integrationId)).some(a => a.account_id === accountId && a.connected);
+    } catch { /* vault briefly busy; retry */ }
+  }
+  if (!connected) {
+    // Show the create screen again; its status line tells the user the account didn't connect.
+    integrationDetailId.value = integrationId;
+    onSetMode('integrations');
+
+    return;
+  }
+  editorIntegrationId.value = integrationId;
+  editorAccountId.value = accountId;
+  editorConnect.value = undefined;
+  onSetMode('vault');
+  setVaultTitle('Edit Credential');
 }
 
 function onHistoryNavigate(entry: { id: string; type: string; url?: string }) {
@@ -1066,6 +1111,7 @@ onMounted(() => {
   window.addEventListener('sulla:mode-rail-select', onModeRailSelect);
   window.addEventListener('sulla:tab-navigate', onExternalNavigate);
   window.addEventListener('sulla:open-secure-vault', onOpenSecureVault);
+  window.addEventListener('sulla:vault-integration-saved', onVaultIntegrationSaved);
   ipcRenderer.on('browser-tab-view:user-input', onUserInput);
 
   // Read initial URL from the shared tab state
@@ -1088,6 +1134,7 @@ onUnmounted(() => {
   window.removeEventListener('sulla:mode-rail-select', onModeRailSelect);
   window.removeEventListener('sulla:tab-navigate', onExternalNavigate);
   window.removeEventListener('sulla:open-secure-vault', onOpenSecureVault);
+  window.removeEventListener('sulla:vault-integration-saved', onVaultIntegrationSaved);
   ipcRenderer.removeListener('browser-tab-view:user-input', onUserInput);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
