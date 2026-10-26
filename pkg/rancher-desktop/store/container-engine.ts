@@ -11,7 +11,7 @@ import { MutationTree, Dispatch, GetterTree } from 'vuex';
 import { ActionTree, MutationsType } from './ts-helpers';
 
 import { ContainerEngine } from '@pkg/config/settings';
-import type { RDXClient } from '@pkg/preload/extensions';
+import type { DockerClient } from '@pkg/utils/dockerClient';
 
 type ValidContainerEngine = Exclude<ContainerEngine, ContainerEngine.NONE>;
 type SubscriberType = 'containers' | 'volumes';
@@ -101,12 +101,12 @@ class Subscriber {
 }
 
 type SubscriberConstructor =
-  new (client: RDXClient, dispatch: Dispatch, namespace?: string) => Subscriber;
+  new (client: DockerClient, dispatch: Dispatch, namespace?: string) => Subscriber;
 
 class MobyContainerSubscriber extends Subscriber {
-  constructor(client: RDXClient, dispatch: Dispatch) {
+  constructor(client: DockerClient, dispatch: Dispatch) {
     super();
-    this.subscription = client.docker.rdSubscribeToEvents(
+    this.subscription = client.docker.subscribeToEvents(
       () => dispatch('fetchContainers'),
       {
         filters: {
@@ -118,9 +118,9 @@ class MobyContainerSubscriber extends Subscriber {
 }
 
 class MobyVolumeSubscriber extends Subscriber {
-  constructor(client: RDXClient, dispatch: Dispatch) {
+  constructor(client: DockerClient, dispatch: Dispatch) {
     super();
-    this.subscription = client.docker.rdSubscribeToEvents(
+    this.subscription = client.docker.subscribeToEvents(
       () => dispatch('fetchVolumes'),
       {
         filters: {
@@ -132,10 +132,10 @@ class MobyVolumeSubscriber extends Subscriber {
 }
 
 class NerdctlContainerSubscriber extends Subscriber {
-  constructor(client: RDXClient, dispatch: Dispatch, namespace?: string) {
+  constructor(client: DockerClient, dispatch: Dispatch, namespace?: string) {
     super();
     // Nerdctl does not support the filtering we need
-    this.subscription = client.docker.rdSubscribeToEvents(
+    this.subscription = client.docker.subscribeToEvents(
       (event) => {
         const topic: string = (event as any).Topic;
         if (topic.startsWith('/containers/')) {
@@ -151,12 +151,12 @@ class NerdctlContainerSubscriber extends Subscriber {
 
 class NerdctlVolumeSubscriber extends Subscriber {
   interval: ReturnType<typeof setInterval>;
-  constructor(client: RDXClient, dispatch: Dispatch, namespace?: string) {
+  constructor(client: DockerClient, dispatch: Dispatch, namespace?: string) {
     super();
     // Nerdctl does not support volume events; set up polling instead.
     this.interval = setInterval(() => dispatch('fetchVolumes'), 2_000);
     // But we still want a filter for namespaces
-    this.subscription = client.docker.rdSubscribeToEvents(
+    this.subscription = client.docker.subscribeToEvents(
       (event) => {
         const topic: string = (event as any).Topic;
         if (topic.startsWith('/namespaces/')) {
@@ -189,7 +189,7 @@ export interface ContainersState {
   backend:    ContainerEngine;
   /** The type of object to monitor. */
   type:       SubscriberType;
-  client:     RDXClient | null;
+  client:     DockerClient | null;
   namespaces: string[] | null;
   namespace:  string | undefined;
   subscriber: Subscriber | null;
@@ -381,7 +381,7 @@ export const actions = {
       const options = { namespace: getters.supportsNamespaces ? namespace : undefined };
 
       // Update volumes in-place to maintain any UI state.
-      for (const volume of await client?.docker.rdListVolumes(options) ?? []) {
+      for (const volume of await client?.docker.listVolumes(options) ?? []) {
         volumes[volume.Name] = Object.assign(volumes[volume.Name] ?? {}, volume);
         names.add(volume.Name);
       }

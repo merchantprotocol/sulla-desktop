@@ -142,20 +142,12 @@ export interface IpcMainEvents {
   'help/preferences/open-url': () => void;
 
   // #region Extensions
-  'extensions/open':            (id: string, path: string) => void;
-  'extensions/close':           () => void;
   'extensions/open-external':   (url: string) => void;
   'extensions/spawn/kill':      (execId: string) => void;
   /** Execute the given command, streaming results back via events. */
   'extensions/spawn/streaming': (
     options: import('@pkg/main/extensions/types').SpawnOptions
   ) => void;
-  /** Show a notification */
-  'extensions/ui/toast': (
-    level: 'success' | 'warning' | 'error',
-    message: string
-  ) => void;
-  'ok:extensions/getContentArea': (payload: { top: number, right: number, bottom: number, left: number }) => void;
   // #endregion
 
   // #region Snapshots
@@ -1077,9 +1069,6 @@ export interface IpcMainInvokeEvents {
   // #region extensions
   /** Execute the given command and return the results. */
   'extensions/spawn/blocking': (options: import('@pkg/main/extensions/types').SpawnOptions) => import('@pkg/main/extensions/types').SpawnResult;
-  'extensions/ui/show-open':   (options: import('electron').OpenDialogOptions) => import('electron').OpenDialogReturnValue;
-  /* Fetch data from the backend, or arbitrary host ignoring CORS. */
-  'extensions/vm/http-fetch':  (config: import('@docker/extension-api-client-types').v1.RequestConfig) => import('@docker/extension-api-client-types').v1.ServiceError;
   // #endregion
 
   // #region Versions
@@ -1335,17 +1324,12 @@ export interface IpcRendererEvents {
   // #region extensions
   // The list of installed extensions may have changed.
   'extensions/changed':        () => void;
-  'extensions/getContentArea': () => void;
-  'extensions/open':           (id: string, path: string) => void;
-  'err:extensions/open':       () => void;
-  'extensions/close':          () => void;
   'extensions/spawn/close':    (id: string, code: number) => void;
   'extensions/spawn/error':    (id: string, error: Error | NodeJS.Signals) => void;
   'extensions/spawn/output': (
     id: string,
     data: { stdout: string } | { stderr: string }
   ) => void;
-  'ok:extensions/uninstall': (id: string) => void;
   // #endregion
 
   // #region window

@@ -160,7 +160,7 @@ function getDefaultPaths(): Partial<Paths> {
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
       deploymentProfileUser:      path.join(home, 'Library', 'Preferences'),
-      extensionRoot:              path.join(appHome, 'extensions'),
+      extensionRoot:              path.join(home, 'Library', 'Application Support', 'sulla-desktop', 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
@@ -185,7 +185,7 @@ function getDefaultPaths(): Partial<Paths> {
       deploymentProfileSystem:    '/etc/rancher-desktop',
       altDeploymentProfileSystem: '/usr/etc/rancher-desktop',
       deploymentProfileUser:      configHome,
-      extensionRoot:              path.join(appHome, 'extensions'),
+      extensionRoot:              path.join(dataHome, 'sulla-desktop', 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };

@@ -100,12 +100,12 @@ onMounted(async() => {
   const headerMenuItem = extensionService.getHeaderMenuItemByLink(`/Extension/${ metadata.name }/ui/${ path }`);
 
   extensionMetadata.value = metadata;
-  extensionIcon.value = `x-rd-extension://${ extensionHex }/icon.svg`;
+  extensionIcon.value = `x-sulla-extension://${ extensionHex }/icon.svg`;
   extensionDisplayMode.value = headerMenuItem?.displayMode || 'iframe';
-  extensionContentUrl.value = `x-rd-extension://${ extensionHex }/${ path }`;
+  extensionContentUrl.value = `x-sulla-extension://${ extensionHex }/${ path }`;
 
   try {
-    const response = await fetch(`x-rd-extension://${ extensionHex }/${ path }`);
+    const response = await fetch(`x-sulla-extension://${ extensionHex }/${ path }`);
     if (response.ok) {
       extensionContentHtml.value = await response.text();
     } else {

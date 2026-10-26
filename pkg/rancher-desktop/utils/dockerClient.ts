@@ -1,12 +1,10 @@
 /**
- * This is the preload script that is exposed to extension frontends.
- * It implements the "ddClient" API.
+ * window.ddClient: the Docker CLI client used by the main window's container,
+ * image and volume views.  Commands run in the main process through the
+ * `extensions/spawn/*` IPC channels.
  */
 
-import Electron from 'electron';
-
 import type { SpawnOptions } from '@pkg/main/extensions/types';
-import clone from '@pkg/utils/clone';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { v1 } from '@docker/extension-api-client-types';
@@ -43,7 +41,7 @@ interface DockerListImagesOptions {
 
 /**
  * DockerListVolumesOptions describes the arguments for
- * ddClient.docker.rdListVolumes()
+ * ddClient.docker.listVolumes()
  */
 interface DockerListVolumesOptions {
   filters?:   string;
@@ -101,29 +99,13 @@ interface execProcess {
   [stream]: v1.ExecStreamOptions;
 }
 
-interface RDXExecOptions extends v1.ExecOptions {
+interface DockerExecOptions extends v1.ExecOptions {
   namespace?: string;
 }
 
-interface RDXSpawnOptions extends v1.SpawnOptions {
+interface DockerSpawnOptions extends v1.SpawnOptions {
   namespace?: string;
 }
-
-/**
- * The identifier for the extension (the name of the image).
- */
-const extensionId = location.protocol === 'app:' ? '<app>' : decodeURIComponent(location.hostname.replace(/(..)/g, '%$1'));
-
-/**
- * Context passed from the main process via additionalArguments.
- */
-const extensionContext: { arch?: string, hostname?: string, extensionVersion?: string } = (() => {
-  try {
-    return JSON.parse(process.argv.slice(-1).pop() ?? '{}');
-  } catch {
-    return {};
-  }
-})();
 
 /**
  * The processes that are waiting to complete, keyed by the process ID.
@@ -164,7 +146,7 @@ function getTypeErrorMessage(name: string, expectedType: string, object: any) {
 /**
  * Given an options object passed to exec(), check if it's a v1.SpawnOptions.
  */
-function isSpawnOptions(options: RDXExecOptions | RDXSpawnOptions): options is RDXSpawnOptions {
+function isSpawnOptions(options: DockerExecOptions | DockerSpawnOptions): options is DockerSpawnOptions {
   return 'stream' in options;
 }
 
@@ -175,9 +157,9 @@ function isSpawnOptions(options: RDXExecOptions | RDXSpawnOptions): options is R
 function getExec(scope: SpawnOptions['scope']): v1.Exec {
   let nextId = 0;
 
-  function exec(cmd: string, args: string[], options?: RDXExecOptions): Promise<v1.ExecResult>;
-  function exec(cmd: string, args: string[], options: RDXSpawnOptions): v1.ExecProcess;
-  function exec(cmd: string, args: string[], options?: RDXExecOptions | RDXSpawnOptions): Promise<v1.ExecResult> | v1.ExecProcess {
+  function exec(cmd: string, args: string[], options?: DockerExecOptions): Promise<v1.ExecResult>;
+  function exec(cmd: string, args: string[], options: DockerSpawnOptions): v1.ExecProcess;
+  function exec(cmd: string, args: string[], options?: DockerExecOptions | DockerSpawnOptions): Promise<v1.ExecResult> | v1.ExecProcess {
     // Do some minimal parameter validation, since passing these to the backend
     // directly can end up with confusing messages otherwise.
     if (typeof cmd !== 'string') {
@@ -349,7 +331,7 @@ ipcRenderer.on('extensions/spawn/output', (event, id, data) => {
 });
 
 ipcRenderer.on('extensions/spawn/error', (_, id, error) => {
-  console.debug(`RDX: Extension ${ id } errored:`, error);
+  console.debug(`docker-cli: process ${ id } errored:`, error);
   try {
     getProcess(id, 'extensions/spawn/error')?.[stream].onError?.(error);
   } catch (ex) {
@@ -359,7 +341,7 @@ ipcRenderer.on('extensions/spawn/error', (_, id, error) => {
 });
 
 ipcRenderer.on('extensions/spawn/close', (_, id, returnValue) => {
-  console.debug(`RDX: Extension ${ id } closed:`, returnValue);
+  console.debug(`docker-cli: process ${ id } closed:`, returnValue);
   try {
     getProcess(id, 'extensions/spawn/close')?.[stream]?.onClose?.(typeof returnValue === 'number' ? returnValue : -1);
   } catch (ex) {
@@ -368,113 +350,7 @@ ipcRenderer.on('extensions/spawn/close', (_, id, returnValue) => {
   delete outstandingProcesses[id];
 });
 
-// During the nuxt removal, import/namespace started failing
-
-export class RDXClient implements v1.DockerDesktopClient {
-  constructor(info?: { arch: string, hostname: string }) {
-    if (info) {
-      Object.assign(this.host, info);
-    }
-  }
-
-  /**
-   * makeRequest is a helper for ddClient.extension.vm.service.<HTTP method>
-   * that wraps ddClient.extension.vm.service.request().
-   */
-  protected makeRequest(method: string, url: string, data?: any): Promise<unknown> {
-    const headers: Record<string, string> = {};
-
-    if (typeof data === 'object') {
-      // For objects, pass the value as JSON.
-      headers['Content-Type'] = 'application/json';
-      data = JSON.stringify(data);
-    }
-
-    return this.request({
-      method, url, data, headers,
-    });
-  }
-
-  protected async request(config: v1.RequestConfig): Promise<unknown> {
-    try {
-      const result = await ipcRenderer.invoke('extensions/vm/http-fetch', config);
-
-      if (!result) {
-        return;
-      }
-
-      // Parse as JSON if possible (API is unclear).
-      let { statusCode, message } = result;
-
-      try {
-        if (message) {
-          message = JSON.parse(message);
-        }
-      } catch {
-        // Body is not JSON, return it as-is.
-      }
-
-      if (statusCode >= 200 && statusCode < 300) {
-        return message;
-      }
-
-      return Promise.reject(result);
-    } catch (ex) {
-      console.debug(`${ config.method } ${ config.url } error:`, ex);
-      throw ex;
-    }
-  }
-
-  extension: v1.Extension & { id?: string, version?: string } = {
-    vm: {
-      cli:     { exec: getExec('container') },
-      service: {
-        request: (config: v1.RequestConfig) => this.request(config),
-        get:     (url: string) => this.makeRequest('GET', url),
-        post:    (url: string, data: any) => this.makeRequest('POST', url, data),
-        put:     (url: string, data: any) => this.makeRequest('PUT', url, data),
-        patch:   (url: string, data: any) => this.makeRequest('PATCH', url, data),
-        delete:  (url: string) => this.makeRequest('DELETE', url),
-        head:    (url: string) => this.makeRequest('HEAD', url),
-      },
-    },
-    host:    { cli: { exec: getExec('host') } },
-    image:   extensionContext.extensionVersion ? `${ extensionId }:${ extensionContext.extensionVersion }` : extensionId,
-    id:      extensionId,
-    version: extensionContext.extensionVersion ?? '',
-  };
-
-  desktopUI = {
-    dialog: {
-      showOpenDialog(options: any): Promise<v1.OpenDialogResult> {
-        // Use the clone() here to ensure we only pass plain data structures to
-        // the main process.
-        return ipcRenderer.invoke('extensions/ui/show-open', clone(options ?? {}));
-      },
-    },
-    navigate: {} as v1.NavigationIntents,
-    toast:    {
-      success(msg: string) {
-        ipcRenderer.send('extensions/ui/toast', 'success', `${ msg }`);
-      },
-      warning(msg: string) {
-        ipcRenderer.send('extensions/ui/toast', 'warning', `${ msg }`);
-      },
-      error(msg: string) {
-        ipcRenderer.send('extensions/ui/toast', 'error', `${ msg }`);
-      },
-    },
-  };
-
-  host: v1.Host = {
-    openExternal: (url: string) => {
-      ipcRenderer.send('extensions/open-external', url);
-    },
-    platform: process.platform,
-    arch:     extensionContext.arch ?? '<unknown>',
-    hostname: extensionContext.hostname ?? '<unknown>',
-  };
-
+export class DockerClient {
   docker = {
     cli:            { exec: getExec('docker-cli') },
     listNamespaces: async() => {
@@ -629,7 +505,7 @@ export class RDXClient implements v1.DockerDesktopClient {
         };
       });
     },
-    rdListVolumes: async(options: DockerListVolumesOptions = {}) => {
+    listVolumes: async(options: DockerListVolumesOptions = {}) => {
       const lsArgs = ['ls', '--format={{json .}}'];
 
       if (options.filters !== undefined) {
@@ -661,7 +537,7 @@ export class RDXClient implements v1.DockerDesktopClient {
         };
       });
     },
-    rdSubscribeToEvents: (callback: DockerEventCallback, options: DockerEventSubscriptionOptions = {}): DockerEventSubscription => {
+    subscribeToEvents: (callback: DockerEventCallback, options: DockerEventSubscriptionOptions = {}): DockerEventSubscription => {
       const eventArgs = ['events', '--format', '{{json .}}'];
 
       options.filters?.type?.forEach(type => {
@@ -716,29 +592,19 @@ export class RDXClient implements v1.DockerDesktopClient {
   };
 }
 
-export default function initExtensions(): void {
-  switch (document.location.protocol) {
-  case 'x-rd-extension:': {
-    Electron.contextBridge.exposeInMainWorld('ddClient', new RDXClient());
-    break;
-  }
-  case 'app:': {
-    import('os').then(({ arch, hostname }) => {
-      Object.defineProperty(window, 'ddClient', {
-        value:        new RDXClient({ arch: arch(), hostname: hostname() }),
-        configurable: true,
-        enumerable:   true,
-        writable:     true,
-      });
-    });
-    break;
-  }
-  default: {
-    console.debug(`Not adding extension API to ${ document.location.protocol }`);
+export default function initDockerClient(): void {
+  if (document.location.protocol !== 'app:') {
+    console.debug(`Not adding the Docker client to ${ document.location.protocol }`);
 
     return;
   }
-  }
+
+  Object.defineProperty(window, 'ddClient', {
+    value:        new DockerClient(),
+    configurable: true,
+    enumerable:   true,
+    writable:     true,
+  });
 
   window.addEventListener('unload', () => {
     function canClose(proc: execProcess): proc is execProcess & v1.ExecProcess {

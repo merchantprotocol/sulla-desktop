@@ -18,7 +18,6 @@
     <rd-nav
       class="nav"
       :items="routes"
-      :extensions="installedExtensions"
       @open-dashboard="openDashboard"
       @open-preferences="openPreferences"
     />
@@ -28,14 +27,9 @@
       class="body main-preferences"
     >
       <Docker v-if="activeMainTab" />
-      <!-- Non-main routes (sub-pages, dialogs, extensions) still use RouterView -->
+      <!-- Non-main routes (sub-pages, dialogs) still use RouterView -->
       <RouterView v-if="!activeMainTab" />
     </main>
-    <!-- The extension area is used for sizing the extension view. -->
-    <div
-      id="extension-spacer"
-      class="extension"
-    />
     <status-bar class="status-bar" />
     <!-- The ActionMenu is used by SortableTable for per-row actions. -->
     <ActionMenu data-testid="actionmenu" />
@@ -44,7 +38,7 @@
 
 <script>
 
-import { mapGetters, mapState } from 'vuex';
+import { mapState } from 'vuex';
 
 import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
@@ -53,7 +47,7 @@ import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import Docker from '@pkg/pages/Docker.vue';
-import initExtensions from '@pkg/preload/extensions';
+import initDockerClient from '@pkg/utils/dockerClient';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { mainRoutes } from '@pkg/window/constants';
 
@@ -100,7 +94,6 @@ export default {
       return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
     },
     ...mapState('credentials', ['credentials']),
-    ...mapGetters('extensions', ['installedExtensions']),
   },
 
   beforeMount() {
@@ -110,7 +103,7 @@ export default {
 
     this.fetch().catch(ex => console.error(ex));
 
-    initExtensions();
+    initDockerClient();
     ipcRenderer.on('window/blur', (event, blur) => {
       this.blur = blur;
     });
@@ -130,28 +123,8 @@ export default {
     ipcRenderer.on('route', (event, args) => {
       this.goToRoute(args);
     });
-    ipcRenderer.on('extensions/changed', () => {
-      this.$store.dispatch('extensions/fetch');
-    });
-    this.$store.dispatch('extensions/fetch');
-
     ipcRenderer.on('preferences/changed', () => {
       this.$store.dispatch('preferences/fetchPreferences');
-    });
-
-    ipcRenderer.on('extensions/getContentArea', () => {
-      /** @type {DOMRect} */
-      const titleRect = this.$refs.title.$el.getBoundingClientRect();
-      /** @type {DOMRect} */
-      const bodyRect = this.$refs.body.getBoundingClientRect();
-      const payload = {
-        top:    titleRect.top,
-        right:  titleRect.right,
-        bottom: bodyRect.bottom,
-        left:   titleRect.left,
-      };
-
-      ipcRenderer.send('ok:extensions/getContentArea', payload);
     });
   },
 
@@ -162,7 +135,6 @@ export default {
 
   beforeUnmount() {
     ipcRenderer.off('k8s-check-state');
-    ipcRenderer.off('extensions/getContentArea');
     ipcRenderer.removeAllListeners('backend-locked');
     ipcRenderer.removeAllListeners('backend-unlocked');
     ipcRenderer.removeAllListeners('window/blur');
@@ -269,11 +241,6 @@ export default {
 
   .main-preferences > div {
     padding-top: 15px;
-  }
-
-  .extension {
-    grid-area: title / title / body / body;
-    z-index: -1000;
   }
 
   .status-bar {

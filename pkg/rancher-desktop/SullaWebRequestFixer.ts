@@ -118,10 +118,10 @@ export class SullaWebRequestFixer extends EventEmitter {
     session.webRequest.onHeadersReceived((details, callback) => {
       this.emit('headersReceived', details);
 
-      // Skip header rewriting for app:// and x-rd-extension:// protocol responses —
+      // Skip header rewriting for app:// and x-sulla-extension:// protocol responses —
       // Electron.protocol.handle responses don't support header modification and
       // attempting it causes ERR_UNEXPECTED (breaks SVG/image loading).
-      if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {
+      if (details.url.startsWith('app://') || details.url.startsWith('x-sulla-extension://')) {
         callback({});
 
         return;
@@ -198,7 +198,7 @@ export class SullaWebRequestFixer extends EventEmitter {
       };
       this.emit('beforeSendHeaders', details);
 
-      if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {
+      if (details.url.startsWith('app://') || details.url.startsWith('x-sulla-extension://')) {
         callback({ requestHeaders: details.requestHeaders });
 
         return;

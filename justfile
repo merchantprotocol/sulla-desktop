@@ -25,7 +25,6 @@ clean:
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
-    rm -rf resources/rdx-proxy.tar
     rm -rf resources/spin-operator*
     rm -rf resources/win32/
     @echo "Cleanup complete. Run 'just build' for a fresh install."
@@ -49,7 +48,6 @@ clean-hard:
     rm -rf resources/host/
     rm -rf resources/preload.js*
     rm -rf resources/rancher-dashboard/
-    rm -rf resources/rdx-proxy.tar
     rm -rf resources/spin-operator*
     rm -rf resources/win32/
     @echo "Cleanup complete. Run 'just build' for a fresh install."
