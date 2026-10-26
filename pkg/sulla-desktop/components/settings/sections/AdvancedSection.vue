@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
     <PrefCard title="Troubleshooting">
       <PrefRow
         title="Debug logging"
-        :subtitle="alwaysDebugging ? 'On because RD_DEBUG_ENABLED is set.' : 'Writes much more detail to the logs.'"
+        :subtitle="alwaysDebugging ? 'On because SULLA_DEBUG_ENABLED is set.' : 'Writes much more detail to the logs.'"
       >
         <PrefToggle
           :model-value="alwaysDebugging || get('application.debug')"

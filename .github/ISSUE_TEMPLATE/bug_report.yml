@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report Rancher Desktop issue
+description: Report a Sulla Desktop issue
 labels: ["kind/bug"]
 body:
 - type: textarea
@@ -35,8 +35,8 @@ body:
       replacement for logs.
 - type: input
   attributes:
-    label: Rancher Desktop Version
-    description: "What version of Rancher Desktop are you using?"
+    label: Sulla Desktop Version
+    description: "What version of Sulla Desktop are you using?"
     placeholder: "e.g. 1.1.1"
   validations:
     required: true
@@ -73,14 +73,3 @@ body:
       - arm64 (Apple Silicon)
   validations:
     required: true
-- type: dropdown
-  attributes:
-    label: "Linux only: what package format did you use to install Rancher Desktop?"
-    options:
-      - N/A
-      - deb
-      - rpm
-      - AppImage
-      - Flatpak
-  validations:
-    required: false

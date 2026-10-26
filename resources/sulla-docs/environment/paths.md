@@ -27,10 +27,12 @@ Agents should use `/mnt/sulla-files/Docs` for the Files-published docs.
 
 | Purpose | macOS | Linux |
 |---------|-------|-------|
-| App home | `~/Library/Application Support/rancher-desktop` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop` |
-| Config | `~/Library/Preferences/rancher-desktop` | `${XDG_CONFIG_HOME:-~/.config}/rancher-desktop` |
-| Logs | `~/Library/Logs/rancher-desktop` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop/logs` |
-| Sulla VM | `~/.rd/lima` | `${XDG_DATA_HOME:-~/.local/share}/rancher-desktop/lima` |
+| App home | `~/Library/Application Support/sulla-desktop` | `${XDG_DATA_HOME:-~/.local/share}/sulla-desktop` |
+| Config | `~/Library/Preferences/sulla-desktop` | `${XDG_CONFIG_HOME:-~/.config}/sulla-desktop` |
+| Logs | `~/Library/Logs/sulla-desktop` | `${XDG_DATA_HOME:-~/.local/share}/sulla-desktop/logs` |
+| Cache | `~/Library/Caches/sulla-desktop` | `${XDG_CACHE_HOME:-~/.cache}/sulla-desktop` |
+| Secondary data, host tools (`bin/`) | `~/.sulla-desktop-data` | `~/.sulla-desktop-data` |
+| Sulla VM disk and sockets | `~/Library/Application Support/Sulla/runtime` | — |
 
 The host home and external volumes are not mounted into Sulla VM. Only app-owned
 transport/cache roots cross that boundary (`backend/sullaRuntimeBackend.ts:getMounts`).

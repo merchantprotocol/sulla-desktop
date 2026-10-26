@@ -99,10 +99,10 @@
   // --border-focus:    focus ring / highlight border
 
   // --------------------------------------------------------------------------
-  // Legacy Aliases  (backward-compat with Rancher Desktop components)
+  // Legacy Aliases  (backward-compat with older components)
   // --------------------------------------------------------------------------
-  // Maps old Rancher Desktop variable names to the new unified tokens.
-  // These exist so existing Rancher components keep working without changes.
+  // Maps older variable names to the new unified tokens.
+  // These exist so older components (including @rancher/components) keep working without changes.
   // New code should use the canonical token names above.
   // --------------------------------------------------------------------------
   --box-bg:            var(--bg-surface);

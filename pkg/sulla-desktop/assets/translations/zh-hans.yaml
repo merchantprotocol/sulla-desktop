@@ -70,7 +70,6 @@ generic:
 
 nav:
   title: 仪表盘
-  #backToRancher: Cluster Manager
   clusterTools: 集群工具
   shell: 命令行
   import: 导入 YAML 文件
@@ -260,7 +259,6 @@ authConfig:
           5: '在OAuth凭证框中上传下载的JSON文件。'
       3:
         title: '第三步：创建服务账户凭证'
-        introduction: '按照<a href="https://rancher.com/docs/rancher/v2.x/en/admin-settings/authentication/google/#creating-service-account-credentials" target="_blank" rel="noopener noreferrer nofollow">这里</a>指南。'
         body:
           1: 创建一个 service account。
           2: 为这个service account生成密钥。
@@ -300,7 +298,6 @@ authConfig:
     serverConnectionTimeout: 服务器连接超时
     serviceAccountDN: 服务账户的独特名称
     serviceAccountPassword: Service Account 密码
-    serviceAccountInfo: Rancher需要一个对所有能够登录的域都有只读访问权的服务账户，这样我们就可以在用户使用API密钥进行请求时，确定用户是什么组的成员。
     starttls:
       label: Start TLS
       tip: 通过在连接过程中使用 TLS 封装来升级非加密连接。不能与TLS结合使用。
@@ -319,7 +316,6 @@ authConfig:
     entityID: Entity ID字段
     UID: UID字段
     adfs: 配置AD FS 账户
-    api: Rancher API Host
     cert:
       label: 证书
       placeholder: 粘贴证书，以-----BEGIN CERTIFICATE----- 开始。
@@ -458,7 +454,6 @@ backupRestoreOperator:
     label: 删除超时
     tip: 在删除定标器强制删除之前，等待资源删除成功的秒数。
   deployment:
-    rancherNamespace: Rancher 资源集命名空间
     size: 大小
     storage:
         label: 默认存储位置
@@ -476,19 +471,16 @@ backupRestoreOperator:
         warning: '此 {type} 没有将其回收策略设置为 "保留"。 如果卷被更改或未绑定，您的备份可能会丢失。'
   encryption: '这个{type}没有将其回收策略设置为 "保留"。 如果该卷被改变或变得不受约束，你的备份可能会丢失。'
   encryptionConfigName:
-    backuptip: '<code>cattle-resource-system</code>命名空间中具有<code>encryption-provider-config.yaml</code>密钥的任何秘密。<br/>此文件的内容是从此备份中执行还原所必需的，Rancher Backup 不会存储这些内容。'
     label: 加密配置密钥
     options:
       none: 存储未加密的备份内容。
       secret: '使用 <a target="_blank" rel="noopener noreferrer nofollow" href="https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#understanding-the-encryption-at-rest-configuration">加密配置秘密</a>（推荐）对备份进行加密。'
     restoretip: '如果备份是在启用加密的情况下进行的，则应在还原过程中使用包含相同加密提供者配置的秘密。'
-    warning: '该文件的内容是从该备份中执行还原所必需的，Rancher 备份不会存储。'
   lastBackup: 上一次备份
   nextBackup: 下一次备份
   noResourceSet: 您必须在此命名空间中定义一个资源集来创建备份CR。
   prune:
     label: 修剪
-    tip: 删除备份中不存在的 Rancher 管理的资源。(推荐使用)
   resourceSetName: 资源集
   restoreFrom:
     existing: 使用已有的备份配置恢复
@@ -543,7 +535,6 @@ catalog:
     #certified:
       #other: Other
       #partner: Partner
-      #rancher: Rancher
     header: Chart Apps
     noCharts: '没有可用的 chart，你有添加 chart 仓库吗？'
     noWindows: 您的应用商店没有包含能部署在 Windows 集群上的 chart。
@@ -552,7 +543,6 @@ catalog:
     action:
       goToUpgrade: 编辑/升级
       ignoreWarning: 忽略警告，继续升级
-    appReadmeGeneric: 此 chart 没有针对 rancher 的自述文件。查看 Helm 自述文件，了解更多可用配置选项及其用法。
     chart: Chart
     error:
       requiresFound: '必须先安装<a href="{url}">${name}</a>，才能安装这个Chart。'
@@ -615,16 +605,12 @@ catalog:
     gitRepo:
       label: Git Repo URL
       placeholder: '例如：https://github.com/your-company/charts.git'
-    name:
-      rancher-charts: Rancher
-      rancher-partner-charts: Partners
     target:
       git: 包含定义了 Helm chart 的 Git 仓库。
       http: 指向 Helm 生成的索引 http(s) URL
       label: 目标类型
     url:
       label: Index URL
-      placeholder: '例如：https://charts.rancher.io'
   tools:
     header: 集群工具
     action:
@@ -665,7 +651,6 @@ chartHeading:
 
 cis:
   addTest: 添加测试 ID
-  alertNeeded: Alerting must be enabled within the CIS chart questions.yaml. This requires that <a tabindex="0" aria-label="Link to Rancher's Monitoring" href="{link}"> Rancher's Monitoring and Alerting app</a> is installed and the Receivers and Routes are <a target="_blank" rel='noopener nofollow' href='https://rancher.com/docs/rancher/v2.x/en/monitoring-alerting/v2.5/configuration/#alertmanager-config'> configured to send out alerts.</a>
   alertOnComplete: 扫描完成告警
   alertOnFailure: 扫描失败告警
   benchmarkVersion: Benchmark 版本
@@ -748,7 +733,6 @@ cluster:
       #packet: Packet
       pinganyunecs: 平安云 ECS
       #rackspace: RackSpace
-      #rancherkubernetesengine: RKE
       #rke2: RKE Government
       #rke: RKE
       #rkeWindows: Windows
@@ -969,7 +953,6 @@ fleet:
       empty: 默认使用的是 repo 的根目录。 要使用一个或多个不同的目录，请在这里添加。
     repo:
       label: 代码库 URL 地址
-      placeholder: '例如：https://github.com/rancher/fleet-examples.git'
     ref:
       label: Watch
       branch: 分支
@@ -1016,7 +999,6 @@ fleet:
           other {现有 {total, number} 个集群，与其中的 {matched, number} 匹配，包括 "{sample}"}
         }
 footer:
-  docs: Rancher 官方文档
   download: 下载 CLI
   forums: 论坛
   issue: 提交 GitHub Issue
@@ -1220,7 +1202,6 @@ istio:
   links:
     kiali:
       label: Kiali
-      description: 可视化服务网状结构中的服务以及它们是如何连接的。要想让 Kiali 显示数据，需要安装 Prometheus。如果您需要监控解决方案，请安装 <a rel="noopener noreferrer nofollow" href="{link}"> Rancher 的监控</a>。
     jaeger:
       label: Jaeger
       description: 监控并排除基于微服务的分布式系统的故障。
@@ -1228,9 +1209,6 @@ istio:
   cni: 启用 CNI
   customOverlayFile:
     label: 自定义覆盖文件
-    tip: '<a target="_blank" rel="noopener noreferrer nofollow" href="https://istio.io/latest/docs/setup/install/istioctl/#customizing-the-configuration">覆盖文件</a>允许在基本的 Rancher Istio 安装之上进行额外的配置。您可以利用<a href="https://istio.io/latest/docs/reference/config/istio.operator.v1alpha1/" target="_blank" rel="noopener noreferrer nofollow" >IstioOperator API</a>对所有组件进行更改和添加，并通过此覆盖 YAML 文件应用这些更改。'
-  description: 'Rancher Istio Helm Chart 为您安装了一个最小的 Istio 配置，以便您开始与您的应用程序集成。
-  如果您想获得有关 Istio 的更多信息，请访问 <a target="_blank" href="https://istio.io/latest/docs/concepts/what-is-istio" rel="noopener nofollow">https://istio.io/latest/docs/concepts/what-is-istio/</a>。'
   egressGateway: 启用 Egress 网关
   ingressGateway: 启用 Ingress 网关
   istiodRemote: 启用 istiodRemote
@@ -1259,44 +1237,6 @@ labels:
 landing:
   clusters: 集群
 # taken from Ember: https://github.com/rancher/ui/blob/master/app/components/modal-home/template.hbs
-  releaseNotes:
-    '<ul class="list-unstyled">
-      <li class="mb-10">
-        <b>Cluster Explorer:</b> 新的仪表盘提供了对Rancher管理的集群的更深入理解。
-        <ul>
-          <li>管理所有Kubernetes集群资源，包括来自Kubernetes运营商生态系统的定制资源</li>
-          <li>从我们新的Apps &amp; Marketplace部署和管理Helm Chart。</li>
-          <li>在一个新的类似IDE的查看器中查看日志并与kubectl shell互动</li>
-        </ul>
-      </li>
-      <li class="mb-10"><b>由Prometheus提供的监控和警报：</b>允许管理定制的Grafana仪表盘，并为AlertManager提供定制。</li>
-      <li class="mb-10"><b>由Banzai Cloud提供日志：</b> 自定义FluentBit和Fluentd的配置，并将日志运送到远程数据存储。</li>
-      <li class="mb-10"><b>由kube-bench提供的CIS扫描：</b> 扩展支持为EKS和GKE平台定制的CIS扫描，并对任何Kubernetes发行版进行通用扫描</li>
-      <li class="mb-10"><b>Istio 1.7+：</b> 允许用户部署多个Ingress和Egress网关</li>
-      <li class="mb-10">
-        <b>Rancher 由Fleet提供的持续交付：</b> Fleet是一个Rancher内置的部署工具，用于在多个集群中从Git源码库交付应用程序和配置。
-        <ul>
-          <li>部署由manifests、kustomize或Helm定义的任何Kubernetes资源</li>
-          <li>使用staged checkout和pull-based的更新模式将部署扩展到任何数量的集群中</li>
-          <li>将集群组织成组，以便更容易管理</li>
-          <li>将Git源存储库映射到目标集群组上</li>
-        </ul>
-      </li>
-      <li class="mb-10">
-        <b>EKS生命周期管理功能增强</b>
-        <ul>
-          <li>集群创建已得到加强，支持管理节点组、私人访问和控制平面记录</li>
-          <li>注册现有的EKS集群允许管理升级和配置</li>
-        </ul>
-      </li>
-      <li>
-        <b>Rancher Server备份：</b>
-        <ul>
-          <li>在不能访问etcd数据库的情况下备份Rancher服务器</li>
-          <li>将数据恢复到任何Kubernetes集群中</li>
-        </ul>
-      </li>
-    </ul>'
   seeWhatsNew: 了解更多关于该版本的改进和新功能。
   whatsNewLink: "2.5的新内容"
   learnMore: 了解更多
@@ -1305,11 +1245,9 @@ landing:
     body: 阅读集群管理器用户的迁移指南--你需要利用扩展的集群资源管理器的一切优势
   community:
     title: 社区支持
-    docs: Rancher文档
     forums: 论坛
   commercial:
     title: 付费支持
-    body: 如需了解付费支持，请单击<a href="https://rancher.com/support-maintenance-terms/" target='_blank' rel='noopener nofollow noreferrer'>这里</a>。
   landingPrefs:
     title: 你想在登录时看到什么？
     options:
@@ -1319,7 +1257,6 @@ landing:
       defaultOverview: 默认集群（{cluster}）的概览页面
       appsAndMarketplace: 应用市场页面
       fleet: Fleet页面
-  welcomeToRancher: 欢迎使用Rancher！
 
 logging:
   clusterFlow:
@@ -1560,10 +1497,6 @@ monitoring:
         info: "密文应挂载到容器路径 <pre class='inline-block m-0'>/etc/alertmanager/secrets/</pre>。"
         label: 附加密文
       existing: 选择现有的配置密文
-      info: |
-        <span class="text-bold">创建默认配置</span>。在部署这个 chart 时，将在<pre class='inline-block m-0'>cattle-monitoring-system</pre> 命名空间中创建一个包含 Alertmanager 配置的密钥，名称为<pre class='inline-block m-0'>alertmanager-rancher-monitoring-alertmanager</pre>。默认情况下，在卸载或升级此图表时，此 Secret 将永远不会被修改。<br/>
-        一旦您部署了这个 chart，您应该通过用户界面编辑密钥，以便添加您的自定义通知配置，这些配置将被 Alertmanager 用于发送警报。<br /> <br />
-        <span class="text-bold">选择一个现有的配置密钥</span>：您必须指定一个存在于<pre class='inline-block m-0'>cattle-monitoring-system</pre>命名空间中的密钥。如果命名空间不存在，您将无法选择一个现有的密钥。
       label: Alertmanager 密文
       new: 创建默认配置
       radio:
@@ -1581,7 +1514,6 @@ monitoring:
     tip: '创建 <code>monitoring-admin</code>，<code>monitoring-edit</code>，和 <code> monitor-view</code> ClusterRoles，可以被分配给用户，为部署监控 Chart 安装 CRDs 提供权限。'
   etcdNodeDirectory:
     label: ETCD 节点证书目录
-    tooltip: '对于使用 RancherOS 作为 etcd 节点的集群，这个选项应该设置为 <pre class="line-block m-0" >/opt/rke/etc/kubernetes/ssl</pre>。不支持需要指定多个证书目录的混合环境(例如，由 RancherOS 和 Ubuntu 主机组成的 etcd 平面)。'
   grafana:
     storage:
       annotations: PVC 注释
@@ -1631,7 +1563,6 @@ monitoring:
         #label: Prometheus Targets
     subtitle: '由<a href=''https://github.com/coreos/prometheus-operator'' target=''_blank'' rel=''noopener nofollow'' >Prometheus</a>提供支持'
     title: 仪表盘
-    v1Warning: '当前监控由 Rancher UI 部署，如果你想在仪表盘中启用新的监控，请先在 Rancher UI 中禁用原来的监控。'
   prometheus:
     config:
       #adminApi: Admin API
@@ -1662,9 +1593,6 @@ monitoring:
       volumeMode: Volume 模式
       volumeName: Volume 名称
     title: 配置 Prometheus
-    warningInstalled: |
-      '警告：目前已经部署了Prometheus Operators。目前不支持在一个集群上部署多个Prometheus Operators。在尝试安装此chart之前，请从该集群中移除所有其他的普罗米修斯Operators部署。
-      如果您是从启用了监控功能的旧版Rancher迁移过来的，请在尝试安装此chart之前完全禁用此集群上的监控功能。
   receiver:
     fields:
       name: 名称
@@ -1693,7 +1621,6 @@ monitoring:
     general: 总体
     #grafana: Grafana
     #prometheus: Prometheus
-  v1Warning: '当前监控由 Rancher UI 部署，如果你想在仪表盘中启用新的监控，请先在 Rancher UI 中禁用原来的监控。'
   volume:
     modes:
       block: 块
@@ -1718,13 +1645,10 @@ monitoringReceiver:
   slack:
     label: Slack
     title: Slack参数
-    info: "您可以在<a href='https://rancher.slack.com/apps/A0F7XDUAZ-incoming-webhooks' target='_blank' rel='noopener noreferrer nofollow'>这里</a>找到有关为Slack创建传入Webhooks的其他信息。"
   webhook:
     #label: Webhook
     title: Webhook参数
     urlTooltip: 对于一些webhooks来说，这是一个指向DNS服务的url
-    modifyNamespace: 如果<pre class="inline-block m-0 p-0 vertical-middle">rancher-alerting-drivers</pre>被安装在一个非默认的命名空间中，你需要更新下面网址中的命名空间。
-    banner: 要使用Microsoft Teams或阿里巴巴云短信，你需要先安装<pre class="inline-block m-0 p-0 vertical-middle">rancher-alerting-drivers</pre>。
     add:
       generic: 通用
       #msTeams: Microsoft Teams
@@ -2167,7 +2091,6 @@ prefs:
   landing:
     label: 默认登录页面
     vue: 仪表盘
-    ember: Rancher UI
   formatting: 格式
   dateFormat:
     label: 日期格式
@@ -2297,10 +2220,6 @@ promptRemove:
   protip: "提示：按住 {alternateLabel} 键同时单击 delete 以绕过此确认"
   confirmName: "Enter <b>{nameToMatch}</b> below to confirm:"
 
-rancherAlertingDrivers:
-  msTeams: 启用Microsoft Teams通知
-  sms: 启用短信通知
-  selectOne: 你必须选择以下至少一个选项。
 
 rbac:
   roleBinding:
@@ -2363,7 +2282,6 @@ rbac:
           false {group}}有什么权限来管理整个{appName}的安装。
       custom:
         label: 自定义
-        description: 不是Rancher创建的角色
       builtin:
         label: 内置角色
         description: 额外的角色来定义更搞细粒度的权限模型。
@@ -2419,9 +2337,6 @@ rbac:
   roles-manage:
     label: 管理用户角色
     description: 允许用户定义、编辑和删除用户角色。
-  settings-manage:
-    label: 管理Rancher配置
-    description: 允许用户管理Rancher配置。
   users-manage:
     label: 管理用户
     description: 允许用户为所有用户创建、删除和设置密码。
@@ -2431,9 +2346,6 @@ rbac:
   nodetemplates-use:
     label: 使用节点模板
     description: 允许用户使用任何现有的节点模板来部署新的节点。
-  view-rancher-metrics:
-    label: 查看Rancher指标
-    description: 允许用户通过API查看Metrics。
   base:
     label: 登录权限
 
@@ -3822,9 +3734,7 @@ typeDescription:
   monitoring.coreos.com.prometheusrule: Prometheus 规则定义了记录和/或警报规则。记录规则可以预先计算值并保存结果，警报规则允许您定义何时向 AlertManager 发送通知的条件。
   monitoring.coreos.com.prometheus: Prometheus 服务器是 deployment 运行的服务，它的刮擦配置和规则是由选定的 ServiceMonitors、PodMonitors 和 PrometheusRules 决定的，它的告警信息将发送给所有选择的具有定制资源配置的 AlertManager。
   monitoring.coreos.com.alertmanager: 告警管理器是 deployment 类型运行的服务，其配置将由同一命名空间中的 密文 指定，该 密文 决定了哪些警报应发送给哪个接收者。
-  catalog.cattle.io.clusterrepo: Chart 仓库是一个 Helm 仓库或 Rancher 的基于 git 的应用商店，它提供了集群中可用的 Chart 列表。
   catalog.cattle.io.operation: 操作是指最近应用于集群的 Helm 操作列表。
-  catalog.cattle.io.app: 已安装的应用程序 Apps 是通过 Rancher catalog 或通过 Helm CLI 安装的 Helm 3 charts。
   logging.banzaicloud.io.clusterflow: 集群流定义了要从整个集群收集和过滤哪些日志，以及发送输出哪些日志。集群流需要部署在 logging operator 所在的命名空间中。
   logging.banzaicloud.io.flow: 流定义要收集和过滤哪些日志，以及要发送输出哪些日志。该流是一个命名空间资源，这意味着只从部署该流的命名空间收集日志。
   logging.banzaicloud.io.clusteroutput: 集群输出定义可以将日志发送到哪些日志提供程序，并且只有部署在 logging operator 所在的命名空间中时才有效。
@@ -3973,11 +3883,6 @@ typeLabel:
       one { CAPI集群 }
       other { CAPI集群 }
     }
-  'rancher.cattle.io.cluster': |-
-    {count, plural,
-      one { 集群 }
-      other { 集群 }
-    }
   'management.cattle.io.user': |-
     {count, plural,
       one { 用户 }
@@ -4092,7 +3997,6 @@ advancedSettings:
 
 featureFlags:
   label: 功能标志
-  warning: 功能标志允许Rancher将某些功能关在标志后面。你应该谨慎地启用这些功能，它们应该被视为测试版功能，可能会给你的系统带来问题。此外，有些功能（非动态）需要重新启动Rancher服务器才能启用。改变非动态功能将重新启动Rancher pods，这将导致短暂的停电。
   promptActivate: 请确认您要激活功能标志"{flag}"。
   promptDeactivate: 请确认你想停用功能标志"{flag}"。
   restartRequired: "注意：更新该功能标志需要重新启动"
@@ -4103,11 +4007,9 @@ featureFlags:
 
 support:
   community:
-    title: SUSE Rancher 提供世界一流的支持
     register: 已经购买支持？请添加您的SUSE订阅ID。
     addSubscription: 添加订阅ID
     linksTitle: 社区支持
-    learnMore: 了解更多关于SUSE Rancher支持的信息
   suse:
     title: "好消息--你得到了保障"
   promos:
@@ -4116,10 +4018,8 @@ support:
       text: 我们提供严格定义的服务水平协议，并提供全天候的支持选项。
     two:
       title: 解决问题
-      text: 满怀信心地运行 SUSE Rancher 产品，因为我们知道构建这些产品的开发人员可以快速解决问题。
     three:
       title: 问题排查
-      text: 我们专注于发现任何问题的根源，无论它是否与Rancher产品、Kubernetes、Docker或你的底层基础设施有关。
     four:
       title: 自由创新
       text: 利用我们与众多的Kubernetes厂商、操作系统和开源软件的认证兼容性。

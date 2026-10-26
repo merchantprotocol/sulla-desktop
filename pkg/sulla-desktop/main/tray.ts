@@ -29,7 +29,7 @@ const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
 /**
- * Tray is a class to manage the tray icon for rancher-desktop.
+ * Tray is a class to manage the tray icon for sulla-desktop.
  */
 export class Tray {
   protected trayMenu:           Electron.Tray;

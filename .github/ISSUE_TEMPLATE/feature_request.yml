@@ -1,5 +1,5 @@
 name: Feature Request
-description: "Suggest a feature or idea to Rancher Desktop."
+description: "Suggest a feature or idea for Sulla Desktop."
 labels: ["kind/enhancement"]
 body:
 - type: textarea

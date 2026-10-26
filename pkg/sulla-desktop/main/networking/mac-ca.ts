@@ -15,10 +15,10 @@ const console = Logging.networking;
 
 /**
  * Asynchronously enumerate the certificate authorities that should be used to
- * build the Rancher Desktop trust store, in PEM format in undefined order.
+ * build the Sulla Desktop trust store, in PEM format in undefined order.
  */
 export default async function * getMacCertificates(): AsyncIterable<string> {
-  const workdir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rancher-desktop-certificates-'));
+  const workdir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-desktop-certificates-'));
 
   try {
     const keychains = await Array.fromAsync(listKeychains());
