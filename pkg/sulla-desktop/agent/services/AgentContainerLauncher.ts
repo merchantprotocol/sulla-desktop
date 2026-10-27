@@ -15,15 +15,16 @@ import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
 import {
-  chownGuestPath,
+  chownGuestPaths,
   createGuestRuntimeDirectory,
   GUEST_AGENT_DOCS_ROOT,
   GUEST_AGENT_WORKSPACES_ROOT,
   GUEST_CONVERSATIONS_ROOT,
-  ensureGuestRuntimeDirectory,
+  ensureGuestRuntimeDirectories,
   getGuestRuntimeIdentity,
   inspectGuestWorkspaceForCleanup,
   removeGuestPathAtomic,
+  seedContentAddressedDirectoryIntoGuest,
   seedDirectoryIntoGuest,
   seedGitWorktreeIntoGuest,
   type GuestRuntimeIdentity,
@@ -530,15 +531,29 @@ async function provisionContainerSecrets(
   identity: GuestRuntimeIdentity,
 ): Promise<string> {
   const secretDir = `/dev/shm/sulla-agent-secrets/${ containerName }`;
-  await guestExec(['sh', '-c', 'sudo install -d -m 0700 -o "$2" -g "$3" "$1"; [ "$(stat -c %u:%g "$1")" = "$2:$3" ]', 'sh', secretDir, String(identity.uid), String(identity.gid)]);
-  for (const [key, value] of Object.entries(secrets)) {
+  const encoded = Object.entries(secrets).map(([key, value]) => {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`Invalid container secret name ${ key }`);
-    const target = `${ secretDir }/${ key }`;
-    await guestExec(
-      ['sh', '-c', 'umask 077; base64 -d | sudo tee "$1" >/dev/null; sudo chown "$2:$3" "$1"; sudo chmod 0400 "$1"', 'sh', target, String(identity.uid), String(identity.gid)],
-      Buffer.from(value).toString('base64'),
-    );
-  }
+    return `${ key }\t${ Buffer.from(value).toString('base64') }`;
+  }).join('\n') + '\n';
+  await guestExec([
+    'sh', '-c',
+    [
+      'set -eu', 'umask 077',
+      'sudo install -d -m 0700 -o "$2" -g "$3" "$1"',
+      '[ "$(stat -c %u:%g "$1")" = "$2:$3" ]',
+      [
+        'while IFS="$(printf "\t")" read -r key value; do',
+        '[ -n "$key" ] || continue',
+        'case "$key" in *[!A-Z0-9_]*|[0-9_]*) exit 73;; esac',
+        'target="$1/$key"',
+        'printf "%s" "$value" | base64 -d | sudo tee "$target" >/dev/null',
+        'sudo chown "$2:$3" "$target"',
+        'sudo chmod 0400 "$target"',
+        'done',
+      ].join('\n'),
+    ].join('; '),
+    'sulla-container-secrets', secretDir, String(identity.uid), String(identity.gid),
+  ], encoded);
   return secretDir;
 }
 
@@ -851,15 +866,35 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let providerFiles: ContainerProviderFileTransport | undefined;
 
   try {
-    const identity = await getGuestRuntimeIdentity();
+    const launchStartedAt = Date.now();
+    const phaseMs: Record<string, number> = {};
+    const phase = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
+      const startedAt = Date.now();
+      try {
+        return await operation();
+      } finally {
+        phaseMs[name] = Date.now() - startedAt;
+      }
+    };
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
-    const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
-    const subject = usesContainerVaultAuthority()
+    const identityTask = phase('identity', async() => {
+      const [identity, deviceId] = await Promise.all([
+        getGuestRuntimeIdentity(),
+        metadata.deviceId ? Promise.resolve(metadata.deviceId) : getDesktopDeviceId(),
+      ]);
+      return { identity, deviceId };
+    });
+    const subjectTask = phase('vaultPrincipal', async() => usesContainerVaultAuthority()
       ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
-      : metadata.userId;
+      : metadata.userId);
+    const toolsServiceTask = phase('toolsService', () => waitForToolsService());
+    const [{ identity, deviceId }, subject, toolsServiceHealthy] = await Promise.all([
+      identityTask, subjectTask, toolsServiceTask,
+    ]);
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
+    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
     const agentId = metadata.agentId ?? run.state.metadata.wsChannel;
     if (!agentId) throw new Error('Agent container requires an agent identity');
     const allowed = metadata.allowedToolNames;
@@ -876,46 +911,73 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       jti:              capabilityJti,
       expiresInSeconds: Math.ceil(LEASE_MS / 1000),
     }, deriveCapabilitySigningKey(installationSecret));
-    const toolsServiceHealthy = await waitForToolsService();
-    if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
 
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
-    const checkout = await prepareCheckout(run.workspacePath, jobKey);
     const stableKey = run.persistenceKey
       ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
       : undefined;
-    const persistentRoot = stableKey
-      ? await ensureGuestRuntimeDirectory(GUEST_CONVERSATIONS_ROOT, stableKey)
-      : undefined;
-    workspacePath = checkout ?? (persistentRoot
-      ? await ensureGuestRuntimeDirectory(persistentRoot, 'workspace')
-      : await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`));
-    const providerHome = persistentRoot ? await ensureGuestRuntimeDirectory(persistentRoot, 'home') : undefined;
-    const claudeHome = providerHome ? await ensureGuestRuntimeDirectory(providerHome, 'claude') : undefined;
-    const codexHome = providerHome ? await ensureGuestRuntimeDirectory(providerHome, 'codex') : undefined;
-    const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
-    guestRuntimePaths.push(docsPath);
-    await chownGuestPath(workspacePath, identity);
-    await chownGuestPath(docsPath, identity);
+    const dirsTask = phase('dirs', async() => {
+      const checkout = await prepareCheckout(run.workspacePath, jobKey);
+      if (!stableKey) {
+        return {
+          workspace: checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`),
+          claudeHome: undefined,
+          codexHome: undefined,
+          persistentRoot: undefined,
+        };
+      }
+      const [persistentRoot, persistentWorkspace, , claudeHome, codexHome] = await ensureGuestRuntimeDirectories(
+        GUEST_CONVERSATIONS_ROOT,
+        [stableKey, `${ stableKey }/workspace`, `${ stableKey }/home`, `${ stableKey }/home/claude`, `${ stableKey }/home/codex`],
+      );
+      return { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
+    });
+    const docsTask = phase('docs', () => seedContentAddressedDirectoryIntoGuest(
+      resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, 'sulla-docs',
+    ));
+    const providerFilesTask = phase('providerFiles', () => ContainerProviderFileTransport.create())
+      .then(files => { providerFiles = files; return files });
+    const secretsTask = phase('secrets', () => provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
+      SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession!.id,
+    }, identity)).then(directory => { secretDir = directory; return directory });
+    const egressTask = phase('egress', () => prepareAgentEgress());
+    const chownTask = phase('chown', async() => {
+      const dirs = await dirsTask;
+      await chownGuestPaths([dirs.workspace], identity);
+    });
+    const setup = await Promise.allSettled([
+      dirsTask, docsTask, providerFilesTask, secretsTask, egressTask, chownTask,
+    ] as const);
+    const failedSetup = setup.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failedSetup) throw failedSetup.reason;
+    const [dirsResult, docsResult, providerFilesResult, secretsResult, egressResult] = setup as [
+      PromiseFulfilledResult<Awaited<typeof dirsTask>>,
+      PromiseFulfilledResult<Awaited<typeof docsTask>>,
+      PromiseFulfilledResult<Awaited<typeof providerFilesTask>>,
+      PromiseFulfilledResult<Awaited<typeof secretsTask>>,
+      PromiseFulfilledResult<Awaited<typeof egressTask>>,
+      PromiseFulfilledResult<Awaited<typeof chownTask>>,
+    ];
+    const dirs = dirsResult.value;
+    const docsPath = docsResult.value;
+    const egress = egressResult.value;
+    providerFiles = providerFilesResult.value;
+    secretDir = secretsResult.value;
+    workspacePath = dirs.workspace;
     const providerWorkspace = workspacePath;
-    providerFiles = await ContainerProviderFileTransport.create();
-    secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
-      SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
-    }, identity);
-    const egress = await prepareAgentEgress();
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       '/mnt/worktrees:/mnt/worktrees:rw',
       providerFiles.bindMount,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      ...(claudeHome ? [`${ claudeHome }:/home/sulla/.claude:rw`] : []),
-      ...(codexHome ? [`${ codexHome }:/home/sulla/.codex:rw`] : []),
+      ...(dirs.claudeHome ? [`${ dirs.claudeHome }:/home/sulla/.claude:rw`] : []),
+      ...(dirs.codexHome ? [`${ dirs.codexHome }:/home/sulla/.codex:rw`] : []),
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
-    containerId = await runtime.create({
+    containerId = await phase('create', () => runtime.create({
       name:   containerName,
       image,
       labels: {
@@ -941,26 +1003,32 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       extraHosts:  [`host.sulla.internal:${ SULLA_RUNTIME_HOST_GATEWAY }`],
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
-      tmpfs:       providerHome ? undefined : {
+      tmpfs:       dirs.persistentRoot ? undefined : {
         '/home/sulla/.claude': `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
         '/home/sulla/.codex':  `rw,uid=${ identity.uid },gid=${ identity.gid },mode=0700`,
       },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
       oomScoreAdj: AGENT_OOM_SCORE_ADJ,
-    });
-    await registerSullaFilesActor(containerId, agentId, run.jobId);
-    await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
-    await runtime.start(containerId);
+    }));
+    await Promise.all([
+      phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
+      phase('network', () => guestExec(connectServiceNetworkCommand('sulla_default', containerName))),
+    ]);
+    await phase('start', () => runtime.start(containerId!));
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
-    await guestExec([
+    await phase('mcpProbe', () => guestExec([
       'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
       `${ mcpUrl.origin }${ mcpUrl.pathname.replace(/\/mcp$/, '/healthz') }`,
-    ]).catch(error => {
+    ])).catch(error => {
       throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
     });
     log.info(`[AgentContainer] ${ containerName } can reach graph MCP host`);
+    perf.log(`[ContainerStart] name=${ containerName } ${ [
+      'identity', 'vaultPrincipal', 'toolsService', 'dirs', 'docs', 'chown', 'providerFiles', 'secrets',
+      'egress', 'create', 'filesActor', 'network', 'start', 'mcpProbe',
+    ].map(name => `${ name }Ms=${ phaseMs[name] ?? 0 }`).join(' ') } totalMs=${ Date.now() - launchStartedAt }`);
     const binding = {
       podId:         containerName,
       subject,
@@ -1218,8 +1286,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     workspacePath = checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
     const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
     guestRuntimePaths.push(docsPath);
-    await chownGuestPath(workspacePath, identity);
-    await chownGuestPath(docsPath, identity);
+    await chownGuestPaths([workspacePath, docsPath], identity);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets, identity);
     const egress = await prepareAgentEgress();
     const binds = [

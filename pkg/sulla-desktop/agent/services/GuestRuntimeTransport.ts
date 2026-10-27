@@ -167,6 +167,39 @@ export async function ensureGuestRuntimeDirectory(parent: string, name: string):
   return await existingGuestPath(target, [boundedParent]);
 }
 
+/** Create or reopen a validated directory tree in one guest runtime round trip. */
+export async function ensureGuestRuntimeDirectories(parent: string, relativeNames: string[]): Promise<string[]> {
+  const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
+  const targets = relativeNames.map(name => {
+    const segments = name.split('/');
+    if (segments.length === 0 || segments.some(segment => !/^[a-zA-Z0-9_.-]{1,120}$/.test(segment))) {
+      throw new Error('Invalid stable guest runtime directory name');
+    }
+    return assertGuestPath(path.posix.join(boundedParent, ...segments), [boundedParent]);
+  });
+  const { uid, gid } = await getGuestRuntimeIdentity();
+  await runGuest([
+    'sh', '-c',
+    [
+      'set -eu', 'umask 077',
+      'parent="$1"; uid="$2"; gid="$3"; root="$4"; shift 4',
+      'sudo install -d -m 0700 -o "$uid" -g "$gid" "$parent"',
+      '[ "$(realpath "$parent")" = "$parent" ]',
+      'case "$parent" in "$root"|"$root"/*) ;; *) exit 73;; esac',
+      [
+        'for target; do',
+        'case "$target" in "$parent"/*) ;; *) exit 73;; esac',
+        'sudo install -d -m 0700 -o "$uid" -g "$gid" "$target"',
+        '[ "$(realpath "$target")" = "$target" ]',
+        '[ "$(stat -c %u:%g "$target")" = "$uid:$gid" ]',
+        'done',
+      ].join('\n'),
+    ].join('; '),
+    'sulla-stable-guest-mkdirs', boundedParent, String(uid), String(gid), GUEST_RUNTIME_ROOT, ...targets,
+  ]);
+  return targets;
+}
+
 export async function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): Promise<void> {
   const boundedTarget = assertGuestPath(target);
   if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) throw new Error('Invalid guest file mode');
@@ -196,14 +229,32 @@ export async function chmodGuestPath(target: string, mode: number): Promise<void
 }
 
 export async function chownGuestPath(target: string, identity: GuestRuntimeIdentity): Promise<void> {
+  await chownGuestPaths([target], identity);
+}
+
+/** Validate and chown several bounded guest paths in one runtime round trip. */
+export async function chownGuestPaths(targets: string[], identity: GuestRuntimeIdentity): Promise<void> {
   if (![identity.uid, identity.gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error('Invalid guest path ownership');
   }
-  const resolved = await existingGuestPath(target);
+  const boundedTargets = targets.map(target => assertGuestPath(target));
+  if (boundedTargets.length === 0) return;
   await runGuest([
     'sh', '-c',
-    'set -eu; sudo chown -hR "$2:$3" -- "$1"; [ "$(stat -c %u:%g "$1")" = "$2:$3" ]; [ -w "$1" ] && [ -x "$1" ]',
-    'sulla-guest-chown', resolved, String(identity.uid), String(identity.gid),
+    [
+      'set -eu',
+      'uid="$1"; gid="$2"; root="$3"; shift 3',
+      [
+        'for target; do',
+        'resolved=$(realpath "$target")',
+        'case "$resolved" in "$root"|"$root"/*) ;; *) exit 73;; esac',
+        'sudo chown -hR "$uid:$gid" -- "$resolved"',
+        '[ "$(stat -c %u:%g "$resolved")" = "$uid:$gid" ]',
+        '[ -w "$resolved" ] && [ -x "$resolved" ]',
+        'done',
+      ].join('\n'),
+    ].join('; '),
+    'sulla-guest-chown', String(identity.uid), String(identity.gid), GUEST_RUNTIME_ROOT, ...boundedTargets,
   ]);
 }
 
@@ -387,6 +438,85 @@ export async function inspectGuestWorkspaceForCleanup(workspacePath: string): Pr
     remove: false,
     reason: 'workspace retained pending independent publication and file-preservation verification',
   };
+}
+
+const contentAddressedSeeds = new Map<string, Promise<string>>();
+const directoryDigests = new Map<string, string>();
+
+function hashDirectoryTree(root: string): string {
+  const hash = crypto.createHash('sha256');
+  const visit = (directory: string, relative = '') => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name);
+      const childRelative = path.posix.join(relative, name);
+      const stat = fs.lstatSync(absolute);
+      hash.update(`${ childRelative }\0${ stat.mode }\0`);
+      if (stat.isDirectory()) visit(absolute, childRelative);
+      else if (stat.isSymbolicLink()) hash.update(`link\0${ fs.readlinkSync(absolute) }\0`);
+      else if (stat.isFile()) hash.update(fs.readFileSync(absolute));
+      else throw new Error(`Guest seed source contains unsupported entry: ${ absolute }`);
+    }
+  };
+  visit(root);
+  const digest = hash.digest('hex');
+  directoryDigests.set(root, digest);
+  return digest;
+}
+
+/**
+ * Seed immutable directory content once per digest and reuse it across containers.
+ * The caller must mount the returned guest directory read-only; shared seeds are
+ * intentionally not lifecycle cleanup paths.
+ */
+export async function seedContentAddressedDirectoryIntoGuest(source: string, parent: string, label: string): Promise<string> {
+  const resolved = fs.realpathSync(source);
+  if (!fs.statSync(resolved).isDirectory()) throw new Error(`Guest seed source is not a directory: ${ source }`);
+  const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
+  const safeLabel = label.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 40) || 'seed';
+  // Packaged docs are immutable for the process lifetime; hash them once per app run.
+  const digest = directoryDigests.get(resolved) ?? hashDirectoryTree(resolved);
+  const target = assertGuestPath(path.posix.join(boundedParent, `${ safeLabel }-${ digest }`), [boundedParent]);
+  const cacheKey = `${ resolved }\0${ target }`;
+  let seeded = contentAddressedSeeds.get(cacheKey);
+  if (!seeded) {
+    seeded = (async() => {
+      const { uid, gid } = await getGuestRuntimeIdentity();
+      const status = await runGuest([
+        'sh', '-c',
+        [
+          'set -eu', 'umask 077',
+          'sudo install -d -m 0700 -o "$3" -g "$4" "$1"',
+          '[ "$(realpath "$1")" = "$1" ]',
+          'case "$2" in "$1"/*) ;; *) exit 73;; esac',
+          '[ ! -L "$2" ]',
+          'if [ -f "$2/.sulla-content-digest" ] && [ "$(cat "$2/.sulla-content-digest")" = "$5" ]; then printf hit; exit 0; fi',
+          'if [ -e "$2" ]; then resolved=$(realpath "$2"); [ "$resolved" = "$2" ]; case "$resolved" in "$1"/*) ;; *) exit 73;; esac; sudo rm -rf -- "$resolved"; fi',
+          'sudo install -d -m 0700 -o "$3" -g "$4" "$2"',
+          'printf miss',
+        ].join('; '),
+        'sulla-content-seed', boundedParent, target, String(uid), String(gid), digest,
+      ]);
+      if (status === 'miss') {
+        await pipeToGuest('tar', ['-C', resolved, '-cf', '-', '.'], [
+          'sh', '-c',
+          [
+            'set -eu',
+            'target=$(realpath "$1")',
+            'case "$target" in "$2"/*) ;; *) exit 73;; esac',
+            'tar --no-same-owner -C "$target" -xf -',
+            'sudo chown -hR "$4:$5" -- "$target"',
+            'printf "%s" "$3" > "$target/.sulla-content-digest"',
+            'chmod 0400 "$target/.sulla-content-digest"',
+          ].join('; '),
+          'sulla-content-seed-transfer', target, boundedParent, digest, String(uid), String(gid),
+        ]);
+      }
+      return target;
+    })();
+    contentAddressedSeeds.set(cacheKey, seeded);
+    seeded.catch(() => contentAddressedSeeds.delete(cacheKey));
+  }
+  return await seeded;
 }
 
 export async function seedDirectoryIntoGuest(source: string, parent: string, prefix: string): Promise<string> {
