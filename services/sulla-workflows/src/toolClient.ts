@@ -11,9 +11,15 @@ import { config } from './config.js';
 
 function unwrap(value: any): any {
   let current = value;
-  for (let i = 0; i < 4; i++) {
-    if (current && typeof current === 'object' && 'result' in current) current = current.result;
-    else break;
+  for (let i = 0; i < 8; i++) {
+    if (current && typeof current === 'object' && 'result' in current) {
+      current = current.result;
+      continue;
+    }
+    if (typeof current === 'string') {
+      try { current = JSON.parse(current); continue } catch { /* plain tool output */ }
+    }
+    break;
   }
   return current;
 }
@@ -53,9 +59,10 @@ export class DesktopAgentLauncher {
   constructor(private readonly tools: ScopedToolClient) {}
 
   async run(agentId: string, prompt: string, label: string, nodeId?: string, occurrence = 0): Promise<{ output: unknown; threadId?: string }> {
-    const launched = await this.tools.call('spawn_agent', {
-      tasks: [{ prompt, agentId, label }],
-    });
+    // `sulla-desktop` is the default Desktop persona, not an agent-definition
+    // slug. Treat it exactly like an omitted selector.
+    const task = agentId && agentId !== 'sulla-desktop' ? { prompt, agentId, label } : { prompt, label };
+    const launched = await this.tools.call('spawn_agent', { tasks: [task] });
     const jobId = launched?.jobId ?? launched?.id;
     if (!jobId) throw new Error(`meta/spawn_agent did not return a job id: ${ JSON.stringify(launched) }`);
 

@@ -35,6 +35,7 @@ import { workflowConcurrencyLimit } from '../../../pkg/sulla-desktop/agent/workf
 import { agentOccurrence } from './agentInvocation.js';
 
 import { issueCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import { metaToolManifests } from '../../../pkg/sulla-desktop/agent/tools/meta/manifests.js';
 
 import type { WorkflowPlaybookState } from '../../../pkg/sulla-desktop/agent/workflow/types.js';
 
@@ -66,12 +67,18 @@ function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+function canonicalToolScope(toolName: string): string {
+  if (toolName.includes('/')) return toolName;
+  const manifest = metaToolManifests.find(candidate => candidate.name === toolName);
+  return `${ manifest?.category ?? 'meta' }/${ toolName }`;
+}
+
 function runnerTools(nodes: any[]): string[] {
   const allowedTools = new Set<string>(config.mode === 'desktop' ? ['meta/spawn_agent', 'agents/check_agent_jobs'] : []);
   for (const node of nodes) {
     const toolName = node?.data?.config?.toolName;
     if (typeof toolName === 'string' && toolName && toolName !== '*' && !toolName.endsWith('/*')) {
-      allowedTools.add(toolName.includes('/') ? toolName : `meta/${ toolName }`);
+      allowedTools.add(canonicalToolScope(toolName));
     }
     if (node?.data?.subtype === 'desktop-notification') allowedTools.add('notify/notify_user');
   }
