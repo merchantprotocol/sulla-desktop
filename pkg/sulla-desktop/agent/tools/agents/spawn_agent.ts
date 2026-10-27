@@ -15,6 +15,7 @@ import {
 } from './contract';
 import { emitProactiveCompletion, returnedJobResult, wakeParentGraph } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
+import { threadSlug } from './threadSlug';
 import {
   abortJob,
   completeJob,
@@ -408,7 +409,7 @@ export class SpawnAgentWorker extends BaseTool {
       const label = task.label || selector || `task-${ index }`;
       const agentConfigChannel = selector || (task.model ? 'sulla-desktop' : parentChannel);
       const contract = contracts[index];
-      const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
+      const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const delegationId = await safeStartDelegation(this.delegationFor(task, { childThreadId: threadId, refId: activityJobId ?? null }));
       delegationIds[index] = delegationId;
 

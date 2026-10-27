@@ -17,6 +17,8 @@
  * opened before the migration. New work is launched through spawn_agent.
  */
 
+import { threadSlug } from './threadSlug';
+
 export interface ConversationTurn {
   from: 'parent' | 'agent';
   text: string;
@@ -50,7 +52,7 @@ export function atConversationCap(): boolean {
 export function createConversation(channel: string, label: string): AgentConversation {
   convCounter += 1;
   const stamp = Date.now();
-  const slug = label.replace(/\s+/g, '-').toLowerCase();
+  const slug = threadSlug(label);
   const conversationId = `conv-${ stamp }-${ convCounter }`;
   const conv: AgentConversation = {
     conversationId,
