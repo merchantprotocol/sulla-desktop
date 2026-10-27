@@ -122,7 +122,11 @@ export class BackendGraphWebSocketService {
     // A lifecycle that aborted or closed (container died, secrets were wiped, capability renewal
     // failed) is dead for good. Reusing it failed every later message in the thread; rebuild it.
     // The conversation itself survives: its workspace and provider homes live on the data disk.
-    if (existing?.provider === provider && existing.model === model && !existing.lifecycle.closed) {
+    // While a turn is in flight the container is in use, and a provider fallback (Claude to Codex)
+    // or model switch inside that turn must reuse it: recreating it removed the container under the
+    // running turn ("No such container"). Both providers' homes are mounted in every container.
+    const inUse = this.hasActiveRun(channelId, threadId);
+    if (existing && !existing.lifecycle.closed && ((existing.provider === provider && existing.model === model) || inUse)) {
       clearTimeout(existing.idleTimer);
       return existing.lifecycle;
     }
