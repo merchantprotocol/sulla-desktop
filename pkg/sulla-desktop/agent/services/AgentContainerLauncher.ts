@@ -650,9 +650,13 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
   }
 
   async context(input: Parameters<ProviderExecutionTransport['context']>[0]): Promise<ProviderTransportContext> {
-    const bridge = await this.options.bridgeFor(input.provider);
-    let toolConfig: { ref: string; claudePath: string; codexOverrides: readonly string[] } | undefined;
-    if (input.toolSessionId) toolConfig = await this.ensureToolConfig(input.toolSessionId);
+    // The provider bridge and graph MCP config are independent. Starting them
+    // together removes one host→guest round trip from every CLI turn. Both are
+    // lifecycle-cached below, so later turns normally resolve without I/O.
+    const [bridge, toolConfig] = await Promise.all([
+      this.options.bridgeFor(input.provider),
+      input.toolSessionId ? this.ensureToolConfig(input.toolSessionId) : Promise.resolve(undefined),
+    ]);
 
     return {
       runtime:        'container',

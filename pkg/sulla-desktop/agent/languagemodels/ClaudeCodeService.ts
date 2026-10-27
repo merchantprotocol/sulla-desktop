@@ -692,12 +692,19 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
+    const runPhaseStart = Date.now();
+    const runPhaseMarks: Record<string, number> = {};
+    let lastSetupMark = runPhaseStart;
+    const markPhase = (name: string) => { const now = Date.now(); runPhaseMarks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
+    // Signal immediately, before credential/config/file setup starts.
+    try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
     // A process still held open for this conversation's background tasks
     // ends here: the new turn's `--resume` must be the only live copy of the
     // session (the launch command would stop it anyway).
     backgroundHolds.get(convId)?.();
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
+    markPhase('session');
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'claude-code',
@@ -706,6 +713,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       providerSessionId: existingSession,
     });
     requireBrokeredContainerAuth(initialTransportContext);
+    markPhase('initialContext');
     const attachmentRefs: ProviderFileRef[] = [];
 
     // Prompt strategy:
@@ -736,6 +744,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const heldNotices = this.bgDelivery.takePending(convId);
     const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
     const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
+    markPhase('prompt');
 
     // The Sulla runtime only exists on macOS; container transports do not depend on it.
     if (transport.runtime === 'guest' && process.platform === 'win32') {
@@ -775,10 +784,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         toolSessionId:     mcpSession.id,
       })
       : initialTransportContext;
+    markPhase('toolContext');
     const providerConfig = requireBrokeredContainerAuth(transportContext);
     const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest'
       ? await this.resolveClaudeCreds(convId, options.state)
       : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
+    markPhase('auth');
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
     if (transportContext.runtime === 'guest' && !oauthToken && !apiKey) {
       releaseLease(authLease);
@@ -815,6 +826,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
     });
     const systemPromptPath = systemPromptFile.path;
+    markPhase('systemPromptFile');
     const pidFile = newRemotePidFile();
     const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, disallowedTools, systemPromptPath, pidFile });
     const providerCommand = this.buildProviderCommand({
@@ -845,6 +857,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       throw error;
     }
 
+    const setupDoneAt = Date.now();
     const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
       context: transportContext,
       providerCommand,
@@ -1010,6 +1023,18 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         const toolTotals = new Map<string, { count: number; ms: number }>();
         let firstTokenAt = 0;
         const runStartedAt = Date.now();
+        let spawnedAt = 0;
+        let initAt = 0;
+        let firstStreamAt = 0;
+        let firstContentAt = 0;
+        let phaseLogged = false;
+        const logRunPhase = () => {
+          if (phaseLogged) return;
+          phaseLogged = true;
+          const d = (a: number, b: number) => a && b ? b - a : -1;
+          const setupParts = Object.entries(runPhaseMarks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
+          perf.log(`[RunPhase] provider=claude-code convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTokenAt) } totalToTextMs=${ d(runPhaseStart, firstTokenAt) }`);
+        };
         const noteToolStart = (id?: string, name?: string, input?: unknown) => {
           if (!id || toolStarts.has(id)) return;
           toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
@@ -1097,7 +1122,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
 
         // Start the heartbeat + stall watchdog once the process has spawned.
-        proc.once('spawn', onSpawned);
+        proc.once('spawn', () => { spawnedAt = Date.now(); onSpawned() });
 
         /**
        * Summarise a tool_use block into a short activity message like
@@ -1326,6 +1351,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           // Update the heartbeat phase but keep ticking because the model
           // call itself can still add 20–60s.
           if (parsed.type === 'system' && parsed.subtype === 'init') {
+            if (!initAt) initAt = Date.now();
             emitActivity('Tools connected — calling model');
             return;
           }
@@ -1334,11 +1360,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           // tool_use block starts, thinking starts.
           const ev = parsed?.event;
           if (ev) {
+            if (!firstStreamAt && ev.type === 'message_start') firstStreamAt = Date.now();
           // Text chunks → stream to caller as content
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
               if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
               stopHeartbeat();
-              if (!firstTokenAt) firstTokenAt = Date.now();
+              if (!firstContentAt) firstContentAt = Date.now();
+              if (!firstTokenAt) { firstTokenAt = Date.now(); logRunPhase() }
               textCollected += ev.delta.text;
               try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
               return;
@@ -1347,6 +1375,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             // Thinking deltas → live reasoning trace (throttled, see flushThinking)
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
               stopHeartbeat();
+              if (!firstContentAt) firstContentAt = Date.now();
               thinkingBuf += ev.delta.thinking;
               flushThinking();
               return;
@@ -1357,6 +1386,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             // starts generic and content_block_stop below refines it.
             if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
               stopHeartbeat();
+              if (!firstContentAt) firstContentAt = Date.now();
               const name = ev.content_block.name ?? 'tool';
               noteIfNativeAsk(name);
               emitActivity(activityForToolUse(name, ev.content_block.input));
@@ -1379,6 +1409,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             // Thinking block starting → stop the heartbeat
             if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
               stopHeartbeat();
+              if (!firstContentAt) firstContentAt = Date.now();
               return;
             }
 
@@ -1617,6 +1648,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
 
         const onProcClose = async(code: number | null) => {
+          logRunPhase();
           const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
           stopHeartbeat();
           stopStallWatchdog();

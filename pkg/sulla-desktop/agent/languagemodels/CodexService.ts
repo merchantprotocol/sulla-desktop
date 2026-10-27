@@ -37,6 +37,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
+const perf = Logging.perf;
 
 /** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
 const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
@@ -561,8 +562,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
+    const runPhaseStart = Date.now();
+    const marks: Record<string, number> = {};
+    let lastSetupMark = runPhaseStart;
+    const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
+    // Signal immediately, before credential/config/file setup starts.
+    try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
+    mark('session');
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'codex',
@@ -571,6 +579,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       providerSessionId: existingSession,
     });
     requireBrokeredContainerAuth(initialTransportContext);
+    mark('initialContext');
     if (initialTransportContext.runtime === 'guest' && !await ensureCodexAuthFile()) {
       throw new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.');
     }
@@ -595,6 +604,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       isNewSession: !existingSession,
     });
     const prompt = contextPrefix ? `${ contextPrefix }\n\n${ basePrompt }` : basePrompt;
+    mark('prompt');
 
     log.log(`[CodexService] runCodex: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } runtime=${ initialTransportContext.runtime }`);
 
@@ -635,6 +645,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         toolSessionId:     mcpSession.id,
       })
       : initialTransportContext;
+    mark('toolContext');
     const providerConfig = requireBrokeredContainerAuth(transportContext);
     const toolConfig = transportContext.runtime === 'container' && mcpSession
       ? requireContainerToolConfig(transportContext)
@@ -651,6 +662,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       data:          systemInstructions,
     });
     const instructionsPath = instructionsFile.path;
+    mark('instructionsFile');
+    const setupDoneAt = Date.now();
     const pidFile = newRemotePidFile('sulla-codex');
     const args = this.buildSpawnArgs({
       existingSession,
@@ -683,6 +696,19 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         reject(error);
         return;
       }
+      let spawnedAt = 0;
+      let initAt = 0;
+      let firstStreamAt = 0;
+      let firstContentAt = 0;
+      let firstTextAt = 0;
+      let phaseLogged = false;
+      const logRunPhase = () => {
+        if (phaseLogged) return;
+        phaseLogged = true;
+        const d = (a: number, b: number) => a && b ? b - a : -1;
+        const setupParts = Object.entries(marks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
+        perf.log(`[RunPhase] provider=codex convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTextAt) } totalToTextMs=${ d(runPhaseStart, firstTextAt) }`);
+      };
       const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
         context: transportContext,
         providerCommand,
@@ -708,6 +734,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
 
       proc.once('spawn', () => {
+        spawnedAt = Date.now();
         emitActivity('Booting isolated environment…');
       });
 
@@ -902,6 +929,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
        *  streamed its content into textCollected. */
       const appendAgentMessage = (text: string) => {
         if (!text) return;
+        if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
         if (sawDelta) {
           // Deltas already delivered this content; reset for the next message.
           sawDelta = false;
@@ -953,7 +981,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
         // ── Thread-event schema (codex exec --json) ──────────────
         if (typeof parsed.type === 'string') {
+          if (!firstStreamAt) firstStreamAt = Date.now();
           if (parsed.type === 'thread.started' && parsed.thread_id) {
+            if (!initAt) initAt = Date.now();
             capturedSessionId = parsed.thread_id;
             emitActivity('Session started — calling model');
             maybeInterruptForSteer();
@@ -961,6 +991,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           }
           if (parsed.type === 'item.started' || parsed.type === 'item.completed') {
             const item = parsed.item ?? {};
+            if (!firstContentAt && parsed.type === 'item.started') firstContentAt = Date.now();
             const kind = item.item_type ?? item.type;
             const itemId = typeof item.id === 'string' ? item.id : typeof item.call_id === 'string' ? item.call_id : '';
             const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
@@ -1020,6 +1051,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           break;
         case 'agent_message_delta':
           if (typeof msg.delta === 'string') {
+            if (!firstContentAt) firstContentAt = Date.now();
+            if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
             sawDelta = true;
             textCollected += msg.delta;
             try { callbacks.onToken?.(msg.delta) } catch { /* ignore */ }
@@ -1100,6 +1133,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       });
 
       proc.on('close', async(code) => {
+        logRunPhase();
         if (settled) return;
         if (stdoutBuffer.trim()) {
           processLine(stdoutBuffer);
