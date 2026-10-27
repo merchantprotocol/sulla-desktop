@@ -4,7 +4,6 @@ import { ActionContext, ActionTree, MutationsType } from './ts-helpers';
 
 import { CURRENT_SETTINGS_VERSION, defaultSettings, Settings, LockedSettingsType } from '@pkg/config/settings';
 import type { ServerState } from '@pkg/main/commandServer/httpCommandServer';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { RecursiveKeys, RecursivePartial, RecursiveTypes } from '@pkg/utils/typeUtils';
 
 import type { GetterTree, MutationTree } from 'vuex';
@@ -241,14 +240,10 @@ export const getters = {
     return state.preferences;
   },
   isPreferencesDirty(state) {
-    const isDirty = !_.isEqual(
+    return !_.isEqual(
       normalizePreferences(state.initialPreferences, 'diff'),
       normalizePreferences(state.preferences, 'diff'),
     );
-
-    ipcRenderer.send('preferences-set-dirty', isDirty);
-
-    return isDirty;
   },
   hasError(state) {
     return state.hasError;

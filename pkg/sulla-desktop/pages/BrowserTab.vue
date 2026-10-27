@@ -293,6 +293,24 @@
 
     <template v-else-if="tabMode === 'decide'"><DecidePage class="flex-1 min-h-0" /></template>
 
+    <template v-else-if="tabMode === 'preferences'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <PreferencesPage
+          :section="getTab(props.tabId)?.section"
+          @section-consumed="updateTab(props.tabId, { section: undefined })"
+        />
+      </div>
+    </template>
+
+    <template v-else-if="tabMode === 'docker'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <DockerPage
+          :requested-section="getTab(props.tabId)?.section"
+          @section-consumed="updateTab(props.tabId, { section: undefined })"
+        />
+      </div>
+    </template>
+
 
 
     <template v-else-if="tabMode === 'files'">
@@ -408,6 +426,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const AgentRoutines = defineAsyncComponent(() => import('./AgentRoutines.vue'));
 const FileEditorTab = defineAsyncComponent(() => import('./FileEditorTab.vue'));
 const TerminalTab = defineAsyncComponent(() => import('./TerminalTab.vue'));
+const PreferencesPage = defineAsyncComponent(() => import('./Preferences.vue'));
+const DockerPage = defineAsyncComponent(() => import('./Docker.vue'));
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
   welcome:       'New Tab',
@@ -427,6 +447,8 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   terminal:      'Terminal',
   files:         'File Manager',
   decide:        'Decide',
+  preferences:   'Preferences',
+  docker:        'Docker',
 };
 
 const props = defineProps<{

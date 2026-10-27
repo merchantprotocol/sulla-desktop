@@ -18,7 +18,7 @@ import PrefMore from '../PrefMore.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
-import { openDockerWindow } from '@pkg/composables/preferences/openInMain';
+import { openDockerTab } from '@pkg/composables/preferences/openInMain';
 import { confirmFactoryReset } from '@pkg/composables/preferences/resets';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="link"
-          @click="openDockerWindow"
+          @click="openDockerTab('snapshots')"
         >
           Open
         </button>

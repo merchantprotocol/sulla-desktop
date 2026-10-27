@@ -7,8 +7,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 
-import { getWindow } from '@pkg/window';
-import { openPreferences } from '@pkg/window/preferences';
+import { getWindow, openDocker, openPreferences } from '@pkg/window';
 
 /**
  * UI Open Tab — bridge between the agent and the renderer's `agent-command`
@@ -53,33 +52,23 @@ export class UiOpenTabWorker extends BaseTool {
     const url = typeof input.url === 'string' ? input.url.trim() : '';
     const mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
 
-    // `models` and `audio` are sections of the Preferences window, not tabs.
-    const WINDOW_MODES: Record<string, { open: () => void; label: string }> = {
-      models: { open: () => openPreferences('models'), label: 'Preferences › AI models' },
-      audio:  { open: () => openPreferences('voice'), label: 'Preferences › Voice & audio' },
-    };
-    if (WINDOW_MODES[mode]) {
-      try {
-        WINDOW_MODES[mode].open();
-        return { successBoolean: true, responseString: `Opened the ${ WINDOW_MODES[mode].label } window.` };
-      } catch (err) {
-        return { successBoolean: false, responseString: `Failed to open ${ WINDOW_MODES[mode].label }: ${ (err as Error).message }` };
-      }
-    }
+    const section = typeof input.section === 'string' ? input.section.trim() : '';
 
-    // `settings` is a separate Electron window, not a tab — handle it up front.
-    if (mode === 'settings') {
+    // Preferences and Docker are single tabs that open on a section. `settings`,
+    // `models` and `audio` are the older names for Preferences and two of its sections.
+    const SECTION_TABS: Record<string, { open: () => void; label: string }> = {
+      preferences: { open: () => openPreferences(section), label: section ? `Preferences › ${ section }` : 'Preferences' },
+      settings:    { open: () => openPreferences(section), label: section ? `Preferences › ${ section }` : 'Preferences' },
+      models:      { open: () => openPreferences('models'), label: 'Preferences › AI models' },
+      audio:       { open: () => openPreferences('voice'), label: 'Preferences › Voice & audio' },
+      docker:      { open: () => openDocker(section), label: section ? `Docker › ${ section }` : 'Docker' },
+    };
+    if (SECTION_TABS[mode]) {
       try {
-        await openPreferences();
-        return {
-          successBoolean: true,
-          responseString: 'Opened the Sulla Desktop Settings window.',
-        };
+        SECTION_TABS[mode].open();
+        return { successBoolean: true, responseString: `Opened the ${ SECTION_TABS[mode].label } tab.` };
       } catch (err) {
-        return {
-          successBoolean: false,
-          responseString: `Failed to open Settings: ${ (err as Error).message }`,
-        };
+        return { successBoolean: false, responseString: `Failed to open ${ SECTION_TABS[mode].label }: ${ (err as Error).message }` };
       }
     }
 
@@ -101,14 +90,14 @@ export class UiOpenTabWorker extends BaseTool {
     if (!mode) {
       return {
         successBoolean: false,
-        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings, models, audio. (Or pass a "url" to open a raw browser tab.)`,
+        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }, preferences, settings, models, audio, docker. (Or pass a "url" to open a raw browser tab.)`,
       };
     }
 
     if (!VALID_MODES.has(mode)) {
       return {
         successBoolean: false,
-        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings, models, audio.`,
+        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }, preferences, settings, models, audio, docker.`,
       };
     }
 

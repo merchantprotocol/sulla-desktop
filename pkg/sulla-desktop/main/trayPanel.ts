@@ -24,7 +24,7 @@ import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } fro
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import { openMain, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, openDocker, getWindow, openUrlInApp } from '@pkg/window';
 
 const console = Logging.background;
 
@@ -368,7 +368,7 @@ function registerPanelIpc(): void {
   });
 
   ipcMain.on('tray-panel:open-docker', () => {
-    openDockerDashboard();
+    openDocker();
     panelWindow?.hide();
   });
 

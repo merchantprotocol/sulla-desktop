@@ -22,8 +22,9 @@ import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
-import { openPreferences } from '@pkg/window/preferences';
+import {
+  openMain, send, openDocker, openPreferences, getWindow, openUrlInApp,
+} from '@pkg/window';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -79,12 +80,20 @@ export class Tray {
     },
     { type: 'separator' },
     {
-      id:    'docker-dashboard',
-      label: 'Docker Dashboard',
+      id:    'docker',
+      label: 'Docker',
       icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
       type:  'normal',
       click() {
-        openDockerDashboard();
+        openDocker();
+      },
+    },
+    {
+      id:    'preferences',
+      label: 'Preferences…',
+      type:  'normal',
+      click() {
+        openPreferences();
       },
     },
     { type: 'separator' },

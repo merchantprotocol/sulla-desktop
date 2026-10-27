@@ -18,7 +18,6 @@ import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
-import { openPreferences } from '@pkg/window/preferences';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
 
@@ -148,12 +147,11 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 }
 
 const mainUrl = `${ webRoot }/agent.html`;
-const dockerDashboardUrl = `${ webRoot }/index.html`;
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
 
-console.log('[window/index] URLs configured:', { webRoot, mainUrl, dockerDashboardUrl });
+console.log('[window/index] URLs configured:', { webRoot, mainUrl });
 
 /**
  * Open the main window (Agent); if it is already open, focus it.
@@ -205,26 +203,6 @@ export function openMain() {
       },
       () => openPreferences(),
       'open preferences',
-    );
-
-    Shortcuts.register(
-      window,
-      {
-        ...CommandOrControl,
-        key: ']',
-      },
-      () => window.webContents.send('route', { direction: 'forward' }),
-      'switch preferences tabs by cycle [forward]',
-    );
-
-    Shortcuts.register(
-      window,
-      {
-        ...CommandOrControl,
-        key: '[',
-      },
-      () => window.webContents.send('route', { direction: 'back' }),
-      'switch preferences tabs by cycle [back]',
     );
 
     // ── File menu accelerators ──────────────────────────────────
@@ -310,12 +288,36 @@ export function openMain() {
  * create a new browser tab navigating to the given URL.
  */
 export function openUrlInApp(url: string): void {
+  sendToMain({ command: 'open-url', url });
+}
+
+/**
+ * Open Preferences as a tab in the main window, or focus the one that's open.
+ * @param section A section id (`models`, `voice`, `account`…) to show.
+ */
+export function openPreferences(section?: string): void {
+  // Menu items pass their click arguments through; only a string names a section.
+  sendToMain({ command: 'open-tab', mode: 'preferences', section: typeof section === 'string' ? section : undefined });
+}
+
+/**
+ * Open Docker as a tab in the main window, or focus the one that's open.
+ * @param section A Docker page (`containers`, `images`, `snapshots`…) to show.
+ */
+export function openDocker(section?: string): void {
+  sendToMain({ command: 'open-tab', mode: 'docker', section: typeof section === 'string' ? section : undefined });
+}
+
+/**
+ * Make sure the main window is open, then hand an `agent-command` to it.
+ */
+function sendToMain(payload: Record<string, unknown>): void {
   openMain();
   const existing = getWindow('main-agent');
 
   const sendCommand = (window: Electron.BrowserWindow) => {
     const send = () => {
-      window.webContents.send('agent-command', { command: 'open-url', url });
+      window.webContents.send('agent-command', payload);
     };
 
     if (window.webContents.isLoading()) {
@@ -345,39 +347,6 @@ if (process.type === 'browser') {
   ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
   });
-}
-
-/**
- * Open the Docker Dashboard window; if it is already open, focus it.
- */
-export function openDockerDashboard() {
-  console.log('[openDockerDashboard] Called. dockerDashboardUrl:', dockerDashboardUrl, 'webRoot:', webRoot);
-
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
-  const defaultHeight = Math.min(Math.trunc(height * 0.8), 720);
-
-  console.log('[openDockerDashboard] Creating window with name: docker-dashboard, url:', dockerDashboardUrl);
-  const window = createWindow(
-    'docker-dashboard',
-    dockerDashboardUrl,
-    {
-      title:          'Sulla Desktop - Docker',
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      webPreferences: {
-        devTools:         !app.isPackaged,
-        nodeIntegration:  true,
-        contextIsolation: false,
-      },
-    });
-
-  app.dock?.show();
-
-  return window;
 }
 
 /**

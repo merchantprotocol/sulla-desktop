@@ -20,7 +20,7 @@ import PrefRange from '../PrefRange.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
-import { openDockerWindow } from '@pkg/composables/preferences/openInMain';
+import { openDockerTab } from '@pkg/composables/preferences/openInMain';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import {
@@ -167,7 +167,7 @@ onMounted(async() => {
         <button
           type="button"
           class="btn"
-          @click="openDockerWindow"
+          @click="openDockerTab()"
         >
           <PrefIcon name="box" />Open Docker
         </button>
@@ -544,7 +544,7 @@ onMounted(async() => {
         <button
           type="button"
           class="link"
-          @click="openDockerWindow"
+          @click="openDockerTab('snapshots')"
         >
           Open
         </button>

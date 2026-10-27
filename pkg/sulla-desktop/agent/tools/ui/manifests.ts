@@ -10,13 +10,18 @@ import type { ToolManifest } from '../registry';
 export const uiToolManifests: ToolManifest[] = [
   {
     name:        'open_tab',
-    description: 'Open or focus a built-in Sulla Desktop view (Use Cases, vault, integrations, routines, history, secretary, chat, document, browser, files, agents, decide) or settings window (settings, models, audio). Use this when the user asks to "open" or "show me" a section of the app. For external URLs or extension web UIs (e.g. Twenty CRM at localhost:30207), use browser/tab instead.',
+    description: 'Open or focus a built-in Sulla Desktop view (Use Cases, vault, integrations, routines, history, secretary, chat, document, browser, files, agents, decide, preferences, docker). Use this when the user asks to "open" or "show me" a section of the app. For external URLs or extension web UIs (e.g. Twenty CRM at localhost:30207), use browser/tab instead.',
     category:    'ui',
     schemaDef:   {
       mode: {
         type:        'string',
         optional:    true,
-        description: 'Built-in view to open. One of: use-cases (aliases: packages, marketplace), vault, integrations, routines, history, secretary, chat, document, browser, welcome, agents, files, decide, settings, models, audio. Use Cases are ready-made jobs bundled into one download. (settings opens the Preferences window; models opens Language Model Settings — choose the AI model/provider; audio opens Audio Settings — microphone, speaker, voice. These three are windows outside the tab system.)',
+        description: 'Built-in view to open. One of: use-cases (aliases: packages, marketplace), vault, integrations, routines, history, secretary, chat, document, browser, welcome, agents, files, decide, preferences (alias: settings), models, audio, docker. Use Cases are ready-made jobs bundled into one download. preferences opens the Preferences tab; models opens it on AI models (provider and model); audio opens it on Voice & audio (microphone, speaker, voice); docker opens the Docker tab (containers, images, volumes, snapshots).',
+      },
+      section: {
+        type:        'string',
+        optional:    true,
+        description: 'With preferences: the section to show (general, appearance, models, personality, heartbeat, voice, workflows, account, files, privacy, docker, advanced). With docker: the page to show (containers, images, volumes, networks, ports, snapshots, options).',
       },
       url: {
         type:        'string',

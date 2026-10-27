@@ -8,6 +8,18 @@
 -->
 
 <template>
+  <div class="nx-docker-tab">
+  <nav class="nx-nav" aria-label="Docker">
+    <button
+      v-for="item in NAV"
+      :key="item.id"
+      type="button"
+      :class="{ on: navActive === item.id }"
+      @click="go(item.id)"
+    >
+      {{ item.label }}
+    </button>
+  </nav>
   <div class="nx-docker">
     <header class="nx-heading">
       <div>
@@ -143,7 +155,7 @@
       class="nx-detail"
       label="Container detail"
     >
-      <button class="nx-back" @click="$router.push('/Containers')">
+      <button class="nx-back" @click="go('containers')">
         ‹ All containers
       </button>
       <div class="nx-container-title">
@@ -248,7 +260,7 @@
           <h2>Images</h2>
           <p>Local images available to Docker.</p>
         </div>
-        <button class="nx-button primary" @click="$router.push('/images/add')">
+        <button class="nx-button primary" @click="go('add-image')">
           Pull or build
         </button>
       </div>
@@ -415,7 +427,7 @@
         </div>
         <button
           class="nx-button primary"
-          @click="$router.push('/snapshots/create')"
+          @click="go('create-snapshot')"
         >
           Create snapshot
         </button>
@@ -447,6 +459,49 @@
         No snapshots yet.
       </div>
     </SnapshotsList>
+
+    <section
+      v-else-if="section === 'add-image'"
+      class="nx-card nx-form"
+      aria-label="Pull or build an image"
+    >
+      <button class="nx-back" @click="go('images')">‹ All images</button>
+      <h2>Pull or build an image</h2>
+      <p>Pull an image from a registry, or build one from a folder with a Dockerfile.</p>
+      <div class="nx-form-row">
+        <input
+          v-model="imageName"
+          class="nx-search nx-wide"
+          placeholder="Image name, like nginx:latest"
+          :disabled="imageBusy"
+          @keydown.enter="runImage('pull')"
+        />
+        <button class="nx-button primary" :disabled="!imageName.trim() || imageBusy" @click="runImage('pull')">Pull</button>
+        <button class="nx-button" :disabled="!imageName.trim() || imageBusy" @click="runImage('build')">Build…</button>
+      </div>
+      <pre v-if="imageOutput" class="nx-output">{{ imageOutput }}</pre>
+    </section>
+
+    <section
+      v-else-if="section === 'create-snapshot'"
+      class="nx-card nx-form"
+      aria-label="Create snapshot"
+    >
+      <button class="nx-back" @click="go('snapshots')">‹ All snapshots</button>
+      <h2>Create snapshot</h2>
+      <p>Docker stops while the snapshot is taken, then starts again.</p>
+      <div class="nx-form-row">
+        <input v-model="snapshotName" class="nx-search nx-wide" placeholder="Name" :disabled="snapshotBusy" />
+      </div>
+      <div class="nx-form-row">
+        <input v-model="snapshotDescription" class="nx-search nx-wide" placeholder="Description (optional)" :disabled="snapshotBusy" />
+      </div>
+      <div class="nx-form-row">
+        <button class="nx-button primary" :disabled="!snapshotName.trim() || snapshotBusy" @click="createSnapshot">
+          {{ snapshotBusy ? 'Creating…' : 'Create snapshot' }}
+        </button>
+      </div>
+    </section>
 
     <DockerOptionsCard v-else class="nx-stack" label="Docker options">
       <article class="nx-card nx-options">
@@ -513,10 +568,10 @@
       </article>
     </DockerOptionsCard>
   </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
 import { useStore } from 'vuex';
 import ContainerLogs from '@pkg/components/ContainerLogs.vue';
 import DockerShell from '@pkg/components/DockerShell.vue';
@@ -543,11 +598,38 @@ import {
   titleCase,
   truthy,
 } from '@pkg/components/docker/helpers';
+import initDockerClient from '@pkg/utils/dockerClient';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { Container, Volume } from '@pkg/store/container-engine';
-const route = useRoute(),
-  router = useRouter(),
-  store = useStore();
+const props = defineProps<{
+  /** Page to show next (`containers`, `images`, `snapshots`…), from a menu, link or the agent. */
+  requestedSection?: string;
+}>();
+const emit = defineEmits<{ (e: 'section-consumed'): void }>();
+const store = useStore();
+// The Docker tab keeps its own place instead of using the main window's router.
+const view = ref<{ section: string; id?: string; tab?: string }>({ section: 'containers' });
+const SECTIONS = ['containers', 'images', 'volumes', 'networks', 'ports', 'snapshots', 'options', 'add-image', 'create-snapshot'];
+function go(section: string) {
+  view.value = { section };
+}
+const NAV = [
+  { id: 'containers', label: 'Containers' },
+  { id: 'images', label: 'Images' },
+  { id: 'volumes', label: 'Volumes' },
+  { id: 'networks', label: 'Networks' },
+  { id: 'ports', label: 'Ports' },
+  { id: 'snapshots', label: 'Snapshots' },
+  { id: 'options', label: 'Options' },
+];
+// Detail and form pages light up the list they belong to.
+const navActive = computed(() => ({ container: 'containers', 'add-image': 'images', 'create-snapshot': 'snapshots' } as Record<string, string>)[view.value.section] ?? view.value.section);
+watch(() => props.requestedSection, (name) => {
+  if (!name) return;
+  const target = name.toLowerCase().replace(/^docker/, '') || 'options';
+  if (SECTIONS.includes(target)) go(target);
+  emit('section-consumed');
+}, { immediate: true });
 const query = ref(''),
   error = ref(''),
   loading = ref(false),
@@ -558,10 +640,8 @@ const query = ref(''),
   collapsed = ref<Record<string, boolean>>({}),
   containerFilter = ref('all');
 let statsTimer: any;
-const section = computed(() =>
-  String(route.meta.dockerSection || 'containers'),
-);
-const detailTab = computed(() => String(route.query.tab || 'logs'));
+const section = computed(() => view.value.section);
+const detailTab = computed(() => view.value.tab || 'logs');
 const detailTabs = ['logs', 'shell', 'ports', 'stats', 'details'];
 const containers = computed<Record<string, Container> | null>(
   () => store.state['container-engine'].containers,
@@ -573,9 +653,9 @@ const namespace = computed(() => store.getters['container-engine/namespace']);
 const containerRows = computed(() => Object.values(containers.value || {}));
 const selectedContainer = computed(
   () =>
-    containers.value?.[String(route.params.id)] ||
+    containers.value?.[String(view.value.id)] ||
     containerRows.value.find(
-      (c) => cleanName(c.containerName) === route.params.id,
+      (c) => cleanName(c.containerName) === view.value.id,
     ),
 );
 const runningCount = computed(
@@ -593,6 +673,8 @@ const headings: any = {
   ports: ['Ports', 'Local services, within reach.'],
   snapshots: ['Snapshots', 'A safe point to return to.'],
   options: ['Options', 'Docker, tuned for this Mac.'],
+  'add-image': ['Pull or build', 'Bring a new image onto this machine.'],
+  'create-snapshot': ['New snapshot', 'A safe point to return to.'],
 };
 const heading = computed(() => ({
   title: headings[section.value][0],
@@ -686,14 +768,10 @@ function openPort(p: any) {
   ipcRenderer.send('open-url-in-app', `http://127.0.0.1:${p.hostPort}`);
 }
 function openContainer(c: Container) {
-  router.push({
-    name: 'container-info',
-    params: { id: c.id },
-    query: { tab: 'logs' },
-  });
+  view.value = { section: 'container', id: c.id, tab: 'logs' };
 }
 function setDetailTab(tab: string) {
-  router.replace({ query: { ...route.query, tab } });
+  view.value = { ...view.value, tab };
 }
 function toggleGroup(n: string) {
   collapsed.value[n] = !collapsed.value[n];
@@ -759,8 +837,45 @@ async function refresh() {
   }
 }
 function openDockerPreferences() {
-  // Lands on Preferences › Docker once the new Preferences window (#1493) is in.
   ipcRenderer.send('preferences-open', 'docker');
+}
+const imageName = ref(''),
+  imageOutput = ref(''),
+  imageBusy = ref(false);
+function onImageOutput(_e: any, data: string) {
+  imageOutput.value += data;
+}
+function onImageEnded(_e: any, status: number) {
+  imageBusy.value = false;
+  imageOutput.value += status === 0 ? '\nDone.\n' : `\nFailed (exit ${ status }).\n`;
+}
+function runImage(action: 'pull' | 'build') {
+  const name = imageName.value.trim();
+  if (!name || imageBusy.value) return;
+  imageBusy.value = true;
+  imageOutput.value = `${ action } ${ name }\n`;
+  ipcRenderer.send(action === 'pull' ? 'do-image-pull' : 'do-image-build', name);
+}
+const snapshotName = ref(''),
+  snapshotDescription = ref(''),
+  snapshotBusy = ref(false);
+async function createSnapshot() {
+  const name = snapshotName.value.trim();
+  if (!name || snapshotBusy.value) return;
+  snapshotBusy.value = true;
+  error.value = '';
+  try {
+    const result = await store.dispatch('snapshots/create', { name, description: snapshotDescription.value.trim() });
+    if (result) {
+      error.value = String(result);
+    } else {
+      snapshotName.value = '';
+      snapshotDescription.value = '';
+      go('snapshots');
+    }
+  } finally {
+    snapshotBusy.value = false;
+  }
 }
 async function deleteSnapshot(n: string) {
   const result = await store.dispatch('snapshots/delete', n);
@@ -770,11 +885,29 @@ async function restoreSnapshot(n: string) {
   const result = await store.dispatch('snapshots/restore', n);
   if (result) error.value = String(result);
 }
+// While a snapshot is taken or restored the backend is locked; show the blocking progress dialog.
+function onBackendLocked(_e: any, action?: string) {
+  ipcRenderer.invoke('show-snapshots-blocking-dialog', {
+    window: { buttons: [], cancelId: 1 },
+    format: {
+      header:            action || 'Working on a snapshot',
+      message:           'Docker is paused until this finishes.',
+      showProgressBar:   true,
+      snapshotEventType: 'backend-lock',
+    },
+  });
+}
+function onBackendUnlocked() {
+  ipcRenderer.send('dialog/close', { dialog: 'SnapshotsDialog', snapshotEventType: 'backend-lock' });
+}
 function readSettings(_e: any, value: any) {
   settings.value = value;
 }
+// The Docker client and backend credentials used to come from the Docker window's layout.
+if (!window.ddClient) initDockerClient();
+store.dispatch('credentials/fetchCredentials').catch(console.error);
 watch(
-  () => route.fullPath,
+  view,
   () => {
     clearInterval(statsTimer);
     statsTimer = undefined;
@@ -788,6 +921,10 @@ watch(
 );
 onMounted(() => {
   ipcRenderer.on('settings-read', readSettings);
+  ipcRenderer.on('images-process-output', onImageOutput);
+  ipcRenderer.on('backend-locked', onBackendLocked);
+  ipcRenderer.on('backend-unlocked', onBackendUnlocked);
+  ipcRenderer.on('images-process-ended', onImageEnded);
   ipcRenderer.on('settings-update', readSettings);
   ipcRenderer.send('settings-read');
 });
@@ -795,10 +932,47 @@ onBeforeUnmount(() => {
   clearInterval(statsTimer);
   ipcRenderer.removeListener('settings-read', readSettings);
   ipcRenderer.removeListener('settings-update', readSettings);
+  ipcRenderer.removeListener('images-process-output', onImageOutput);
+  ipcRenderer.removeListener('backend-locked', onBackendLocked);
+  ipcRenderer.removeListener('backend-unlocked', onBackendUnlocked);
+  ipcRenderer.removeListener('images-process-ended', onImageEnded);
   store.dispatch('container-engine/unsubscribe', 'sulla-docker');
 });
 </script>
 <style scoped lang="scss">
+.nx-docker-tab {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  background: var(--body-bg, var(--bg));
+}
+.nx-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 18px 10px;
+  border-right: 1px solid var(--border, #dce3ea);
+  button {
+    text-align: left;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted, #667381);
+    font: 500 13px var(--font-body, Inter, sans-serif);
+    cursor: pointer;
+    &:hover { color: var(--body-text, var(--text)); }
+    &.on {
+      color: var(--accent, #3a7fa0);
+      background: color-mix(in srgb, var(--accent, #3a7fa0) 12%, transparent);
+    }
+  }
+}
+.nx-docker-tab > .nx-docker {
+  overflow: auto;
+  padding: 24px 28px 40px;
+}
 .nx-docker {
   --nx-accent: var(--accent, #3a7fa0);
   --nx-paper: var(--body-bg, #f4f7fb);
@@ -809,6 +983,32 @@ onBeforeUnmount(() => {
   color: var(--nx-text);
   font-family: var(--font-body, Inter, sans-serif);
   padding: 6px 8px 40px;
+}
+.nx-form {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+}
+.nx-form-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.nx-wide {
+  flex: 1;
+  width: auto;
+}
+.nx-output {
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--nx-paper);
+  border: 1px solid var(--nx-line);
+  font: 12px/1.5 var(--font-mono, monospace);
+  white-space: pre-wrap;
 }
 .nx-heading,
 .nx-card-head,

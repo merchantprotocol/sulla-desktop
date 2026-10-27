@@ -8,14 +8,14 @@
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 /**
- * Open a tab (Passwords, Integrations…) in the main Sulla window. Preferences
- * is its own window, so it asks the main process to forward the request.
+ * Open a tab (Passwords, Integrations…) in the main Sulla window. The main
+ * process forwards the request, so this works from any renderer.
  */
 export function openMainTab(mode: string): void {
   ipcRenderer.send('preferences/open-main-tab', mode);
 }
 
-/** Open the Docker window (containers, images, snapshots). */
-export function openDockerWindow(): void {
-  ipcRenderer.send('dashboard-open');
+/** Open the Docker tab (containers, images, snapshots), optionally on one of its pages. */
+export function openDockerTab(section?: string): void {
+  ipcRenderer.send('dashboard-open', section);
 }
