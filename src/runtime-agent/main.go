@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	version      = "0.2.0"
+	version      = "0.3.0"
 	afVsock      = 40
 	vmaddrCIDAny = 0xffffffff
 )
@@ -107,6 +107,8 @@ func main() {
 	// the whole mount with EINVAL and /dev never gets device nodes.
 	mustMount("devtmpfs", "/dev", "devtmpfs", syscall.MS_NOSUID, "mode=0755")
 	ensureDevices()
+	loadBootModules()
+	mountUsr()
 	loadKernelModules()
 	mustMount("cgroup2", "/sys/fs/cgroup", "cgroup2", 0, "")
 	mustMount("tmpfs", "/run", "tmpfs", syscall.MS_NOSUID|syscall.MS_NODEV, "mode=0755")
@@ -123,7 +125,7 @@ func main() {
 	a.log = openLogger()
 	a.log.Printf("sulla-runtime-agent %s booting", version)
 	for _, e := range moduleErrors {
-		a.log.Printf("modprobe %s", e)
+		a.log.Printf("boot: %s", e)
 	}
 	_ = os.WriteFile("/proc/sys/kernel/hostname", []byte("sulla-runtime\n"), 0644)
 	// Before the daemons start: dockerd reads resolv.conf at startup and only
@@ -162,7 +164,12 @@ func kernelArg(name string) string {
 	if err != nil {
 		return ""
 	}
-	for _, field := range strings.Fields(string(cmdline)) {
+	return argFrom(string(cmdline), name)
+}
+
+// argFrom returns the value of name=<value> in a kernel command line.
+func argFrom(cmdline, name string) string {
+	for _, field := range strings.Fields(cmdline) {
 		if value, ok := strings.CutPrefix(field, name+"="); ok {
 			return value
 		}
@@ -199,7 +206,7 @@ func loadKernelModules() {
 		"x_tables", "ip_tables", "iptable_nat", "nft_compat", "xt_nat", "xt_REDIRECT", "nft_redir",
 	} {
 		if out, err := exec.Command("/sbin/modprobe", module).CombinedOutput(); err != nil {
-			moduleErrors = append(moduleErrors, fmt.Sprintf("%s: %v %s", module, err, strings.TrimSpace(string(out))))
+			moduleErrors = append(moduleErrors, fmt.Sprintf("modprobe %s: %v %s", module, err, strings.TrimSpace(string(out))))
 		}
 	}
 }

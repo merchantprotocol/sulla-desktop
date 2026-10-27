@@ -28,7 +28,8 @@ private let serialLogURL = runtimeDirectory.appendingPathComponent("console.log"
 private struct StartOptions {
     let kernel: URL
     let initrd: URL
-    let rootfs: URL?
+    /// Read-only erofs image of the guest's /usr (Docker, tools, kernel modules).
+    let usrImage: URL
     let dataDisk: URL
     let cpus: Int
     let memoryBytes: UInt64
@@ -122,8 +123,8 @@ private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartO
         index = arguments.index(after: valueIndex)
     }
     guard let kernel = values["--kernel"], let initrd = values["--initrd"],
-          let dataDisk = values["--data-disk"] else {
-        throw RuntimeError.usage("start requires --kernel, --initrd, and --data-disk")
+          let usrImage = values["--usr-image"], let dataDisk = values["--data-disk"] else {
+        throw RuntimeError.usage("start requires --kernel, --initrd, --usr-image, and --data-disk")
     }
     let cpus = try values["--cpus"].map { value -> Int in
         guard let parsed = Int(value), parsed > 0 else { throw RuntimeError.usage("--cpus must be positive") }
@@ -136,7 +137,7 @@ private func parseStartOptions(_ arguments: ArraySlice<String>) throws -> StartO
     let memoryBytes = memoryMiB.map { UInt64($0) * 1_048_576 } ?? defaultMemoryBytes()
     return StartOptions(
         kernel: URL(fileURLWithPath: kernel), initrd: URL(fileURLWithPath: initrd),
-        rootfs: values["--rootfs"].map(URL.init(fileURLWithPath:)),
+        usrImage: URL(fileURLWithPath: usrImage),
         dataDisk: URL(fileURLWithPath: dataDisk), cpus: cpus, memoryBytes: memoryBytes,
         kernelArguments: kernelArguments, shares: shares,
         stateFile: values["--state"].map(URL.init(fileURLWithPath:))
@@ -301,17 +302,15 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         config.platform = platform
         let loader = VZLinuxBootLoader(kernelURL: options.kernel)
         loader.initialRamdiskURL = options.initrd
-        // The agent formats and mounts only the disk named by sulla.data.
-        loader.commandLine = "console=hvc0 root=/dev/vda ro sulla.data=vdb"
+        // Disks appear in the guest in this order (vda, vdb). The agent formats
+        // and mounts only the disk named by sulla.data, and mounts the
+        // read-only one named by sulla.usr at /usr.
+        loader.commandLine = "console=hvc0 sulla.data=vda sulla.usr=vdb"
         config.bootLoader = loader
-        var storage: [VZStorageDeviceConfiguration] = []
-        if let rootfs = options.rootfs {
-            storage.append(VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: rootfs, readOnly: true)))
-        } else {
-            loader.commandLine = "console=hvc0 sulla.data=vda"
-        }
-        storage.append(VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: options.dataDisk, readOnly: false)))
-        config.storageDevices = storage
+        config.storageDevices = [
+            VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: options.dataDisk, readOnly: false)),
+            VZVirtioBlockDeviceConfiguration(attachment: try VZDiskImageStorageDeviceAttachment(url: options.usrImage, readOnly: true)),
+        ]
         // The guest has no clock source of its own, and TLS fails at 1970.
         loader.commandLine += " sulla.time=\(Int(Date().timeIntervalSince1970))"
         for argument in options.kernelArguments { loader.commandLine += " \(argument)" }
@@ -389,7 +388,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         let shares = options.shares.map { "\($0.tag)=\($0.path.path):\($0.readOnly)" }.joined(separator: ",")
         // The data disk's stamp is taken after the VM stopped: if anything wrote
         // the disk since, the saved memory no longer matches it.
-        return [stamp(options.kernel), stamp(options.initrd), stamp(options.dataDisk), "\(options.cpus)",
+        return [stamp(options.kernel), stamp(options.initrd), stamp(options.usrImage), stamp(options.dataDisk), "\(options.cpus)",
                 "\(options.memoryBytes)", shares, options.kernelArguments.joined(separator: " ")].joined(separator: "|")
     }
 

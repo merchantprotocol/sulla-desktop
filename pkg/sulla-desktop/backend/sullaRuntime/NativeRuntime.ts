@@ -93,6 +93,7 @@ export class NativeRuntime {
       'start',
       '--kernel', this.artifacts.kernel,
       '--initrd', this.artifacts.initrd,
+      '--usr-image', this.artifacts.usrImage,
       '--data-disk', options.dataDisk,
       '--cpus', String(Math.max(1, Math.round(options.cpus))),
       '--memory-mib', String(Math.max(512, Math.round(options.memoryMiB))),

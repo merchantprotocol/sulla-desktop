@@ -16,6 +16,8 @@ export interface SullaRuntimeArtifacts {
   binary: string;
   kernel: string;
   initrd: string;
+  /** Read-only erofs image the guest mounts at /usr (Docker, tools, kernel modules). */
+  usrImage: string;
 }
 
 /**
@@ -63,5 +65,6 @@ export async function findSullaRuntimeArtifacts(): Promise<SullaRuntimeArtifacts
     binary: await requireFile(process.env.SULLA_RUNTIME_BIN || path.join(root, 'sulla-runtime'), true),
     kernel: await requireFile(path.join(guestDir, 'vmlinuz')),
     initrd: await requireFile(path.join(guestDir, 'initramfs.img')),
+    usrImage: await requireFile(path.join(guestDir, 'usr.erofs')),
   };
 }

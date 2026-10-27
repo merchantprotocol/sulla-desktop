@@ -36,7 +36,7 @@ Port 2375 proxies each accepted vsock stream byte-for-byte to `/run/docker.sock`
 
 `{"id":4,"method":"set-time","unixMs":1790000000000}` sets the guest clock. The host sends it on every control connection and every minute after, since the guest has no clock of its own and is as old as its saved state after a restore. `{"id":5,"method":"prepare-suspend"}` syncs disks and drops clean caches before the host saves the machine state.
 
-The host's `sulla-runtime start ... --state FILE` restores FILE instead of cold-booting when FILE matches this configuration (kernel, initrd, data disk, CPU, memory, shares, kernel arguments; the machine identifier and MAC address persist in the runtime directory). The state is deleted as soon as a restore begins, so it's never used twice. A failed restore falls back to a cold boot. `sulla-runtime suspend` saves the state and stops the VM (macOS 14+).
+The host's `sulla-runtime start ... --state FILE` restores FILE instead of cold-booting when FILE matches this configuration (kernel, initrd, /usr image, data disk, CPU, memory, shares, kernel arguments; the machine identifier and MAC address persist in the runtime directory). The state is deleted as soon as a restore begins, so it's never used twice. A failed restore falls back to a cold boot. `sulla-runtime suspend` saves the state and stops the VM (macOS 14+).
 
 ## Guest exec (port 1025)
 
@@ -57,12 +57,12 @@ In the runtime directory (`~/Library/Application Support/Sulla/runtime`, or `$SU
 ## Boot milestones and readiness
 
 1. Agent entered (`bootUptimeMs` origin).
-2. proc, sysfs, cgroup v2, and `/run` tmpfs mounted.
+2. proc, sysfs and devtmpfs mounted; the agent loads the modules in `/lib/sulla-boot-modules` (virtio PCI, block and console, erofs, overlay) and mounts the read-only erofs disk named by `sulla.usr=` at `/sulla/usr-image`, under a tmpfs overlay at `/usr` so `/usr` stays writable (in RAM, lost at reboot). Everything except PID 1's first steps lives there (Docker, the toolset, the kernel modules, which `/lib/modules` links to), so it is page cache the guest can reclaim rather than initramfs RAM. Then the remaining modules load with `modprobe`, and cgroup v2 and the `/run` tmpfs are mounted.
 3. The data disk (`sulla.data=`) is mounted at `/mnt/data`: the whole disk if it is ext4, otherwise its first ext4 partition, which is how a Lima data disk is laid out. Only a provably blank disk (no filesystem and an all-zero first MiB, so no partition table) is formatted, as ext4 with label `sulla-data`. `/mnt/data/var/lib` is bind-mounted at `/var/lib` (Docker at `/var/lib/docker`) and `/mnt/data/worktrees` at `/mnt/worktrees`.
 4. Control and Docker vsock listeners started; network configuration proceeds independently.
 5. containerd and dockerd launched as supervised units in parallel. `unit-ready` means the process successfully started, not API readiness.
 6. `docker-ready` fires exactly once, immediately after the first `GET /_ping` response with HTTP 200 on `/run/docker.sock`. No debounce, package install, download, SSH, time synchronization, or unrelated service gates it.
 
-The immutable boot disk is `/dev/vda`; the mutable ext4 data disk is `/dev/vdb`. Agent logs are duplicated to `/dev/hvc0` and `/var/lib/sulla-runtime/logs/sulla-agent.log`.
+The mutable ext4 data disk is `/dev/vda` (`sulla.data=vda`); the read-only `/usr` image is `/dev/vdb` (`sulla.usr=vdb`). The initramfs is the rest of the immutable root and stays in RAM, so it holds only what runs before `/usr` is mounted. Agent logs are duplicated to `/dev/hvc0` and `/var/lib/sulla-runtime/logs/sulla-agent.log`.
 
 On shutdown the agent stops dockerd first (up to 45 s, while it stops containers), then containerd (up to 10 s), syncs, unmounts the data disk and powers off. The host waits up to 60 s before forcing the VM off.
