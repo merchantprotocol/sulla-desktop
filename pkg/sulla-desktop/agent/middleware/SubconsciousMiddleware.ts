@@ -357,6 +357,11 @@ export async function runSubconsciousMiddleware(
       meta.skillsObservationContext = '';
       meta.brainMemoryContext = block || '';
       if (reset) { meta.v7LedgerCompactedAt = meta.cliCompactedAt; meta.lastV7LedgerSummaryReset = meta.v7LedgerSummarizedAt }
+    }).catch((error) => {
+      // Never fall back silently to the previous turn's observation blocks.
+      console.warn('[SubconsciousMiddleware] v7 subject-memory recall failed:', error instanceof Error ? error.message : error);
+      meta.observationContext = '';
+      meta.brainMemoryContext = '';
     })));
   }
 
@@ -475,7 +480,8 @@ export async function runSubconsciousMiddleware(
   // to the brain container's /recall endpoint, no LLM round-trip. Typically
   // 300-400ms (dominated by embedding). Returns pre-formatted <brain_memory>
   // XML that the engine already builds. Gated on the brainMemory setting.
-  if (options.includeObservations && analyzable) {
+  // v7 owns brainMemoryContext; Brain v2 would race it and clear the block.
+  if (options.includeObservations && analyzable && recallModeForTurn !== 'v7') {
     launched.push('brain-recall');
     awaitedTasks.push(timed('brain-recall', 'Recalling brain knowledge', runBrainRecall(state)));
   }
