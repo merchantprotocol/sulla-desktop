@@ -22,6 +22,7 @@ import mainEvents from '@pkg/main/mainEvents';
 import * as serverHelper from '@pkg/main/serverHelper';
 import { Snapshot } from '@pkg/main/snapshots/types';
 import Logging from '@pkg/utils/logging';
+import { variantPort } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { sullaLog } from '@pkg/utils/sullaLog';
@@ -49,7 +50,7 @@ type DispatchFunctionType = (request: express.Request, response: express.Respons
 type HttpMethod = 'get' | 'put' | 'post';
 
 const console = Logging.server;
-const SERVER_PORT = 6107;
+const SERVER_PORT = variantPort(6107);
 const SERVER_FILE_BASENAME = 'rd-engine.json';
 const MAX_REQUEST_BODY_LENGTH = 4194304; // 4MiB
 
@@ -128,18 +129,31 @@ export class HttpCommandServer {
       jsonStringifyWithWhiteSpace(this.externalState),
       { mode: 0o600 });
 
-    this.server = this.app
+    const app = this.app
       .disable('etag')
       .disable('x-powered-by')
       .use(this.handleCORS)
-      .use(this.checkAuth)
-      .listen(SERVER_PORT, localHost)
-      .on('error', (err) => {
-        console.log(`Error: ${ err }`);
-      });
+      .use(this.checkAuth);
 
     this.setupRoutes();
-    console.log('CLI server is now ready.');
+    await new Promise<void>((resolve, reject) => {
+      const server = app.listen(SERVER_PORT, localHost);
+      const onError = (error: NodeJS.ErrnoException) => {
+        const failure = new Error(`CLI server could not listen on ${ localHost }:${ SERVER_PORT } (${ error.code ?? error.message })`, { cause: error });
+
+        console.error(failure.message);
+        reject(failure);
+      };
+
+      this.server = server;
+      server.once('error', onError);
+      server.once('listening', () => {
+        server.off('error', onError);
+        server.on('error', error => console.error('CLI server error:', error));
+        console.log(`CLI server is now ready on http://${ localHost }:${ SERVER_PORT }.`);
+        resolve();
+      });
+    });
   }
 
   /**

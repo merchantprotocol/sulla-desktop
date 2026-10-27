@@ -28,6 +28,7 @@ import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
 
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
+import { variantPort } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
@@ -528,7 +529,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
     await getTerminalServer().start();
-    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+    console.log(`[Background] Terminal WebSocket server started on ws://127.0.0.1:${ variantPort(6108) }`);
   } catch (error) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }

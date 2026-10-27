@@ -9,9 +9,11 @@ import { isIP } from 'node:net';
 
 import { session } from 'electron';
 
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
+
 import { SullaAccountsBootstrap, type AccountsOwnerSession } from './sullaAccountsBootstrap';
 
-const API = 'http://127.0.0.1:3020';
+const API = variantLoopbackUrl(3020);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_JSON_BYTES = 256 * 1024;

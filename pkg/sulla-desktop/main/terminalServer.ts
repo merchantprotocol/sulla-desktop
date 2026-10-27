@@ -10,9 +10,10 @@ import http from 'http';
 import * as pty from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 
+import { variantPort } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 
-const TERMINAL_PORT = 6108;
+const TERMINAL_PORT = variantPort(6108);
 const PTY_RETRY_INTERVAL_MS = 3000;
 const PTY_MAX_RETRIES = 20;
 
@@ -194,14 +195,19 @@ export class WebSocketTerminalServer {
           this.handleConnection(ws);
         });
 
+        const onError = (error: NodeJS.ErrnoException) => {
+          const failure = new Error(`Terminal server could not listen on 127.0.0.1:${ port } (${ error.code ?? error.message })`, { cause: error });
+
+          console.error(`[TerminalServer] ${ failure.message }`);
+          reject(failure);
+        };
+
+        this.server.once('error', onError);
         this.server.listen(port, '127.0.0.1', () => {
+          this.server?.off('error', onError);
+          this.server?.on('error', error => console.error('[TerminalServer] Server error:', error));
           console.log(`[TerminalServer] WebSocket server listening on ws://127.0.0.1:${ port }`);
           resolve();
-        });
-
-        this.server.on('error', (err: Error) => {
-          console.error('[TerminalServer] Server error:', err);
-          reject(err);
         });
       } catch (err) {
         console.error('[TerminalServer] Failed to start:', err);

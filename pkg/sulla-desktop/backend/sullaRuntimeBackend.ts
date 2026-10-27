@@ -428,10 +428,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenFile, JSON.stringify({
       token: sullaApiToken,
-      port:  3000,
+      port:  variantPort(3000),
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
-    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\n`;
+    const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\nSULLA_TOOL_API_URL=http://host.sulla.internal:${ variantPort(3000) }\n`;
 
     await this.writeFile('/etc/sulla-env', sullaEnv, 0o644);
     console.log('[sulla-runtime] wrote /etc/sulla-env');
@@ -1138,7 +1138,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
-          SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
+          SULLA_ACCOUNTS_PUBLIC_URL:                   variantLoopbackUrl(3020),
           SULLA_ACCOUNTS_DATABASE_HOST:                'postgres',
           SULLA_ACCOUNTS_DATABASE_PORT:                '5432',
           SULLA_ACCOUNTS_DATABASE_NAME:                'sulla_accounts',
@@ -1148,7 +1148,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE:   '/run/sulla-accounts-source/session.secret',
           SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
         },
-        ports:   ['127.0.0.1:3020:3020'],
+        ports:   [`127.0.0.1:${ variantPort(3020) }:3020`],
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
@@ -1210,12 +1210,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_VAULT_AUDIT_SPOOL_DIR: '/var/lib/sulla-vault',
           SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
           NODE_EXTRA_CA_CERTS: '/run/sulla-files-ca/tls.crt',
-          SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
+          SULLA_VAULT_HUMAN_UI_ORIGIN: variantLoopbackUrl(30135, 'https'),
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
-        ports: ['127.0.0.1:30135:8787'],
+        ports: [`127.0.0.1:${ variantPort(30135) }:8787`],
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
@@ -1265,7 +1265,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
-        SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
+        SULLA_TOOL_API_URL: `http://host.docker.internal:${ variantPort(3000) }`,
         SULLA_WORKFLOW_IMAGE: image,
         SULLA_DOCKER_NETWORK: appVariantComposeNetwork,
       },

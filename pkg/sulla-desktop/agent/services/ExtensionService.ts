@@ -13,6 +13,7 @@ import yaml from 'yaml';
 import { Integration } from '../integrations/catalog';
 
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 
 const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
@@ -82,7 +83,7 @@ export function getExtensionService(): ExtensionService {
 }
 
 export class ExtensionService {
-  private backendUrl = 'http://127.0.0.1:6107';
+  private backendUrl = variantLoopbackUrl(6107);
   private extensionsMetadata:       LocalExtensionMetadata[] = [];
   private headerMenuItems:          HeaderMenuItem[] = [];
   private initialized = false;

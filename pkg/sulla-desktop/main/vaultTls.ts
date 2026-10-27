@@ -12,11 +12,12 @@ import Electron from 'electron';
 
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 
 export { vaultCertificateMetadataMatches, verifyVaultCertificate } from './vaultTlsVerifier';
 
-export const VAULT_HTTPS_ORIGIN = 'https://127.0.0.1:30135';
+export const VAULT_HTTPS_ORIGIN = variantLoopbackUrl(30135, 'https');
 
 let pinnedFingerprint: Promise<string> | undefined;
 const pinnedSessions = new Set<WeakRef<Electron.Session>>();

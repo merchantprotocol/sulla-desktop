@@ -14,10 +14,11 @@
  * for, and the container never returns, a sync body, a key or plaintext.
  */
 
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
 import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broker/desktopTransport';
 
 // Same endpoint as @pkg/vault-broker's DESKTOP_VAULT_ENDPOINT.
-const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
+const DESKTOP_VAULT_ENDPOINT = variantLoopbackUrl(30135, 'https');
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
 

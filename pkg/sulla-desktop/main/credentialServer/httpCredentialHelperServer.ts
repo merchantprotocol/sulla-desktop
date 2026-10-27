@@ -14,6 +14,7 @@ import runCredentialHelper from './credentialUtils';
 
 import * as serverHelper from '@pkg/main/serverHelper';
 import Logging from '@pkg/utils/logging';
+import { variantPort } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 
@@ -24,7 +25,7 @@ export interface ServerState {
   pid:      number;
 }
 
-const SERVER_PORT = 6109;
+const SERVER_PORT = variantPort(6109);
 const console = Logging.server;
 const SERVER_USERNAME = 'user';
 const SERVER_FILE_BASENAME = 'credential-server.json';
@@ -78,11 +79,22 @@ export class HttpCredentialHelperServer {
       jsonStringifyWithWhiteSpace(this.stateInfo),
       { mode: 0o600 });
     this.server.on('request', this.handleRequest.bind(this));
-    this.server.on('error', (err) => {
-      console.error(`Error writing out ${ statePath }`, err);
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: NodeJS.ErrnoException) => {
+        const failure = new Error(`Credentials server could not listen on ${ this.listenAddr }:${ SERVER_PORT } (${ error.code ?? error.message })`, { cause: error });
+
+        console.error(failure.message);
+        reject(failure);
+      };
+
+      this.server.once('error', onError);
+      this.server.listen(SERVER_PORT, this.listenAddr, () => {
+        this.server.off('error', onError);
+        this.server.on('error', error => console.error('Credentials server error:', error));
+        console.log(`Credentials server is now ready on http://${ this.listenAddr }:${ SERVER_PORT }.`);
+        resolve();
+      });
     });
-    this.server.listen(SERVER_PORT, this.listenAddr);
-    console.log('Credentials server is now ready.');
   }
 
   protected async handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {

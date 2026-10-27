@@ -16,6 +16,7 @@
 <script lang="ts">
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
+import { variantPort } from '@pkg/utils/appVariant';
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import '@xterm/xterm/css/xterm.css';
 
@@ -29,7 +30,7 @@ export default defineComponent({
     },
     wsUrl: {
       type:    String,
-      default: 'ws://127.0.0.1:6108',
+      default: () => `ws://127.0.0.1:${ variantPort(6108) }`,
     },
     sessionId: {
       type:    String,

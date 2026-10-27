@@ -11,6 +11,7 @@ import { ConversationHistoryModel } from '@pkg/agent/database/models/Conversatio
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
 import { updateManager } from '@pkg/main/update/UpdateManager';
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
 import Logging from '@pkg/utils/logging';
 import {
   openDocker, openMain, openPreferences, getWindow, openUrlInApp,
@@ -197,7 +198,7 @@ async function refreshExtensions(): Promise<void> {
     }
 
     const authHeader = `Basic ${ Buffer.from(`${ credentials.user }:${ credentials.password }`).toString('base64') }`;
-    const response = await fetch('http://127.0.0.1:6107/v1/extensions', {
+    const response = await fetch(`${ variantLoopbackUrl(6107) }/v1/extensions`, {
       headers: { Authorization: authHeader },
     });
 
