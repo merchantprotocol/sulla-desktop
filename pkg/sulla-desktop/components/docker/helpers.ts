@@ -12,51 +12,7 @@ export function cleanName(value: string) {
 }
 
 export function displayProject(value: string) {
-  return value === 'sulla' ? 'Sulla' : value;
-}
-
-export function titleCase(value: string) {
-  return value[0].toUpperCase() + value.slice(1);
-}
-
-export function labelState(value: string) {
-  return value ? titleCase(value) : 'Unknown';
-}
-
-export function shortId(value: string) {
-  return (value || '').replace('sha256:', '').slice(0, 12);
-}
-
-export function truthy(value: unknown) {
-  return value === true || value === 'true' || value === 'enabled';
-}
-
-export function started(value: unknown) {
-  if (!value) return '—';
-  const hours = Math.floor(
-    (Date.now() - new Date(value as string).getTime()) / 36e5,
-  );
-  return hours < 1
-    ? 'Less than an hour'
-    : `${hours} hour${hours === 1 ? '' : 's'}`;
-}
-
-export function date(value: unknown) {
-  if (!value) return '—';
-  const parsed = new Date(value as string | number);
-  return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString();
-}
-
-export function bytes(value: number) {
-  if (!Number.isFinite(value)) return '—';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let amount = value;
-  let unit = 0;
-  while (amount >= 1024 && unit < 3) {
-    amount /= 1024;
-    unit++;
-  }
-  return `${amount.toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`;
+  return value === 'sulla' ? 'Sulla' : value === 'Standalone Containers' ? 'Other containers' : value;
 }
 
 export function flatPorts(container: Container) {
@@ -66,7 +22,7 @@ export function flatPorts(container: Container) {
       return {
         containerPort,
         protocol,
-        hostIp: binding.HostIp || '127.0.0.1',
+        hostIp:   binding.HostIp || '127.0.0.1',
         hostPort: binding.HostPort,
       };
     }),
@@ -87,6 +43,6 @@ export function imageName(image: any) {
   const hasTag = separator > raw.lastIndexOf('/');
   return {
     repository: hasTag ? raw.slice(0, separator) : raw,
-    tag: hasTag ? raw.slice(separator + 1) : '<none>',
+    tag:        hasTag ? raw.slice(separator + 1) : '<none>',
   };
 }

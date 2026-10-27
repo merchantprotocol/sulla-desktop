@@ -27,6 +27,9 @@ import {
   changesForVmType, diskSizeChoices, gbToDiskSize, mountWorksWith, type MountKind, type VmType,
 } from '@pkg/utils/preferencesModel';
 
+// In the Docker tab this page is "Docker options"; in Preferences it's "Docker".
+const props = defineProps<{ inDocker?: boolean }>();
+
 const { get, set, setMany, isLocked } = useEngineSettings();
 
 const platform = os.platform();
@@ -159,11 +162,18 @@ onMounted(async() => {
 <template>
   <div>
     <div class="ph">
-      <div>
+      <div v-if="props.inDocker">
+        <h1>Docker options</h1>
+        <p>Speed, size and engine settings. Also in Preferences › Docker.</p>
+      </div>
+      <div v-else>
         <h1>Docker</h1>
         <p>Speed, size and engine settings for your containers.</p>
       </div>
-      <div class="r">
+      <div
+        v-if="!props.inDocker"
+        class="r"
+      >
         <button
           type="button"
           class="btn"
@@ -188,7 +198,7 @@ onMounted(async() => {
           :min="minMemory"
           :max="maxMemory"
           :ticks="memoryTicks"
-          :format="v => `${ v } GB`"
+          :format="v => `${v} GB`"
           :disabled="isLocked('virtualMachine.memoryInGB')"
           label="Memory"
           @change="set('virtualMachine.memoryInGB', $event)"
@@ -200,7 +210,7 @@ onMounted(async() => {
           :min="1"
           :max="maxCpus"
           :ticks="cpuTicks"
-          :format="v => `${ v } core${ v === 1 ? '' : 's' }`"
+          :format="v => `${v} core${v === 1 ? '' : 's'}`"
           :disabled="isLocked('virtualMachine.numberCPUs')"
           label="CPU cores"
           @change="set('virtualMachine.numberCPUs', $event)"
