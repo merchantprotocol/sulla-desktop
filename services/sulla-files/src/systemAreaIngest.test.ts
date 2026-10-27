@@ -10,9 +10,10 @@ import test from 'node:test';
 
 import { isSystemArea, shouldSkipSearchIndex, skipSearchIndexForVersion } from './systemAreaIngest.js';
 
-test('search indexing is always skipped only for read-only system areas', () => {
+test('search indexing is always skipped only for the Logs audit store', () => {
   assert.equal(shouldSkipSearchIndex('1', 'logs'), true);
-  assert.equal(shouldSkipSearchIndex('1', 'training-data'), true);
+  // Training Data is no longer a system area.
+  assert.equal(shouldSkipSearchIndex('1', 'training-data'), false);
   // The Sulla area (docs, use cases) and customer collections stay searchable.
   assert.equal(shouldSkipSearchIndex('1', 'sulla'), false);
   assert.equal(shouldSkipSearchIndex('1', null), false);
@@ -20,12 +21,13 @@ test('search indexing is always skipped only for read-only system areas', () => 
   // A missing or malformed header cannot opt an excluded area back in.
   assert.equal(shouldSkipSearchIndex(undefined, 'logs'), true);
   assert.equal(shouldSkipSearchIndex('true', 'logs'), true);
-  assert.equal(shouldSkipSearchIndex('0', 'training-data'), true);
+  assert.equal(shouldSkipSearchIndex('0', 'logs'), true);
 });
 
-test('only the three system collections accept plain system-area ingest', () => {
-  for (const area of ['logs', 'training-data', 'sulla']) assert.equal(isSystemArea(area), true);
-  for (const area of [null, undefined, '', 'Logs', 'user', 42]) assert.equal(isSystemArea(area), false);
+test('only the Sulla system collection accepts plain system-area ingest', () => {
+  assert.equal(isSystemArea('sulla'), true);
+  // Logs is the audit store, written only by the audit writer; Training Data is gone.
+  for (const area of ['logs', 'training-data', null, undefined, '', 'Logs', 'user', 42]) assert.equal(isSystemArea(area), false);
 });
 
 test('skipping drops the queued index job and marks only that current version unindexed', async() => {

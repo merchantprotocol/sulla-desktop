@@ -568,9 +568,8 @@ export function createApp(
   } catch(error){next(error)} });
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
-    // The 'sulla' ingest lane (bundled Docs) now writes into the owner's home collection.
-    response.json((await db.query(`SELECT id,system_area AS "systemArea" FROM collections WHERE system_area IN ('logs','training-data')
-      UNION ALL (SELECT home.id,'sulla' FROM (${ homeQuery }) home)`,[config.userId])).rows);
+    // The only ingest lane, 'sulla' (bundled Docs), writes into the owner's home collection.
+    response.json((await db.query(`SELECT home.id,'sulla' AS "systemArea" FROM (${ homeQuery }) home`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
   const requireFuseExperiment = () => {
@@ -756,7 +755,6 @@ export function createApp(
   // lookups now pay for a scalar revision read and receive 304, rather than
   // rebuilding and transferring the complete multi-megabyte tree every second.
   const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
-  // In-flight builds are per area: sharing one let a Logs refresh answer the home mount.
   const fuseTreeSnapshotRequests=new Map<string,Promise<{ body:Buffer; revision:string }>>();
   const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
@@ -781,7 +779,7 @@ export function createApp(
           client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
         ]);
 
-        // Each mount serves exactly one collection at its root (home, Logs or Training Data).
+        // The mount serves exactly one collection at its root: the owner's home.
         for (const row of collections.rows) row.tree_path='';
         const root=collections.rows[0];
         const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
@@ -796,9 +794,8 @@ export function createApp(
     requireFuseExperiment();
     mountIdentity(request, 'list');
     const currentRevision=await fuseTreeRevision();
-    const area=String(request.query.systemArea??'');
-    if(area && !['logs','training-data'].includes(area)) throw new HttpError(400,'invalid system area');
-    // The ETag names the area, so a mount never accepts another area's tree as unchanged.
+    // The one Files mount serves the home collection; there are no other mounted areas.
+    const area='';
     const etag=`"${ area || 'home' }:${ currentRevision }"`;
     response.setHeader('Cache-Control', 'private, no-cache');
     response.setHeader('ETag', etag);

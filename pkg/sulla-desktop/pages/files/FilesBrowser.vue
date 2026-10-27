@@ -43,10 +43,6 @@
         class="cnt"
         :class="{ warn: entry.warn }"
       >{{ entry.count }}</span></a>
-      <a href="#" :class="{ on: moreExpanded }" @click.prevent="moreExpanded = !moreExpanded"><span class="sv" v-html="icons.chevronRight" /><span>More</span></a>
-      <template v-if="moreExpanded">
-        <a v-for="collection in moreCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.systemArea === 'training-data' ? 'Training Data' : 'Logs' }}</span></a>
-      </template>
       <template v-if="trackedCollections.length">
         <div class="grp">Tracked folders</div>
         <a v-for="collection in trackedCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' && !atRoots }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
@@ -1049,20 +1045,18 @@ const folderFavorites = computed(() => {
       available: folders.has(path) || activeFiles.value.some(file => file.path.startsWith(`${ path }/`)),
     }));
 });
-const moreExpanded = ref(false);
-const moreCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => collection.systemArea === 'training-data' || collection.systemArea === 'logs'));
 const trackedCollections = computed(() => userCollections.value.slice(1));
-const systemReadOnly = computed(() => snapshot.value?.collection.systemArea === 'logs' || snapshot.value?.collection.systemArea === 'training-data');
 // My Files opens on one folder per collection (this desktop's Files plus each synced folder), the same tree Sulla Cloud and Mobile show.
 const userCollections = computed(() => (snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea));
 const collectionsRoot = ref(true);
 const atRoots = computed(() => collectionsRoot.value && section.value === 'files' && userCollections.value.length > 1);
 const collectionCrumb = computed(() => section.value === 'files' && !atRoots.value && userCollections.value.length > 1 && !snapshot.value?.collection.systemArea ? snapshot.value?.collection.name ?? '' : '');
-const readOnlyArea = computed(() => systemReadOnly.value || atRoots.value);
+const readOnlyArea = computed(() => atRoots.value);
 const cloudBackup = computed(() => snapshot.value?.collection.cloudBackup);
 const cloudBackupTitle = computed(() => { const backup=cloudBackup.value; if(!backup)return 'Encrypted Files backup is unavailable'; if(backup.status==='needs-vault')return 'Turn on Passwords sync first. Passwords holds the encryption keys for Files backup.'; return backup.lastError || `Encrypted with ${backup.cryptoModule.provider} ${backup.cryptoModule.version}${backup.cryptoModule.fips?' (FIPS mode)':''}` });
 const cloudBackupLine = computed(() => { const backup=cloudBackup.value; if(!backup)return ''; if(backup.status==='needs-vault')return 'Needs Passwords sync'; const pending=backup.pendingBytes?`${formatBytes(backup.pendingBytes)} pending`:'Nothing pending'; const conflicts=backup.conflicts?` · ${backup.conflicts} conflict${backup.conflicts===1?'':'s'}`:''; const last=backup.lastSyncAt?` · Last backup ${timeAgo(backup.lastSyncAt)}`:''; return `${pending}${conflicts}${last} · ${backup.cryptoModule.provider}` });
-const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs' && collection.systemArea !== 'training-data') ?? []);
+// The Logs collection is the Files service's internal audit store: never a move/copy target.
+const otherCollections = computed(() => snapshot.value?.availableCollections?.filter(collection=>collection.id!==snapshot.value?.collection.id && collection.systemArea !== 'logs') ?? []);
 const syncState = computed(() => snapshot.value?.status.state ?? 'error');
 const retentionDays = computed(() => Number(snapshot.value?.collection.retentionPolicy?.trashDays ?? 90));
 const retentionLabel = computed(() => snapshot.value?.collection.retentionPolicy?.mode === 'none' ? 'No automatic disposal' : snapshot.value?.collection.retentionPolicy?.mode ? `Retention: ${ snapshot.value.collection.retentionPolicy.mode }` : `Trash is recoverable for ${ retentionDays.value } days`);
@@ -1296,7 +1290,6 @@ async function refresh(silent = false, afterMutation = false) {
   finally { if (isCurrent()) loading.value = false }
 }
 async function runMutation(operation:() => Promise<void>, reload = true) {
-  if (systemReadOnly.value && reload) return false;
   if (busy.value || loading.value || error.value || !snapshot.value) return false;
   busy.value = true; refreshGeneration++; operationError.value = ''; stopPointerGesture?.();
   try { await operation(); return true }

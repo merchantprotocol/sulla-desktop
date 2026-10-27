@@ -27,7 +27,7 @@ import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaService
 import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
-import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
+import { planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
 import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
 } from './onDemandServices';
@@ -49,7 +49,7 @@ import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
 import {
-  SULLA_FILES_GUEST_MOUNT_PATH, drainFilesAdapterLayers, isGuestPathUsable, prepareSullaFilesGuestAnchor, prepareSullaFilesGuestAnchorDraining,
+  SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchorDraining,
 } from '@pkg/backend/guestMountInfo';
 import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
@@ -1267,7 +1267,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: ['127.0.0.1:30122:8788'],
-      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1468,7 +1468,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       );
       const resolvedFuseImage = fuseImage.build ? fuseImage.image : `\${SULLA_FILES_FUSE_IMAGE:-${ fuseImage.image }}`;
       if (shouldRefreshSullaServiceImage(fuseImage, process.env.SULLA_FILES_FUSE_IMAGE)) {
-        for (const service of ['sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data']) this.#managedSullaRefreshImages.set(service, fuseImage.image);
+        this.#managedSullaRefreshImages.set('sulla_files_fuse', fuseImage.image);
       }
       compose.services.sulla_files_fuse = {
         ...composeImageFields(fuseImage),
@@ -1509,20 +1509,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           interval: '5s', timeout: '3s', retries: 10,
         },
       };
-      for (const [serviceName, mountPath, systemArea] of [
-        ['sulla_files_fuse_logs', '/mnt/sulla-logs', 'logs'],
-        ['sulla_files_fuse_training_data', '/mnt/sulla-training-data', 'training-data'],
-      ] as const) {
-        compose.services[serviceName] = {
-          ...compose.services.sulla_files_fuse,
-          container_name: serviceName,
-          environment: { ...compose.services.sulla_files_fuse.environment,
-            SULLA_FILES_FUSE_MOUNT_PATH: mountPath, SULLA_FILES_FUSE_SYSTEM_AREA: systemArea, SULLA_FILES_FUSE_READ_ONLY: '1',
-            SULLA_FILES_FUSE_STATUS_FILE: `/tmp/${serviceName}-status.json` },
-          volumes: compose.services.sulla_files_fuse.volumes.map((volume:unknown) => typeof volume === 'string' && volume.startsWith('/mnt/sulla-files:') ? `${mountPath}:${mountPath}:rshared` : volume),
-          healthcheck: { ...compose.services.sulla_files_fuse.healthcheck, test: ['CMD','python3','-c',`import os; assert os.path.ismount('${mountPath}'); os.listdir('${mountPath}')`] },
-        };
-      }
     }
 
     // Modify dynamic values like passwords
@@ -1588,30 +1574,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       if (drained > 0) {
         console.warn(`[Sulla] ${ SULLA_FILES_GUEST_MOUNT_PATH } had ${ drained } stale adapter mount(s); detached them and will recreate sulla_files_fuse`);
         this.#staleFilesAdapters.add('sulla_files_fuse');
-      }
-      // The logs and training-data views are optional extras with no mount manager of their
-      // own. A failure here must not disable the main Files mount, and a surviving but broken
-      // adapter must be detached (and its container recreated) instead of wedging startup.
-      for (const [serviceName, mountPath] of Object.entries(FILES_ADAPTER_MOUNTS)) {
-        if (mountPath === SULLA_FILES_GUEST_MOUNT_PATH) continue;
-        try {
-          if (!await isGuestPathUsable(this, mountPath)) {
-            const drained = await drainFilesAdapterLayers(this, mountPath);
-
-            if (drained > 0) {
-              console.warn(`[Sulla] ${ mountPath } had ${ drained } stale adapter mount(s); detached them and will recreate ${ serviceName }`);
-              this.#staleFilesAdapters.add(serviceName);
-            }
-          }
-          await prepareSullaFilesGuestAnchor(this, mountPath);
-        } catch (error) {
-          console.warn(`[Sulla] ${ mountPath } is unavailable; continuing without ${ serviceName }:`, (error as Error).message?.split('\n')[0]);
-          delete compose.services?.[serviceName];
-          for (const service of Object.values<any>(compose.services ?? {})) {
-            if (!Array.isArray(service?.volumes)) continue;
-            service.volumes = service.volumes.filter((volume: any) => (typeof volume === 'string' ? volume.split(':')[0] : volume?.source) !== mountPath);
-          }
-        }
       }
       this.#lastFilesGuestMountFailure = undefined;
       getSullaFilesMountManager().reportGuestPreparation();
@@ -1813,9 +1775,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       }
 
       if (configuredServices.split(/\s+/).includes('sulla_files_fuse')) {
-        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' },
-          { service: 'sulla_files_fuse_logs', container: 'sulla_files_fuse_logs' },
-          { service: 'sulla_files_fuse_training_data', container: 'sulla_files_fuse_training_data' });
+        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' });
       }
 
       // Attempt dependencies before their consumers. Optional failure remains
@@ -1835,7 +1795,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
         const order = ['sulla_vault', 'sulla_accounts', 'sulla_relay', 'sulla_files',
-          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager'];
+          'sulla_files_fuse', 'tools', 'workflow_manager'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });
@@ -1844,12 +1804,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // rest, so they start together: the vault, which gates the main window, is
       // no longer queued behind accounts and the threat proxy.
       const optionalServiceNeeds: Record<string, string[]> = {
-        sulla_files:                    ['sulla_vault'],
-        sulla_files_fuse:               ['sulla_files'],
-        sulla_files_fuse_logs:          ['sulla_files'],
-        sulla_files_fuse_training_data: ['sulla_files'],
-        tools:                          ['sulla_relay', 'sulla_files', 'sulla_vault'],
-        workflow_manager:               ['sulla_files'],
+        sulla_files:      ['sulla_vault'],
+        sulla_files_fuse: ['sulla_files'],
+        tools:            ['sulla_relay', 'sulla_files', 'sulla_vault'],
+        workflow_manager: ['sulla_files'],
       };
       // Every Node service peaks while it loads code and runs migrations. On a
       // small guest, starting them all at once stacks those peaks; limit how
@@ -1957,8 +1915,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
   /**
    * Keep managed containers honest: every minute, recreate any Sulla container that Docker
-   * reports unhealthy (or restart-looping) past its grace period. FUSE adapters get their
-   * stale mount detached first so the replacement can mount cleanly.
+   * reports unhealthy (or restart-looping) past its grace period. The Files adapter's stale
+   * guest mount is handled by the Files mount manager, not here.
    */
   private watchManagedContainerHealth(generation: number, composeCommand: string[]): void {
     this.#containerRecreates.clear();
@@ -1984,12 +1942,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       for (const action of planUnhealthyRecreates(rows, this.#containerRecreates)) {
         this.#containerRecreates.set(action.container, (this.#containerRecreates.get(action.container) ?? 0) + 1);
         console.warn(`[Sulla] ${ action.container } is ${ action.reason }; recreating it`);
-        const mountPath = FILES_ADAPTER_MOUNTS[action.service];
-
-        if (mountPath && mountPath !== SULLA_FILES_GUEST_MOUNT_PATH) {
-          await this.execCommand({ root: true, expectFailure: true }, 'docker', 'stop', '-t', '5', action.container).catch(() => undefined);
-          await drainFilesAdapterLayers(this, mountPath).catch(() => 0);
-        }
         await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service)
           .catch(error => console.warn(`[Sulla] Could not recreate ${ action.container }:`, (error as Error).message?.split('\n')[0]));
       }

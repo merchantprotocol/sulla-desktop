@@ -37,8 +37,8 @@ Domains include operational observations plus `human`, `agent`, `business`,
 existing observation-context metadata keys used in prompt assembly. Do not
 assume every recall launches a model or that only six identity domains exist.
 
-Conversation Reader supplies `<conversation_context>`. Files recall supplies
-references, not full file contents. Installed skill recall is a deterministic
+Conversation Reader supplies `<conversation_context>`. There is no Files
+recall: the middleware does not search Files. Installed skill recall is a deterministic
 keyword-ranked read of `skill_definitions`; the primary agent decides whether
 to load a skill. Team and subagent directories are also read-only context.
 
@@ -71,9 +71,8 @@ These are not the same as the Knowledge Base: the code also contains
 `memory/recall_index_store`: content-hash-checked digests avoid repeating file
 research. `memory/recall_conversations` searches message content or reads a
 transcript. `browser/search_conversations` is a separate title/summary search.
-User-facing conversation JSONL logs are written by `SullaLogger`; Files-first
-exposes Training Data as a system area. Do not assume a raw host log path is
-mounted into the agent VM.
+User-facing conversation JSONL logs are written by `SullaLogger`. They are not
+in Files and no host log path is mounted into the agent VM.
 
 ## Implementation references
 

@@ -10,26 +10,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Background job that mirrors the Files "system areas" (bundled docs, use
- * cases, training data, logs) into the Files service.
+ * Background job that mirrors the Files "sulla" system area (bundled docs and
+ * use cases) into the Files service.
  *
  * It is a low-priority, resumable job and never part of the startup or unlock
  * promise chain:
  * - the first pass only runs after a startup grace delay (unref'd timer);
  * - work is split into priority lanes. P0 is the user's own Files (handled by
  *   the Files service and the watcher, outside this job): while it has pending
- *   work this job starts nothing. Then P1 Sulla (docs, use cases), P2 training
- *   data, P3 logs. The highest pending lane always runs first, and a lower lane
- *   is preempted between files (never mid-file) when higher work arrives;
+ *   work this job starts nothing. Then P1 Sulla (docs, use cases). The highest
+ *   pending lane always runs first, and a lower lane is preempted between files
+ *   (never mid-file) when higher work arrives;
  * - each lane has a token-bucket rate limit (files/s and bytes/s) and its own
- *   concurrency; P2/P3 pause entirely while the Files service is slow;
+ *   concurrency; a lane can opt to pause entirely while the Files service is slow;
  * - passes are time-budgeted and yield to the event loop between files;
  * - a persisted stat cache (size/mtime/inode + last ingested hash) lets later
  *   passes and later app starts skip unchanged files without reading them, so
  *   an interrupted sweep resumes where it stopped.
  */
 
-export type SystemIngestLaneId = 'sulla' | 'training' | 'logs';
+export type SystemIngestLaneId = 'sulla';
 
 export interface SystemIngestLaneConfig {
   /** 1 = highest system lane (P0 customer files sit above all of these). */
@@ -37,7 +37,7 @@ export interface SystemIngestLaneConfig {
   filesPerSecond:       number;
   bytesPerSecond:       number;
   concurrency:          number;
-  /** 'newest' ingests recently modified files first (logs). */
+  /** 'newest' ingests recently modified files first. */
   order:                'path' | 'newest';
   /** Delay between completed sweeps of this lane. */
   idleIntervalMs:       number;
@@ -53,12 +53,6 @@ export interface SystemIngestLaneConfig {
 export const SYSTEM_INGEST_LANES:Readonly<Record<SystemIngestLaneId, SystemIngestLaneConfig>> = {
   sulla: {
     priority: 1, filesPerSecond: 10, bytesPerSecond: 8 * 1024 * 1024, concurrency: 2, order: 'path', idleIntervalMs: 2 * 60_000, skipSearchIndex: false, yieldsToBackpressure: false,
-  },
-  training: {
-    priority: 2, filesPerSecond: 3, bytesPerSecond: 2 * 1024 * 1024, concurrency: 1, order: 'path', idleIntervalMs: 5 * 60_000, skipSearchIndex: true, yieldsToBackpressure: true,
-  },
-  logs: {
-    priority: 3, filesPerSecond: 1, bytesPerSecond: 2 * 1024 * 1024, concurrency: 1, order: 'newest', idleIntervalMs: 10 * 60_000, skipSearchIndex: true, yieldsToBackpressure: true, maxFilesPerSweep: 1_000,
   },
 };
 
@@ -498,7 +492,11 @@ export class SullaFilesSystemIngestJob {
       try {
         const parsed = JSON.parse(await fs.promises.readFile(file, 'utf8')) as PersistedState;
         if (parsed?.v === 2 && parsed.entries && typeof parsed.entries === 'object' && parsed.lanes) {
-          state = { ...emptyState(sig), ...parsed, sig, lanes: { ...emptyState(sig).lanes, ...parsed.lanes } };
+          // Keep only lanes this build knows; entries of a lane that no longer exists are dropped.
+          const known = (id:string) => (LANE_IDS as string[]).includes(id);
+          const lanes = Object.fromEntries(Object.entries(parsed.lanes).filter(([id]) => known(id)));
+          const entries = Object.fromEntries(Object.entries(parsed.entries).filter(([, entry]) => known(entry?.l)));
+          state = { ...emptyState(sig), ...parsed, sig, entries, lanes: { ...emptyState(sig).lanes, ...lanes } };
         }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.deps.debug?.('[SullaFiles] system ingest state unreadable; starting a fresh sweep', error);

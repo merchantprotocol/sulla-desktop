@@ -17,12 +17,12 @@ Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path
     Use Cases/     skills/ workflows/ agents/ functions/ recipes/ — one folder per item, versioned by Files
     Projects/      plan files and project working docs
     Identity/
-  Logs/            system area, hidden in the UI behind Trash → More
-    audit/files/<file-id>.jsonl
-    audit/vault/<secret-id>.jsonl
-    app/
-  Training Data/   system area, hidden behind Trash → More; points at Sulla's conversation JSONL folder
 ```
+
+Outside the mount, the Files service keeps one more system collection, `Logs`: the
+audit store (`audit/files/<file-id>.jsonl`, `audit/vault/<secret-id>.jsonl`). It is not
+mounted, not mirrored from Desktop and not shown in the File Manager. Desktop's app logs
+and conversation transcripts are not in Files.
 
 ## Rules
 
@@ -33,7 +33,7 @@ Agent Git worktrees live at `/mnt/worktrees` (backed by the persistent ext4 path
 - Kept on purpose: the Files service token (`x-sulla-files-token`), the wallet/vault path exclusions, and no host-path mounts.
 - Audit logs are append-only JSONL, one file per subject, named by stable id (renames never break the trail).
   Each line: `ts, actor, action, subjectKind, subjectId, path, result, requestId, prevHash, hash`. Never secret values.
-  Only services write them; agents can read them.
+  Only the Files audit writer writes them. They are not mounted into agent containers.
 - Existing Postgres audit tables stay. File logs are added alongside them.
 - Use Cases: the files are the source of truth; Postgres is the runtime index. The index is rebuilt from published versions about every 2 seconds, so a publish takes effect within seconds. Only published versions are active. Drafts never are. See [files-harness.md](files-harness.md#5-use-cases-lifecycle).
 - The one-time Use Case migration copies old Postgres definitions into Files. It never deletes Postgres rows. It only disables runtime rows whose Files definition is gone.

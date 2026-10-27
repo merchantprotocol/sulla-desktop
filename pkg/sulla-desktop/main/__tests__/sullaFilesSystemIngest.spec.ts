@@ -127,7 +127,7 @@ class FakeFiles {
   deps(sources:SystemIngestSource[], extra:Partial<SystemIngestDeps> = {}):SystemIngestDeps {
     return {
       sources:        () => sources,
-      fetchAreas:     () => Promise.resolve([{ id: 'c-logs', systemArea: 'logs' }, { id: 'c-train', systemArea: 'training-data' }, { id: 'c-sulla', systemArea: 'sulla' }]),
+      fetchAreas:     () => Promise.resolve([{ id: 'c-sulla', systemArea: 'sulla' }]),
       fs:             {
         readdir:  directory => this.memory.readdir(directory),
         lstat:    file => this.memory.lstat(file),
@@ -162,9 +162,7 @@ class FakeFiles {
 
 const UNLIMITED:Partial<SystemIngestLaneConfig> = { filesPerSecond: 1e9, bytesPerSecond: 1e15, idleIntervalMs: 1e9 };
 const lanes = (overrides:Partial<Record<SystemIngestLaneId, Partial<SystemIngestLaneConfig>>> = {}) => ({
-  sulla:    { ...UNLIMITED, ...overrides.sulla },
-  training: { ...UNLIMITED, ...overrides.training },
-  logs:     { ...UNLIMITED, ...overrides.logs },
+  sulla: { ...UNLIMITED, ...overrides.sulla },
 });
 const FAST:Partial<SystemIngestOptions> = {
   startupGraceMs: 0, unlockSettleMs: 0, resumePauseMs: 5, nudgeDelayMs: 0, recentWriteMs: 2_000, logIntervalMs: 0, customerRetryMs: 5, backpressurePauseMs: 20, lanes: lanes(),
@@ -190,8 +188,7 @@ describe('SullaFilesSystemIngestJob', () => {
   let memory:MemoryFs;
   let files:FakeFiles;
   let tmp:string;
-  let logs:SystemIngestSource;
-  let training:SystemIngestSource;
+  let docs:SystemIngestSource;
   let useCases:SystemIngestSource;
   const jobs:SullaFilesSystemIngestJob[] = [];
   const make = (sources:SystemIngestSource[], options:Partial<SystemIngestOptions> = {}, extra:Partial<SystemIngestDeps> = {}, fake = files) => {
@@ -199,17 +196,15 @@ describe('SullaFilesSystemIngestJob', () => {
     jobs.push(job);
     return job;
   };
-  const addLogs = (count:number) => { for (let index = 0; index < count; index++) memory.file(`/logs/d${ index % 7 }/f${ String(index).padStart(5, '0') }.log`, `log ${ index }`, OLD + index); };
+  const addDocs = (count:number) => { for (let index = 0; index < count; index++) memory.file(`/docs/d${ index % 7 }/f${ String(index).padStart(5, '0') }.md`, `doc ${ index }`, OLD + index); };
 
   beforeEach(async() => {
     memory = new MemoryFs();
     files = new FakeFiles(memory);
-    memory.dir('/logs');
+    memory.dir('/docs');
     memory.dir('/skills');
-    memory.dir('/conversations');
     tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-system-ingest-'));
-    logs = { area: 'logs', lane: 'logs', root: '/logs', prefix: 'app/', filter: () => true };
-    training = { area: 'training-data', lane: 'training', root: '/conversations', prefix: '', filter: name => name.endsWith('.jsonl') };
+    docs = { area: 'sulla', lane: 'sulla', root: '/docs', prefix: 'Docs/', filter: () => true };
     useCases = { area: 'sulla', lane: 'sulla', root: '/skills', prefix: 'Use Cases/skills/', filter: () => true };
   });
 
@@ -220,11 +215,11 @@ describe('SullaFilesSystemIngestJob', () => {
   });
 
   it('does not start the first pass before the startup delay', async() => {
-    addLogs(3);
+    addDocs(3);
     let fetched = 0;
-    const job = make([logs], { startupGraceMs: 300, unlockSettleMs: 50 }, {
+    const job = make([docs], { startupGraceMs: 300, unlockSettleMs: 50 }, {
       uptimeMs:   () => 0,
-      fetchAreas: () => { fetched++; return Promise.resolve([{ id: 'c-logs', systemArea: 'logs' }]) },
+      fetchAreas: () => { fetched++; return Promise.resolve([{ id: 'c-sulla', systemArea: 'sulla' }]) },
     });
     job.start();
     job.nudge(); // a watched-file change must not pull the first pass forward
@@ -237,8 +232,8 @@ describe('SullaFilesSystemIngestJob', () => {
   });
 
   it('skips unchanged files by stat without reading them and re-reads only changed ones', async() => {
-    addLogs(20);
-    const job = make([logs]);
+    addDocs(20);
+    const job = make([docs]);
     await onePass(job, 'start');
     expect(files.reads).toHaveLength(20);
     expect(files.ingests).toHaveLength(20);
@@ -247,36 +242,36 @@ describe('SullaFilesSystemIngestJob', () => {
     expect(files.reads).toHaveLength(20);
     expect(job.status().skippedUnchanged).toBe(20);
 
-    memory.file('/logs/d3/f00003.log', 'log 3 appended', OLD + 99);
+    memory.file('/docs/d3/f00003.md', 'doc 3 appended', OLD + 99);
     await onePass(job);
-    expect(files.reads.slice(20)).toEqual(['/logs/d3/f00003.log']);
-    expect(files.paths.slice(20)).toEqual(['app/d3/f00003.log']);
+    expect(files.reads.slice(20)).toEqual(['/docs/d3/f00003.md']);
+    expect(files.paths.slice(20)).toEqual(['Docs/d3/f00003.md']);
   });
 
   it('defers files written within the last two seconds and keeps security skips', async() => {
-    memory.file('/logs/hot.log', 'still writing', Date.now());
-    memory.file('/logs/wallet.json', 'secret');
-    memory.file('/logs/vault/key', 'secret');
-    memory.file('/logs/master.key', 'secret');
-    memory.link('/logs/link.log');
+    memory.file('/docs/hot.md', 'still writing', Date.now());
+    memory.file('/docs/wallet.json', 'secret');
+    memory.file('/docs/vault/key', 'secret');
+    memory.file('/docs/master.key', 'secret');
+    memory.link('/docs/link.md');
     memory.file('/skills/.git/config', 'x');
     memory.file('/skills/one/SKILL.md', 'skill');
-    const job = make([logs, { ...useCases, ignore: rel => rel.split('/').includes('.git') }]);
+    const job = make([docs, { ...useCases, ignore: rel => rel.split('/').includes('.git') }]);
     await onePass(job, 'start');
     expect(files.reads).toEqual(['/skills/one/SKILL.md']);
-    expect(job.status().lanes.logs.deferred).toBe(1);
+    expect(job.status().lanes.sulla.deferred).toBe(1);
   });
 
   it('stops a pass at its time budget and resumes later without re-ingesting finished files', async() => {
-    addLogs(60);
+    addDocs(60);
     files.readDelayMs = 5;
-    const job = make([logs], { passBudgetMs: 40 });
+    const job = make([docs], { passBudgetMs: 40 });
     await onePass(job, 'start');
     const firstPass = files.ingests.length;
     expect(firstPass).toBeGreaterThan(0);
     expect(firstPass).toBeLessThan(60);
-    expect(job.status().lanes.logs.remaining).toBe(60 - firstPass);
-    await waitFor(() => Boolean(job.status().lanes.logs.lastCompletedSweepAt));
+    expect(job.status().lanes.sulla.remaining).toBe(60 - firstPass);
+    await waitFor(() => Boolean(job.status().lanes.sulla.lastCompletedSweepAt));
     expect(job.status().passes).toBeGreaterThan(1);
     expect(files.ingests).toHaveLength(60);
     expect(new Set(files.paths).size).toBe(60);
@@ -284,77 +279,92 @@ describe('SullaFilesSystemIngestJob', () => {
   });
 
   it('persists progress so a restart resumes and later starts skip unchanged files', async() => {
-    addLogs(40);
+    addDocs(40);
     memory.file('/skills/a/SKILL.md', 'a');
     files.readDelayMs = 5;
     const statePath = () => path.join(tmp, 'state.json');
-    const first = make([logs, useCases], { passBudgetMs: 60 }, { statePath });
+    const first = make([docs, useCases], { passBudgetMs: 60 }, { statePath });
     await onePass(first, 'start');
     await first.pause(); // quit mid-sweep
     const done = files.ingests.length;
     expect(done).toBeGreaterThan(1);
     expect(done).toBeLessThan(41);
     const saved = JSON.parse(await fs.promises.readFile(statePath(), 'utf8'));
-    expect(saved.lanes.logs.inProgress).toBe(true);
+    expect(saved.lanes.sulla.inProgress).toBe(true);
     expect(Object.keys(saved.entries)).toHaveLength(done);
 
     files.restart();
-    const second = make([logs, useCases], {}, { statePath });
+    const second = make([docs, useCases], {}, { statePath });
     await onePass(second, 'start');
     // Every file is ingested exactly once across the restart.
     expect(files.ingests).toHaveLength(41);
     expect(new Set(files.paths).size).toBe(41);
-    expect(second.status().lanes.logs.lastCompletedSweepAt).toBeDefined();
+    expect(second.status().lanes.sulla.lastCompletedSweepAt).toBeDefined();
 
-    // Another app start with nothing changed: no log file is read or re-ingested.
+    // Another app start with nothing changed: no file is read or re-ingested.
     await second.pause();
     files.restart();
     const readsBefore = files.reads.length;
-    const third = make([logs, useCases], {}, { statePath });
+    const third = make([docs, useCases], {}, { statePath });
     await onePass(third, 'start');
     expect(files.reads.slice(readsBefore)).toEqual([]);
     expect(files.ingests).toHaveLength(41);
     expect(files.unchangedCalls).toBe(0);
-    expect(third.status().lanes.logs.skippedUnchanged).toBe(40);
-    expect(third.status().lanes.sulla.skippedUnchanged).toBe(1);
+    expect(third.status().lanes.sulla.skippedUnchanged).toBe(41);
+  });
+
+  it('drops persisted lanes and cache entries this build no longer has', async() => {
+    addDocs(2);
+    const statePath = () => path.join(tmp, 'state.json');
+    await fs.promises.writeFile(statePath(), JSON.stringify({
+      v: 2, sig: 'old', lanes: { sulla: { sweep: 1, inProgress: false }, logs: { sweep: 4, inProgress: true } },
+      entries: { 'c-logs:app/old.log': { z: 1, m: 1, i: 1, h: 'h', s: 4, l: 'logs' } },
+    }));
+    const job = make([docs], {}, { statePath });
+    await onePass(job, 'start');
+    await job.pause();
+    const saved = JSON.parse(await fs.promises.readFile(statePath(), 'utf8'));
+    expect(Object.keys(saved.lanes)).toEqual(['sulla']);
+    expect(Object.values<any>(saved.entries).every(entry => entry.l === 'sulla')).toBe(true);
+    expect(Object.keys(saved.entries)).toHaveLength(2);
   });
 
   it('holds no source handles and never asks Files for the native-source inventory', async() => {
-    addLogs(50);
+    addDocs(50);
     memory.file('/skills/a/SKILL.md', 'a');
-    const deps = files.deps([logs, useCases]);
+    const deps = files.deps([docs, useCases]);
     expect(Object.keys(deps)).not.toContain('fetchInventory');
-    const job = make([logs, useCases]);
+    const job = make([docs, useCases]);
     await onePass(job, 'start');
     expect(files.ingests).toHaveLength(51);
     expect(files.handles.size).toBe(0); // every read handle was revoked immediately
   });
 
   it('a lost stat cache costs reads but never new versions: Files reports the bytes unchanged', async() => {
-    addLogs(30);
-    await onePass(make([logs]), 'start');
+    addDocs(30);
+    await onePass(make([docs]), 'start');
     expect(files.ingests).toHaveLength(30);
     files.restart();
-    const fresh = make([logs]); // no statePath: nothing persisted
+    const fresh = make([docs]); // no statePath: nothing persisted
     await onePass(fresh, 'start');
     expect(files.ingests).toHaveLength(30);
     expect(files.unchangedCalls).toBe(30);
-    expect(fresh.status().lanes.logs.skippedUnchanged).toBe(30);
+    expect(fresh.status().lanes.sulla.skippedUnchanged).toBe(30);
   });
 
   it('never overlaps passes and keeps each lane within its concurrency bound', async() => {
     for (let index = 0; index < 100; index++) memory.file(`/skills/s${ index }.md`, `s${ index }`);
-    addLogs(100);
+    addDocs(100);
     files.readDelayMs = 2;
-    const inflight:Record<string, number> = { sulla: 0, logs: 0 };
-    const maxInflight:Record<string, number> = { sulla: 0, logs: 0 };
+    const inflight:Record<string, number> = { sulla: 0 };
+    const maxInflight:Record<string, number> = { sulla: 0 };
     files.ingestDelayMs = 2;
     files.onIngest = request => {
       inflight[request.lane]++;
       maxInflight[request.lane] = Math.max(maxInflight[request.lane], inflight[request.lane]);
       setTimeout(() => { inflight[request.lane]-- }, 2);
     };
-    const job = make([useCases, logs]);
+    const job = make([useCases, docs]);
     job.start();
     await waitFor(() => files.reads.length > 10);
     for (let index = 0; index < 5; index++) { job.start(); job.nudge() }
@@ -362,15 +372,14 @@ describe('SullaFilesSystemIngestJob', () => {
     await job.idle();
     expect(files.maxInflight).toBeLessThanOrEqual(SYSTEM_INGEST_LANES.sulla.concurrency);
     expect(maxInflight.sulla).toBe(SYSTEM_INGEST_LANES.sulla.concurrency);
-    expect(maxInflight.logs).toBe(SYSTEM_INGEST_LANES.logs.concurrency);
     expect(job.status().passes).toBeGreaterThanOrEqual(1);
     expect(new Set(files.paths).size).toBe(200);
   });
 
   it('pause (lock/shutdown) stops an in-flight pass promptly', async() => {
-    addLogs(2_000);
+    addDocs(2_000);
     files.readDelayMs = 5;
-    const job = make([logs]);
+    const job = make([docs]);
     job.start();
     await waitFor(() => files.reads.length >= 9);
     const started = Date.now();
@@ -384,8 +393,8 @@ describe('SullaFilesSystemIngestJob', () => {
   });
 
   it('yields to the event loop during a long scan that would otherwise run on microtasks only', async() => {
-    addLogs(3_000);
-    const job = make([logs]);
+    addDocs(3_000);
+    const job = make([docs]);
     let ticks = 0;
     let running = true;
     const tick = () => { ticks++; if (running) setImmediate(tick); };
@@ -417,45 +426,11 @@ describe('SullaFilesSystemIngestJob', () => {
     expect(fast.status().backoffMs).toBe(0);
   });
 
-  it('drains lanes in priority order: customer files, then Sulla, then training data, then logs', async() => {
-    addLogs(5);
-    for (let index = 0; index < 5; index++) memory.file(`/conversations/c${ index }.jsonl`, `c${ index }`);
-    for (let index = 0; index < 5; index++) memory.file(`/skills/s${ index }.md`, `s${ index }`);
-    let customer = true;
-    const job = make([logs, training, useCases], {}, { customerBusy: () => customer });
-    job.start();
-    await new Promise(resolve => setTimeout(resolve, 60));
-    expect(files.reads).toHaveLength(0); // P0 pending: nothing starts
-    expect(job.status().customerBusy).toBe(true);
-    customer = false;
-    await waitFor(() => files.ingests.length === 15);
-    expect(files.ingests.map(record => record.lane)).toEqual([...Array(5).fill('sulla'), ...Array(5).fill('training'), ...Array(5).fill('logs')]);
-    expect(files.ingests.filter(record => record.skipSearchIndex).map(record => record.lane)).toEqual([...Array(5).fill('training'), ...Array(5).fill('logs')]);
-  });
-
-  it('preempts a running logs pass when Sulla work arrives (between files, never mid-file)', async() => {
-    addLogs(400);
-    files.readDelayMs = 3;
-    const job = make([logs, useCases]);
-    job.start();
-    await waitFor(() => files.ingests.length >= 20);
-    memory.file('/skills/new/SKILL.md', 'fresh skill');
-    const atNudge = files.ingests.length;
-    job.nudge('sulla');
-    await waitFor(() => files.paths.includes('Use Cases/skills/new/SKILL.md'));
-    const skillIndex = files.paths.indexOf('Use Cases/skills/new/SKILL.md');
-    expect(skillIndex - atNudge).toBeLessThanOrEqual(1); // at most the one in-flight log
-    expect(files.ingests.length).toBeLessThan(400); // logs were still pending
-    await waitFor(() => files.ingests.length === 401);
-  });
-
-  it('rate-limits each lane with its token bucket', async() => {
+  it('rate-limits the lane with its token bucket', async() => {
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
     const counts:Partial<Record<SystemIngestLaneId, number>> = {};
     for (const [lane, source, make500] of [
       ['sulla', useCases, (index:number) => memory.file(`/skills/s${ index }.md`, `s${ index }`)],
-      ['training', training, (index:number) => memory.file(`/conversations/c${ index }.jsonl`, `c${ index }`)],
-      ['logs', logs, (index:number) => memory.file(`/logs/l${ index }.log`, `l${ index }`)],
     ] as const) {
       for (let index = 0; index < 500; index++) make500(index);
       const fake = new FakeFiles(memory);
@@ -473,16 +448,12 @@ describe('SullaFilesSystemIngestJob', () => {
     // 10 s at the configured rate plus at most a one-second burst.
     expect(counts.sulla).toBeGreaterThanOrEqual(95);
     expect(counts.sulla).toBeLessThanOrEqual(10 * 10 + 10);
-    expect(counts.training).toBeGreaterThanOrEqual(28);
-    expect(counts.training).toBeLessThanOrEqual(3 * 10 + 3);
-    expect(counts.logs).toBeGreaterThanOrEqual(9);
-    expect(counts.logs).toBeLessThanOrEqual(1 * 10 + 1);
   }, 60_000);
 
   it('caps a lane by bytes per second', async() => {
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
-    for (let index = 0; index < 100; index++) memory.file(`/logs/big${ index }.log`, `b${ index }`, OLD + index, 1024 * 1024);
-    const job = make([logs], { lanes: lanes({ logs: { filesPerSecond: 100, bytesPerSecond: 2 * 1024 * 1024 } }) });
+    for (let index = 0; index < 100; index++) memory.file(`/docs/big${ index }.md`, `b${ index }`, OLD + index, 1024 * 1024);
+    const job = make([docs], { lanes: lanes({ sulla: { filesPerSecond: 100, bytesPerSecond: 2 * 1024 * 1024 } }) });
     job.start();
     for (let elapsed = 0; elapsed < 10_000; elapsed += 20) {
       await jest.advanceTimersByTimeAsync(20);
@@ -496,39 +467,36 @@ describe('SullaFilesSystemIngestJob', () => {
     expect(count).toBeLessThanOrEqual(22); // 2 MB/s of 1 MB files + 2 MB burst
   }, 60_000);
 
-  it('pauses training and logs entirely under backpressure while Sulla keeps going', async() => {
-    for (let index = 0; index < 5; index++) memory.file(`/conversations/c${ index }.jsonl`, `c${ index }`);
+  it('pauses a lane that yields to backpressure while the Files service is slow', async() => {
+    for (let index = 0; index < 5; index++) memory.file(`/docs/c${ index }.md`, `c${ index }`);
     files.ingestDelayMs = 40;
-    const job = make([training, useCases], { backpressureLatencyMs: 20, latencyDecayMs: 1e9, slowCallMs: 10_000, backpressurePauseMs: 1e9 });
+    const job = make([docs], {
+      backpressureLatencyMs: 20, latencyDecayMs: 1e9, slowCallMs: 10_000, backpressurePauseMs: 1e9, lanes: lanes({ sulla: { concurrency: 1, yieldsToBackpressure: true } }),
+    });
     job.start();
     await waitFor(() => files.ingests.length === 1 && job.status().state === 'scheduled');
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(files.ingests).toHaveLength(1);
     expect(job.status()).toMatchObject({ backpressured: true });
-    expect(job.status().lanes.training.pending).toBe(true);
-
-    memory.file('/skills/urgent/SKILL.md', 'urgent');
-    job.nudge('sulla');
-    await waitFor(() => files.paths.includes('Use Cases/skills/urgent/SKILL.md'));
-    expect(files.ingests.filter(record => record.lane === 'training')).toHaveLength(1);
+    expect(job.status().lanes.sulla.pending).toBe(true);
   });
 
-  it('ingests logs newest first', async() => {
+  it('ingests newest first when a lane is configured for it', async() => {
     const mtimes = [5, 1, 9, 3, 7, 2, 8];
-    mtimes.forEach((offset, index) => memory.file(`/logs/x${ index }.log`, `x${ index }`, OLD + offset * 1_000));
-    const job = make([logs]);
+    mtimes.forEach((offset, index) => memory.file(`/docs/x${ index }.md`, `x${ index }`, OLD + offset * 1_000));
+    const job = make([docs], { lanes: lanes({ sulla: { order: 'newest' } }) });
     await onePass(job, 'start');
-    const expected = mtimes.map((offset, index) => ({ offset, name: `app/x${ index }.log` })).sort((left, right) => right.offset - left.offset).map(entry => entry.name);
+    const expected = mtimes.map((offset, index) => ({ offset, name: `Docs/x${ index }.md` })).sort((left, right) => right.offset - left.offset).map(entry => entry.name);
     expect(files.paths).toEqual(expected);
   });
 
-  it('a flood of 20,000 log files never delays a customer file by more than one in-flight ingest', async() => {
-    addLogs(20_000);
+  it('a flood of 20,000 files never delays a customer file by more than one in-flight ingest', async() => {
+    addDocs(20_000);
     files.ingestDelayMs = 1;
     let customer = false;
     let startedDuringCustomer = 0;
     files.onIngest = () => { if (customer) startedDuringCustomer++; };
-    const job = make([logs], {}, { customerBusy: () => customer });
+    const job = make([docs], { lanes: lanes({ sulla: { concurrency: 1 } }) }, { customerBusy: () => customer });
     job.start();
     await waitFor(() => files.ingests.length >= 100);
     customer = true; // a P0 file arrives mid-flood
@@ -544,13 +512,13 @@ describe('SullaFilesSystemIngestJob', () => {
   }, 60_000);
 
   it('reschedules after a lock/unlock cycle and reports per-lane status', async() => {
-    addLogs(5);
-    const job = make([logs]);
+    addDocs(5);
+    const job = make([docs]);
     await job.pause();
     expect(job.status().state).toBe('paused');
     await onePass(job, 'start');
     const status = job.status();
     expect(status).toMatchObject({ state: 'scheduled', ingested: 5, scanned: 5, remaining: 0 });
-    expect(status.lanes.logs).toMatchObject({ priority: 3, ingested: 5, limiter: { concurrency: 1 } });
+    expect(status.lanes.sulla).toMatchObject({ priority: 1, ingested: 5, limiter: { concurrency: SYSTEM_INGEST_LANES.sulla.concurrency } });
   });
 });

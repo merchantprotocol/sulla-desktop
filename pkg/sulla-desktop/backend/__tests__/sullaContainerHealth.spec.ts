@@ -16,12 +16,12 @@ const row = (over: Record<string, unknown>) => ({ container: 'sulla_x', service:
 describe('planUnhealthyRecreates', () => {
   test('recreates unhealthy stateless services after the grace period only', () => {
     const rows = [
-      row({ container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', health: 'unhealthy' }),
+      row({ container: 'sulla_files_fuse', service: 'sulla_files_fuse', health: 'unhealthy' }),
       row({ container: 'sulla_tools', service: 'tools', health: 'unhealthy', runningForMs: STATELESS_GRACE_MS - 1 }),
       row({ container: 'sulla_redis_ok', service: 'x', health: 'healthy' }),
     ];
 
-    expect(planUnhealthyRecreates(rows, new Map()).map(a => a.container)).toEqual(['sulla_files_fuse_logs']);
+    expect(planUnhealthyRecreates(rows, new Map()).map(a => a.container)).toEqual(['sulla_files_fuse']);
   });
 
   test('gives stateful services (a slow Files migration) a long grace period', () => {
@@ -40,12 +40,12 @@ describe('planUnhealthyRecreates', () => {
 
   test('heals a Files adapter stuck in "created" immediately, with no health status and no grace period', () => {
     const stuckAdapter = row({
-      container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', state: 'created', health: 'none', runningForMs: 0,
+      container: 'sulla_files_fuse', service: 'sulla_files_fuse', state: 'created', health: 'none', runningForMs: 0,
     });
     const stuckUnrelated = row({ container: 'sulla_x', service: 'x', state: 'created', health: 'none', runningForMs: 0 });
 
     expect(planUnhealthyRecreates([stuckAdapter], new Map())).toEqual([
-      { container: 'sulla_files_fuse_logs', service: 'sulla_files_fuse_logs', reason: 'stuck created' },
+      { container: 'sulla_files_fuse', service: 'sulla_files_fuse', reason: 'stuck created' },
     ]);
     expect(planUnhealthyRecreates([stuckUnrelated], new Map())).toEqual([]);
   });
@@ -53,8 +53,8 @@ describe('planUnhealthyRecreates', () => {
 
 describe('drainFilesAdapterLayers', () => {
   test('detaches stacked adapter layers topmost first and stops at the owned anchor', async() => {
-    const adapter = '710 489 0:91 / /mnt/sulla-logs ro - fuse sulla-files ro,user_id=0';
-    const anchor = '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw';
+    const adapter = '710 489 0:91 / /mnt/sulla-files ro - fuse sulla-files ro,user_id=0';
+    const anchor = '489 29 0:26 /mnt/sulla-files /mnt/sulla-files rw - tmpfs tmpfs rw';
     let layers = 2;
     const commands: string[] = [];
     const exec = {
@@ -69,14 +69,14 @@ describe('drainFilesAdapterLayers', () => {
       },
     };
 
-    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-logs')).toBe(2);
+    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-files')).toBe(2);
     expect(layers).toBe(0);
     expect(commands.filter(c => c.startsWith('umount -l')).length).toBe(2);
   });
 
   test('does nothing when the path is a plain anchor', async() => {
-    const exec = { execCommand: async() => '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw' };
+    const exec = { execCommand: async() => '489 29 0:26 /mnt/sulla-files /mnt/sulla-files rw - tmpfs tmpfs rw' };
 
-    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-logs')).toBe(0);
+    expect(await drainFilesAdapterLayers(exec as any, '/mnt/sulla-files')).toBe(0);
   });
 });
