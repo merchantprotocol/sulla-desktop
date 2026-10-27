@@ -138,6 +138,13 @@ export class MCPServerHost {
     };
   }
 
+  /** Mint an authenticated but unusable token for an idle provider standby. */
+  registerUnboundSession(ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
+    if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
+    const id = this.sessions.registerUnbound(ttlMs);
+    return { id, url: this.getVmReachableUrl(), header: `Bearer ${ id }`, revoke: () => this.revokeSession(id) };
+  }
+
   revokeSession(id: string): void {
     this.sessions.revoke(id);
   }

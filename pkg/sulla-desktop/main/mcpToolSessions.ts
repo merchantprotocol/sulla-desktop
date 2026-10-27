@@ -50,6 +50,15 @@ export class ToolSessionRegistry {
     return id;
   }
 
+  /** Reserve a bearer token for an idle provider process. It authenticates but
+   * cannot resolve a graph state, so every tool call is rejected until bind. */
+  registerUnbound(ttlMs: number = DEFAULT_SESSION_TTL_MS): string {
+    const id = randomBytes(24).toString('base64url');
+    const now = Date.now();
+    this.sessions.set(id, { id, state: undefined as unknown as BaseThreadState, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs });
+    return id;
+  }
+
   revoke(id: string): void {
     this.sessions.delete(id);
   }
@@ -86,6 +95,8 @@ export class ToolSessionRegistry {
       this.sessions.delete(id);
       return null;
     }
+    // An idle standby token is deliberately unusable until rebindSession.
+    if (!session.state) return null;
     // Sliding expiry: a session in active use never times out mid-turn.
     session.lastUsedAt = now;
     session.expiresAt = Math.max(session.expiresAt, now + session.ttlMs);
