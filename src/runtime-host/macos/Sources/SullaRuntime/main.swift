@@ -222,6 +222,9 @@ private func runOnThread(_ body: @escaping @Sendable () -> Void) {
     thread.start()
 }
 
+/// Seconds a relay write may make no progress before its connection is torn down.
+private let relayStallSeconds = 30
+
 private func writeAll(_ descriptor: Int32, _ data: Data) {
     data.withUnsafeBytes { raw in
         guard var pointer = raw.baseAddress else { return }
@@ -664,8 +667,8 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             let guest = dup(connection.fileDescriptor)
             guard guest >= 0 else { close(client); return }
             let transfers = DispatchGroup()
-            self.relay(from: client, to: guest, group: transfers)
-            self.relay(from: guest, to: client, group: transfers)
+            self.relay(from: client, to: guest, group: transfers, label: "docker client->guest")
+            self.relay(from: guest, to: client, group: transfers, label: "docker guest->client")
             transfers.notify(queue: self.workers) {
                 close(client); close(guest)
             }
@@ -697,15 +700,15 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 guard case .success(let connection) = result else { close(client); return }
                 let guest = dup(connection.fileDescriptor)
                 guard guest >= 0 else { close(client); return }
-                self.splice(client, guest)
+                self.splice(client, guest, label: "guest-stream:\(port)")
             }
         }
     }
 
-    private func splice(_ left: Int32, _ right: Int32) {
+    private func splice(_ left: Int32, _ right: Int32, label: String = "stream") {
         let transfers = DispatchGroup()
-        relay(from: left, to: right, group: transfers)
-        relay(from: right, to: left, group: transfers)
+        relay(from: left, to: right, group: transfers, label: "\(label) a->b")
+        relay(from: right, to: left, group: transfers, label: "\(label) b->a")
         transfers.notify(queue: workers) { close(left); close(right) }
     }
 
@@ -737,25 +740,48 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 }
             }
             guard connected == 0 else { close(local); close(guest); return }
-            self.splice(guest, local)
+            self.splice(guest, local, label: "loopback:\(port)")
         }
     }
 
-    private func relay(from source: Int32, to destination: Int32, group: DispatchGroup) {
+    /// Copies source to destination on its own thread. Reads may block indefinitely
+    /// (an idle connection is normal), but a write that makes no progress for
+    /// `relayStallSeconds` means the peer stopped reading: that one connection is torn
+    /// down in both directions so its blocked thread, and whatever Virtualization is
+    /// holding for the shared vsock descriptor, are released instead of wedging every
+    /// other stream behind it.
+    private func relay(from source: Int32, to destination: Int32, group: DispatchGroup, label: String = "relay") {
         group.enter()
+        var timeout = timeval(tv_sec: relayStallSeconds, tv_usec: 0)
+        setsockopt(destination, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var noSigPipe: Int32 = 1
+        setsockopt(destination, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         runOnThread {
             defer { group.leave() }
             var buffer = [UInt8](repeating: 0, count: 65_536)
+            var totalRead = 0, totalWritten = 0
             while true {
                 let count = read(source, &buffer, buffer.count)
+                if count < 0 && errno == EINTR { continue }
                 if count <= 0 { shutdown(destination, SHUT_WR); break }
+                totalRead += count
                 var written = 0
                 while written < count {
                     let result = buffer.withUnsafeBytes { raw in
                         Darwin.write(destination, raw.baseAddress!.advanced(by: written), count - written)
                     }
-                    if result <= 0 { shutdown(destination, SHUT_WR); return }
+                    if result < 0 && errno == EINTR { continue }
+                    if result <= 0 {
+                        let err = errno
+                        if result < 0 && (err == EAGAIN || err == EWOULDBLOCK) {
+                            fputs("relay stalled: \(label) peer not reading for \(relayStallSeconds)s, tearing down connection (read \(totalRead) bytes, wrote \(totalWritten + written) bytes, pending \(count - written))\n", stderr)
+                        }
+                        // Wake the sibling relay thread and fail the peer promptly.
+                        shutdown(source, SHUT_RDWR); shutdown(destination, SHUT_RDWR)
+                        return
+                    }
                     written += result
+                    totalWritten += result
                 }
             }
         }
