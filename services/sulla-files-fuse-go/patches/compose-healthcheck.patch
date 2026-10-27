@@ -1,0 +1,18 @@
+diff --git a/pkg/sulla-desktop/backend/sullaRuntimeBackend.ts b/pkg/sulla-desktop/backend/sullaRuntimeBackend.ts
+index aa4b1a4b16..c45da31fdb 100644
+--- a/pkg/sulla-desktop/backend/sullaRuntimeBackend.ts
++++ b/pkg/sulla-desktop/backend/sullaRuntimeBackend.ts
+@@ -1499,10 +1499,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements
+         depends_on:   { sulla_files: { condition: 'service_healthy' } },
+         restart:      'unless-stopped',
+         healthcheck: {
+-          test: [
+-            'CMD', 'python3', '-c',
+-            "import os,ssl,urllib.request; assert os.path.ismount('/mnt/sulla-files'); urllib.request.urlopen('https://sulla_files:8792/healthz', context=ssl.create_default_context(cafile='/run/sulla-files-ca/tls.crt'), timeout=2).read(1)",
+-          ],
++          // The Go adapter checks its own FUSE mount (type, source, a live stat)
++          // and Files /healthz with the mounted CA; no interpreter in the image.
++          test: ['CMD', '/usr/local/bin/sulla-files-fuse', 'healthcheck'],
+           interval: '5s', timeout: '3s', retries: 10,
+         },
+       };
