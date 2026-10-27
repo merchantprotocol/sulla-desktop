@@ -38,6 +38,12 @@ describe('planUnhealthyRecreates', () => {
     expect(planUnhealthyRecreates([loop], new Map([['sulla_loop', MAX_AUTO_RECREATES]]))).toEqual([]);
   });
 
+  test('leaves a stopped container alone even when its last health status was unhealthy', () => {
+    const idle = row({ container: 'sulla_python_runtime', service: 'python_runtime', state: 'exited', health: 'unhealthy' });
+
+    expect(planUnhealthyRecreates([idle], new Map())).toEqual([]);
+  });
+
   test('heals a Files adapter stuck in "created" immediately, with no health status and no grace period', () => {
     const stuckAdapter = row({
       container: 'sulla_files_fuse', service: 'sulla_files_fuse', state: 'created', health: 'none', runningForMs: 0,

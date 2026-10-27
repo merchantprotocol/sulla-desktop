@@ -47,6 +47,11 @@ export function planUnhealthyRecreates(rows: ManagedContainerRow[], recreateCoun
     // since it never ran.
     const stuckCreated = row.state === 'created' && row.service === FILES_ADAPTER_SERVICE;
 
+    // A container that was stopped on purpose (an idle on-demand service) keeps the last
+    // health status Docker saw, which can be "unhealthy"; recreating it would start it again.
+    const stoppedOnPurpose = row.state === 'exited' || row.state === 'dead';
+
+    if (stoppedOnPurpose) continue;
     if (!stuckCreated && row.health !== 'unhealthy' && row.state !== 'restarting') continue;
     if ((recreateCounts.get(row.container) ?? 0) >= MAX_AUTO_RECREATES) continue;
     const grace = STATEFUL_SERVICES.has(row.service) ? STATEFUL_GRACE_MS : STATELESS_GRACE_MS;
