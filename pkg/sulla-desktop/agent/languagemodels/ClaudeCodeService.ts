@@ -28,6 +28,7 @@ import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
+import { providerSessionStore } from './providerSessionStore';
 import { bindLeaseToProcess, createGuestClaudeAuth, releaseLease } from './guestClaudeBridge';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
@@ -159,7 +160,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   private readonly SESSION_KEY_PREFIX = 'claude_code_session:';
   private readonly SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
-
   /**
    * Redis key holding the hash of the stable platform/environment context last
    * stamped into any conversation on this install. Subconscious output is not
@@ -171,7 +171,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const cached = this.sessions.get(convId);
     if (cached) return cached;
     try {
-      const stored = await redisClient.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
       if (stored) {
         this.sessions.set(convId, stored);
         return stored;
@@ -183,16 +183,16 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private async setSession(convId: string, sessionId: string): Promise<void> {
     this.sessions.set(convId, sessionId);
     try {
-      await redisClient.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId, this.SESSION_TTL_SECONDS);
-    } catch { /* Redis unavailable — session persists in memory only this run */ }
+      await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId);
+    } catch { /* Durable store unavailable — session persists in memory only this run */ }
   }
 
   private async deleteSession(convId: string): Promise<void> {
     this.sessions.delete(convId);
     this.recallDedupe.reset(convId);
     try {
-      await redisClient.del(`${ this.SESSION_KEY_PREFIX }${ convId }`);
-    } catch { /* Redis unavailable — non-fatal */ }
+      await providerSessionStore.delete(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+    } catch { /* Durable store unavailable — non-fatal */ }
   }
 
   /**
