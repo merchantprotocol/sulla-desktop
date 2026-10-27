@@ -66,7 +66,8 @@ const dot = (a: Float32Array, b: Float32Array) => {
   for (let i = 0; i < a.length; i++) n += a[i] * b[i];
   return n;
 };
-const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+// pg returns BIGINT columns as strings, so coerce before building a Date.
+const day = (ms: number | string) => new Date(Number(ms)).toISOString().slice(0, 10);
 const EMBEDDING_CHUNK_SIZE = 200;
 
 function nextTick(): Promise<void> {
@@ -343,6 +344,7 @@ export async function recallV7SubjectMemory(
     )}`
   );
   const shownEpisodes = new Set<string>();
+  const shownOverviews: string[] = [];
   for (const slug of chosen) {
     const s = c.subjects.get(slug)!;
     const line = lineage(c, slug),
@@ -365,7 +367,10 @@ export async function recallV7SubjectMemory(
       .map((x) => c.subjects.get(x)!.name)
       .join(' > ')}_\n`;
     const ov = (c.overviews.get(slug) || []).at(-1);
-    if (ov && !sent.has(`o:${slug}@${ov.ts}`)) d += `\n${ov.text}\n`;
+    if (ov && !sent.has(`o:${slug}@${ov.ts}`)) {
+      d += `\n${ov.text}\n`;
+      shownOverviews.push(`o:${slug}@${ov.ts}`);
+    }
     d +=
       section('Rules for this kind of work', majorRules) +
       section('Rules and decisions for this subject', rules) +
@@ -396,6 +401,7 @@ export async function recallV7SubjectMemory(
   const keys = [...used].map((x) => `i:${x}`);
   shownEpisodes.forEach((x) => keys.push(`e:${x}`));
   skills.forEach((x) => keys.push(`s:${x.slug}@${x.version_ts}`));
+  keys.push(...shownOverviews);
   if (keys.length)
     await postgresClient.query(
       `INSERT INTO subject_memory.sent(thread_id,key,source) SELECT $1,x,'recall' FROM unnest($2::text[]) x ON CONFLICT(thread_id,key) DO UPDATE SET cleared=false,sent_at=now(),source='recall'`,
