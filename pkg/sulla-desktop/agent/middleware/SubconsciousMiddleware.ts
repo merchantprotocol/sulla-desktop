@@ -28,6 +28,7 @@ import { IdentityObservationsModel } from '../database/models/IdentityObservatio
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
+import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
@@ -147,6 +148,7 @@ function applyPendingBackground(state: BaseThreadState, background: BackgroundTh
   if (prefixUnchanged && pending.messages) {
     const liveTail = stableLive.slice(pending.snapshotLen);
     state.messages.splice(0, state.messages.length, ...pending.messages, ...liveTail);
+    if (pending.kind === 'summarizer') (state.metadata as any).v7LedgerSummarizedAt = Date.now();
     console.log(`[SubconsciousMiddleware:${ pending.kind }] Applied pending result at turn boundary | snapshot: ${ pending.snapshotLen }, live tail: ${ liveTail.length }, messages: ${ state.messages.length }`);
   } else if (!prefixUnchanged) {
     console.log(`[SubconsciousMiddleware:${ pending.kind }] Discarded pending result — snapshotted prefix changed`);
@@ -333,10 +335,29 @@ export async function runSubconsciousMiddleware(
   //     which still run when subconsciousRecallMode is 'sql' or 'agent', and
   //     as the in-task fallback when the bundled model is unavailable.
   const recallModeForTurn = options.includeObservations && analyzable ? await recallMode() : 'sql';
-  const legacyRecall = options.includeObservations && analyzable && recallModeForTurn !== 'ranked';
+  const legacyRecall = options.includeObservations && analyzable && recallModeForTurn !== 'ranked' && recallModeForTurn !== 'v7';
   if (options.includeObservations && analyzable && recallModeForTurn === 'ranked') {
     launched.push('ranked-memory-recall');
     awaitedTasks.push(timed('ranked-memory-recall', 'Recalling memories', runRankedMemoryRecall(state)));
+  }
+  if (options.includeObservations && analyzable && recallModeForTurn === 'v7') {
+    launched.push('v7-subject-memory');
+    const threadId = String(meta.threadId || meta.conversationId || 'unknown');
+    // A provider compaction or Sulla summary means the model no longer holds
+    // the earlier injection, so clear this conversation's sent ledger.
+    const reset = Boolean(meta.cliCompactedAt && meta.v7LedgerCompactedAt !== meta.cliCompactedAt) || Boolean(meta.v7LedgerSummarizedAt && meta.v7LedgerSummarizedAt !== meta.lastV7LedgerSummaryReset);
+    awaitedTasks.push(timed('v7-subject-memory', 'Recalling subject memory', recallV7SubjectMemory(recentUserTexts(state, 3), threadId, reset).then(block => {
+      meta.observationContext = '';
+      meta.userObservationContext = '';
+      meta.selfObservationContext = '';
+      meta.businessObservationContext = '';
+      meta.environmentObservationContext = '';
+      meta.projectsObservationContext = '';
+      meta.worldObservationContext = '';
+      meta.skillsObservationContext = '';
+      meta.brainMemoryContext = block || '';
+      if (reset) { meta.v7LedgerCompactedAt = meta.cliCompactedAt; meta.lastV7LedgerSummaryReset = meta.v7LedgerSummarizedAt }
+    })));
   }
 
   // R1. Observation Recall — awaited: surfaces relevant observations from the DB
@@ -523,6 +544,16 @@ export function runSubconsciousObservationWriters(
 
   if (!options.includeObservations) return;
 
+  // v7 replaces the old observation writers with one subject-memory elephant.
+  // It uses the same Settings-backed subconscious model slot and is fully
+  // asynchronous through the process-wide writer gate.
+  SullaSettingsModel.get('subconsciousRecallMode', 'ranked').then(mode => {
+    if (mode !== 'v7') return;
+    Promise.resolve().then(() => runThroughWriterGate(() => runV7Elephant(state))).catch(error => {
+      console.error('[SubconsciousMiddleware] Post-turn v7 elephant failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }).catch(() => {});
+
   // Every writer still runs to completion with a model in the loop — the
   // gate only bounds how many run concurrently PROCESS-WIDE (not just within
   // this turn), so a burst of conversations completing close together
@@ -546,6 +577,11 @@ export function runSubconsciousObservationWriters(
   launch('conversation-writer', () => runConversationWriter(state));
 
   console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
+}
+
+async function runV7Elephant(state: BaseThreadState): Promise<void> {
+  const { graph, state: subState } = await GraphRegistry.createV7Elephant(state);
+  await graph.execute(subState, 'subconscious', { maxIterations: 12 });
 }
 
 // ============================================================================
@@ -874,11 +910,11 @@ function turnRecallTerms(state: BaseThreadState): string[] {
  *    2026-09-26), kept as a rollback switch.
  * Wherever the per-domain paths branch, anything other than 'agent' takes SQL.
  */
-async function recallMode(): Promise<'ranked' | 'sql' | 'agent'> {
+async function recallMode(): Promise<'ranked' | 'sql' | 'agent' | 'v7'> {
   try {
     const mode = await SullaSettingsModel.get('subconsciousRecallMode', 'ranked');
 
-    return mode === 'agent' || mode === 'sql' ? mode : 'ranked';
+    return mode === 'agent' || mode === 'sql' || mode === 'v7' ? mode : 'ranked';
   } catch {
     return 'ranked';
   }
