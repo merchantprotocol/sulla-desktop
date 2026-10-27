@@ -62,17 +62,17 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   }
 
   async write(request: ProviderFileRequest): Promise<ProviderFileRef> {
-    const data = typeof request.data === 'string' ? request.data : Buffer.from(request.data);
-    const digest = crypto.createHash('sha256').update(data).digest('hex');
     const mode = ((request.mode ?? 0o600) & 0o700) | 0o044;
+    // Only the system prompt repeats turn after turn; attachments and MCP
+    // configs are one-off and keep their delete-on-dispose lifetime.
+    if (request.purpose !== 'system-prompt') return this.writeOnce(request, mode);
+
+    const digest = crypto.createHash('sha256').update(request.data).digest('hex');
     const cacheKey = `${ mode.toString(8) }:${ digest }`;
     let cached = this.contentFiles.get(cacheKey);
     if (!cached) {
       cached = (async() => {
-        const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80) || 'provider-file';
-        const name = `${ digest }-${ safeName }`;
-        const storageTarget = assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name));
-        const providerTarget = assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name));
+        const { storageTarget, providerTarget } = this.targetsFor(`${ digest }-system-prompt.md`);
         await writeGuestFileAtomic(storageTarget, request.data, mode);
         return { storageTarget, providerTarget };
       })();
@@ -80,10 +80,32 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
       cached.catch(() => this.contentFiles.delete(cacheKey));
     }
     const file = await cached;
-    // Cached provider inputs are immutable and owned by this transport. A run
-    // releases its reference without deleting the shared file; dispose() wipes
-    // the bounded storage root when the container lifecycle ends.
+    // Cached prompts are immutable and owned by this transport; dispose() of
+    // the transport wipes the bounded storage root when the lifecycle ends.
     return { path: file.providerTarget, dispose() {} };
+  }
+
+  private targetsFor(name: string): { storageTarget: string; providerTarget: string } {
+    return {
+      storageTarget:  assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name)),
+      providerTarget: assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name)),
+    };
+  }
+
+  private async writeOnce(request: ProviderFileRequest, mode: number): Promise<ProviderFileRef> {
+    const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 120) || 'provider-file';
+    const { storageTarget, providerTarget } = this.targetsFor(`${ crypto.randomUUID() }-${ safeName }`);
+    await writeGuestFileAtomic(storageTarget, request.data, mode);
+    let disposed = false;
+
+    return {
+      path: providerTarget,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        removeGuestPathAtomic(storageTarget).catch(() => { /* already removed */ });
+      },
+    };
   }
 
   async dispose(): Promise<void> {
