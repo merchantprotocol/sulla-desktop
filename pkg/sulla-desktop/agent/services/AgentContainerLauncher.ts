@@ -139,6 +139,8 @@ export interface AgentContainerLifecycle {
   readonly workspacePath: string;
   execute<T>(action: () => T): T;
   close(): Promise<AgentContainerCleanupReceipt>;
+  /** True once the lifecycle is closing or closed (aborted, container gone, secrets wiped). */
+  readonly closed?: boolean;
 }
 
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
@@ -785,6 +787,8 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       };
     })();
     this.toolConfigs.set(sessionId, created);
+    // A failed write must not be cached: every later turn would replay the same rejection.
+    created.catch(() => { if (this.toolConfigs.get(sessionId) === created) this.toolConfigs.delete(sessionId) });
     return created;
   }
 }
@@ -1111,6 +1115,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         return withAgentContainerRuntime(binding, () => withProviderExecutionTransport(providerTransport, action));
       },
       close,
+      get closed() { return closePromise !== undefined || lifecycleAbort.signal.aborted; },
     };
   } catch (error) {
     lifecycleAbort.abort();
