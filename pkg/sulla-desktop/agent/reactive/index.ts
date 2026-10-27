@@ -11,3 +11,5 @@ export { ReactiveRuntime } from './runtime';
 export type { ReactiveRuntimeOptions } from './runtime';
 export { runSlice, pendingToolCall } from './thread';
 export { createBuiltinTools } from './tools';
+export { Tracer, consoleSink } from './trace';
+export type { MetricsSnapshot, TraceEvent, TraceSink, TraceType } from './trace';

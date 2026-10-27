@@ -10,7 +10,9 @@ import { randomUUID } from 'crypto';
 import { InMemoryConversationStore, InMemoryStateStore } from './stores';
 import { runSlice } from './thread';
 import { createBuiltinTools } from './tools';
+import { Tracer, consoleSink } from './trace';
 
+import type { MetricsSnapshot, TraceSink } from './trace';
 import type {
   ConversationMessage, ConversationStore, InputMessage, ModelProvider, ReactiveTool, StateStore, ThreadId, ToolContext,
 } from './types';
@@ -23,10 +25,14 @@ export interface ReactiveRuntimeOptions {
   /** Compact a thread once its history passes this many characters. */
   compactAtChars?: number;
   onError?:        (threadId: ThreadId, error: unknown) => void;
+  /** Structured trace events (see TraceEvent). Metrics are always collected. */
+  trace?:          TraceSink | TraceSink[];
+  /** Print every trace event with console.log. Defaults to SULLA_REACTIVE_LOG=1. */
+  logToConsole?:   boolean;
 }
 
 interface Mailbox {
-  queue:    InputMessage[];
+  queue:    { msg: InputMessage; at: number }[];
   deferred: InputMessage[];
   running:  boolean;
   /** An interrupted completion still owes the thread an answer. */
@@ -42,6 +48,7 @@ interface Mailbox {
 export class ReactiveRuntime {
   readonly conversations: ConversationStore;
   readonly state:         StateStore;
+  readonly tracer:        Tracer;
 
   private readonly tools = new Map<string, ReactiveTool>();
   private readonly mailboxes = new Map<ThreadId, Mailbox>();
@@ -53,6 +60,12 @@ export class ReactiveRuntime {
   constructor(private readonly opts: ReactiveRuntimeOptions) {
     this.conversations = opts.conversations ?? new InMemoryConversationStore();
     this.state = opts.state ?? new InMemoryStateStore();
+    const sinks = opts.trace ? [opts.trace].flat() : [];
+
+    if (opts.logToConsole ?? process.env.SULLA_REACTIVE_LOG === '1') {
+      sinks.push(consoleSink);
+    }
+    this.tracer = new Tracer(sinks);
     [...createBuiltinTools(), ...(opts.tools ?? [])].forEach(t => this.tools.set(t.name, t));
   }
 
@@ -66,11 +79,15 @@ export class ReactiveRuntime {
   send(msg: InputMessage): void {
     const mb = this.mailbox(msg.threadId);
 
-    mb.queue.push(msg);
+    mb.queue.push({ msg, at: Date.now() });
+    this.tracer.emit('input_queued', msg.threadId, {
+      inputId: msg.id, kind: msg.synthetic?.type ?? msg.content.type, depth: mb.queue.length, driverRunning: mb.running,
+    });
 
     if (mb.running) {
       // Real user text interrupts an in-flight completion; everything else just queues.
       if (!msg.synthetic && msg.content.type === 'user_text') {
+        this.tracer.emit('interrupt_requested', msg.threadId, { inputId: msg.id, completionInFlight: Boolean(mb.abort) });
         mb.abort?.abort();
       }
 
@@ -87,6 +104,11 @@ export class ReactiveRuntime {
   /** Number of threads with a live driver right now (threads parked on tools/timers don't count). */
   activeDrivers(): number {
     return this.drivers;
+  }
+
+  /** Aggregated numbers for comparing against the current system. */
+  metrics(): MetricsSnapshot {
+    return this.tracer.snapshot();
   }
 
   /** Resolves when no driver is running and no timer is pending. */
@@ -123,8 +145,10 @@ export class ReactiveRuntime {
     complete:      text => this.send({ id: `${ toolCallId }:result`, threadId, content: { type: 'tool_result', toolCallId, text } }),
     schedule:      (ms, fn) => {
       this.timers++;
+      this.tracer.emit('timer_scheduled', threadId, { toolCallId, ms });
       setTimeout(() => {
         try {
+          this.tracer.emit('timer_fired', threadId, { toolCallId });
           fn();
         } finally {
           this.timers--;
@@ -137,10 +161,13 @@ export class ReactiveRuntime {
   private async drive(threadId: ThreadId, mb: Mailbox): Promise<void> {
     mb.running = true;
     this.drivers++;
+    this.tracer.emit('driver_start', threadId, { activeDrivers: this.drivers });
 
     try {
       while (mb.queue.length > 0 || mb.force) {
-        const batch = [...mb.deferred, ...mb.queue];
+        const now = Date.now();
+        const waitedMs = mb.queue.reduce((max, q) => Math.max(max, now - q.at), 0);
+        const batch = [...mb.deferred, ...mb.queue.map(q => q.msg)];
 
         mb.deferred = [];
         mb.queue = [];
@@ -155,18 +182,21 @@ export class ReactiveRuntime {
           send:           msg => this.send(msg),
           compactAtChars: this.opts.compactAtChars,
           compacting:     this.compacting,
-        }, threadId, batch, { signal: mb.abort.signal, forceCompletion: mb.force });
+          trace:          this.tracer,
+        }, threadId, batch, { signal: mb.abort.signal, forceCompletion: mb.force, waitedMs });
 
         mb.deferred = result.deferred;
         mb.force = result.aborted;
       }
     } catch (e) {
+      this.tracer.emit('error', threadId, { message: e instanceof Error ? e.message : String(e) });
       this.opts.onError?.(threadId, e);
     } finally {
       // No await between the loop's empty check and this flag, so a send() cannot slip through unnoticed.
       mb.running = false;
       mb.abort = undefined;
       this.drivers--;
+      this.tracer.emit('driver_stop', threadId, { activeDrivers: this.drivers });
       this.notifyIdle();
     }
   }

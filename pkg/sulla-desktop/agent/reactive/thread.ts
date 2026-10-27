@@ -7,6 +7,8 @@
 
 import { randomUUID } from 'crypto';
 
+import { Tracer } from './trace';
+
 import type {
   ConversationMessage, ConversationStore, InputMessage, ModelProvider, ReactiveTool, StateStore, ThreadId, ToolCall, ToolContext,
 } from './types';
@@ -23,12 +25,15 @@ export interface SliceDeps {
   /** Approximate chars of history that trigger compaction; undefined disables it. */
   compactAtChars?: number;
   compacting:      Set<ThreadId>;
+  trace:           Tracer;
 }
 
 export interface SliceOptions {
   signal?:          AbortSignal;
   /** Run a completion even if no input was actionable (re-run after an interrupt). */
   forceCompletion?: boolean;
+  /** How long the oldest queued input waited for this slice to start. */
+  waitedMs?:        number;
 }
 
 export interface SliceResult {
@@ -37,6 +42,8 @@ export interface SliceResult {
   /** The completion was interrupted; nothing from it was persisted. */
   aborted:     boolean;
   completions: number;
+  /** idle: nothing actionable. yielded: async tool dispatched. ended: model stopped. closed. aborted. */
+  outcome:     'idle' | 'yielded' | 'ended' | 'closed' | 'aborted' | 'max_completions';
 }
 
 /** The assistant tool call that has no tool_result yet, if any. */
@@ -89,8 +96,29 @@ export async function runSlice(
   inputs: InputMessage[],
   opts: SliceOptions = {},
 ): Promise<SliceResult> {
-  const { conversations, state } = deps;
+  const t0 = Date.now();
+
+  deps.trace.emit('slice_start', threadId, { batch: inputs.length, waitedMs: opts.waitedMs ?? 0, forced: opts.forceCompletion ?? false });
+
+  const result = await sliceBody(deps, threadId, inputs, opts);
+
+  deps.trace.emit('slice_end', threadId, {
+    durationMs: Date.now() - t0, completions: result.completions, outcome: result.outcome, deferred: result.deferred.length,
+  });
+
+  return result;
+}
+
+async function sliceBody(
+  deps: SliceDeps,
+  threadId: ThreadId,
+  inputs: InputMessage[],
+  opts: SliceOptions,
+): Promise<SliceResult> {
+  const { conversations, state, trace } = deps;
   let history = await conversations.load(threadId);
+
+  trace.emit('history_loaded', threadId, { messages: history.length, chars: sizeOf(history) });
   const processed = await state.getProcessed(threadId);
   const handled: string[] = [];
   const deferred: InputMessage[] = [];
@@ -106,10 +134,12 @@ export async function runSlice(
 
   for (const input of ordered) {
     if (processed.has(input.id) || handled.includes(input.id)) {
+      trace.emit('input_deduped', threadId, { inputId: input.id });
       continue;
     }
 
     if (await conversations.isClosed(threadId)) {
+      trace.emit('input_dropped', threadId, { inputId: input.id, reason: 'closed' });
       handled.push(input.id);
       continue;
     }
@@ -120,7 +150,11 @@ export async function runSlice(
       // Stale or duplicate results (e.g. the call was already interrupted) are dropped.
       if (findToolCall(history, content.toolCallId) && !isAnswered(history, content.toolCallId)) {
         await append([{ id: input.id, kind: 'tool_result', toolCallId: content.toolCallId, text: content.text }]);
+        trace.emit('input_applied', threadId, { inputId: input.id, kind: 'tool_result', toolCallId: content.toolCallId, chars: content.text.length });
+        trace.emit('tool_resumed', threadId, { toolCallId: content.toolCallId });
         actionable = true;
+      } else {
+        trace.emit('input_dropped', threadId, { inputId: input.id, reason: 'stale_result', toolCallId: content.toolCallId });
       }
       handled.push(input.id);
       continue;
@@ -131,17 +165,22 @@ export async function runSlice(
       const msgs: ConversationMessage[] = [];
 
       if (pending) {
+        trace.emit('interrupted_tool', threadId, { toolCallId: pending.id, name: pending.name });
         msgs.push({ id: `${ pending.id }:interrupted`, kind: 'tool_result', toolCallId: pending.id, text: 'Interrupted by new user input before the tool finished.' });
       }
       msgs.push({ id: input.id, kind: 'user', text: content.text });
       await append(msgs);
+      trace.emit('input_applied', threadId, { inputId: input.id, kind: 'user_text', chars: content.text.length });
       actionable = true;
       handled.push(input.id);
       continue;
     }
 
     // Synthetic inputs must not split a tool_use/tool_result pair: wait until nothing is pending.
-    if (pendingToolCall(history)) {
+    const waitingOn = pendingToolCall(history);
+
+    if (waitingOn) {
+      trace.emit('input_deferred', threadId, { inputId: input.id, syntheticType: synthetic?.type, waitingOn: waitingOn.id });
       deferred.push(input);
       continue;
     }
@@ -156,11 +195,13 @@ export async function runSlice(
     if (info?.kind === 'compaction') {
       await conversations.saveCompaction(threadId, content.text, info.parentIndex);
       deps.compacting.delete(threadId);
+      trace.emit('compaction_saved', threadId, { summaryChars: content.text.length, upTo: info.parentIndex });
       history = await conversations.load(threadId);
       continue;
     }
 
     if (!findToolCall(history, synthetic.toolCallId)) {
+      trace.emit('input_dropped', threadId, { inputId: input.id, reason: 'unknown_call', toolCallId: synthetic.toolCallId });
       continue;
     }
 
@@ -171,6 +212,7 @@ export async function runSlice(
       });
 
       await conversations.ensureThread(child);
+      trace.emit('child_spawned', threadId, { child, kind: 'event', source: synthetic.toolCallId });
       deps.send({
         id:       `${ input.id }:child`,
         threadId: child,
@@ -186,6 +228,7 @@ export async function runSlice(
       { id: `${ input.id }:call`, kind: 'assistant', text: '', toolCall: { id: callId, name: 'receive_event__injected', args: { source: synthetic.toolCallId } } },
       { id: `${ input.id }:result`, kind: 'tool_result', toolCallId: callId, text: content.text },
     ]);
+    trace.emit('input_applied', threadId, { inputId: input.id, kind: synthetic.type, associative: synthetic.type === 'subscription_event' ? Boolean(synthetic.associative) : undefined, chars: content.text.length });
     actionable = true;
   }
 
@@ -193,9 +236,11 @@ export async function runSlice(
     await state.addProcessed(threadId, handled);
   }
 
-  const result: SliceResult = { deferred, aborted: false, completions: 0 };
+  const result: SliceResult = { deferred, aborted: false, completions: 0, outcome: 'idle' };
 
   if (!actionable || await conversations.isClosed(threadId)) {
+    result.outcome = (await conversations.isClosed(threadId)) ? 'closed' : 'idle';
+
     return result;
   }
 
@@ -206,15 +251,22 @@ export async function runSlice(
 
     if (opts.signal?.aborted) {
       result.aborted = true;
+      result.outcome = 'aborted';
 
       return result;
     }
+
+    const c0 = Date.now();
+
+    trace.emit('completion_start', threadId, { historyMessages: history.length, historyChars: sizeOf(history) });
 
     try {
       out = await deps.model.complete({ threadId, history, tools: specs, signal: opts.signal ?? new AbortController().signal });
     } catch (e) {
       if (opts.signal?.aborted) {
+        trace.emit('completion_end', threadId, { durationMs: Date.now() - c0, aborted: true });
         result.aborted = true;
+        result.outcome = 'aborted';
 
         return result;
       }
@@ -222,10 +274,12 @@ export async function runSlice(
     }
 
     result.completions++;
+    trace.emit('completion_end', threadId, { durationMs: Date.now() - c0, aborted: Boolean(opts.signal?.aborted), tool: out.toolCall?.name, textChars: out.text.length });
 
     // Streaming output is only committed once the turn completes, so an interrupt leaves no half-turn behind.
     if (opts.signal?.aborted) {
       result.aborted = true;
+      result.outcome = 'aborted';
 
       return result;
     }
@@ -236,10 +290,12 @@ export async function runSlice(
     await append([{ id: `asst-${ randomUUID() }`, kind: 'assistant', text: out.text, toolCall }]);
 
     if (!toolCall) {
+      result.outcome = 'ended';
       break;
     }
 
     const tool = deps.tools.get(toolCall.name);
+    const k0 = Date.now();
     let outcome;
 
     if (!tool) {
@@ -252,15 +308,22 @@ export async function runSlice(
       }
     }
 
+    trace.emit('tool_end', threadId, { toolCallId: toolCall.id, name: toolCall.name, mode: outcome.mode, durationMs: Date.now() - k0, known: Boolean(tool) });
+
     if (outcome.mode === 'async') {
+      trace.emit('tool_dispatched', threadId, { toolCallId: toolCall.id, name: toolCall.name });
+      result.outcome = 'yielded';
       break;
     }
 
     await append([{ id: `${ toolCall.id }:result`, kind: 'tool_result', toolCallId: toolCall.id, text: outcome.text }]);
 
     if (await conversations.isClosed(threadId)) {
+      result.outcome = 'closed';
       break;
     }
+
+    result.outcome = 'max_completions';
   }
 
   await maybeCompact(deps, threadId, history);
@@ -284,6 +347,7 @@ async function maybeCompact(deps: SliceDeps, threadId: ThreadId, history: Conver
   const child = await conversations.spawn(threadId, `compaction-${ randomUUID() }`, { inherit: true, upTo, kind: 'compaction' });
 
   await conversations.ensureThread(child);
+  deps.trace.emit('compaction_started', threadId, { child, historyChars: sizeOf(history), threshold: compactAtChars });
   deps.send({
     id:       `${ child }:instructions`,
     threadId: child,

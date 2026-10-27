@@ -11,6 +11,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import { ReactiveRuntime } from '../runtime';
 
+import type { TraceEvent } from '../trace';
 import type { CompletionRequest, CompletionResult, ConversationMessage, ModelProvider, ReactiveTool } from '../types';
 
 type Script = (req: CompletionRequest) => CompletionResult | Promise<CompletionResult>;
@@ -282,5 +283,68 @@ describe('ReactiveRuntime', () => {
     const h2 = await rt.history('t1');
 
     expect(kinds(h2.slice(0, 3))).toEqual(['summary', 'user', 'assistant']);
+  });
+
+  describe('tracing', () => {
+    it('emits an ordered trace for an async tool round trip and aggregates it', async() => {
+      const { tool, pending } = manualTool();
+      const events: TraceEvent[] = [];
+      const m = model(req => (last(req.history).kind === 'tool_result' ? { text: 'done' } : { text: '', toolCall: { name: 'slow', args: {} } }));
+      const rt = new ReactiveRuntime({ model: m, tools: [tool], trace: e => events.push(e) });
+
+      await rt.sendUserText('t1', 'go');
+      await rt.idle();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      pending[0].complete('r');
+      await rt.idle();
+
+      const types = events.map(e => e.type);
+
+      expect(types.indexOf('tool_dispatched')).toBeGreaterThan(types.indexOf('completion_end'));
+      expect(types.indexOf('tool_resumed')).toBeGreaterThan(types.indexOf('tool_dispatched'));
+      expect(events.filter(e => e.type === 'slice_end').map(e => e.outcome)).toEqual(['yielded', 'ended']);
+
+      const snap = rt.metrics();
+
+      expect(snap).toMatchObject({ slices: 2, completions: 2, asyncToolCalls: 1, parkedNow: 0, parkedPeak: 1, driversNow: 0, driversPeak: 1 });
+      expect(snap.maxSuspendedMs).toBeGreaterThanOrEqual(15);
+      expect(snap.toolMs.slow.calls).toBe(1);
+    });
+
+    it('records dedupe, defer, drop and interrupt decisions', async() => {
+      const { tool, pending } = manualTool();
+      const m = model(req => (req.history.length === 1 ? { text: '', toolCall: { name: 'slow', args: {} } } : { text: 'ok' }));
+      const rt = new ReactiveRuntime({ model: m, tools: [tool] });
+
+      await rt.sendUserText('t1', 'go', 'same');
+      await rt.sendUserText('t1', 'go', 'same');
+      await rt.idle();
+      rt.send({ id: 'ev', threadId: 't1', content: { type: 'user_text', text: 'E' }, synthetic: { type: 'subscription_event', toolCallId: pending[0].toolCallId, associative: true } });
+      await rt.idle();
+      await rt.sendUserText('t1', 'stop');
+      await rt.idle();
+      pending[0].complete('late');
+      await rt.idle();
+
+      const { counts } = rt.metrics();
+
+      expect(counts).toMatchObject({ input_deduped: 1, input_deferred: 1, interrupted_tool: 1, input_dropped: 1 });
+    });
+
+    it('shows many parked threads on very few drivers', async() => {
+      const m = model(req => (last(req.history).kind === 'tool_result' ? { text: 'woke' } : { text: '', toolCall: { name: 'sleep', args: { seconds: 0.02 } } }));
+      const rt = new ReactiveRuntime({ model: m });
+
+      for (let i = 0; i < 200; i++) {
+        await rt.sendUserText(`t${ i }`, 'nap');
+      }
+      await rt.idle();
+
+      const snap = rt.metrics();
+
+      expect(snap.parkedPeak).toBeGreaterThan(100);
+      expect(snap.driversPeak).toBeLessThanOrEqual(snap.parkedPeak);
+      expect(snap.driversNow).toBe(0);
+    });
   });
 });
