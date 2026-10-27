@@ -26,23 +26,21 @@ cd "$here"
 export GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH="$arch"
 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$work/sulla-files-fuse" ./cmd/sulla-files-fuse
 go build -trimpath -ldflags "-s -w" -o "$work/fakefiles" ./cmd/fakefiles
-# Assemble with create/cp/commit instead of `docker build`: it needs no
-# BuildKit session (which some Docker socket proxies cannot carry) and no
-# registry access. scripts/Dockerfile.prebuilt is the equivalent Dockerfile.
-assemble() { # image, container, entrypoint json, files...
-  image=$1 name=$2 entrypoint=$3; shift 3
-  docker --context "$context" rm -f "$name" >/dev/null 2>&1 || true
-  docker --context "$context" create --name "$name" --entrypoint /bin/sh "$base_for_assemble" -c \
-    'ln -sf sulla-files-fuse /usr/local/bin/python3 && ln -sf sulla-files-fuse /usr/local/bin/sulla-files-fuse-entrypoint && install -d -m 0700 /run/sulla-files-fuse /mnt/sulla-files /var/spool/sulla-files-fuse' >/dev/null
-  for file in "$@"; do docker --context "$context" cp "$work/$file" "$name:/usr/local/bin/$file"; done
-  docker --context "$context" start -a "$name"
-  docker --context "$context" commit --change "ENTRYPOINT $entrypoint" --change 'CMD ["run"]' --change 'WORKDIR /' "$name" "$image" >/dev/null
-  docker --context "$context" rm "$name" >/dev/null
-}
-base_for_assemble=$base
-assemble "$tag" gofuse-assemble '["/usr/local/bin/sulla-files-fuse"]' sulla-files-fuse
+# Legacy builder (DOCKER_BUILDKIT=0): needs no BuildKit session, which the
+# Sulla Docker socket proxy cannot carry. Build only; this script never runs
+# a container.
+cp scripts/Dockerfile.prebuilt "$work/Dockerfile"
+DOCKER_BUILDKIT=0 docker --context "$context" build --build-arg BASE="$base" -t "$tag" "$work"
+
+# Integration-test image (adapter + fake Files + script). Run it ONLY in an
+# isolated VM: it needs --privileged and /dev/fuse.
 cp scripts/integration.sh "$work/integration.sh"
-base_for_assemble=$tag
-assemble gofuse-itest:latest gofuse-assemble-itest '["/bin/sh","/usr/local/bin/integration.sh"]' fakefiles integration.sh
+cat > "$work/Dockerfile.itest" <<DOCKERFILE
+FROM $tag
+COPY fakefiles /usr/local/bin/fakefiles
+COPY integration.sh /usr/local/bin/integration.sh
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/integration.sh"]
+DOCKERFILE
+DOCKER_BUILDKIT=0 docker --context "$context" build -t gofuse-itest:latest -f "$work/Dockerfile.itest" "$work"
 ls -l "$work/sulla-files-fuse"
 docker --context "$context" image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -E '^(sulla-files-fuse:gotest|gofuse-itest)'
