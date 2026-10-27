@@ -61,6 +61,7 @@ export class AgentNode extends BaseNode {
 
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
     const startTime = Date.now();
+    const turnReceivedAt = Date.now();
 
     // Emit an immediate thinking heartbeat so the UI shows activity within
     // milliseconds of the user sending a message, then keep that same bubble
@@ -148,6 +149,7 @@ export class AgentNode extends BaseNode {
         onProgress: (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
       });
       subconsciousMs = Date.now() - subStart;
+      perf.log(`[TurnPhase] threadId=${ (state.metadata as any).threadId } turnReceivedToSubconsciousDoneMs=${ Date.now() - turnReceivedAt }`);
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent

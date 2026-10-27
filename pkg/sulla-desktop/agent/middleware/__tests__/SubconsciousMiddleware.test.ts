@@ -260,14 +260,33 @@ describe('runSubconsciousMiddleware', () => {
     expect(createSummarizerMock).not.toHaveBeenCalled();
   });
 
-  it('wakes the summarizer after 30 messages', async() => {
+  it('runs summarization off-path and preserves messages appended after its snapshot', async() => {
     const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
     const state = stateWithMessages(31);
+    let finishSummarizer!: () => void;
+    const execution = new Promise<void>(resolve => { finishSummarizer = resolve });
+    const compressed = [{ role: 'assistant', content: 'compressed history' }];
+    createSummarizerMock.mockResolvedValueOnce({
+      graph: { execute: jest.fn(() => execution) },
+      state: { messages: [], metadata: { compressedMessages: compressed } },
+      threadId: 'summarizer-test-thread',
+    });
 
     await runSubconsciousMiddleware(state, { includeObservations: false });
-
     expect(createSummarizerMock).toHaveBeenCalledTimes(1);
-    expect(createSummarizerMock).toHaveBeenCalledWith(state);
+    expect(state.messages).toHaveLength(31);
+
+    state.messages.push({ role: 'user', content: 'arrived while summarizing' });
+    finishSummarizer();
+    await execution;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await runSubconsciousMiddleware(state, { includeObservations: false });
+
+    expect(state.messages).toEqual([
+      ...compressed,
+      { role: 'user', content: 'arrived while summarizing' },
+    ]);
+    expect(createSummarizerMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not dispatch the observation writer for a turn without user text', async() => {

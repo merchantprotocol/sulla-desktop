@@ -36,6 +36,7 @@ import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 import { latestUserText } from '../utils/latestUserText';
 import { extractRecallTerms } from '../utils/recallTerms';
+import { stripTurnContext } from '../prompts/turnContext';
 
 import Logging from '@pkg/utils/logging';
 
@@ -81,6 +82,77 @@ const DIGEST_PROTECTED_RECENT_TURNS = 4;
  * "already digested" flag so a block is never re-digested.
  */
 const DIGESTED_MARKER_PREFIX = '[digested tool result';
+
+/** New messages required before another background maintenance pass. */
+const BACKGROUND_RETRIGGER_GROWTH = 10;
+
+interface BackgroundResult {
+  kind:         'summarizer' | 'digester';
+  snapshotLen:  number;
+  fingerprints: string[];
+  messages:     any[] | null;
+}
+
+interface BackgroundThreadState {
+  inFlight:       Promise<void> | null;
+  pending:        BackgroundResult | null;
+  growthSinceRun: number;
+  lastObservedLen: number;
+  hasRun:         boolean;
+}
+
+const backgroundByThread = new Map<unknown, BackgroundThreadState>();
+
+function backgroundStateFor(state: BaseThreadState): BackgroundThreadState {
+  const meta = state.metadata as any;
+  const key = meta.threadId || meta.conversationId || state;
+  let background = backgroundByThread.get(key);
+  if (!background) {
+    background = { inFlight: null, pending: null, growthSinceRun: 0, lastObservedLen: state.messages.length, hasRun: false };
+    backgroundByThread.set(key, background);
+  }
+  return background;
+}
+
+function messageFingerprint(message: any): string {
+  try {
+    const normalized = JSON.parse(JSON.stringify(message));
+    if (typeof normalized?.content === 'string') {
+      normalized.content = stripTurnContext(normalized.content);
+    } else if (Array.isArray(normalized?.content)) {
+      normalized.content = normalized.content.map((block: any) =>
+        block?.type === 'text' ? { ...block, text: stripTurnContext(block.text) } : block);
+    }
+    return JSON.stringify(normalized);
+  } catch {
+    return String(message);
+  }
+}
+
+function stableMessages(messages: any[]): any[] {
+  return messages.filter(message => message?.metadata?.source !== 'subconscious_context');
+}
+
+/** Apply completed work only at a pre-turn boundary, never during a provider call. */
+function applyPendingBackground(state: BaseThreadState, background: BackgroundThreadState): void {
+  background.growthSinceRun += Math.max(0, state.messages.length - background.lastObservedLen);
+  background.lastObservedLen = state.messages.length;
+  const pending = background.pending;
+  if (!pending) return;
+  background.pending = null;
+
+  const stableLive = stableMessages(state.messages);
+  const prefixUnchanged = stableLive.length >= pending.snapshotLen &&
+    pending.fingerprints.every((fingerprint, index) => messageFingerprint(stableLive[index]) === fingerprint);
+  if (prefixUnchanged && pending.messages) {
+    const liveTail = stableLive.slice(pending.snapshotLen);
+    state.messages.splice(0, state.messages.length, ...pending.messages, ...liveTail);
+    console.log(`[SubconsciousMiddleware:${ pending.kind }] Applied pending result at turn boundary | snapshot: ${ pending.snapshotLen }, live tail: ${ liveTail.length }, messages: ${ state.messages.length }`);
+  } else if (!prefixUnchanged) {
+    console.log(`[SubconsciousMiddleware:${ pending.kind }] Discarded pending result — snapshotted prefix changed`);
+  }
+  background.lastObservedLen = state.messages.length;
+}
 
 /**
  * Token estimation heuristic — matches BaseNode's pre-flight trim
@@ -164,6 +236,8 @@ export async function runSubconsciousMiddleware(
   const startTime = Date.now();
   const launched: string[] = [];
   const awaitedTasks: Promise<void>[] = [];
+  const background = backgroundStateFor(state);
+  applyPendingBackground(state, background);
 
   const progress = (message: string) => {
     try { options.onProgress?.(message) } catch { /* progress must never break the pipeline */ }
@@ -182,22 +256,47 @@ export async function runSubconsciousMiddleware(
     });
   };
 
-  // 1. Summarizer — only when conversation is long (awaited: modifies messages)
+  // 1. Conversation maintenance is deliberately off the critical path. A
+  // single per-thread worker snapshots the prefix, and its result is applied
+  // at the next pre-turn boundary. Ten newly appended messages are required
+  // before another run, preventing threshold-hovering threads from re-firing.
   const shouldSummarize = state.messages.length > TRIGGER_WINDOW_SIZE;
-  if (shouldSummarize) {
-    launched.push('summarizer');
-    awaitedTasks.push(timed('summarizer', 'Summarizing older conversation', runSummarizer(state)));
-  }
 
   // 1b. Tool-Result Digester — triggered by compactable TOKEN MASS, not
-  //     message count (awaited: modifies messages). Only stale tool results
+  //     message count (background: produces a pending batch). Only stale tool results
   //     outside the last DIGEST_PROTECTED_RECENT_TURNS assistant turns and
   //     not already digested count toward the trigger. See
   //     DIGEST_TRIGGER_TOKEN_MASS for why this fires in batches.
   const digestPlan = collectDigestibleToolResults(state);
-  if (digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS) {
-    launched.push('tool-result-digester');
-    awaitedTasks.push(timed('digester', 'Compacting stale tool results', runToolResultDigester(state, digestPlan.eligible)));
+  const backgroundKind = shouldSummarize ? 'summarizer' :
+    digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS ? 'digester' : null;
+  const canLaunchBackground = !background.inFlight &&
+    (!background.hasRun || background.growthSinceRun >= BACKGROUND_RETRIGGER_GROWTH);
+  if (backgroundKind && canLaunchBackground) {
+    launched.push(`${ backgroundKind }-background`);
+    const snapshotMessages = stableMessages(state.messages);
+    const snapshotLen = snapshotMessages.length;
+    const fingerprints = snapshotMessages.map(messageFingerprint);
+    const snapshotState = {
+      ...state,
+      messages: JSON.parse(JSON.stringify(snapshotMessages)),
+      metadata: { ...(state.metadata as any) },
+    } as BaseThreadState;
+    background.hasRun = true;
+    background.growthSinceRun = 0;
+    const bgStart = Date.now();
+    const task = (async() => {
+      const messages = backgroundKind === 'summarizer'
+        ? await runSummarizer(snapshotState)
+        : await runToolResultDigester(snapshotState, collectDigestibleToolResults(snapshotState).eligible);
+      background.pending = { kind: backgroundKind, snapshotLen, fingerprints, messages };
+    })().catch(error => {
+      console.error(`[SubconsciousMiddleware:${ backgroundKind }] Background task failed:`, error instanceof Error ? error.message : error);
+    }).finally(() => {
+      perf.log(`[SubconsciousBackground] threadId=${ (state.metadata as any).threadId } task=${ backgroundKind } durationMs=${ Date.now() - bgStart } snapshotMsgs=${ snapshotLen }`);
+      background.inFlight = null;
+    });
+    background.inFlight = task;
   }
 
   // The recall/observation agents analyze the conversation's user messages.
@@ -453,7 +552,7 @@ export function runSubconsciousObservationWriters(
 // SUMMARIZER
 // ============================================================================
 
-async function runSummarizer(state: BaseThreadState): Promise<void> {
+async function runSummarizer(state: BaseThreadState): Promise<any[] | null> {
   const startTime = Date.now();
   const messagesBefore = state.messages.length;
 
@@ -469,16 +568,15 @@ async function runSummarizer(state: BaseThreadState): Promise<void> {
       const deletedCount = (subState.metadata as any).deletedCount || 0;
       const summarizedCount = (subState.metadata as any).summarizedCount || 0;
 
-      // Replace the live state's messages with the compressed version
-      state.messages.splice(0, state.messages.length, ...compressedMessages);
-
-      console.log(`[SubconsciousMiddleware:Summarizer] Applied in ${ Date.now() - startTime }ms | deleted: ${ deletedCount }, summarized: ${ summarizedCount }, messages: ${ messagesBefore } → ${ state.messages.length }`);
+      console.log(`[SubconsciousMiddleware:Summarizer] Produced result in ${ Date.now() - startTime }ms | deleted: ${ deletedCount }, summarized: ${ summarizedCount }, messages: ${ messagesBefore } → ${ compressedMessages.length }`);
+      return compressedMessages;
     } else {
       console.log(`[SubconsciousMiddleware:Summarizer] No changes in ${ Date.now() - startTime }ms`);
     }
   } catch (error) {
     console.error(`[SubconsciousMiddleware:Summarizer] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
   }
+  return null;
 }
 
 // ============================================================================
@@ -572,14 +670,12 @@ function collectDigestibleToolResults(state: BaseThreadState): DigestPlan {
 /**
  * Run the digester and apply its digests to the live state in ONE batch.
  *
- * Awaited (not fire-and-forget) for the same reason as the summarizer: it
- * mutates state.messages, and the primary agent must see a consistent
- * history before its LLM call. Applying results "next turn" would also mean
- * the rewrite races the prompt-cache prefix mid-turn.
+ * Runs against a private snapshot. The completed batch is applied at the next
+ * pre-turn boundary so it can never rewrite the prompt under a provider call.
  *
- * Replacements are looked up by tool_use_id over the LIVE message array at
- * apply time (not via references captured at collection time), so a
- * concurrent summarizer splice can't strand the edits.
+ * Replacements are looked up by tool_use_id over the private snapshot (not
+ * via references captured at collection time), then the entire batch becomes
+ * one pending prefix replacement.
  *
  * NOTE (claude-code provider): when the primary agent runs through the
  * claude-code provider with --resume, conversation history lives inside the
@@ -589,7 +685,7 @@ function collectDigestibleToolResults(state: BaseThreadState): DigestPlan {
  * immediately and shrinks the BaseNode pre-flight token budget on every
  * provider.
  */
-async function runToolResultDigester(state: BaseThreadState, eligible: DigestibleToolResult[]): Promise<void> {
+async function runToolResultDigester(state: BaseThreadState, eligible: DigestibleToolResult[]): Promise<any[] | null> {
   const startTime = Date.now();
 
   try {
@@ -601,7 +697,7 @@ async function runToolResultDigester(state: BaseThreadState, eligible: Digestibl
     const digests = (subState.metadata as any).toolResultDigests as Map<string, string> | undefined;
     if (!digests || digests.size === 0) {
       console.log(`[SubconsciousMiddleware:Digester] No digests produced in ${ Date.now() - startTime }ms`);
-      return;
+      return null;
     }
 
     // Apply in ONE batch — every digested block rewritten in the same turn
@@ -632,9 +728,11 @@ async function runToolResultDigester(state: BaseThreadState, eligible: Digestibl
     }
 
     console.log(`[SubconsciousMiddleware:Digester] Applied in ${ Date.now() - startTime }ms | digested: ${ applied }/${ eligible.length }, ~${ estimateTokensFromChars(savedChars) } tokens reclaimed`);
+    return state.messages;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:Digester] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
   }
+  return null;
 }
 
 // ============================================================================
