@@ -141,8 +141,8 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'training-data' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
-  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'training-data' | 'sulla' | null }[];
+  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
+  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'sulla' | null }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   trash?: FilesTrashItem[];

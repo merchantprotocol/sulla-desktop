@@ -190,7 +190,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
     const availableCollections = collections.map(collection => ({ id: collection.id,
       name: collection.name || roots.find(root => root.collectionId === collection.id)?.name || collection.explorer_path || '',
-      systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
+      systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'sulla' | null }).systemArea ?? null,
       treePath: collection.explorer_path ?? '' }));
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
@@ -252,7 +252,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
         accountName:     collection.account_display_name,
         accountRole:     collection.access_role,
         ownerUserId:     collection.owner_user_id,
-        systemArea:      (collection as FilesApiCollection & { systemArea?: 'logs' | 'training-data' | 'sulla' | null }).systemArea ?? null,
+        systemArea:      (collection as FilesApiCollection & { systemArea?: 'logs' | 'sulla' | null }).systemArea ?? null,
         sharedFolders:   collection.shared_folders?.map(folder => folder.folderPath),
         cloudCatalogSync: Boolean((collection as FilesApiCollection & { cloud_catalog_sync?: boolean }).cloud_catalog_sync),
         cloudBackup: (() => { const backup=cloudBackupStatus?.collections.find(item=>item.collectionId===collection.id); return backup ? { ...backup, cryptoModule:cloudBackupStatus!.cryptoModule } : undefined })(),

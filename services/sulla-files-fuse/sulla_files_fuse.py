@@ -156,11 +156,10 @@ def _mtime_ms(value):
 
 
 class FilesApi:
-    def __init__(self, base_url: str, token_file: str, actor_resolver=None, system_area=""):
+    def __init__(self, base_url: str, token_file: str, actor_resolver=None):
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
         self.actor_resolver = actor_resolver
-        self.system_area = system_area
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -248,7 +247,7 @@ class FilesApi:
 
     async def snapshot(self, etag=None):
         headers = {"If-None-Match": etag} if etag else None
-        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree" + (("?systemArea=" + urllib.parse.quote(self.system_area)) if self.system_area else ""), "GET", None, headers)
+        status, response_headers, body = await trio.to_thread.run_sync(self._request, "/v1/fuse/tree", "GET", None, headers)
         next_etag = response_headers.get("ETag", etag)
         return (None if status == 304 else json.loads(body)), next_etag
 
@@ -323,7 +322,6 @@ class SullaFiles(pyfuse3.Operations):
         self.children = {}
         self.handles = {}
         self.next_handle = 1
-        self.readonly_collections = set()
         self.uid = 0
         self.gid = 0
         self.snapshot_at = 0.0
@@ -394,7 +392,6 @@ class SullaFiles(pyfuse3.Operations):
     def _apply(self, snapshot):
         self.metadata_cache.clear()
         present = {""}
-        self.readonly_collections = {row["id"] for row in snapshot["collections"] if row.get("systemArea") in ("logs", "training-data")}
         roots = {}
         root_collection_id = snapshot.get("rootCollectionId")
         if root_collection_id:
@@ -471,8 +468,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
         attrs = pyfuse3.EntryAttributes()
         attrs.st_ino = inode
-        readonly = node.get("collectionId") in self.readonly_collections
-        attrs.st_mode = (stat.S_IFDIR | (0o555 if readonly else 0o777)) if node["directory"] else (stat.S_IFREG | (0o444 if readonly else 0o666))
+        attrs.st_mode = (stat.S_IFDIR | 0o777) if node["directory"] else (stat.S_IFREG | 0o666)
         attrs.st_nlink = 2 if node["directory"] else 1
         attrs.st_uid = self.uid
         attrs.st_gid = self.gid
@@ -531,17 +527,11 @@ class SullaFiles(pyfuse3.Operations):
             if not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), index):
                 break
 
-    def _writable(self, node):
-        if node.get("collectionId") in self.readonly_collections:
-            raise pyfuse3.FUSEError(errno.EROFS)
-
     @traced("open", lambda s, a: s._inode_info(a[0], a[-1]))
     async def open(self, inode, flags, ctx):
         node = self.nodes.get(inode)
         if not node or node["directory"]:
             raise pyfuse3.FUSEError(errno.EISDIR)
-        if flags & (os.O_WRONLY | os.O_RDWR | os.O_TRUNC | os.O_APPEND):
-            self._writable(node)
         if len(self.handles) >= MAX_OPEN_HANDLES:
             raise pyfuse3.FUSEError(errno.EMFILE)
         try:
@@ -643,7 +633,6 @@ class SullaFiles(pyfuse3.Operations):
 
     async def write(self, fh, offset, buf):
         handle = self.handles[fh]
-        self._writable(self.nodes[handle["inode"]])
         if handle["append"]:
             offset = handle["size"]
         end = offset + len(buf)
@@ -661,7 +650,6 @@ class SullaFiles(pyfuse3.Operations):
     @traced("setattr", lambda s, a: s._inode_info(a[0], a[-1]), mutating=True)
     async def setattr(self, inode, attr, fields, fh, ctx):
         if fields.update_size:
-            self._writable(self.nodes[inode])
             if fh is None or fh not in self.handles:
                 raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
             handle = self.handles[fh]
@@ -754,7 +742,6 @@ class SullaFiles(pyfuse3.Operations):
     @traced("create", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def create(self, parent_inode, name, mode, flags, ctx):
         parent,path=self._child(parent_inode,name)
-        self._writable(parent)
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: row=await self._as_actor(await self._actor(ctx), self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error:
@@ -770,7 +757,6 @@ class SullaFiles(pyfuse3.Operations):
         parent,old_path=self._child(parent_inode,name); target_parent,new_path=self._child(new_parent_inode,new_name)
         inode=self.path_inode.get(old_path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
-        self._writable(node); self._writable(target_parent)
         source_collection = node.get("collectionId") or parent.get("collectionId")
         target_collection = target_parent.get("collectionId")
         if not source_collection or not target_collection: raise pyfuse3.FUSEError(errno.EPERM)
@@ -807,7 +793,6 @@ class SullaFiles(pyfuse3.Operations):
     async def unlink(self, parent_inode, name, ctx):
         _,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("directory"): raise pyfuse3.FUSEError(errno.ENOENT)
-        self._writable(node)
         try: await self._as_actor(await self._actor(ctx), self.api.delete(node["id"]))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
@@ -815,7 +800,6 @@ class SullaFiles(pyfuse3.Operations):
     @traced("mkdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def mkdir(self, parent_inode, name, mode, ctx):
         parent,path=self._child(parent_inode,name)
-        self._writable(parent)
         if not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: await self._as_actor(await self._actor(ctx), self.api.mkdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
@@ -826,7 +810,6 @@ class SullaFiles(pyfuse3.Operations):
     async def rmdir(self, parent_inode, name, ctx):
         parent,path=self._child(parent_inode,name); inode=self.path_inode.get(path); node=self.nodes.get(inode) if inode else None
         if not node or node.get("collectionRoot"): raise pyfuse3.FUSEError(errno.EPERM)
-        self._writable(node)
         try: await self._as_actor(await self._actor(ctx), self.api.rmdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         self._forget(path)
@@ -914,13 +897,13 @@ async def main(options):
         raise SystemExit("SULLA_FILES_FUSE_TOKEN_FILE is required")
     status = StatusFile(options.status_file)
     os.makedirs(options.mountpoint, exist_ok=True)
-    operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver(), options.system_area))
+    operations = SullaFiles(FilesApi(options.url, token_file, ActorResolver()))
     emit("daemon-start", pid=os.getpid(), url=options.url, mountpoint=options.mountpoint, spool=SPOOL_DIR,
          logLevel=logging.getLevelName(log.getEffectiveLevel()), pyfuse3=pyfuse3.__version__, snapshotTtlSeconds=SNAPSHOT_TTL_SECONDS,
          maxFileBytes=MAX_FILE_BYTES, maxOpenHandles=MAX_OPEN_HANDLES, slowRequestSeconds=SLOW_REQUEST_SECONDS)
     status.set("mounting")
     try:
-        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other", *({"ro"} if options.read_only else set())})
+        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
     except Exception as error:
         log.exception("mount failed", extra={"event": "mount-failed", "fields": {"mountpoint": options.mountpoint}})
         status.set("failed", reason="mount-failed", error=str(error))
@@ -983,8 +966,6 @@ if __name__ == "__main__":
     logging.getLogger("pyfuse3").setLevel(os.environ.get("SULLA_FILES_FUSE_PYFUSE3_LOG_LEVEL", "INFO").upper())
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Files service base URL")
-    parser.add_argument("--system-area", default=os.environ.get("SULLA_FILES_FUSE_SYSTEM_AREA", ""), choices=("", "logs", "training-data"))
-    parser.add_argument("--read-only", action="store_true", default=os.environ.get("SULLA_FILES_FUSE_READ_ONLY", "").lower() in ("1", "true"))
     parser.add_argument("--status-file", default=os.environ.get("SULLA_FILES_FUSE_STATUS_FILE"), help="JSON status file Desktop polls")
     parser.add_argument("mountpoint")
     trio.run(main, parser.parse_args())

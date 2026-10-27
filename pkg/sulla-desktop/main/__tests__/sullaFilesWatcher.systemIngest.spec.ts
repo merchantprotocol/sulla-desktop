@@ -15,13 +15,13 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-files-watcher-ingest-'));
-const dirs = Object.fromEntries(['logs', 'conversations', 'docs', 'skills', 'workflows', 'agents', 'functions', 'files', 'userData']
+const dirs = Object.fromEntries(['docs', 'skills', 'workflows', 'agents', 'functions', 'files', 'userData']
   .map(name => [name, path.join(fixture, name)]));
-const LOG_FILES = 2_000;
+const DOC_FILES = 2_000;
 const old = new Date(Date.now() - 60_000);
 for (const dir of Object.values(dirs)) fs.mkdirSync(dir, { recursive: true });
-for (let index = 0; index < LOG_FILES; index++) {
-  const file = path.join(dirs.logs, `f${ String(index).padStart(5, '0') }.log`);
+for (let index = 0; index < DOC_FILES; index++) {
+  const file = path.join(dirs.docs, `f${ String(index).padStart(5, '0') }.md`);
   fs.writeFileSync(file, `line ${ index }\n`);
   fs.utimesSync(file, old, old);
 }
@@ -50,7 +50,7 @@ const desktopFilesFetch = jest.fn(async(input:string | URL, _init?:RequestInit) 
   switch (url.pathname) {
   case '/healthz': return json({ locked: false, legacyImport: { state: 'clear' } });
   case '/v1/local/native-sources/revalidate': return new Response(null, { status: 204 });
-  case '/v1/local/system-areas': return json([{ id: 'c-logs', systemArea: 'logs' }, { id: 'c-train', systemArea: 'training-data' }, { id: 'c-sulla', systemArea: 'sulla' }]);
+  case '/v1/local/system-areas': return json([{ id: 'c-sulla', systemArea: 'sulla' }]);
   case '/v1/local/native-sources': return json([]);
   case '/v1/local/native-sources/ingest': return json({ id: crypto.randomUUID() }, 201);
   case '/v1/local/system-areas/ingest': return json({ id: crypto.randomUUID(), current_version_id: crypto.randomUUID(), unchanged: false }, 201);
@@ -84,10 +84,8 @@ jest.unstable_mockModule('../sullaFilesSourceGateway', () => ({
 }));
 jest.unstable_mockModule('../sullaFilesTls', () => ({ desktopFilesFetch, FILES_HTTPS_ORIGIN: 'https://127.0.0.1:30124' }));
 jest.unstable_mockModule('@pkg/agent/utils/sullaPaths', () => ({
-  resolveSullaConversationsDir: () => dirs.conversations,
   resolveSullaDocsDir:          () => dirs.docs,
   resolveSullaFunctionsDir:     () => dirs.functions,
-  resolveSullaLogsDir:          () => dirs.logs,
   resolveSullaUserAgentsDir:    () => dirs.agents,
   resolveSullaUserSkillsDir:    () => dirs.skills,
   resolveSullaUserWorkflowsDir: () => dirs.workflows,
@@ -122,7 +120,7 @@ describe('SullaFilesWatcher system-area ingest never gates unlock/startup', () =
   beforeAll(() => {
     internals.nativeEnabled = true; // what initialize() derives from the rollout flag
     Object.assign(internals.systemIngest.options, { startupGraceMs: 150, unlockSettleMs: 150, resumePauseMs: 10, customerRetryMs: 20 });
-    // Production logs run at 1 file/s; speed the lane up so the test can watch a long scan in progress.
+    // Speed the lane up from its production rate so the test can watch a long scan in progress.
     for (const lane of internals.systemIngest.lanes) lane.config.filesPerSecond = 1_000;
   });
 
@@ -147,7 +145,7 @@ describe('SullaFilesWatcher system-area ingest never gates unlock/startup', () =
     await watcher.unlockService();
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(500);
-    expect(reads.length).toBeLessThan(LOG_FILES); // the scan was still in progress
+    expect(reads.length).toBeLessThan(DOC_FILES); // the scan was still in progress
     // The pass steps aside while the unlock is in flight and is rescheduled, never run inline.
     expect(['running', 'scheduled']).toContain(watcher.systemIngestStatus().state);
 
@@ -156,8 +154,8 @@ describe('SullaFilesWatcher system-area ingest never gates unlock/startup', () =
     const headers = new Headers((ingest?.[1])?.headers);
     expect(headers.get('x-sulla-files-token')).toBe('test-service-token');
     expect(headers.get('authorization')).toBeNull();
-    // Logs skip the expensive search extraction/embedding path.
-    expect(headers.get('x-sulla-files-skip-search-index')).toBe('1');
+    // Sulla docs are searchable: the search extraction/embedding path is not skipped.
+    expect(headers.get('x-sulla-files-skip-search-index')).toBeNull();
     // Plain read-only ingest: no native-source ingest, no full native inventory, no handle kept.
     expect(fetchLog).not.toContain('/v1/local/native-sources/ingest');
     expect(fetchLog).not.toContain('/v1/local/native-sources');
@@ -174,10 +172,10 @@ describe('SullaFilesWatcher system-area ingest never gates unlock/startup', () =
     const after = reads.length;
     await new Promise(resolve => setTimeout(resolve, 100));
     expect(reads.length).toBe(after);
-    expect(after).toBeLessThan(LOG_FILES);
+    expect(after).toBeLessThan(DOC_FILES);
     expect(watcher.systemIngestStatus().state).toBe('paused');
     const state = JSON.parse(await fs.promises.readFile(path.join(dirs.userData, 'sulla-files-system-ingest.json'), 'utf8'));
-    expect(state.lanes.logs.inProgress).toBe(true); // resumes this sweep on the next unlock/start
+    expect(state.lanes.sulla.inProgress).toBe(true); // resumes this sweep on the next unlock/start
     expect(Object.keys(state.entries).length).toBeGreaterThan(0);
   }, 30_000);
 
@@ -190,7 +188,7 @@ describe('SullaFilesWatcher system-area ingest never gates unlock/startup', () =
     expect(reads.length - before).toBeLessThanOrEqual(1);
     customerSyncing = false;
     await waitFor(() => reads.length > before + 20);
-    expect(watcher.systemIngestStatus().lanes.logs.ingested).toBeGreaterThan(0);
+    expect(watcher.systemIngestStatus().lanes.sulla.ingested).toBeGreaterThan(0);
     await watcher.lockService();
   }, 30_000);
 });

@@ -7,6 +7,7 @@
 
 import { startVectorBackfill } from './vectorBackfill.js';
 import { startSearchCleanup } from './searchCleanup.js';
+import { startRetiredSystemAreaCleanup } from './retiredSystemAreas.js';
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import http, { type RequestListener } from 'node:http';
@@ -200,6 +201,7 @@ if (chunkStore instanceof CachingStore) await chunkStore.start();
 const app = createApp(db, config, manager, identityDb, search, undefined, undefined, undefined, residency, lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync);
 requestHandler = app;
 startSearchCleanup(db);
+startRetiredSystemAreaCleanup(db, (collectionId, chunkId) => chunkStore.delete(collectionId, chunkId));
 startVectorBackfill(db);
 if(config.mode==='desktop') app.locals.backupScheduler.start();
 if(config.mode==='desktop') app.locals.catalogSync.start();

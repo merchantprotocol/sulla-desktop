@@ -10,9 +10,10 @@ import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import type pg from 'pg';
 
+// 'logs' is the internal audit store (FileAuditWriter appends audit/files and audit/vault).
+// It is not mounted, mirrored or shown in the File Manager.
 const AREAS = [
-  { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault', 'app'] },
-  { key: 'training-data', name: 'Training Data', explorerPath: 'Training Data', folders: [] },
+  { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault'] },
   { key: 'home', name: 'Files', explorerPath: '', folders: [
     { path: 'Docs' }, { path: 'Use Cases/skills' }, { path: 'Use Cases/workflows' }, { path: 'Use Cases/agents' },
     { path: 'Use Cases/functions' }, { path: 'Use Cases/recipes' }, { path: 'Projects' }, { path: 'Identity' },
@@ -60,7 +61,7 @@ export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void>
 
 /** Read-only system storage is structural: no caller grants can override it. */
 export function assertSystemAreaWritable(area:unknown):void {
-  if (area === 'logs' || area === 'training-data') {
+  if (area === 'logs') {
     throw Object.assign(new Error('System area is read-only'), {status:403,code:'EROFS'});
   }
 }

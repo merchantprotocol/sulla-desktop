@@ -27,7 +27,6 @@ import { ConversationKeywordsModel } from '../database/models/ConversationKeywor
 import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { filesRecallCounters, formatFilesRecall, startFilesRecallForTurn, type FilesRecallTurnDeps, type FilesRecallTurnResult } from '../memory/FilesRecallService';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -105,8 +104,6 @@ export interface SubconsciousMiddlewareOptions {
    * short line ("Recalling memories…", "Memory recall done (12.4s)").
    */
   onProgress?:         (message: string) => void;
-  /** 'heartbeat' lets the Files recall gate pull history for background cycles. */
-  turnKind?:           'chat' | 'heartbeat';
 }
 
 /**
@@ -158,7 +155,6 @@ export async function runSubconsciousMiddleware(
   meta.teamDirectoryContext = '';
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
-  meta.filesContext = '';
   meta.brainMemoryContext = '';
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
@@ -326,37 +322,6 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('conversation-reader', 'Recalling prior conversations', conversationRecallPromise.then(ctx => { (state.metadata as any).conversationContext = ctx })));
   }
 
-  // R9b. Files recall — only when the deterministic gate (memory/filesRecallGate)
-  // says this turn needs Files (prior conversations, a named file, a Sulla
-  // how-to, errors/runs). Gate "no" = zero Files calls and zero added latency.
-  // Hybrid keyword+meaning search via the Files service's /v1/search, 1.5s
-  // budget, silently skipped when Files is locked/unavailable. Results are
-  // deduplicated against the other recalls after they settle (below).
-  const isHeartbeat = options.turnKind === 'heartbeat';
-  const filesRecall = options.includeObservations && (analyzable || isHeartbeat)
-    ? startFilesRecallForTurn({
-      text:            extractLatestUserText(state),
-      msSinceLastTurn: msSinceLastUserTurn(state),
-      isHeartbeat,
-      isNested:        isNestedRun(meta),
-      agentId:         resolveAgentIdentity(state.metadata),
-      threadId:        typeof meta.threadId === 'string' ? meta.threadId : undefined,
-      callerContext:   {
-        sub:       meta.userId ?? meta.ownerUserId,
-        org_id:    meta.orgId,
-        device_id: meta.deviceId,
-        agent_id:  meta.agentId,
-        job_id:    meta.jobId,
-        thread_id: meta.threadId,
-      },
-    }, filesRecallDeps())
-    : null;
-  const filesRecallBox: { result: FilesRecallTurnResult | null } = { result: null };
-  if (filesRecall) {
-    launched.push('files-recall');
-    awaitedTasks.push(timed('files-recall', 'Searching your Files', filesRecall.then((r) => { filesRecallBox.result = r })));
-  }
-
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
   // ranked by the current situation (plus the shared "Calling your team"
   // section when their prompt lacks it), injected as <team_directory>.
@@ -410,8 +375,6 @@ export async function runSubconsciousMiddleware(
       console.error('[SubconsciousMiddleware] Agent failed:', (f).reason?.message || (f).reason);
     }
   }
-
-  if (filesRecallBox.result) finalizeFilesRecall(state, filesRecallBox.result);
 
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
   console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | observationContext: ${ obsRecallLen } chars`);
@@ -1037,82 +1000,6 @@ async function runBrainRecall(state: BaseThreadState): Promise<void> {
     console.warn('[SubconsciousMiddleware] brain recall failed:', err instanceof Error ? err.message : err);
     meta.brainMemoryContext = '';
   }
-}
-
-/**
- * Spawned sub-agents and subconscious observer/recall graphs never trigger
- * Files recall: the parent turn already searched, and a nested search per
- * child would multiply Files traffic for no new context.
- */
-function isNestedRun(meta: any): boolean {
-  return !!(meta?.isSubAgent || meta?.isSubconscious || meta?.parentConversationId);
-}
-
-/** ms between the latest real user message and the message before it (null when unknown). */
-function msSinceLastUserTurn(state: BaseThreadState): number | null {
-  const messages = state.messages as any[];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m?.role !== 'user' || m?.metadata?.source === 'subconscious') continue;
-    const at = Number(m.timestamp);
-    if (!Number.isFinite(at)) return null;
-    for (let j = i - 1; j >= 0; j--) {
-      if (messages[j]?.metadata?.source === 'subconscious_context') continue;
-      const prev = Number(messages[j]?.timestamp);
-      if (Number.isFinite(prev)) return Math.max(0, at - prev);
-    }
-    return null;
-  }
-  return null;
-}
-
-/** Production dependencies for Files recall; tests replace the Files transport via containerClient. */
-function filesRecallDeps(): FilesRecallTurnDeps {
-  return {
-    getSetting:  (key, fallback) => SullaSettingsModel.get(key, fallback),
-    agentAllows: async(agentId) => {
-      const { agentDefinitionService } = await import('../services/AgentDefinitionService');
-      const definition: any = await agentDefinitionService.findBySlug(agentId);
-      return definition?.config?.filesRecall !== false;
-    },
-    // Only consulted when the subconsciousFilesRecallLlmGate setting is true
-    // (default false) and the deterministic gate scored a borderline turn.
-    secondOpinion: async(text) => {
-      const { getSubconsciousService } = await import('../languagemodels');
-      const service: any = await getSubconsciousService();
-      const reply = await service?.chat?.([
-        { role: 'system', content: 'Answer only "yes" or "no". Would answering the user\'s message benefit from searching their saved files, Sulla docs, or past conversation logs?' },
-        { role: 'user', content: text.slice(0, 1_000) },
-      ], { maxTokens: 3, temperature: 0, timeoutSeconds: 2, nodeName: 'files-recall-gate' });
-      return /^\s*yes\b/i.test(String(reply?.content ?? ''));
-    },
-  };
-}
-
-/**
- * Merge step, run after every recall has settled: dedup Files hits against
- * what the observation/conversation recalls already injected, trim to the
- * token budget, and log one line for the turn.
- */
-function finalizeFilesRecall(state: BaseThreadState, result: FilesRecallTurnResult): void {
-  const meta = state.metadata as any;
-  const outcome = result.outcome;
-  const formatted = outcome?.hits.length
-    ? formatFilesRecall(outcome.hits, {
-      existingContexts: [
-        meta.observationContext, meta.userObservationContext, meta.selfObservationContext, meta.businessObservationContext,
-        meta.environmentObservationContext, meta.projectsObservationContext, meta.worldObservationContext,
-        meta.skillsObservationContext, meta.conversationContext, meta.skillRecallContext, meta.brainMemoryContext,
-      ],
-      currentThreadId:    typeof meta.threadId === 'string' ? meta.threadId : undefined,
-      incompleteCoverage: outcome.incompleteCoverage,
-    })
-    : { text: '', injected: 0, dropped: 0 };
-
-  meta.filesContext = formatted.text;
-  filesRecallCounters.hitsInjected += formatted.injected;
-  const c = filesRecallCounters;
-  perf.log(`[FilesRecall] threadId=${ meta.threadId } reasons=${ result.decision.reasons.join(',') } areas=${ result.decision.areas.join(',') } status=${ outcome?.status ?? result.skipped } cache=${ outcome?.cache ?? 'none' } hits=${ outcome?.hits.length ?? 0 } injected=${ formatted.injected } deduped=${ formatted.dropped } chars=${ formatted.text.length } ms=${ result.ms } | totals fired=${ c.gateFired }/${ c.gateEvaluated } searches=${ c.searches } cacheHits=${ c.cacheHits } timeouts=${ c.timeouts } unavailable=${ c.unavailable } cooldownSkips=${ c.cooldownSkips } injected=${ c.hitsInjected }`);
 }
 
 /** Fire-and-forget post-turn Reflex Trainer (teaches the Reflex engine). */

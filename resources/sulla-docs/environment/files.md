@@ -129,13 +129,13 @@ The Files-owned system collections are:
 
 - `Sulla`: `Docs`, `Use Cases/{skills,workflows,agents,functions,recipes}`,
   `Projects`, and `Identity`.
-- `Logs`: hidden behind **Trash → More**, with `audit/files`, `audit/vault`
-  and `app` folders.
-- `Training Data`: hidden behind **Trash → More**.
+- `Logs`: the audit store, with `audit/files` and `audit/vault` folders. It is
+  not mounted and not shown in the File Manager.
 
-Logs and Training Data are read-only to callers; only services write them.
+Logs is read-only to callers; only the Files audit writer writes it.
 Audit files are append-only JSONL at `Logs/audit/files/<file-id>.jsonl` and
-`Logs/audit/vault/<secret-id>.jsonl`.
+`Logs/audit/vault/<secret-id>.jsonl`. There is no Training Data area and no
+mirror of Desktop's app logs; `/mnt/sulla-files` is the only Files mount.
 
 Use Cases folders are the file authority; database definitions are runtime
 indexes. See [files-harness.md](files-harness.md) for working rules and

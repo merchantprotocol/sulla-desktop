@@ -74,7 +74,7 @@ interface SyntheticTrashState {
 }
 interface SyntheticFile extends FilesItem { syntheticTrash?:SyntheticTrashState }
 interface SyntheticFolder extends FilesFolderState { deletedAt?:string; syntheticTrash?:SyntheticTrashState }
-interface SyntheticCollection { id:string; name:string; home:string; systemArea:'logs' | 'training-data' | 'sulla' | null; files:SyntheticFile[]; folders:SyntheticFolder[]; cloudCatalogSync?:boolean }
+interface SyntheticCollection { id:string; name:string; home:string; systemArea:'logs' | 'sulla' | null; files:SyntheticFile[]; folders:SyntheticFolder[]; cloudCatalogSync?:boolean }
 interface SyntheticMutation {
   before:SyntheticCollection[];
   after:SyntheticCollection[];
@@ -197,11 +197,9 @@ export class SyntheticFilesDataSource implements FilesDataSource {
     };
 
     const sulla:SyntheticCollection = { id: 'synthetic-sulla', name: 'Sulla', home: 'sulla', systemArea: 'sulla', files: [this.file('synthetic-sulla-readme', 'Docs/README.md', 'text/markdown', 1200, 'version-sulla-readme', '38')], folders: [{ folderId: 'synthetic-sulla-docs', path: 'Docs', revision: '39' }] };
-    const logs:SyntheticCollection = { id: 'synthetic-logs', name: 'Logs', home: 'logs', systemArea: 'logs', files: [this.file('synthetic-log', 'app/latest.log', 'text/plain', 3200, 'version-log', '40')], folders: [{ folderId: 'synthetic-logs-app', path: 'app', revision: '41' }] };
-    const trainingData:SyntheticCollection = { id: 'synthetic-training-data', name: 'Training Data', home: 'training-data', systemArea: 'training-data', files: [this.file('synthetic-training', 'conversations/sample.jsonl', 'application/jsonl', 1800, 'version-training', '42')], folders: [{ folderId: 'synthetic-training-conversations', path: 'conversations', revision: '43' }] };
 
     return {
-      revision: 37, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored, sulla, logs, trainingData], operations: {}, idempotency: {},
+      revision: 37, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored, sulla], operations: {}, idempotency: {},
       folderReceipts: {
         'receipt-trash-folder': {
           collectionId: primary.id, rootFolderId: 'synthetic-trash-folder', rootPath: 'Discarded project',
