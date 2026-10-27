@@ -176,13 +176,19 @@ final class BalloonController: @unchecked Sendable {
     private var lastTelemetry: TimeInterval = -.infinity
     private var lastSample: GuestMemorySample?
     private var lowAlarm = false
+    /// Experiment mode (SULLA_RUNTIME_BALLOON=probe): inflate once, hold, deflate, and log the
+    /// host footprint every 5 s throughout, to see whether the balloon returns memory to macOS.
+    private let probe: Bool
+    private enum ProbePhase { case waiting, holding(since: TimeInterval), released(since: TimeInterval), done }
+    private var probePhase: ProbePhase = .waiting
 
     /// - Parameters:
     ///   - configured: the VM's memory size, which is also the ceiling.
     ///   - send: writes one JSON line to the guest control stream; false when there is none.
     ///   - setTarget: sets the balloon device's target (on the VM's queue).
-    init(configured: UInt64, startedAt: Date, send: @escaping (String) -> Bool, setTarget: @escaping (UInt64) -> Void) {
+    init(configured: UInt64, startedAt: Date, probe: Bool = false, send: @escaping (String) -> Bool, setTarget: @escaping (UInt64) -> Void) {
         let ceiling = Int64(configured)
+        self.probe = probe
         policy = BalloonPolicy(ceiling: ceiling, hardMinimum: gibBytes)
         target = ceiling
         self.send = send
@@ -236,7 +242,7 @@ final class BalloonController: @unchecked Sendable {
     /// The guest is running low between polls: give memory back now.
     func guestAlarm(_ detail: String) {
         lock.lock(); defer { lock.unlock() }
-        guard running, let sample = lastSample else { return }
+        guard running, !probe, let sample = lastSample else { return }
         lowAlarm = true
         evaluate(sample, alarmDetail: detail)
     }
@@ -250,7 +256,42 @@ final class BalloonController: @unchecked Sendable {
         return send("{\"id\":\(id),\"method\":\"reclaim\",\"dropCaches\":true}")
     }
 
+    private func evaluateProbe(_ sample: GuestMemorySample) {
+        lastSample = sample
+        let t = now
+        switch probePhase {
+        case .waiting:
+            // Let the guest finish booting, then take everything it is not using, leaving 1.5 GiB spare.
+            if t - readyAt >= 90 {
+                let reserve = max(0, policy.ceiling - sample.total)
+                kernelReserve = reserve
+                let wanted = policy.roundToMiB(max(2 * gibBytes, sample.used + 1536 * mib + reserve))
+                print("probe inflate to \(Self.format(wanted)) (used \(Self.format(sample.used)), reserve \(Self.format(reserve)))")
+                apply(wanted, reason: "probe-inflate", sample: sample)
+                probePhase = .holding(since: t)
+            }
+        case .holding(let since):
+            if t - since >= 180 {
+                print("probe deflate to \(Self.format(policy.ceiling))")
+                apply(policy.ceiling, reason: "probe-deflate", sample: sample)
+                probePhase = .released(since: t)
+            }
+        case .released(let since):
+            if t - since >= 120 {
+                print("probe finished")
+                probePhase = .done
+            }
+        case .done:
+            break
+        }
+        if t - lastTelemetry >= 5 {
+            lastTelemetry = t
+            logTelemetry(sample)
+        }
+    }
+
     private func evaluate(_ sample: GuestMemorySample, alarmDetail: String? = nil) {
+        if probe { evaluateProbe(sample); return }
         lastSample = sample
         let t = now
         // Before the first inflation the gap between the configured size and

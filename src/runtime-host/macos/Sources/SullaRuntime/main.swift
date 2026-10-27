@@ -358,11 +358,12 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     /// and the controller growing straight back to ~20 GB (host footprint 21.8 GB, worse than
     /// with no controller). It stays out of the default path until that is fixed.
     private func makeBalloonController() -> BalloonController? {
-        guard ProcessInfo.processInfo.environment["SULLA_RUNTIME_BALLOON"] == "on",
+        let mode = ProcessInfo.processInfo.environment["SULLA_RUNTIME_BALLOON"]
+        guard mode == "on" || mode == "probe",
               let device = machine.memoryBalloonDevices.compactMap({ $0 as? VZVirtioTraditionalMemoryBalloonDevice }).first
         else { return nil }
         return BalloonController(
-            configured: configuration.memorySize, startedAt: Date(),
+            configured: configuration.memorySize, startedAt: Date(), probe: mode == "probe",
             send: { [weak self] line in
                 guard let self else { return false }
                 self.controlLock.lock(); defer { self.controlLock.unlock() }
