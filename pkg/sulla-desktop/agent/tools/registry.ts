@@ -82,7 +82,6 @@ export class ToolRegistry {
     fs:                 'File system operations tools for creating, reading, writing, moving, copying, and deleting files/directories.',
     gdrive:             'Google Drive (read-only) — list folders, search, read Docs/Sheets/Slides as text, and download PDFs/images/videos to disk. Needs the Google Drive integration connected.',
     github:             'GitHub repository management tools.',
-    kubectl:            'Kubernetes cluster management tools.',
     slack:              'Slack messaging and reaction tools.',
     workspace:          'Tools for managing workspace folders in the Sulla Desktop data directory.',
     redis:              'Redis key/value store operations.',

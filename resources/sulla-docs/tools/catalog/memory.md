@@ -38,7 +38,7 @@ sulla memory/episodic_resolve '{"terms":"<terms>"}'
 
 ## episodic_search
 
-Search canonical Knowledge Base nodes without mutating recall or graph strength.
+Search durable conversation history and message content. Empty query lists recent conversations.
 
 **Parameters**
 

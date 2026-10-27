@@ -467,17 +467,6 @@ const formatters: Record<string, Formatter> = {
     return { label: 'Vault', summary: `Saving credential for ${ str(args.account_type) }` };
   },
 
-  // ── Kubectl ──────────────────────────────────────────────────────────────
-  kubectl_apply(args) {
-    return { label: 'Kubernetes', summary: 'Applying manifest' };
-  },
-  kubectl_delete() {
-    return { label: 'Kubernetes', summary: 'Deleting resource' };
-  },
-  kubectl_describe() {
-    return { label: 'Kubernetes', summary: 'Describing resource' };
-  },
-
   // Fallback handled by prefix matching below
 };
 

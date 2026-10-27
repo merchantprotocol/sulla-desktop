@@ -20,10 +20,10 @@ export const episodicToolManifests: ToolManifest[] = [
     name:           'episodic_search',
     category:       'memory',
     operationTypes: ['read'],
-    description:    'Search canonical Knowledge Base nodes without mutating recall or graph strength.',
+    description:    'Search durable conversation history and message content. Empty query lists recent conversations.',
     schemaDef:      {
-      query:            { type: 'string', optional: true, description: 'Title/summary query. Empty lists recent nodes.' },
-      include_archived: { type: 'boolean', optional: true, description: 'Include archived nodes.' },
+      query:            { type: 'string', optional: true, description: 'Conversation title, summary, or message-content query. Empty lists recent conversations.' },
+      include_archived: { type: 'boolean', optional: true, description: 'Include archived conversations.' },
       limit:            { type: 'number', optional: true, description: 'Bounded result limit.' },
     },
     loader: () => import('./search'),

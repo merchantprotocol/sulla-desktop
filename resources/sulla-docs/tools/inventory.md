@@ -356,11 +356,6 @@ sulla meta/browse_tools '{"category":"<category>"}'
 - `sulla docker/run` — Run a Docker container.
 - `sulla docker/stop` — Stop a running Docker container.
 
-## kubectl (3 tools)
-- `sulla kubectl/apply` — Apply a Kubernetes manifest file.
-- `sulla kubectl/delete` — Delete Kubernetes resources.
-- `sulla kubectl/describe` — Describe Kubernetes resources.
-
 ## secretary (3 tools)
 - `sulla secretary/start` — Start Secretary Mode — opens (or focuses) a Secretary tab and auto-begins the listening session.
 - `sulla secretary/stop` — Stop Secretary Mode — ends the active listening session.
