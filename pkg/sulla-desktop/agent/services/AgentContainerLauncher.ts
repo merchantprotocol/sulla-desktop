@@ -69,6 +69,7 @@ import paths from '@pkg/utils/paths';
 import type { BaseThreadState } from '../nodes/Graph';
 
 const log = Logging.background;
+const perf = Logging.perf;
 const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
@@ -268,6 +269,8 @@ while True: threading.Thread(target=serve,args=(s.accept()[0],),daemon=True).sta
   // per connection instead of parsing every request on it.
   const bridge = String.raw`const n = require('net');
 n.createServer(c => {
+  c.setNoDelay(true);
+  const startedAt = performance.now();
   let b = Buffer.alloc(0);
   const onHead = d => {
     b = Buffer.concat([b, d]);
@@ -290,8 +293,13 @@ n.createServer(c => {
     // callback would land behind body chunks that arrived in the meantime,
     // which truncates every request bigger than one read.
     const u = ${ upstream };
+    u.setNoDelay(true);
 ${ portLine }    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
-    u.on('data', x => c.write(x));
+    let firstUpstream = true;
+    u.on('data', x => {
+      if (firstUpstream) { console.log('[RelayTiming] firstByteMs=' + (performance.now() - startedAt).toFixed(1)); firstUpstream = false; }
+      c.write(x);
+    });
     u.on('end', () => c.end());
     u.on('error', () => c.destroy());
     c.on('data', x => u.write(x));
@@ -914,6 +922,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       },
       binds,
       network:     AGENT_NETWORK,
+      extraHosts:  [`host.sulla.internal:${ SULLA_RUNTIME_HOST_GATEWAY }`],
       workingDir:  providerWorkspace,
       user:        `${ identity.uid }:${ identity.gid }`,
       tmpfs:       providerHome ? undefined : {
@@ -1033,6 +1042,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           },
           // Codex runs on a ChatGPT OAuth session; refresh it in the vault
           // before it expires instead of letting the upstream call 401.
+          logTiming:      message => perf.info(message),
           beforeUpstream: integrationId === 'codex'
             ? async() => {
               const { getOAuthService } = await import('./OAuthService');
@@ -1219,6 +1229,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       env:         { ...configuration.env, ...egress.env },
       binds,
       network:     AGENT_NETWORK,
+      extraHosts:  [`host.sulla.internal:${ SULLA_RUNTIME_HOST_GATEWAY }`],
       workingDir:  workspacePath,
       user:        `${ identity.uid }:${ identity.gid }`,
       tmpfs:       {
