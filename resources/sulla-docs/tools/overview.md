@@ -1,5 +1,7 @@
 # Sulla Tools — Overview & Critical Patterns
 
+For fast discovery, grep [`catalog/INDEX.md`](catalog/INDEX.md) first and open only the matching category file in `catalog/`. Use the hand-written guides in this directory when you need deeper operating guidance.
+
 ## Invocation Pattern
 
 ```bash

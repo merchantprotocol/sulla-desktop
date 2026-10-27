@@ -28,6 +28,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 → [`design-system.md`](design-system.md) — all project HTML must use `sulla.css`. Copy `template.html`, link the CSS relative to `~/sulla/designs/`, default `class="dark"` on `<html>`.
 
 **Start here when a user request comes in:**
+- [`tools/catalog/INDEX.md`](tools/catalog/INDEX.md) — grep this generated live-catalog list first, then open only the matching category file under `tools/catalog/`; use the hand-written `tools/*.md` guides when you need deeper operating guidance
 - [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
@@ -54,6 +55,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `updates.md` — In-app updater (electron-updater + Longhorn provider, release channels, dev-mode config)
 
 ## tools/
+- `catalog/INDEX.md` — generated from the live catalog; grep this cheap list first and open only the category file you need, then use the hand-written guides below for deeper guidance
 - `inventory.md` — **MASTER LIST** of every tool, grouped by category, one-line each
 - `overview.md` — ⚠️ CRITICAL: invocation pattern, anti-patterns, all tool categories
 - `meta.md` — Foundational: exec, browse_tools, file_search, read_file, spawn_agent, observational + identity memory, recall index
