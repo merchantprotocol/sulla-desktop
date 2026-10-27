@@ -26,7 +26,7 @@
 //   - Always returns { type: 'next' } — routing lives in graph edges
 
 import { BaseNode, JSON_ONLY_RESPONSE_INSTRUCTIONS } from './BaseNode';
-import { type ChatMessage, getTextContent } from '../languagemodels/BaseLanguageModel';
+import { type BaseLanguageModel, type ChatMessage, getTextContent, isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 
@@ -165,7 +165,7 @@ const CONTROL_CHAR_REGEX = /[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008\u000B
  * @extends BaseNode
  */
 export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> extends BaseNode {
-  constructor() {
+  constructor(private readonly providerResolver?: (state: BaseThreadState) => Promise<BaseLanguageModel>) {
     super('input_handler', 'Input Handler');
   }
 
@@ -220,21 +220,31 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     }
 
     // ----------------------------------------------------------------
-    // 3. BATCH SUMMARIZATION WHEN HITTING MAX WINDOW
+    // 3. SULLA-SIDE CONTEXT MANAGEMENT
     // ----------------------------------------------------------------
-    diagnostics.tokensBefore = estimateTotalTokens(state.messages);
+    const provider = this.providerResolver
+      ? await this.providerResolver(state)
+      : await this.resolveLoopProvider(state);
+    const cliManagedLoop = isCliManagedLoop(provider);
+    diagnostics.cliManagedLoop = cliManagedLoop;
 
-    const needsBatchSummarization = state.messages.length > SUMMARY_WAKE_MESSAGE_COUNT;
+    // A restored DB summary is Sulla's view of history, not the CLI session's.
+    // Never feed it back into a CLI-managed loop.
+    if (cliManagedLoop) {
+      state.messages = state.messages.filter(message => !message.metadata?._conversationSummary);
+    }
+
+    diagnostics.tokensBefore = estimateTotalTokens(state.messages);
+    const needsBatchSummarization = !cliManagedLoop && state.messages.length > SUMMARY_WAKE_MESSAGE_COUNT;
 
     if (needsBatchSummarization) {
       diagnostics.summaryServiceTriggered = true;
       console.log(`[InputHandler] Triggered background summarization for ${ state.messages.length } messages`);
     }
 
-    // ----------------------------------------------------------------
-    // 4. TOKEN BUDGET ENFORCEMENT (hard ceiling)
-    // ----------------------------------------------------------------
-    this.enforceTokenBudget(state);
+    // API providers rely on Sulla's bounded graph context. External CLIs own
+    // their session and context window, including any compaction they perform.
+    if (!cliManagedLoop) this.enforceTokenBudget(state);
 
     diagnostics.tokensAfter = estimateTotalTokens(state.messages);
 

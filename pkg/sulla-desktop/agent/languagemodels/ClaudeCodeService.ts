@@ -136,6 +136,10 @@ const STEER_FOLLOWUP_GRACE_MS = 30_000;
 const backgroundHolds = new Map<string, () => void>();
 
 export class ClaudeCodeService extends BaseLanguageModel {
+  override managesOwnLoop(): boolean {
+    return true;
+  }
+
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
   private readonly recallDedupe = new RecallDedupe();
@@ -1366,6 +1370,20 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
               if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
               emitActivity('Claude picked up your message');
             }
+            return;
+          }
+
+          // Claude Code exposes its own context compaction in stream-json as
+          // a system/compact_boundary event. Sulla records the boundary but
+          // deliberately leaves compaction itself to the CLI.
+          if (parsed.type === 'system' && parsed.subtype === 'compact_boundary') {
+            try {
+              callbacks.onContextCompaction?.({
+                provider: 'claude-code',
+                at:       Date.now(),
+                source:   'stream-json:system/compact_boundary',
+              });
+            } catch { /* observer callback */ }
             return;
           }
 

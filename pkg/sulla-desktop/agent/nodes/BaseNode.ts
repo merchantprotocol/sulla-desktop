@@ -13,7 +13,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
-import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
+import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
@@ -500,6 +500,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.name = name;
   }
 
+  /** Resolve the provider that owns this graph turn. */
+  protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
+    const override = await getAgentOverrideService((state.metadata as any).agent);
+    return override ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
+      ? await getSubconsciousService()
+      : await getPrimaryService());
+  }
+
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
   protected get toolExecutor(): ToolExecutor {
     if (!this._toolExecutor) {
@@ -943,10 +951,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // modelSlot='primary' so autonomous work runs on the primary chain on
     // every install; only subconscious observers (observation writer/recall,
     // summarizer) keep the fast subconscious chat peer.
-    const agentOverrideLLM = await getAgentOverrideService((state.metadata as any).agent);
-    this.llm = agentOverrideLLM ?? (resolveModelSlot(state.metadata as any) === 'subconscious'
-      ? await getSubconsciousService()
-      : await getPrimaryService());
+    this.llm = await this.resolveLoopProvider(state);
 
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,
@@ -997,18 +1002,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Curate the exact provider input after the system prompt/context is in
     // place. This compacts stale tool payloads before pair-safe eviction.
-    const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
-    messages.splice(0, messages.length, ...budget.messages);
-    (state.metadata as any).contextBudget = {
-      inputBudgetTokens: budget.inputBudgetTokens,
-      beforeTokens:      budget.beforeTokens,
-      afterTokens:       budget.afterTokens,
-      beforeChars:       budget.beforeChars,
-      afterChars:        budget.afterChars,
-      toolResultChars:   budget.toolResultChars,
-    };
-    if (budget.beforeTokens !== budget.afterTokens || budget.beforeChars !== budget.afterChars) {
-      console.log(`[${ this.name }] Provider context curated: ~${ budget.beforeTokens } → ~${ budget.afterTokens } tokens, ${ budget.beforeChars } → ${ budget.afterChars } chars`);
+    if (isCliManagedLoop(this.llm)) {
+      (state.metadata as any).contextBudget = { skipped: true, reason: 'cli-managed-loop' };
+    } else {
+      const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
+      messages.splice(0, messages.length, ...budget.messages);
+      (state.metadata as any).contextBudget = {
+        inputBudgetTokens: budget.inputBudgetTokens,
+        beforeTokens:      budget.beforeTokens,
+        afterTokens:       budget.afterTokens,
+        beforeChars:       budget.beforeChars,
+        afterChars:        budget.afterChars,
+        toolResultChars:   budget.toolResultChars,
+      };
+      if (budget.beforeTokens !== budget.afterTokens || budget.beforeChars !== budget.afterChars) {
+        console.log(`[${ this.name }] Provider context curated: ~${ budget.beforeTokens } → ~${ budget.afterTokens } tokens, ${ budget.beforeChars } → ${ budget.afterChars } chars`);
+      }
     }
 
     // Check for abort before making LLM calls
@@ -1624,6 +1633,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Tool_use/tool_result pairs run inside the provider's own CLI (Claude
     // Code, Codex) and never touch Sulla's ToolExecutor — this is the only
     // place that sees them, so log each one directly once its result lands.
+    const onContextCompaction = (event: { provider: string; at: number; source: string }): void => {
+      const meta = state.metadata as any;
+      meta.cliCompactedAt = event.at;
+      meta.cliCompaction = event;
+      console.log(`[${ this.name }] ${ event.provider } compacted its CLI-managed context (${ event.source })`);
+    };
+
     const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
       this.logConversationToolCall(state, event.toolName, event.input, {
         chars: event.resultChars,
@@ -1648,7 +1664,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const executionContext = providerId && accountId
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state, executionContext });
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent }, { ...options, state, executionContext });
     } finally {
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while
