@@ -10,6 +10,7 @@ import os from 'os';
 import path from 'path';
 
 import paths from '@pkg/utils/paths';
+import { appVariant } from '@pkg/utils/appVariant';
 
 export interface SullaRuntimeArtifacts {
   /** The signed host binary (`sulla-runtime`). */
@@ -26,7 +27,7 @@ export interface SullaRuntimeArtifacts {
  */
 export function sullaRuntimeDirectory(): string {
   return process.env.SULLA_RUNTIME_DIR ||
-    path.join(os.homedir(), 'Library', 'Application Support', 'Sulla', 'runtime');
+    path.join(os.homedir(), 'Library', 'Application Support', `Sulla${ appVariant.pathSuffix }`, 'runtime');
 }
 
 export const sullaRuntimeSockets = {

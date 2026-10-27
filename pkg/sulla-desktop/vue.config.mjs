@@ -84,6 +84,7 @@ export default {
       'process.client':       JSON.stringify(true),
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
       'process.env.SULLA_TEST':  JSON.stringify(process.env.SULLA_TEST || ''),
+      'process.env.SULLA_DESKTOP_VARIANT': JSON.stringify(process.env.SULLA_DESKTOP_VARIANT || 'production'),
 
       'process.env.FEATURE_DIAGNOSTICS_FIXES': process.env.SULLA_ENV_DIAGNOSTICS_FIXES === '1',
 

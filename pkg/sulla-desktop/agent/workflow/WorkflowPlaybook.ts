@@ -23,8 +23,9 @@
  */
 
 import * as fsSync from 'fs';
-import * as osUtil from 'os';
 import * as pathUtil from 'path';
+
+import paths from '@pkg/utils/paths';
 
 import type {
   WorkflowDefinition,
@@ -38,7 +39,7 @@ import type {
   LoopIterationState,
 } from './types';
 
-const PLAYBOOK_LOG_PATH = pathUtil.join(osUtil.homedir(), 'sulla', 'logs', 'playbook-debug.log');
+const PLAYBOOK_LOG_PATH = pathUtil.join(paths.sullaHome, 'logs', 'playbook-debug.log');
 function playbookLog(tag: string, data: Record<string, unknown> = {}): void {
   try {
     const line = JSON.stringify({ ts: new Date().toISOString(), tag, ...data });

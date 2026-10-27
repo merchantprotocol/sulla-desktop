@@ -179,7 +179,7 @@ class Builder {
     // succeed without it we'll reinstate it as a separate step that
     // runs before codesign, not inside afterPack.
     // await this.flipFuses(context);
-    await this.buildMacNativeExtensions(context);
+    if (process.env.SULLA_DESKTOP_VARIANT !== 'test') await this.buildMacNativeExtensions(context);
     await this.embedSullaRuntime(context);
     await this.checkBundledAssets(context);
   }
@@ -375,6 +375,25 @@ class Builder {
     }
     const consoleRuntime = await this.prepareSullaConsoleRuntime();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
+    const testVariant = process.env.SULLA_DESKTOP_VARIANT === 'test';
+
+    if (testVariant) {
+      config.productName = 'Sulla Desktop Test';
+      config.appId = 'io.sulla.desktop.test';
+      config.protocols = [];
+      config.publish = undefined;
+      config.mac ??= {};
+      config.mac.artifactName = 'Sulla-Desktop-Test-${version}-${arch}-mac.${ext}';
+      // The production app-group extensions intentionally stay out of the test
+      // bundle, and the app itself must not inherit their production app group.
+      const productionEntitlements = plist.parse(await fs.promises.readFile('packaging/entitlements.mac.plist', 'utf-8')) as Record<string, plist.PlistValue>;
+      delete productionEntitlements['com.apple.security.application-groups'];
+      const testEntitlements = path.join(buildUtils.distDir, 'entitlements.mac.test.plist');
+      await fs.promises.writeFile(testEntitlements, plist.build(productionEntitlements), 'utf-8');
+      config.mac.entitlements = testEntitlements;
+      config.mac.entitlementsInherit = testEntitlements;
+      config.mac.extendInfo = { ...(config.mac.extendInfo ?? {}), SullaDesktopVariant: 'test' };
+    }
     const extraResources = config.extraResources ??= [];
     extraResources.push({ from: consoleRuntime, to: 'sulla-console' });
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');

@@ -21,10 +21,12 @@ import {
   type FilesBootstrapChallengeResponse,
   type FilesBootstrapUnlockResponse,
 } from '../../../services/sulla-files/src/bootstrapProtocol';
+import { variantLoopbackUrl } from '@pkg/utils/appVariant';
+
 import { SullaFilesKeychain } from './sullaFilesKeychain';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 
-const API = 'https://127.0.0.1:30124';
+const API = variantLoopbackUrl(30124, 'https');
 const CALLER_ID = 'sulla-desktop-files-bootstrap';
 
 function requiredEnv(name:string):string {

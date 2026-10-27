@@ -62,6 +62,7 @@ import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { appVariant, appVariantComposeNetwork, variantPort } from '@pkg/utils/appVariant';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -1068,6 +1069,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   private async prepareSullaComposeFile(): Promise<void> {
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
 
+    compose.name = appVariant.composeProject;
+    for (const service of Object.values<any>(compose.services ?? {})) {
+      if (!Array.isArray(service.ports)) continue;
+      service.ports = service.ports.map((published: string) => published.replace(/^(127\.0\.0\.1:)(301\d{2})(:)/, (_match, host, port, separator) => `${ host }${ variantPort(Number(port)) }${ separator }`));
+    }
+
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
     this.#pinnedSullaImages.clear();
@@ -1260,10 +1267,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
         SULLA_WORKFLOW_IMAGE: image,
-        SULLA_DOCKER_NETWORK: 'sulla_default',
+        SULLA_DOCKER_NETWORK: appVariantComposeNetwork,
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
-      ports: ['127.0.0.1:30122:8788'],
+      ports: [`127.0.0.1:${ variantPort(30122) }:8788`],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
@@ -1297,7 +1304,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
         SULLA_RELAY_REPLICA_ID: 'desktop-local',
       },
-      ports: ['127.0.0.1:30126:8790'],
+      ports: [`127.0.0.1:${ variantPort(30126) }:8790`],
       restart: 'unless-stopped',
       mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1355,7 +1362,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
-      ports: ['127.0.0.1:30123:3000'],
+      ports: [`127.0.0.1:${ variantPort(30123) }:3000`],
       volumes: [
         ...(vaultIdentities ? [vaultTlsBind(true)] : []),
         filesTlsBind(true),
@@ -1429,7 +1436,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
-      ports: ['127.0.0.1:30124:8792'],
+      ports: [`127.0.0.1:${ variantPort(30124) }:8792`],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         '/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave',
@@ -1627,7 +1634,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
     }
     await reconcileComposeService({
-      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
+      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', appVariant.composeProject],
       service:        'workflow_manager',
       run:            (...command) => this.execCommand({ root: true }, ...command),
       checkpoint:     () => this.assertManagedServicesGeneration(generation),
@@ -1688,7 +1695,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     });
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
-      const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+      const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', appVariant.composeProject];
       const reconcileOptionalService = (service: string): Promise<void> => reconcileComposeService({
         composeCommand,
         service,
@@ -1921,7 +1928,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.assertManagedServicesGeneration(generation);
       const listing = await this.execCommand(
         { capture: true, root: true, expectFailure: true }, 'docker', 'ps', '-a',
-        '--filter', 'label=com.docker.compose.project=sulla',
+        '--filter', `label=com.docker.compose.project=${ appVariant.composeProject }`,
         '--format', '{{.Names}}\t{{.Label "com.docker.compose.service"}}',
       );
       const rows: ManagedContainerRow[] = [];

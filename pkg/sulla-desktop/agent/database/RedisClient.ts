@@ -9,9 +9,10 @@
 // Singleton wrapper around ioredis for clean, consistent access
 // Mirrors memoryClient/PostgresClient structure
 
+import { variantLoopbackUrl, variantPort } from '@pkg/utils/appVariant';
 import Redis, { Pipeline, ChainableCommander } from 'ioredis';
 
-const REDIS_URL = process.env.SULLA_REDIS_URL ?? 'redis://127.0.0.1:30117';
+const REDIS_URL = process.env.SULLA_REDIS_URL ?? variantLoopbackUrl(30117, 'redis');
 
 export class RedisClient {
   private client: Redis;
@@ -287,7 +288,7 @@ export class RedisClient {
         await this.client.ping();
         this.connected = true;
         this.connectionAttempts = 0;
-        console.log(`[RedisClient] Host port 30117 reachable (attempt ${ i })`);
+        console.log(`[RedisClient] Host port ${ variantPort(30117) } reachable (attempt ${ i })`);
 
         return;
       } catch {

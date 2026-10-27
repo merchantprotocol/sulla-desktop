@@ -28,6 +28,7 @@ import { app, ipcMain } from 'electron';
 import type { UpdateState as RawUpdateState } from './index';
 
 import Logging from '@pkg/utils/logging';
+import { appVariant } from '@pkg/utils/appVariant';
 import * as window from '@pkg/window';
 
 const console = Logging.update;
@@ -208,6 +209,10 @@ class UpdateManager extends EventEmitter {
    * run silently and only surface the window when a download completes.
    */
   async checkForUpdates(trigger: UpdateTrigger): Promise<void> {
+    if (!appVariant.updates) {
+      this.setState({ phase: 'disabled', configured: false, updaterEnabled: false });
+      return;
+    }
     this.pendingTrigger = trigger;
     this.setState({
       phase:    'checking',
@@ -302,6 +307,10 @@ class UpdateManager extends EventEmitter {
    * running `yarn dev` process.
    */
   async installUpdate(): Promise<void> {
+    if (!appVariant.updates) {
+      console.warn('[UpdateManager] installUpdate ignored for this application variant');
+      return;
+    }
     if (!app.isPackaged) {
       console.warn('[UpdateManager] installUpdate ignored — app is not packaged');
       this.setState({

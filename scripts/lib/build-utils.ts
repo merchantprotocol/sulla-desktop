@@ -210,7 +210,7 @@ export default {
         ],
       },
       plugins: [
-        new webpack.EnvironmentPlugin({ NODE_ENV: mode }),
+        new webpack.EnvironmentPlugin({ NODE_ENV: mode, SULLA_DESKTOP_VARIANT: 'production' }),
       ],
       stats: {
         warnings:       false,

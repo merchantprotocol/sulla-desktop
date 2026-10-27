@@ -7,6 +7,7 @@
 
 // PostgresClient.ts — upgraded to pg.Pool + proper shutdown
 
+import { variantPort } from '@pkg/utils/appVariant';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
@@ -42,7 +43,7 @@ export class PostgresClient {
 
     this.pool = new Pool({
       ...(connectionString ? { connectionString } : {
-        host: '127.0.0.1', port: 30116, user: 'sulla', password, database: 'sulla',
+        host: '127.0.0.1', port: variantPort(30116), user: 'sulla', password, database: 'sulla',
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
@@ -201,7 +202,7 @@ export class PostgresClient {
           connectionTimeoutMillis: 2000,
         });
         await probe.query('SELECT 1');
-        console.log(`[PostgresClient] Host port 30116 reachable (attempt ${ i })`);
+        console.log(`[PostgresClient] Host port ${ variantPort(30116) } reachable (attempt ${ i })`);
 
         return;
       } catch {

@@ -29,6 +29,7 @@ import K8sFactory from '@pkg/backend/factory';
 import { getImageProcessor } from '@pkg/backend/images/imageFactory';
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
 import { isSullaRuntimeActive, suspendSullaRuntimeOnNextStop } from '@pkg/backend/sullaRuntime/state';
+import { sullaRuntimeDirectory } from '@pkg/backend/sullaRuntime/artifacts';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
 import { getStartupProgressHub as getStartupProgressHubInstance } from '@pkg/main/startupProgressHub';
@@ -76,6 +77,7 @@ import { isDevEnv } from '@pkg/utils/environment';
 import Logging, { clearLoggingDirectory, setLogLevel } from '@pkg/utils/logging';
 import { fetchMacOsVersion, getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
+import { appVariant } from '@pkg/utils/appVariant';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { handleDeepLink, findDeepLinkInArgv } from '@pkg/main/deepLink';
 import { executable } from '@pkg/utils/resources';
@@ -94,12 +96,16 @@ if (process.platform === 'linux') {
 // Browser tabs use WebContentsView (first-party context) — no iframe
 // workarounds needed.  No Chromium feature flags to disable.
 
+// The host runtime binary reads this environment variable itself. Set it before
+// any backend command can run so the test app cannot address production sockets.
+process.env.SULLA_RUNTIME_DIR = sullaRuntimeDirectory();
+
 Electron.app.setPath('userData', path.join(paths.appHome, 'electron'));
 Electron.app.setPath('cache', paths.cache);
 Electron.app.setAppLogsPath(paths.logs);
 
 // Set the app name for macOS menu bar (shows next to Apple icon)
-Electron.app.setName('Sulla Desktop');
+Electron.app.setName(appVariant.productName);
 
 const console = Logging.background;
 
@@ -123,7 +129,7 @@ if (!Electron.app.requestSingleInstanceLock()) {
 //
 // MUST be called before 'will-finish-launching' / the first 'open-url'
 // event can fire, otherwise cold-launch deep links on macOS are lost.
-Electron.app.setAsDefaultProtocolClient('sulla');
+if (appVariant.protocol) Electron.app.setAsDefaultProtocolClient('sulla');
 
 // macOS: cold-launch deep links arrive via 'open-url' (NOT argv).
 // Registering before app-ready is required to catch the earliest one.
@@ -259,7 +265,7 @@ mainEvents.on('settings-update', async(newSettings) => {
   await pathManager.enforce();
 
   if (!isDevEnv) {
-    Electron.app.setLoginItemSettings({ openAtLogin: newSettings.application.autoStart });
+    if (appVariant.loginItem) Electron.app.setLoginItemSettings({ openAtLogin: newSettings.application.autoStart });
   }
 
   if (newSettings.application.hideNotificationIcon) {
@@ -612,8 +618,8 @@ Electron.app.whenReady().then(async() => {
     // queued. Initialize UpdateManager first so it can bridge the state events
     // to the new centralized IPC surface (and auto-open the Updates window
     // when a background download completes).
-    updateManager.initialize(cfg.application.updater.enabled);
-    if (await setupUpdate(cfg.application.updater.enabled)) {
+    updateManager.initialize(appVariant.updates && cfg.application.updater.enabled);
+    if (await setupUpdate(appVariant.updates && cfg.application.updater.enabled)) {
       gone = true;
       // The update code will trigger a restart; don't do it here, as it may not
       // be ready yet.
@@ -1606,7 +1612,7 @@ async function doFactoryReset(keepSystemImages: boolean) {
   }
   await k8smanager.stop();
   await k8smanager.del();
-  Electron.app.setLoginItemSettings({ openAtLogin: false });
+  if (appVariant.loginItem) Electron.app.setLoginItemSettings({ openAtLogin: false });
   await pathManager.remove();
   await dockerDirManager.clearDockerContext();
 

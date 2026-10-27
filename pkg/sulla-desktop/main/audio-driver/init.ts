@@ -34,6 +34,7 @@
  * ```
  */
 
+import { appVariant } from '@pkg/utils/appVariant';
 import { ipcMain, BrowserWindow, systemPreferences } from 'electron';
 import crypto from 'crypto';
 
@@ -443,12 +444,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('audio-driver:get-auto-launch', () => {
     const { app } = require('electron') as typeof import('electron');
-    return app.getLoginItemSettings().openAtLogin;
+    return appVariant.loginItem && app.getLoginItemSettings().openAtLogin;
   });
 
   ipcMain.handle('audio-driver:set-auto-launch', (_event: unknown, enabled: boolean) => {
     const { app } = require('electron') as typeof import('electron');
-    app.setLoginItemSettings({ openAtLogin: enabled });
+    if (appVariant.loginItem) app.setLoginItemSettings({ openAtLogin: enabled });
     return enabled;
   });
 

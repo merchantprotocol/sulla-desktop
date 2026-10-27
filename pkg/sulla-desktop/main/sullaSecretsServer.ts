@@ -20,6 +20,7 @@
 // Electron IPC channel — runtime containers cannot reach IPC, and the
 // capability-token flow does not need Electron-privileged callers.
 
+import { variantPort } from '@pkg/utils/appVariant';
 import * as http from 'http';
 
 import {
@@ -27,7 +28,7 @@ import {
   SecretsResolveError,
 } from '@pkg/agent/services/SecretsCapabilityService';
 
-const DEFAULT_PORT = 30121;
+const DEFAULT_PORT = variantPort(30121);
 const BIND_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 4 * 1024;
 
