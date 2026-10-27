@@ -435,12 +435,25 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
       response.writeHead(upstream.status, responseHeaders(upstream.headers));
       response.flushHeaders();
       if (upstream.body) {
+        // Forward each chunk the moment it arrives (no pipeline buffering). A
+        // client that disconnects mid-stream must not leave us waiting on a
+        // drain that never comes, so back-pressure also settles on close.
         const reader = upstream.body.getReader();
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
-          if (!response.write(value)) await new Promise<void>(resolve => response.once('drain', resolve));
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || response.destroyed) break;
+            if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
+            if (!response.write(value)) {
+              await new Promise<void>(resolve => {
+                const settle = () => { response.off('drain', settle); response.off('close', settle); resolve() };
+                response.once('drain', settle);
+                response.once('close', settle);
+              });
+            }
+          }
+        } finally {
+          if (response.destroyed) await reader.cancel().catch(() => {});
         }
       }
       response.end();
