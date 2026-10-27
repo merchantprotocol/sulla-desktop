@@ -583,10 +583,12 @@ export class BackendGraphWebSocketService {
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
+        // Closures lose the narrowing above; pin the checked state for the retry path.
+        const runState = state;
         await executeWithContainerLifecycleRecovery(
-          () => this.conversationContainer(channelId, threadId, provider, state),
-          lost => this.recoverConversationContainer(channelId, threadId, provider, state, lost),
-          () => graph.execute(state, startNode),
+          () => this.conversationContainer(channelId, threadId, provider, runState),
+          lost => this.recoverConversationContainer(channelId, threadId, provider, runState, lost),
+          () => graph.execute(runState, startNode),
         );
       } else {
         await graph.execute(state, startNode);
