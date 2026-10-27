@@ -34,6 +34,7 @@ import type { ProviderCliBridgeLease } from '../../vault-broker';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
+import { RecallDedupe } from '../utils/recallDedupe';
 import { markSteerPending, onSteer } from '../utils/steerChannel';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
@@ -129,6 +130,7 @@ const backgroundHolds = new Map<string, () => void>();
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+  private readonly recallDedupe = new RecallDedupe();
 
   // Routes background-task completions from held CLI processes back into
   // their graph threads. See claudeBackgroundTasks.ts.
@@ -175,6 +177,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   private async deleteSession(convId: string): Promise<void> {
     this.sessions.delete(convId);
+    this.recallDedupe.reset(convId);
     try {
       await redisClient.del(`${ this.SESSION_KEY_PREFIX }${ convId }`);
     } catch { /* Redis unavailable — non-fatal */ }
@@ -463,7 +466,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Image blocks are saved to disk and their paths injected into the text
    * so the Claude Code agent can read them with the Read tool.
    */
-  private extractLatestUserMessage(messages: ChatMessage[], stage?: ImageStager): string {
+  private extractLatestUserMessage(
+    messages: ChatMessage[],
+    stage?: ImageStager,
+    dedupeSynthetic?: (text: string) => string,
+  ): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
@@ -502,7 +509,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
           const turn: string[] = [];
           while (contextIdx >= 0 && messages[contextIdx].role === 'assistant' && (messages[contextIdx] as any).metadata?._synthetic) {
             const assistantText = msgToText(messages[contextIdx]).trim();
-            if (assistantText) turn.unshift(`Assistant:\n${ assistantText }`);
+            const deduped = dedupeSynthetic ? dedupeSynthetic(assistantText) : assistantText;
+            if (deduped) turn.unshift(`Assistant:\n${ deduped }`);
             contextIdx--;
           }
           for (const userText of userTexts) turn.push(`User:\n${ userText }`);
@@ -720,9 +728,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //   - existingSession → send only the latest user message (Claude has the
     //     rest via --resume + prompt cache)
     //   - no session    → seed Claude with the full curated transcript
+    if (!existingSession) this.recallDedupe.reset(convId);
     const extractedPrompt = existingSession
-      ? await stageImagePaths(stage => this.extractLatestUserMessage(messages, stage), b => this.saveImageAttachment(b, initialTransportContext, attachmentRefs))
+      ? await stageImagePaths(
+        stage => this.extractLatestUserMessage(messages, stage, text => this.recallDedupe.dedupe(convId, existingSession, text)),
+        b => this.saveImageAttachment(b, initialTransportContext, attachmentRefs),
+      )
       : this.serializeFullTranscript(messages);
+    if (existingSession) perf.log(`[RecallDedupe] convId=${ convId } beforeChars=${ this.extractLatestUserMessage(messages).length } afterChars=${ extractedPrompt.length }`);
 
     if (!extractedPrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
