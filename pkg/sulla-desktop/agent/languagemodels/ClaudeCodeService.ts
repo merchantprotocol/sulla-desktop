@@ -185,10 +185,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   private async warmNextTurn(p: { convId: string; sessionId: string; state: BaseThreadState; systemPrompt: string; disallowedTools: string; key: string }): Promise<void> {
     const transport = getProviderExecutionTransport();
-    if (transport.runtime !== 'container' || warmStandbys.has(p.convId)) return;
+    // A background hold keeps the previous process (and its session lock).
+    if (transport.runtime !== 'container' || warmStandbys.has(p.convId) || backgroundHolds.has(p.convId)) return;
     const host = getMCPServerHost();
     if (!host.running) return;
-    const session = host.registerUnboundSession(WARM_STANDBY_TTL_MS);
+    const session = host.registerUnboundSession(p.state, WARM_STANDBY_TTL_MS);
     try {
       const context = await transport.context({ provider: 'claude-code', conversationId: p.convId, state: p.state, providerSessionId: p.sessionId, toolSessionId: session.id });
       const providerConfig = requireBrokeredContainerAuth(context);
@@ -931,7 +932,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     if (standby && standby.key === standbyKey && existingSession && options.state && getMCPServerHost().rebindSession(standby.session.id, options.state, PROC_MCP_SESSION_TTL_MS)) {
       warmStandbys.delete(convId);
       clearTimeout(standby.timer);
-      cleanupMcp();
+      // Drop only this turn's freshly minted MCP session; attachments staged
+      // for the prompt must survive.
+      if (mcpSession) { try { mcpSession.revoke() } catch { /* ignore */ } }
+      mcpConfigFile?.dispose();
+      mcpConfigFile = null;
       systemPromptFile.dispose();
       releaseLease(authLease);
       transportContext = standby.context;

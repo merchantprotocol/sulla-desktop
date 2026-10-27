@@ -38,6 +38,9 @@ export interface ToolSession {
   ttlMs:             number;
   /** Verified container identity projected into in-process tool dispatch. */
   executionContext?: ToolExecutionContext;
+  /** Standby only: state used to describe the tool list during the MCP
+   * handshake. Never used to execute a tool. */
+  listState?:        BaseThreadState;
 }
 
 export class ToolSessionRegistry {
@@ -52,11 +55,18 @@ export class ToolSessionRegistry {
 
   /** Reserve a bearer token for an idle provider process. It authenticates but
    * cannot resolve a graph state, so every tool call is rejected until bind. */
-  registerUnbound(ttlMs: number = DEFAULT_SESSION_TTL_MS): string {
+  registerUnbound(listState: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): string {
     const id = randomBytes(24).toString('base64url');
     const now = Date.now();
-    this.sessions.set(id, { id, state: undefined as unknown as BaseThreadState, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs });
+    this.sessions.set(id, { id, state: undefined as unknown as BaseThreadState, listState, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs });
     return id;
+  }
+
+  /** Unbound standby session for the MCP handshake only (no sliding expiry). */
+  getUnboundForHandshake(id: string): ToolSession | null {
+    const session = this.sessions.get(id);
+    if (!session || session.state || !session.listState || session.expiresAt <= Date.now()) return null;
+    return session;
   }
 
   revoke(id: string): void {
@@ -80,6 +90,7 @@ export class ToolSessionRegistry {
     const now = Date.now();
     if (ttlMs !== undefined) session.ttlMs = ttlMs;
     session.state = state;
+    session.listState = undefined;
     session.executionContext = executionContext;
     session.lastUsedAt = now;
     session.expiresAt = now + session.ttlMs;

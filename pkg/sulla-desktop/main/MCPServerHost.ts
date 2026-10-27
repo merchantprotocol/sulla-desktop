@@ -91,6 +91,9 @@ export function getMCPServerHost(): MCPServerHost {
   if (!hostInstance) hostInstance = new MCPServerHost();
   return hostInstance;
 }
+/** MCP methods an unbound standby session may use before its turn binds it. */
+const UNBOUND_HANDSHAKE_METHODS = new Set(['initialize', 'notifications/initialized', 'tools/list', 'ping']);
+
 export class MCPServerHost {
   private httpServer: HttpServer | null = null;
   private port = 0;
@@ -139,9 +142,9 @@ export class MCPServerHost {
   }
 
   /** Mint an authenticated but unusable token for an idle provider standby. */
-  registerUnboundSession(ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
+  registerUnboundSession(listState: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = this.sessions.registerUnbound(ttlMs);
+    const id = this.sessions.registerUnbound(listState, ttlMs);
     return { id, url: this.getVmReachableUrl(), header: `Bearer ${ id }`, revoke: () => this.revokeSession(id) };
   }
 
@@ -176,6 +179,11 @@ export class MCPServerHost {
     return this.sessions.get(id);
   }
 
+  private unboundSession(req: Request): ToolSession | null {
+    const match = /^Bearer\s+(.+)$/i.exec((req.get('authorization') ?? '').trim());
+    return match ? this.sessions.getUnboundForHandshake(match[1].trim()) : null;
+  }
+
   private resolveSession(req: Request): ToolSession | null {
     const auth = req.get('authorization') ?? req.get('Authorization');
     if (!auth) return null;
@@ -197,7 +205,14 @@ export class MCPServerHost {
       // graph's live state. Unauthenticated calls are rejected before we
       // spin up any MCP machinery.
       const requireSession = (req: Request, res: Response, next: NextFunction): void => {
-        const session = this.resolveSession(req);
+        let session = this.resolveSession(req);
+        if (!session && UNBOUND_HANDSHAKE_METHODS.has(req.body?.method)) {
+          // A warm standby CLI connects before its turn exists. It may finish
+          // the handshake (tool list described from the previous turn's state)
+          // but every tools/call is rejected until rebindSession binds it.
+          const standby = this.unboundSession(req);
+          if (standby) session = { ...standby, state: standby.listState! };
+        }
         if (!session) {
           res.status(401).json({ error: 'invalid_or_expired_session' });
           return;
