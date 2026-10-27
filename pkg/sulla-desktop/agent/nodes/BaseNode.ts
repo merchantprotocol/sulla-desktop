@@ -17,6 +17,7 @@ import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCli
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
+import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
@@ -1205,6 +1206,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } catch (err) {
       const abortSignal = state.metadata?.options?.abort?.signal;
       throwIfAborted(abortSignal);
+      // A vanished runtime is infrastructure failure, not a provider failure. The
+      // conversation owner rebuilds the lifecycle and retries this same provider.
+      if (isContainerLifecycleLost(err)) throw err;
       const initialRecovery = classifyLLMFailure(err);
       if (initialRecovery.kind === 'interrupted') throw err;
 

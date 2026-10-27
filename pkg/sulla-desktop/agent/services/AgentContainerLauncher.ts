@@ -140,7 +140,7 @@ export interface AgentContainerLifecycle {
   readonly containerName: string;
   readonly workspacePath: string;
   execute<T>(action: () => T): T;
-  close(): Promise<AgentContainerCleanupReceipt>;
+  close(reason?: string, caller?: string): Promise<AgentContainerCleanupReceipt>;
   /** True once the lifecycle is closing or closed (aborted, container gone, secrets wiped). */
   readonly closed?: boolean;
 }
@@ -217,6 +217,17 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
     const output = (await guestExec(args)).stdout.trim();
     return output ? output.split('\n').map(line => JSON.parse(line)) : [];
   }
+}
+
+async function removeAgentContainer(
+  runtime: ContainerRuntimeDriver,
+  id: string,
+  name: string,
+  reason: string,
+  caller: string,
+): Promise<void> {
+  log.info(`[AgentContainer] remove name=${ safeName(name) } reason=${ safeName(reason) } caller=${ safeName(caller) }`);
+  await runtime.remove(id);
 }
 
 /** Rewrite a Desktop URL through the hostname-only agent relay. */
@@ -582,6 +593,9 @@ async function cleanupContainerResources(
   providerFiles?: ContainerProviderFileTransport,
   workspacePath?: string,
   guestPaths: string[] = [],
+  removal: { name: string; reason: string; caller: string } = {
+    name: containerId ?? 'unknown', reason: 'resource-cleanup', caller: 'cleanupContainerResources',
+  },
 ): Promise<AgentContainerCleanupReceipt> {
   const failures: unknown[] = [];
   const receipt: AgentContainerCleanupReceipt = {
@@ -591,7 +605,7 @@ async function cleanupContainerResources(
   };
   let containerRemoved = !containerId;
   if (containerId) {
-    await cleanupOwner.run(`container:${ containerId }`, () => runtime.remove(containerId))
+    await cleanupOwner.run(`container:${ containerId }`, () => removeAgentContainer(runtime, containerId, removal.name, removal.reason, removal.caller))
       .then(async() => {
         containerRemoved = true;
         await unregisterSullaFilesActor(containerId);
@@ -863,6 +877,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let livenessTimer: ReturnType<typeof setInterval> | undefined;
   let checkingLiveness = false;
   let closePromise: Promise<AgentContainerCleanupReceipt> | undefined;
+  let closeRemoval = { reason: 'lifecycle-abort', caller: 'createAgentContainerLifecycle.abort' };
   let providerFiles: ContainerProviderFileTransport | undefined;
 
   try {
@@ -1175,8 +1190,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     livenessTimer.unref();
     run.signal?.addEventListener('abort', () => lifecycleAbort.abort(), { once: true });
 
-    const close = (): Promise<AgentContainerCleanupReceipt> => {
+    const close = (reason = 'lifecycle-close', caller = 'createAgentContainerLifecycle.close'): Promise<AgentContainerCleanupReceipt> => {
       if (closePromise) return closePromise;
+      closeRemoval = { reason, caller };
       // Defer the abort until after the sentinel is assigned: abort dispatch is
       // synchronous and otherwise re-enters close() before closePromise exists.
       closePromise = Promise.resolve().then(async() => {
@@ -1194,7 +1210,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         }
         providerBridgeRefs.clear();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-        return await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths);
+        return await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
+          name: containerName, reason: closeRemoval.reason, caller: closeRemoval.caller,
+        });
       });
       return closePromise;
     };
@@ -1229,7 +1247,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     }
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     const receipt = await (closePromise ??
-      cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths)).catch(cleanupError => {
+      cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
+        name: containerName, reason: 'lifecycle-startup-failed', caller: 'createAgentContainerLifecycle.catch',
+      })).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     if (receipt.recoveryWorkspacePath && error instanceof Error) {
@@ -1380,7 +1400,9 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           log.warn(`[AgentContainer] ${ containerName } idle for 30 minutes; reaping`);
-          cleanupOwner.run(`container:${ startedContainerId }`, () => runtime.remove(startedContainerId)).catch(cleanupError => {
+          cleanupOwner.run(`container:${ startedContainerId }`, () => removeAgentContainer(
+            runtime, startedContainerId, containerName, 'job-idle-timeout', 'runAgentContainer.resetIdle',
+          )).catch(cleanupError => {
             log.error(`[AgentContainer] idle cleanup remains pending for ${ startedContainerId }: ${ (cleanupError as Error).message }`);
           });
           proc.kill('SIGTERM');
@@ -1399,7 +1421,9 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         let cleanupReceipt: AgentContainerCleanupReceipt;
         try {
-          cleanupReceipt = await cleanupContainerResources(runtime, startedContainerId, secretDir, undefined, workspacePath, guestRuntimePaths);
+          cleanupReceipt = await cleanupContainerResources(runtime, startedContainerId, secretDir, undefined, workspacePath, guestRuntimePaths, {
+            name: containerName, reason: error ? 'job-finished-with-error' : 'job-finished', caller: 'runAgentContainer.finish',
+          });
         } catch (cleanupError) {
           reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
           return;
@@ -1500,7 +1524,9 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         run.signal.addEventListener('abort', () => {
           proc.stdin.write(`${ JSON.stringify({ type: 'cancel' }) }\n`, () => {});
           abortForceTimer = setTimeout(() => {
-            cleanupOwner.run(`container:${ startedContainerId }`, () => runtime.remove(startedContainerId)).catch(error => {
+            cleanupOwner.run(`container:${ startedContainerId }`, () => removeAgentContainer(
+              runtime, startedContainerId, containerName, 'job-abort-timeout', 'runAgentContainer.abortForceTimer',
+            )).catch(error => {
               log.error(`[AgentContainer] abort cleanup remains pending for ${ startedContainerId }: ${ (error as Error).message }`);
             });
           }, 6_000);
@@ -1514,7 +1540,9 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     unregisterRuntime?.();
     session.revoke();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
-    const receipt = await cleanupContainerResources(runtime, containerId, secretDir, undefined, workspacePath, guestRuntimePaths).catch(cleanupError => {
+    const receipt = await cleanupContainerResources(runtime, containerId, secretDir, undefined, workspacePath, guestRuntimePaths, {
+      name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
+    }).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     if (receipt.recoveryWorkspacePath && error instanceof Error) {
@@ -1542,7 +1570,10 @@ export async function reapOrphanAgentContainers(): Promise<void> {
       const exp = Number(labels['com.sulla.capability-exp'] ?? 0);
       if (jti) await redisClient.set(`sulla:capability:revoked:${ jti }`, '1', Math.max(Math.ceil(LEASE_MS / 1000), exp - Math.floor(Date.now() / 1000))).catch(() => {});
       const id = details.Id ?? container.ID ?? container.Names;
-      await cleanupOwner.run(`container:${ id }`, () => runtime.remove(id));
+      const name = details.Name?.replace(/^\//, '') ?? container.Names ?? id;
+      await cleanupOwner.run(`container:${ id }`, () => removeAgentContainer(
+        runtime, id, name, 'desktop-shutdown-orphan-cleanup', 'reapOrphanAgentContainers',
+      ));
     } catch (error) {
       log.error(`[AgentContainer] startup orphan cleanup remains pending: ${ (error as Error).message }`);
     }
