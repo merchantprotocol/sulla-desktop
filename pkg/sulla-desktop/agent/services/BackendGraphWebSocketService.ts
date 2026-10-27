@@ -119,13 +119,16 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const existing = this.conversationContainers.get(key);
     const model = state.metadata.agent?.model;
-    if (existing?.provider === provider && existing.model === model) {
+    // A lifecycle that aborted or closed (container died, secrets were wiped, capability renewal
+    // failed) is dead for good. Reusing it failed every later message in the thread; rebuild it.
+    // The conversation itself survives: its workspace and provider homes live on the data disk.
+    if (existing?.provider === provider && existing.model === model && !existing.lifecycle.closed) {
       clearTimeout(existing.idleTimer);
       return existing.lifecycle;
     }
     if (existing) {
       clearTimeout(existing.idleTimer);
-      await existing.lifecycle.close();
+      await existing.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
     }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
