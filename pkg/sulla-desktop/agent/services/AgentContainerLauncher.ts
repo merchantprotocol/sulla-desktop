@@ -1421,7 +1421,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   }
 }
 
-/** Remove agent containers left behind by a Desktop crash/restart. */
+/** Remove agent containers and their secrets when Sulla stops (never at startup: it races starting chats). */
 export async function reapOrphanAgentContainers(): Promise<void> {
   const runtime = new GuestDockerRuntimeDriver();
   let containers: any[];

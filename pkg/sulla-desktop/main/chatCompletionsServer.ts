@@ -1878,9 +1878,6 @@ export class ChatCompletionsServer {
 
   async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
     await this.loadApiToken();
-    import('@pkg/agent/services/AgentContainerLauncher')
-      .then(({ reapOrphanAgentContainers }) => reapOrphanAgentContainers())
-      .catch(error => console.warn('[ChatCompletionsAPI] Agent container orphan reap skipped:', error));
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(port, '0.0.0.0', () => {
@@ -1901,18 +1898,21 @@ export class ChatCompletionsServer {
     });
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     if (this.taskerUnsubscribe) {
       this.taskerUnsubscribe();
       this.taskerUnsubscribe = null;
     }
 
+    // Stop accepting chats first, then sweep agent containers and their secrets. This only
+    // happens when Sulla stops: sweeping at startup raced chats that were already starting and
+    // deleted their freshly created secret dirs. Bounded so a wedged guest can't hold up quitting.
     if (this.server) {
       console.log('[ChatCompletionsAPI] Stopping server...');
       const server = this.server;
       this.server = null;
 
-      return new Promise((resolve) => {
+      await new Promise<void>((resolve) => {
         server.close(() => {
           console.log('[ChatCompletionsAPI] Server stopped');
           resolve();
@@ -1920,7 +1920,10 @@ export class ChatCompletionsServer {
       });
     }
 
-    return Promise.resolve();
+    await Promise.race([
+      import('@pkg/agent/services/AgentContainerLauncher').then(({ reapOrphanAgentContainers }) => reapOrphanAgentContainers()),
+      new Promise<void>(resolve => setTimeout(resolve, 20_000).unref?.()),
+    ]).catch(error => console.warn('[ChatCompletionsAPI] Agent container cleanup on stop skipped:', error));
   }
 }
 
