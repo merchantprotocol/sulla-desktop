@@ -582,6 +582,11 @@ export function runSubconsciousObservationWriters(
 async function runV7Elephant(state: BaseThreadState): Promise<void> {
   const { graph, state: subState } = await GraphRegistry.createV7Elephant(state);
   await graph.execute(subState, 'subconscious', { maxIterations: 12 });
+  const response = (subState.metadata as any).v7ElephantOutput;
+  if (typeof response === 'string') {
+    const { appendV7ElephantOutput } = await import('../memory/V7SubjectMemoryWriter');
+    await appendV7ElephantOutput(response);
+  }
 }
 
 // ============================================================================
