@@ -19,6 +19,7 @@ import {
 import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -323,7 +324,7 @@ export class CodexService extends BaseLanguageModel {
    * Transport a base64 image block into the provider's guest-owned staging
    * area. Returns the provider-visible path.
    */
-  private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
+  private async saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): Promise<string | null> {
     try {
       const data: string | undefined = b?.source?.data;
       const mediaType: string = b?.source?.media_type || 'image/png';
@@ -332,7 +333,7 @@ export class CodexService extends BaseLanguageModel {
       const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
       const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
       if (context) {
-        const ref = getProviderExecutionTransport().files.write({
+        const ref = await getProviderExecutionTransport().files.write({
           context, purpose: 'attachment', suggestedName: filename, data: Buffer.from(data, 'base64'), mode: 0o600,
         });
         refs?.push(ref);
@@ -351,13 +352,13 @@ export class CodexService extends BaseLanguageModel {
    * must be replayed because Codex's stored session does not contain this
    * turn's newly generated subconscious context.
    */
-  private extractLatestUserMessage(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
+  private extractLatestUserMessage(messages: ChatMessage[], stage?: ImageStager): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b, context, refs);
+        const savedPath = stage ? stage(b) : null;
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_result') {
@@ -414,13 +415,13 @@ export class CodexService extends BaseLanguageModel {
    * per-spawn guest instruction file, so including it here would deliver it
    * twice.
    */
-  private serializeFullTranscript(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
+  private serializeFullTranscript(messages: ChatMessage[], stage?: ImageStager): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b, context, refs);
+        const savedPath = stage ? stage(b) : null;
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_use') {
@@ -580,8 +581,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //     rest via `exec resume`)
     //   - no session    → seed codex with the full curated transcript
     const extractedPrompt = existingSession
-      ? this.extractLatestUserMessage(messages, initialTransportContext, attachmentRefs)
-      : this.serializeFullTranscript(messages, initialTransportContext, attachmentRefs);
+      ? await stageImagePaths(stage => this.extractLatestUserMessage(messages, stage), b => this.saveImageAttachment(b, initialTransportContext, attachmentRefs))
+      : await stageImagePaths(stage => this.serializeFullTranscript(messages, stage), b => this.saveImageAttachment(b, initialTransportContext, attachmentRefs));
 
     if (!extractedPrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
@@ -643,7 +644,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // Nothing depends on a host ~/.codex/AGENTS.md or broad home mount.
     const systemInstructions = systemPromptFromMessages(messages);
     if (!systemInstructions.trim()) throw new Error('Codex system instructions are unavailable for this run');
-    const instructionsFile = transport.files.write({
+    const instructionsFile = await transport.files.write({
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,

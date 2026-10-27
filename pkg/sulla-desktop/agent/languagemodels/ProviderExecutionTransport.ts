@@ -106,7 +106,7 @@ export interface ProviderFileRef {
 }
 
 export interface ProviderFileTransport {
-  write(request: ProviderFileRequest): ProviderFileRef;
+  write(request: ProviderFileRequest): Promise<ProviderFileRef>;
 }
 
 /**
@@ -136,12 +136,12 @@ function assertInside(root: string, candidate: string): void {
 }
 
 class GuestProviderFileTransport implements ProviderFileTransport {
-  write(request: ProviderFileRequest): ProviderFileRef {
-    const dir = createGuestRuntimeDirectory(GUEST_PROVIDER_FILES_ROOT, 'file-');
+  async write(request: ProviderFileRequest): Promise<ProviderFileRef> {
+    const dir = await createGuestRuntimeDirectory(GUEST_PROVIDER_FILES_ROOT, 'file-');
     const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-');
     const target = path.posix.join(dir, safeName || 'provider-file');
     assertInside(dir, target);
-    writeGuestFileAtomic(target, request.data, request.mode ?? 0o600);
+    await writeGuestFileAtomic(target, request.data, request.mode ?? 0o600);
     let disposed = false;
 
     return {
@@ -149,7 +149,7 @@ class GuestProviderFileTransport implements ProviderFileTransport {
       dispose() {
         if (disposed) return;
         disposed = true;
-        try { removeGuestPathAtomic(dir) } catch { /* already removed */ }
+        removeGuestPathAtomic(dir).catch(() => { /* already removed */ });
       },
     };
   }

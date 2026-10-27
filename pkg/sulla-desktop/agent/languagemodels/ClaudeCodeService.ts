@@ -27,6 +27,7 @@ import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchComman
 import { disallowedToolsFor } from './claudeToolPolicy';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { bindLeaseToProcess, createGuestClaudeAuth, releaseLease } from './guestClaudeBridge';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
@@ -431,7 +432,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Transport a base64 image block into the provider's guest-owned staging
    * area so the Read tool can open it. Returns the provider-visible path.
    */
-  private saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): string | null {
+  private async saveImageAttachment(b: any, context?: ProviderTransportContext, refs?: ProviderFileRef[]): Promise<string | null> {
     try {
       const data: string | undefined = b?.source?.data;
       const mediaType: string = b?.source?.media_type || 'image/png';
@@ -440,7 +441,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
       const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
       if (context) {
-        const ref = getProviderExecutionTransport().files.write({
+        const ref = await getProviderExecutionTransport().files.write({
           context, purpose: 'attachment', suggestedName: filename, data: Buffer.from(data, 'base64'), mode: 0o600,
         });
         refs?.push(ref);
@@ -462,13 +463,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Image blocks are saved to disk and their paths injected into the text
    * so the Claude Code agent can read them with the Read tool.
    */
-  private extractLatestUserMessage(messages: ChatMessage[], context?: ProviderTransportContext, refs?: ProviderFileRef[]): string {
+  private extractLatestUserMessage(messages: ChatMessage[], stage?: ImageStager): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
       if (b.type === 'image' && b?.source?.type === 'base64') {
-        const savedPath = this.saveImageAttachment(b, context, refs);
+        const savedPath = stage ? stage(b) : null;
         return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
       }
       if (b.type === 'tool_result') {
@@ -712,7 +713,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //     rest via --resume + prompt cache)
     //   - no session    → seed Claude with the full curated transcript
     const extractedPrompt = existingSession
-      ? this.extractLatestUserMessage(messages, initialTransportContext, attachmentRefs)
+      ? await stageImagePaths(stage => this.extractLatestUserMessage(messages, stage), b => this.saveImageAttachment(b, initialTransportContext, attachmentRefs))
       : this.serializeFullTranscript(messages);
 
     if (!extractedPrompt.trim()) {
@@ -755,7 +756,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         if (host.running) {
           mcpSession = host.registerSession(options.state, PROC_MCP_SESSION_TTL_MS);
           if (transport.runtime === 'guest') {
-            mcpConfigFile = this.writeMcpConfig(mcpSession, initialTransportContext);
+            mcpConfigFile = await this.writeMcpConfig(mcpSession, initialTransportContext);
             mcpConfigPath = mcpConfigFile.path;
           }
           log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath ?? '(transport-owned)' } url=${ mcpSession.url }`);
@@ -807,7 +808,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
     // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
-    const systemPromptFile: ProviderFileRef = transport.files.write({
+    const systemPromptFile: ProviderFileRef = await transport.files.write({
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
@@ -1742,7 +1743,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
    * The Authorization header carries the session id so tool handlers can
    * resolve back to the calling graph's BaseThreadState.
    */
-  private writeMcpConfig(session: RegisteredSession, context: ProviderTransportContext): ProviderFileRef {
+  private async writeMcpConfig(session: RegisteredSession, context: ProviderTransportContext): Promise<ProviderFileRef> {
     const payload = {
       mcpServers: {
         'sulla-native': {
@@ -1752,7 +1753,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         },
       },
     };
-    return getProviderExecutionTransport().files.write({
+    return await getProviderExecutionTransport().files.write({
       context,
       purpose:       'mcp-config',
       suggestedName: `mcp-${ session.id }.json`,

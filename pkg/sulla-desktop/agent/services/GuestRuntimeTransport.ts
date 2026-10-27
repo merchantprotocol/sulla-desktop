@@ -21,7 +21,7 @@ export const GUEST_CONVERSATIONS_ROOT = `${ GUEST_RUNTIME_ROOT }/conversations`;
 
 const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];
 const CAPTURE_LIMIT = 64 * 1024;
-const COMMAND_TIMEOUT_MS = 2 * 60_000;
+const COMMAND_TIMEOUT_MS = 30_000;
 const TRANSFER_TIMEOUT_MS = 5 * 60_000;
 
 export interface GuestRuntimeIdentity {
@@ -58,33 +58,50 @@ function safeErrorText(value: string): string {
     .slice(-8_192);
 }
 
-export function runGuestSync(args: string[], input?: string | Buffer): string {
-  const result = childProcess.spawnSync(paths.sullaRuntime, ['exec', '--', ...args], {
-    env:      guestEnvironment(),
-    input,
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-    timeout:   COMMAND_TIMEOUT_MS,
+export function runGuest(args: string[], input?: string | Buffer, timeoutMs = COMMAND_TIMEOUT_MS): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let child: childProcess.ChildProcess;
+    try {
+      child = childProcess.execFile(paths.sullaRuntime, ['exec', '--', ...args], {
+        env:       guestEnvironment(),
+        encoding:  'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        timeout:   timeoutMs,
+        killSignal: 'SIGKILL',
+      }, (error, stdout, stderr) => {
+        if (error) {
+          const exitCode = (error as NodeJS.ErrnoException & { code?: unknown }).code;
+          if (typeof exitCode !== 'number') {
+            reject(error);
+            return;
+          }
+          const detail = safeErrorText(String(stderr || stdout || ''));
+          reject(new Error(detail || `Guest command exited ${ exitCode }`));
+          return;
+        }
+        resolve(String(stdout ?? '').trim());
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    child.stdin?.on('error', () => { /* child exited before reading input */ });
+    if (input !== undefined) child.stdin?.end(input);
+    else child.stdin?.end();
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = safeErrorText(String(result.stderr || result.stdout || ''));
-    throw new Error(detail || `Guest command exited ${ result.status }`);
-  }
-  return String(result.stdout ?? '').trim();
 }
 
 let guestIdentity: { user: string; identity: GuestRuntimeIdentity } | undefined;
 
 /** The container runs as the actual guest login identity, never a host-derived or guessed UID. */
-export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
+export async function getGuestRuntimeIdentity(): Promise<GuestRuntimeIdentity> {
   // Guest commands run as root on the Sulla runtime; there the login account
   // is the one the runtime created for this Mac user, looked up by name.
   const runtimeUser = sullaRuntimeGuestUser()?.name ?? '';
   if (guestIdentity?.user === runtimeUser) return guestIdentity.identity;
   const output = runtimeUser
-    ? runGuestSync(['sh', '-c', 'set -eu; id -u "$1"; id -g "$1"', 'sulla-guest-id', runtimeUser])
-    : runGuestSync(['sh', '-c', 'set -eu; id -u; id -g']);
+    ? await runGuest(['sh', '-c', 'set -eu; id -u "$1"; id -g "$1"', 'sulla-guest-id', runtimeUser])
+    : await runGuest(['sh', '-c', 'set -eu; id -u; id -g']);
   const [uid, gid] = output.split(/\s+/).map(Number);
   if (![uid, gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error('Could not resolve the Sulla guest runtime identity');
@@ -93,9 +110,9 @@ export function getGuestRuntimeIdentity(): GuestRuntimeIdentity {
   return guestIdentity.identity;
 }
 
-function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): string {
+async function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): Promise<string> {
   const boundedTarget = assertGuestPath(target, roots);
-  const resolved = runGuestSync([
+  const resolved = await runGuest([
     'sh', '-c',
     'set -eu; resolved=$(realpath "$1"); case "$resolved" in "$2"|"$2"/*) printf "%s" "$resolved";; *) exit 73;; esac',
     'sulla-guest-path', boundedTarget, roots[0],
@@ -103,11 +120,11 @@ function existingGuestPath(target: string, roots = GUEST_PATH_ROOTS): string {
   return assertGuestPath(resolved, roots);
 }
 
-export function createGuestRuntimeDirectory(parent: string, prefix: string): string {
+export async function createGuestRuntimeDirectory(parent: string, prefix: string): Promise<string> {
   const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
   const safePrefix = prefix.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80) || 'runtime-';
-  const { uid, gid } = getGuestRuntimeIdentity();
-  const created = runGuestSync([
+  const { uid, gid } = await getGuestRuntimeIdentity();
+  const created = await runGuest([
     'sh', '-c',
     [
       'set -eu',
@@ -126,16 +143,16 @@ export function createGuestRuntimeDirectory(parent: string, prefix: string): str
     ].join('; '),
     'sulla-guest-mkdir', boundedParent, safePrefix, String(uid), String(gid), GUEST_RUNTIME_ROOT,
   ]);
-  return existingGuestPath(created, [boundedParent]);
+  return await existingGuestPath(created, [boundedParent]);
 }
 
 /** Create or reopen one stable, guest-owned runtime directory. */
-export function ensureGuestRuntimeDirectory(parent: string, name: string): string {
+export async function ensureGuestRuntimeDirectory(parent: string, name: string): Promise<string> {
   const boundedParent = assertGuestPath(parent, [GUEST_RUNTIME_ROOT]);
   if (!/^[a-zA-Z0-9_.-]{1,120}$/.test(name)) throw new Error('Invalid stable guest runtime directory name');
-  const { uid, gid } = getGuestRuntimeIdentity();
+  const { uid, gid } = await getGuestRuntimeIdentity();
   const target = assertGuestPath(path.posix.join(boundedParent, name), [boundedParent]);
-  runGuestSync([
+  await runGuest([
     'sh', '-c',
     [
       'set -eu', 'umask 077',
@@ -147,13 +164,13 @@ export function ensureGuestRuntimeDirectory(parent: string, name: string): strin
     ].join('; '),
     'sulla-stable-guest-mkdir', boundedParent, target, String(uid), String(gid),
   ]);
-  return existingGuestPath(target, [boundedParent]);
+  return await existingGuestPath(target, [boundedParent]);
 }
 
-export function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): void {
+export async function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): Promise<void> {
   const boundedTarget = assertGuestPath(target);
   if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) throw new Error('Invalid guest file mode');
-  runGuestSync([
+  await runGuest([
     'sh', '-c',
     [
       'set -eu',
@@ -172,28 +189,28 @@ export function writeGuestFileAtomic(target: string, data: string | Buffer, mode
   ], data);
 }
 
-export function chmodGuestPath(target: string, mode: number): void {
+export async function chmodGuestPath(target: string, mode: number): Promise<void> {
   if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) throw new Error('Invalid guest path mode');
-  const resolved = existingGuestPath(target);
-  runGuestSync(['chmod', mode.toString(8), '--', resolved]);
+  const resolved = await existingGuestPath(target);
+  await runGuest(['chmod', mode.toString(8), '--', resolved]);
 }
 
-export function chownGuestPath(target: string, identity: GuestRuntimeIdentity): void {
+export async function chownGuestPath(target: string, identity: GuestRuntimeIdentity): Promise<void> {
   if (![identity.uid, identity.gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
     throw new Error('Invalid guest path ownership');
   }
-  const resolved = existingGuestPath(target);
-  runGuestSync([
+  const resolved = await existingGuestPath(target);
+  await runGuest([
     'sh', '-c',
     'set -eu; sudo chown -hR "$2:$3" -- "$1"; [ "$(stat -c %u:%g "$1")" = "$2:$3" ]; [ -w "$1" ] && [ -x "$1" ]',
     'sulla-guest-chown', resolved, String(identity.uid), String(identity.gid),
   ]);
 }
 
-export function removeGuestPathAtomic(target: string): void {
+export async function removeGuestPathAtomic(target: string): Promise<void> {
   const boundedTarget = assertGuestPath(target);
   if (boundedTarget === GUEST_RUNTIME_ROOT) throw new Error('Refusing to remove the guest runtime root');
-  runGuestSync([
+  await runGuest([
     'sh', '-c',
     [
       'set -eu',
@@ -332,7 +349,7 @@ export async function seedGitWorktreeIntoGuest(source: string, jobKey: string): 
 
   const repository = path.basename(path.dirname(commonGitDir));
   const prefix = `${ repository }-${ branch || `detached-${ head.slice(0, 12) }` }-${ jobKey }-`;
-  const checkout = createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, prefix);
+  const checkout = await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, prefix);
   const bundle = assertGuestPath(`${ checkout }.bundle-${ crypto.randomUUID() }`, [GUEST_AGENT_WORKSPACES_ROOT]);
   const approvedRef = branch ? `refs/heads/${ branch }` : 'HEAD';
   try {
@@ -354,14 +371,14 @@ export async function seedGitWorktreeIntoGuest(source: string, jobKey: string): 
     ]);
     return checkout;
   } catch (error) {
-    try { removeGuestPathAtomic(checkout) } catch { /* retain original failure */ }
-    try { removeGuestPathAtomic(bundle) } catch { /* already absent */ }
+    try { await removeGuestPathAtomic(checkout) } catch { /* retain original failure */ }
+    try { await removeGuestPathAtomic(bundle) } catch { /* already absent */ }
     throw error;
   }
 }
 
-export function inspectGuestWorkspaceForCleanup(workspacePath: string): GuestWorkspaceCleanupDecision {
-  existingGuestPath(workspacePath, [GUEST_AGENT_WORKSPACES_ROOT]);
+export async function inspectGuestWorkspaceForCleanup(workspacePath: string): Promise<GuestWorkspaceCleanupDecision> {
+  await existingGuestPath(workspacePath, [GUEST_AGENT_WORKSPACES_ROOT]);
   // A guest-controlled origin-tracking ref is not proof of remote publication.
   // Git status also omits ignored files that may contain irreplaceable output.
   // Retain runtime work until its owner verifies publication and preservation
@@ -375,7 +392,7 @@ export function inspectGuestWorkspaceForCleanup(workspacePath: string): GuestWor
 export async function seedDirectoryIntoGuest(source: string, parent: string, prefix: string): Promise<string> {
   const resolved = fs.realpathSync(source);
   if (!fs.statSync(resolved).isDirectory()) throw new Error(`Guest seed source is not a directory: ${ source }`);
-  const target = createGuestRuntimeDirectory(parent, prefix);
+  const target = await createGuestRuntimeDirectory(parent, prefix);
   try {
     await pipeToGuest('tar', ['-C', resolved, '-cf', '-', '.'], [
       'sh', '-c', 'set -eu; target=$(realpath "$1"); case "$target" in "$2"/*) ;; *) exit 73;; esac; tar -C "$target" -xf -',
@@ -383,7 +400,7 @@ export async function seedDirectoryIntoGuest(source: string, parent: string, pre
     ]);
     return target;
   } catch (error) {
-    try { removeGuestPathAtomic(target) } catch { /* retain original failure */ }
+    try { await removeGuestPathAtomic(target) } catch { /* retain original failure */ }
     throw error;
   }
 }
