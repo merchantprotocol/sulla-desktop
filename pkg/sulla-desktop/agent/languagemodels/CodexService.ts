@@ -13,7 +13,6 @@ import {
   getProviderExecutionTransport,
   requireBrokeredContainerAuth,
   requireContainerToolConfig,
-  type ProviderExecutionTransport,
   type ProviderFileRef,
   type ProviderTransportContext,
 } from './ProviderExecutionTransport';
@@ -21,7 +20,7 @@ import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCom
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
-import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_SESSION_TTL_MS, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
@@ -38,9 +37,6 @@ import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
 
-/** Idle timeout for a speculatively-booted process that is never claimed. */
-const PREWARM_IDLE_REAP_MS = 60_000;
-
 /** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
 const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
 
@@ -49,28 +45,6 @@ const STEER_INTERRUPT_GRACE_MS = 10_000;
 
 /** Opening line of the resume prompt that delivers a steer to an interrupted codex turn. */
 const STEER_RESUME_NOTE = '[Steering message] The user sent the message below while you were working. Your turn was paused to deliver it. Take it into account and carry on with the task. Do not start over or repeat work that is already done.';
-
-/**
- * A `codex exec` process speculatively booted during the pre-turn
- * (accumulator) phase, waiting to be adopted by the next runCodex for its
- * conversation. See CodexService.prewarm().
- */
-interface CodexPrewarmRecord {
-  proc:             childProcess.ChildProcessWithoutNullStreams;
-  transport:        ProviderExecutionTransport;
-  transportContext: ProviderTransportContext;
-  instructionsFile: ProviderFileRef;
-  mcpSession:       RegisteredSession | null;
-  /** VM-side pidfile of this process (see buildRemoteKillCommand). */
-  pidFile:          string;
-  model:            string;
-  existingSession:  string | undefined;
-  readOnly:         boolean;
-  createdAt:        number;
-  closed:           boolean;
-  busy:             boolean;
-  reapTimer:        ReturnType<typeof setTimeout> | null;
-}
 
 /**
  * CodexService — runs `codex exec` inside the Sulla VM and streams the
@@ -100,35 +74,14 @@ interface CodexPrewarmRecord {
  *   - Resume failures (expired/missing thread): drop the cached id and
  *     retry once with a fresh session (full history).
  *
- * Speculative boot (prewarm): mirrors ClaudeCodeService's Phase 1. `codex
- * exec` reads its prompt from stdin when invoked with no positional PROMPT
- * arg (or `-`), so the process can be spawned — and pay its Node/CLI boot +
- * auth-file read cost — before the turn's prompt exists, overlapping that
- * cost with the subconscious/recall phase. AgentNode.maybePrewarmPrimary
- * picks this up automatically via the same `typeof llm.prewarm ===
- * 'function'` duck-type check used for Claude Code.
- *
- * NOT implemented: a Claude-style "warm pool" that keeps one process alive
- * across multiple turns. Claude's Phase 2 works because `claude -p
- * --input-format stream-json` is explicitly designed to accept a *stream* of
- * JSON user messages on one long-lived process. `codex exec` has no
- * equivalent — per `codex exec --help` it reads exactly one prompt, runs to
- * `task_complete`, and exits; the codebase's existing `runCodex` already
- * relies on this (it resolves its promise on the process `close` event, and
- * turn N+1 is `codex exec resume <threadId>`, a brand-new process). Codex
- * does ship an experimental persistent multi-turn protocol (`codex
- * app-server`, JSON-RPC 2.0 over stdio) that could support a real warm pool,
- * but that's a different wire protocol from the JSONL event stream this
- * file parses today — a separate, larger integration, not a mirror of this
- * one. See the latency-opportunities notes in PR description for follow-up.
+ * Process lifetime: one `codex exec` process per turn. It is spawned when
+ * the turn starts and exits when the turn ends (`codex exec` reads exactly
+ * one prompt, runs to `task_complete`, and exits). Nothing is booted ahead
+ * of a turn and no idle process is kept between turns, to keep VM memory low.
  */
 export class CodexService extends BaseLanguageModel {
   // conversationId → codex thread_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
-
-  // conversationId → a speculatively-booted process warming up during the
-  // pre-turn phase, claimed by the next runCodex. See prewarm().
-  private prewarmed = new Map<string, CodexPrewarmRecord>();
 
   /**
    * Tracks the hash of the stable <sulla_context> payload last sent per
@@ -168,30 +121,13 @@ export class CodexService extends BaseLanguageModel {
   }
 
   /**
-   * Whether speculative boot (prewarm) is enabled. Default ON — see the
-   * class doc for why there is no Codex "warm pool" counterpart. No UI
-   * toggle; override by setting the row to 'false' via SullaSettingsModel
-   * if a specific install needs to fall back to cold spawns.
-   */
-  private async speculativeBootEnabled(): Promise<boolean> {
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('codexSpeculativeBoot', 'true')) === 'true';
-    } catch {
-      return false;
-    }
-  }
-
-  /**
    * Build the `sulla-runtime exec` argv that launches `codex exec` in the VM.
-   * Shared by runCodex (fresh spawn) and prewarm (speculative boot) so both
-   * stay identical. The prompt is never baked into this argv — `codex
-   * exec`'s positional PROMPT arg is always omitted (trailing `-`) so the
-   * CLI reads its prompt from stdin once the caller writes it (see `codex
-   * exec --help`: "If not provided as an argument (or if `-` is used),
-   * instructions are read from stdin"). That's what lets prewarm spawn the
-   * process before the turn's prompt exists — runCodex and prewarm both
-   * write the prompt to stdin themselves, at different times.
+   * The prompt is never baked into this argv — `codex exec`'s positional
+   * PROMPT arg is always omitted (trailing `-`) so the CLI reads its prompt
+   * from stdin once runCodex writes it (see `codex exec --help`: "If not
+   * provided as an argument (or if `-` is used), instructions are read from
+   * stdin"). A large transcript on the command line would overflow
+   * sulla-runtime's SSH multiplexing channel.
    */
   private buildSpawnArgs(p: {
     existingSession?:  string;
@@ -279,176 +215,6 @@ export class CodexService extends BaseLanguageModel {
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
-  }
-
-  /**
-   * Speculatively boot a `codex exec` process for this conversation while
-   * the caller does pre-turn work (recall / observations). The process pays
-   * its Node/CLI boot + auth-file read cost and then idles reading stdin;
-   * the next runCodex adopts it and just writes the prompt — hiding that
-   * cost the same way ClaudeCodeService.prewarm hides claude's cold start.
-   * Fire-and-forget: every failure mode falls back to a normal cold spawn.
-   * No-op unless the codexSpeculativeBoot setting is on.
-   */
-  async prewarm(state: BaseThreadState): Promise<void> {
-    try {
-      const transport = getProviderExecutionTransport();
-      if (transport.runtime === 'guest' && process.platform === 'win32') return;
-      if (!await this.speculativeBootEnabled()) return;
-
-      const convId = typeof (state.metadata as any)?.threadId === 'string'
-        ? (state.metadata as any).threadId
-        : '__default__';
-
-      const existing = this.prewarmed.get(convId);
-      if (existing && !existing.closed) return;          // already warming
-      if (existing) this.disposePrewarm(convId);          // stale/dead — replace
-
-      const existingSession = await this.getSession(convId);
-
-      let mcpSession: RegisteredSession | null = null;
-      try {
-        const host = getMCPServerHost();
-        if (host.running) mcpSession = host.registerSession(state, CODEX_MCP_SESSION_TTL_MS);
-      } catch { /* continue without sulla-native tools */ }
-
-      const transportContext = await transport.context({
-        provider:          'codex',
-        conversationId:    convId,
-        state,
-        providerSessionId: existingSession,
-        toolSessionId:     mcpSession?.id,
-      });
-      const providerConfig = requireBrokeredContainerAuth(transportContext);
-      const toolConfig = transportContext.runtime === 'container' && mcpSession
-        ? requireContainerToolConfig(transportContext)
-        : undefined;
-      if (transportContext.runtime === 'guest' && !await ensureCodexAuthFile()) return;
-
-      const runtimePath = paths.sullaRuntime;
-      const readOnly = !!(state.metadata as any)?.verifierReadOnly;
-      const pidFile = newRemotePidFile('sulla-codex');
-      const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
-      const instructionsFile = transport.files.write({
-        context:       transportContext,
-        purpose:       'system-prompt',
-        suggestedName: `codex-prewarm-${ crypto.randomUUID() }.md`,
-        data:          await buildFullSystemPrompt({ provider: 'openai' }),
-      });
-      const args = this.buildSpawnArgs({
-        existingSession,
-        mcpSession: transportContext.runtime === 'guest' ? mcpSession : null,
-        readOnly,
-        instructionsPath: instructionsFile.path,
-        pidFile,
-      });
-      const providerCommand = this.buildProviderCommand({
-        existingSession,
-        readOnly,
-        instructionsPath: instructionsFile.path,
-        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
-        configOverrides: [...(providerConfig?.codexConfigOverrides ?? []), ...(toolConfig?.codexConfigOverrides ?? [])],
-      });
-      let proc: childProcess.ChildProcessWithoutNullStreams;
-      try {
-        proc = transport.spawn({
-          context: transportContext,
-          providerCommand,
-          ...(transportContext.runtime === 'guest'
-            ? {
-              guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
-            }
-            : {}),
-        });
-      } catch (error) {
-        instructionsFile.dispose();
-        throw error;
-      }
-
-      const record: CodexPrewarmRecord = {
-        proc,
-        transport,
-        transportContext,
-        instructionsFile,
-        mcpSession,
-        pidFile,
-        model:     this.model || 'codex',
-        existingSession,
-        readOnly,
-        createdAt: Date.now(),
-        closed:    false,
-        busy:      false,
-        reapTimer: null,
-      };
-      // Deliberately attach NO stdout 'data' listener: leaving stdout paused
-      // lets Node buffer any early output so the adopting runCodex receives
-      // it intact when it switches the stream to flowing mode.
-      proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
-      proc.once('exit', () => { record.closed = true });
-      proc.once('error', () => { record.closed = true });
-      record.reapTimer = setTimeout(() => {
-        if (this.prewarmed.get(convId) === record) this.disposePrewarm(convId);
-      }, PREWARM_IDLE_REAP_MS);
-      record.reapTimer.unref?.();
-
-      this.prewarmed.set(convId, record);
-      log.log(`[CodexService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
-    } catch (err) {
-      log.log(`[CodexService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
-    }
-  }
-
-  /**
-   * Claim a live pre-warmed process for this conversation, or null. Unlike
-   * ClaudeCodeService (whose --resume argument can be swapped on adoption
-   * since the prompt strategy only depends on it at message-build time),
-   * Codex bakes `resume <threadId>` into the spawned argv at prewarm time —
-   * so a session mismatch between prewarm and claim time (e.g. a session
-   * was minted concurrently) must also evict the record, not just a model
-   * mismatch.
-   */
-  private claimPrewarm(
-    convId: string,
-    model: string,
-    existingSession: string | undefined,
-    readOnly: boolean,
-    transport: ProviderExecutionTransport,
-  ): CodexPrewarmRecord | null {
-    const rec = this.prewarmed.get(convId);
-    if (!rec) return null;
-    this.prewarmed.delete(convId);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly || rec.transport !== transport) {
-      this.killPrewarmRecord(rec);                       // dead, model, session, or runtime mismatch
-      return null;
-    }
-    return rec;
-  }
-
-  /** Tear down and forget the pre-warmed process for a conversation. */
-  private disposePrewarm(convId: string): void {
-    const rec = this.prewarmed.get(convId);
-    if (!rec) return;
-    this.prewarmed.delete(convId);
-    this.killPrewarmRecord(rec);
-  }
-
-  private killPrewarmRecord(rec: CodexPrewarmRecord): void {
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
-    const signalRemote = (signal: 'TERM' | 'KILL') => {
-      Promise.resolve(rec.transport.terminate({
-        context: rec.transportContext, process: rec.proc, signal, remotePidFile: rec.pidFile,
-      })).catch(() => {});
-    };
-    signalRemote('TERM');
-    const escalation = setTimeout(() => {
-      try { if (rec.proc.exitCode === null) rec.proc.kill('SIGKILL'); } catch { /* already dead */ }
-      signalRemote('KILL');
-    }, 5_000);
-    escalation.unref?.();
-    try { rec.mcpSession?.revoke() } catch { /* already revoked */ }
-    rec.instructionsFile.dispose();
   }
 
   override getContextWindow(): number {
@@ -839,10 +605,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     const runtimePath = paths.sullaRuntime;
 
-    // Speculative boot: adopt a process pre-warmed for this conversation
-    // during the accumulator phase; otherwise spawn fresh below. Flag off →
-    // adopted is always null and the legacy path runs byte-for-byte as
-    // before. Normal actor runs use --dangerously-bypass-approvals-and-sandbox:
+    // One fresh `codex exec` process per turn. Normal actor runs use --dangerously-bypass-approvals-and-sandbox:
     // codex runs inside the Sulla VM, which IS the sandbox. Verifier runs are
     // different: their graph state carries verifierReadOnly, so Codex uses its
     // read-only sandbox and cannot mutate a checkout even through native shell.
@@ -850,26 +613,19 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // prompt is fed via stdin (`-` positional), NOT as an argv element — a
     // large transcript on the command line overflows sulla-runtime's SSH
     // multiplexing channel (same failure mode ClaudeCodeService hit).
-    const speculative = await this.speculativeBootEnabled();
     const readOnly = !!(options.state?.metadata as any)?.verifierReadOnly;
-    const adopted = speculative
-      ? this.claimPrewarm(convId, this.model || 'codex', existingSession, readOnly, transport)
-      : null;
 
-    let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
+    let mcpSession: RegisteredSession | null = null;
     if (options.state) {
       try {
         const host = getMCPServerHost();
-        const boundSession = bindCodexMcpSession(host, options.state, mcpSession);
-        if (boundSession !== mcpSession) {
-          mcpSession = boundSession;
-          if (mcpSession) log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
-        }
+        mcpSession = bindCodexMcpSession(host, options.state, null);
+        if (mcpSession) log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
       } catch (err) {
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
-    const transportContext = adopted?.transportContext ?? (mcpSession
+    const transportContext = mcpSession
       ? await transport.context({
         provider:          'codex',
         conversationId:    convId,
@@ -877,7 +633,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         providerSessionId: existingSession,
         toolSessionId:     mcpSession.id,
       })
-      : initialTransportContext);
+      : initialTransportContext;
     const providerConfig = requireBrokeredContainerAuth(transportContext);
     const toolConfig = transportContext.runtime === 'container' && mcpSession
       ? requireContainerToolConfig(transportContext)
@@ -887,14 +643,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // Nothing depends on a host ~/.codex/AGENTS.md or broad home mount.
     const systemInstructions = systemPromptFromMessages(messages);
     if (!systemInstructions.trim()) throw new Error('Codex system instructions are unavailable for this run');
-    const instructionsFile = adopted ? null : transport.files.write({
+    const instructionsFile = transport.files.write({
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `codex-instructions-${ crypto.randomUUID() }.md`,
       data:          systemInstructions,
     });
-    const instructionsPath = instructionsFile?.path ?? null;
-    const pidFile = adopted ? adopted.pidFile : newRemotePidFile('sulla-codex');
+    const instructionsPath = instructionsFile.path;
+    const pidFile = newRemotePidFile('sulla-codex');
     const args = this.buildSpawnArgs({
       existingSession,
       mcpSession: transportContext.runtime === 'guest' ? mcpSession : null,
@@ -920,37 +676,22 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       };
       if (options.signal?.aborted) {
         cleanupMcp();
-        if (adopted) this.killPrewarmRecord(adopted);
-        if (instructionsPath) {
-          instructionsFile?.dispose();
-        }
+        instructionsFile.dispose();
         const error = new Error('Codex run aborted');
         error.name = 'AbortError';
         reject(error);
         return;
       }
-      let proc: childProcess.ChildProcessWithoutNullStreams;
-      let adoptedSpawned = false;
-      if (adopted) {
-        proc = adopted.proc;
-        adoptedSpawned = true;
-        // Drop the prewarm holding listeners; this run attaches its own below.
-        proc.removeAllListeners('exit');
-        proc.removeAllListeners('error');
-        proc.stdin.removeAllListeners('error');
-        proc.once('exit', () => adopted.instructionsFile.dispose());
-      } else {
-        proc = transport.spawn({
-          context: transportContext,
-          providerCommand,
-          ...(transportContext.runtime === 'guest'
-            ? {
-              guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
-            }
-            : {}),
-        });
-        proc.once('exit', () => instructionsFile?.dispose());
-      }
+      const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
+        context: transportContext,
+        providerCommand,
+        ...(transportContext.runtime === 'guest'
+          ? {
+            guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
+          }
+          : {}),
+      });
+      proc.once('exit', () => instructionsFile.dispose());
 
       // Feed the prompt through stdin instead of the command line. Guard
       // against EPIPE in case codex exits before we finish.
@@ -965,13 +706,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
 
-      if (adoptedSpawned) {
-        emitActivity('Isolated environment ready…');
-      } else {
-        proc.once('spawn', () => {
-          emitActivity('Booting isolated environment…');
-        });
-      }
+      proc.once('spawn', () => {
+        emitActivity('Booting isolated environment…');
+      });
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
@@ -1090,8 +827,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           ));
         }, STALL_CHECK_MS);
       };
-      if (adoptedSpawned) startStallWatchdog();
-      else proc.once('spawn', startStallWatchdog);
+      proc.once('spawn', startStallWatchdog);
 
       // ── Live steering ("Send now" while the turn runs) ─────────────
       // `codex exec` reads exactly one prompt, so a steer can't be written

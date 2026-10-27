@@ -37,7 +37,7 @@ describe('ToolSessionRegistry ("Expired tool session")', () => {
     expect(sessions.get(id)).toBeNull();
   });
 
-  it('revives a reaped warm-pool token under the same id on rebind', () => {
+  it('revives a reaped token under the same id on rebind', () => {
     const sessions = new ToolSessionRegistry();
     const id = sessions.register(stateA, TTL);
 
