@@ -7,6 +7,7 @@ import _ from 'lodash';
 
 import * as settings from '@pkg/config/settings';
 import * as settingsImpl from '@pkg/config/settingsImpl';
+import { appVariant } from '@pkg/utils/appVariant';
 import { spawnFile } from '@pkg/utils/childProcess';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -44,7 +45,7 @@ export async function readDeploymentProfiles(): Promise<settings.DeploymentProfi
     const linuxPaths = {
       [paths.deploymentProfileSystem]:    ['defaults.json', 'locked.json'],
       [paths.altDeploymentProfileSystem]: ['defaults.json', 'locked.json'],
-      [paths.deploymentProfileUser]:      ['sulla-desktop.defaults.json', 'sulla-desktop.locked.json'],
+      ...(appVariant.id === 'production' ? { [paths.deploymentProfileUser]: ['sulla-desktop.defaults.json', 'sulla-desktop.locked.json'] } : {}),
     };
 
     for (const configDir in linuxPaths) {
@@ -61,7 +62,8 @@ export async function readDeploymentProfiles(): Promise<settings.DeploymentProfi
   }
 
   case 'darwin':
-    for (const rootPath of [paths.deploymentProfileSystem, paths.altDeploymentProfileSystem, paths.deploymentProfileUser]) {
+    for (const rootPath of [paths.deploymentProfileSystem, paths.altDeploymentProfileSystem,
+      ...(appVariant.id === 'production' ? [paths.deploymentProfileUser] : [])]) {
       [defaults, locked] = await parseJsonFromPlists(rootPath, 'io.sulla.desktop.profile.defaults.plist', 'io.sulla.desktop.profile.locked.plist');
       fullDefaultPath = join(rootPath, 'io.sulla.desktop.profile.defaults.plist');
       fullLockedPath = join(rootPath, 'io.sulla.desktop.profile.locked.plist');

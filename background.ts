@@ -46,7 +46,7 @@ import * as settings from '@pkg/config/settings';
 import * as settingsImpl from '@pkg/config/settingsImpl';
 import { TransientSettings } from '@pkg/config/transientSettings';
 import { IntegrationManager, getIntegrationManager } from '@pkg/integrations/integrationManager';
-import { PathManagementStrategy, PathManager } from '@pkg/integrations/pathManager';
+import { ManualPathManager, PathManagementStrategy, PathManager } from '@pkg/integrations/pathManager';
 import { getPathManagerFor } from '@pkg/integrations/pathManagerImpl';
 import { BackendState, CommandWorkerInterface, HttpCommandServer } from '@pkg/main/commandServer/httpCommandServer';
 import SettingsValidator from '@pkg/main/commandServer/settingsValidator';
@@ -629,7 +629,8 @@ Electron.app.whenReady().then(async() => {
     }
 
     try {
-      await dockerDirManager.ensureCredHelperConfigured();
+      if (appVariant.id === 'test') console.log('[Docker] Test variant: skipping host credential-helper configuration');
+      else await dockerDirManager.ensureCredHelperConfigured();
     } catch (ex: any) {
       const errorTitle = 'Error configuring credential helper';
 
@@ -664,6 +665,11 @@ Electron.app.whenReady().then(async() => {
 });
 
 async function setPathManager(newStrategy: PathManagementStrategy) {
+  if (appVariant.id === 'test') {
+    if (!(pathManager instanceof ManualPathManager)) console.log('[PathManager] Test variant: forcing manual PATH management; shell profiles and global links will not be changed');
+    pathManager = new ManualPathManager();
+    return;
+  }
   if (pathManager) {
     if (pathManager.strategy === newStrategy) {
       return;
@@ -772,18 +778,22 @@ async function initUI() {
     Tray.getInstance(cfg).show();
   }
 
-  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
-  // Registers IPC handlers in the main process — no window reference needed.
+  // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming).
+  // The test variant fails closed because the driver, launch daemon and system audio settings are host-global.
   try {
-    audioDriver.initialize();
-    console.log('[Audio Driver] Initialized');
-    registerCaptureStudioTracking();
-    registerCaptureStudioRpc();
-    registerTeleprompterIpc();
-    registerTeleprompterTrackingIpc();
-    registerTabContextMenuIpc();
-    registerMoreMenuIpc();
-    console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
+    if (appVariant.id === 'test') {
+      console.log('[Audio Driver] Test variant: skipping host-global audio driver integration');
+    } else {
+      audioDriver.initialize();
+      console.log('[Audio Driver] Initialized');
+      registerCaptureStudioTracking();
+      registerCaptureStudioRpc();
+      registerTeleprompterIpc();
+      registerTeleprompterTrackingIpc();
+      registerTabContextMenuIpc();
+      registerMoreMenuIpc();
+      console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
+    }
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
   }
@@ -1155,8 +1165,10 @@ Electron.app.on('before-quit', async(event) => {
 
   // Shut down audio-driver (restore audio output, release capture, remove driver)
   try {
-    await withTimeout('audioDriver.shutdown', 5_000, audioDriver.shutdown());
-    console.log('[Shutdown] Audio driver shut down');
+    if (appVariant.id !== 'test') {
+      await withTimeout('audioDriver.shutdown', 5_000, audioDriver.shutdown());
+      console.log('[Shutdown] Audio driver shut down');
+    }
   } catch (err) {
     console.error('[Shutdown] Audio driver shutdown error:', err);
   }
@@ -1614,7 +1626,7 @@ async function doFactoryReset(keepSystemImages: boolean) {
   await k8smanager.del();
   if (appVariant.loginItem) Electron.app.setLoginItemSettings({ openAtLogin: false });
   await pathManager.remove();
-  await dockerDirManager.clearDockerContext();
+  if (appVariant.id !== 'test') await dockerDirManager.clearDockerContext();
 
   const preserved = new Set([paths.snapshots, paths.containerdShims]);
   const appHomeEntries = await fs.promises.readdir(paths.appHome, { withFileTypes: true }).catch(() => []);

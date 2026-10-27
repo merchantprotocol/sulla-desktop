@@ -13,6 +13,9 @@ import path from 'node:path';
 
 import { sullaAppGroupDirectory } from './sullaAppGroup';
 
+import { appVariant } from '@pkg/utils/appVariant';
+import paths from '@pkg/utils/paths';
+
 /**
  * Relay between SullaFileProvider.appex and the Files service.
  *
@@ -42,7 +45,9 @@ export class RelayError extends Error {
 }
 
 export function relayDirectory(home = os.homedir()):string {
-  return path.join(sullaAppGroupDirectory(home), RELAY_DIRECTORY);
+  return appVariant.nativeExtensions
+    ? path.join(sullaAppGroupDirectory(home), RELAY_DIRECTORY)
+    : path.join(paths.appHome, RELAY_DIRECTORY);
 }
 
 /** Short-lived bearer for the extension. The previous token stays valid until its own expiry so rotation never races a request. */

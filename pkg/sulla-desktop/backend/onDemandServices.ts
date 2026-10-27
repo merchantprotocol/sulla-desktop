@@ -20,11 +20,12 @@
  */
 
 import { THREAT_PROXY_CONTAINER } from '@pkg/backend/threatProxyEgress';
+import { appVariant } from '@pkg/utils/appVariant';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sullaRuntime;
 
-export const SULLA_COMPOSE_COMMAND = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'] as const;
+export const SULLA_COMPOSE_COMMAND = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', appVariant.composeProject] as const;
 
 /** Runs argv in the guest as root and resolves with stdout. */
 export type OnDemandGuestRunner = (args: string[]) => Promise<string>;

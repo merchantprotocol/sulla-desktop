@@ -2,6 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import { appVariant } from '@pkg/utils/appVariant';
+
 import yaml from 'yaml';
 
 import paths from './paths';
@@ -51,7 +53,7 @@ export class DockerDirManager {
   protected readonly dockerContextPath:    string;
   protected readonly dockerConfigPath:     string;
   protected readonly defaultDockerSockPath = '/var/run/docker.sock';
-  protected readonly contextName = 'sulla-desktop';
+  protected readonly contextName = `sulla-desktop${ appVariant.pathSuffix }`;
 
   /**
    * @param dockerDirPath The path to the directory containing docker CLI config.
@@ -329,6 +331,10 @@ export class DockerDirManager {
    * Clear the docker context if we changed it for running without admin privileges
    */
   async clearDockerContext(): Promise<void> {
+    if (appVariant.id === 'test') {
+      console.log('[Docker] Test variant: host Docker configuration is disabled');
+      return;
+    }
     try {
       await fs.promises.rm(path.dirname(this.dockerContextPath), {
         recursive: true, force: true, maxRetries: 3,
@@ -354,6 +360,10 @@ export class DockerDirManager {
    * @param socketPath Path to the sulla-desktop specific docker socket. Darwin/Linux only.
    */
   async ensureDockerContextConfigured(weOwnDefaultSocket: boolean, socketPath?: string): Promise<void> {
+    if (appVariant.id === 'test') {
+      console.log('[Docker] Test variant: host Docker configuration is disabled');
+      return;
+    }
     // read current config
     const currentConfig = await this.readDockerConfig();
 
@@ -379,6 +389,10 @@ export class DockerDirManager {
    * Ensures that the docker config file is configured with a valid credential helper.
    */
   async ensureCredHelperConfigured(): Promise<void> {
+    if (appVariant.id === 'test') {
+      console.log('[Docker] Test variant: host Docker configuration is disabled');
+      return;
+    }
     // read current config
     const currentConfig = await this.readDockerConfig();
 
@@ -398,4 +412,4 @@ export class DockerDirManager {
 /**
  * Export a singleton instance of the docker dir manager by default.
  */
-export default new DockerDirManager(path.join(os.homedir(), '.docker'));
+export default new DockerDirManager(path.join(os.homedir(), `.docker${ appVariant.pathSuffix }`));

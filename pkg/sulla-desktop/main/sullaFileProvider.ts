@@ -15,6 +15,7 @@ import { app } from 'electron';
 import { getSullaFilesClient } from './sullaFilesClient';
 import { FileProviderRelayServer, encodeChangeToken, type FileProviderFilesPort } from './sullaFileProviderRelay';
 
+import { appVariant } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 
 /**
@@ -105,7 +106,7 @@ export class SullaFileProviderService {
   }
 
   async status():Promise<FileProviderStatus> {
-    const supported = process.platform === 'darwin';
+    const supported = process.platform === 'darwin' && appVariant.nativeExtensions;
     const state = await this.state();
     const helperPresent = supported && fs.existsSync(helperPath());
     const status:FileProviderStatus = { supported, enabled: state.enabled, running: Boolean(this.relay), helperPresent, ...(this.lastError ? { error: this.lastError } : {}) };
@@ -119,6 +120,7 @@ export class SullaFileProviderService {
   setEnabled(enabled:boolean, caller:FileProviderCaller):Promise<FileProviderStatus> {
     requireHumanFileProvider(caller);
     return this.serial(async() => {
+      if (!appVariant.nativeExtensions) throw new Error('File Provider integration is disabled for the isolated test variant');
       if (process.platform !== 'darwin') throw new Error('The Finder location is only available on macOS');
       if (!fs.existsSync(helperPath())) throw new Error('This build of Sulla Desktop does not include the File Provider extension');
       const state = await this.state();
@@ -137,7 +139,10 @@ export class SullaFileProviderService {
   /** Called at startup; a no-op unless the person already turned it on. */
   start():Promise<void> {
     return this.serial(async() => {
-      if (process.platform !== 'darwin') return;
+      if (process.platform !== 'darwin' || !appVariant.nativeExtensions) {
+        if (!appVariant.nativeExtensions) console.log('[SullaFileProvider] Test variant: skipping host File Provider registration');
+        return;
+      }
       const state = await this.state();
       if (!state.enabled || !state.domainIdentifier || !fs.existsSync(helperPath())) return;
       await this.activate(state.domainIdentifier).catch(error => { this.lastError = (error as Error).message; console.warn('[SullaFileProvider] start failed:', error) });

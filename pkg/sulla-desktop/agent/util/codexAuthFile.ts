@@ -15,12 +15,14 @@ import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 
+import { appVariant } from '@pkg/utils/appVariant';
+
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 
 const CODEX_AUTH_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export function codexHomeDir(): string {
-  return path.join(os.homedir(), '.codex');
+  return path.join(os.homedir(), `.codex${ appVariant.pathSuffix }`);
 }
 
 export function codexAuthPath(): string {

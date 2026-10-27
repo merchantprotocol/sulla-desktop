@@ -514,7 +514,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   protected sullaRuntimeShares(): SullaRuntimeShare[] {
     // Only app-owned transport/cache roots cross the VM boundary. User home,
     // external volumes, and Darwin's broad temporary roots are Files-owned.
-    const locations = ['/tmp/sulla-desktop'];
+    const locations = [`/tmp/sulla-desktop${ appVariant.pathSuffix }`];
 
     for (const extraDir of [paths.cache, paths.logs, paths.resources]) {
       const found = locations.some(loc => !path.relative(path.normalize(loc), path.normalize(extraDir)).startsWith('../'));
@@ -584,8 +584,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const dockerSocket = sullaRuntimeSockets.docker;
 
     this.#containerEngineClient = new MobyClient(this, `unix://${ dockerSocket }`);
-    await this.progressTracker.action('Setting docker context', 50,
-      dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
+    if (appVariant.id === 'test') {
+      console.log('[Docker] Test variant: skipping host Docker context configuration');
+    } else {
+      await this.progressTracker.action('Setting docker context', 50,
+        dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
+    }
     this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest);
     this.#sullaRuntimeForwarder.start();
 
@@ -639,7 +643,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     try {
       await runtime?.stop({ suspend: takeSullaRuntimeSuspendRequest() });
     } finally {
-      if (wasActive) await dockerDirManager.clearDockerContext();
+      if (wasActive && appVariant.id !== 'test') await dockerDirManager.clearDockerContext();
     }
   }
 

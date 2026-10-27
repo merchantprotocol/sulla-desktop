@@ -26,6 +26,27 @@ Locations below identify the production collision and the test-flavour isolation
 | Cloud device registration | `main/deviceIdentity.ts:29-33,109-128` | Device identity is stored in the variant `~/.sulla-test/device-id`, producing a separate Cloud device registration. |
 | Native app-group extensions | `main/sullaAppGroup.ts:16`; `scripts/package.ts:248-284`; `native/SullaFileProvider/**` | Test packages omit Finder Sync, File Provider and its helper rather than sharing production bundle/app-group IDs. |
 
+## Host-global resource audit
+
+The test flavour treats host integration as opt-out-by-construction: a feature that cannot use a variant-owned location is skipped with a log message. It never falls back to the production location.
+
+| Host-global resource | Production behaviour | Test-variant behaviour |
+|---|---|---|
+| `~/.docker/config.json` and Docker context `sulla-desktop` | Maintains the Desktop context and may select it while the runtime is active. | Docker context setup, cleanup and credential-helper configuration are skipped. The defensive `DockerDirManager` instance points at `~/.docker-test` and uses context name `sulla-desktop-test`, so an accidental caller still cannot read or rewrite production Docker configuration. |
+| `~/.docker/cli-plugins` and CLI integration links | Installs bundled CLI/plugin symlinks and removes managed links on shutdown/reset. | `getIntegrationManager()` returns a logged no-op; no links are inspected, created or removed. The packaged `sulla`/`sulla-daemon` scripts (including `/tmp/sulla-tools.sock` and `/tmp/sulla-daemon.pid`) are consequently not installed or launched by the test app. |
+| Docker credential helper routing (`credsStore` / `credHelpers`) | Ensures the Sulla helper is represented in Docker configuration and serves credentials on the production credential-server port. | Host Docker helper configuration is skipped. The isolated credential server still uses `variantPort(6109)` for internal test-runtime callers. |
+| Shell profiles and global PATH links (`.zshrc`, `.bashrc`, `.bash_profile`, `.profile`, fish config, `/usr/local/bin`) | Applies the selected automatic PATH strategy. | `setPathManager()` always installs `ManualPathManager`; profile/link writes and removals are skipped and logged. |
+| Login item and `sulla://` protocol handler | Registers the production app when enabled. | Both capabilities are false in `appVariant`; test startup, settings changes and reset never register or remove the production handlers. |
+| Finder Sync, File Provider, Finder defaults, badge xattrs and production app group | Embeds/registers native extensions and uses the production app-group relay. | Native extensions are omitted. Registration reports unsupported, startup skips it, Finder defaults and badge xattrs are skipped, and the fallback relay lives below the variant `appHome`. |
+| Audio driver, launch daemon, `/usr/local/bin/audio-driver`, `/tmp/audio-driver.sock`, and system audio settings | Initializes the host driver and may install/start/stop it or change audio routing. | Audio/Capture Studio host integration is not initialized or shut down. Legacy connect/disconnect calls fail closed and status returns disabled without probing shared files or sockets. |
+| Claude Code host memory | Rewrites `~/.claude/CLAUDE.md` with the generated Sulla prompt. | Writes only `~/.claude-test/CLAUDE.md`; the production Claude directory is not read or changed. |
+| Codex host credentials/config | Stores CLI OAuth material below `~/.codex`; generated agent configuration is guest-scoped. | Host OAuth material uses `~/.codex-test`; the test VM has its own guest home/data disk. Production `~/.codex` is not read or changed. |
+| `~/.gitconfig`, `~/.ssh`, and `~/.kube` | Git identity may be read to render agent defaults; Desktop has no write path for these locations. | The test flavour has no writer for these resources. Git identity discovery is read-only; SSH and Kubernetes user configuration are neither imported nor changed. |
+| Per-user deployment profiles (`~/Library/Preferences/io.sulla.desktop.profile.*` or XDG equivalents) | Reads production per-user defaults and locked settings after system profiles. | Per-user production profiles are not read. System administrator deployment profiles remain readable policy inputs; test-local settings remain under variant paths. |
+| macOS Keychain / Electron `safeStorage` | Encrypts secrets under the production bundle/application identity. | Separate bundle ID, Electron `userData`, database and `safeStorage` identity prevent the test app from addressing production encrypted state; no production-named Keychain item writer exists. |
+| Host temporary directories and runtime sockets | Uses `/tmp/sulla-desktop`, production runtime sockets, and production File Provider app-group relay. | Shared host temp root is `/tmp/sulla-desktop-test`; runtime sockets are below the variant runtime directory and File Provider fallback relay is below variant `appHome`. Guest-only `/tmp` and `/var/run/docker.sock` paths live inside the test VM's separate disk/daemon. |
+| Docker Compose project inside the VM | Uses project `sulla`. | Uses `appVariant.composeProject` (`sulla-test`) for boot and on-demand service commands. Although the VM is already isolated, this prevents fallback to the production project name. |
+
 ## Build and launch from a branch
 
 Do not use the primary checkout and do not install the test app in `/Applications`:

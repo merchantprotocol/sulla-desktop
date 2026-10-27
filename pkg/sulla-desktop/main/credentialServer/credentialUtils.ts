@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import stream from 'stream';
 
+import { appVariant } from '@pkg/utils/appVariant';
+
 import { findHomeDir } from '@kubernetes/client-node';
 
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -78,7 +80,7 @@ export async function list(): Promise<Record<string, string>> {
  */
 async function getCredentialHelperInfo(command: string, payload: string): Promise<credHelperInfo> {
   const home = findHomeDir();
-  const dockerConfig = path.join(home ?? '', '.docker', 'config.json');
+  const dockerConfig = path.join(home ?? '', `.docker${ appVariant.pathSuffix }`, 'config.json');
   const contents = JSON.parse(await fs.promises.readFile(dockerConfig, { encoding: 'utf-8' }));
   const credHelpers = contents.credHelpers;
   const credsStore = contents.credsStore;

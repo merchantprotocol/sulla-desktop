@@ -48,6 +48,7 @@ import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 import { initRecipeRailApps } from './marketplace/recipeRailApps';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { appVariant } from '@pkg/utils/appVariant';
 import Logging from '@pkg/utils/logging';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
@@ -663,6 +664,7 @@ export function initSullaEvents(): void {
   // ─────────────────────────────────────────────────────────────
 
   ipcMainProxy.handle('audio-driver-connect', async() => {
+    if (appVariant.id === 'test') return { ok: false, error: 'Host-global audio driver integration is disabled for the isolated test variant' };
     try {
       const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');
       const client = getAudioDriverClient();
@@ -703,6 +705,7 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('audio-driver-disconnect', async() => {
+    if (appVariant.id === 'test') return { ok: false, error: 'Host-global audio driver integration is disabled for the isolated test variant' };
     try {
       const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');
       getAudioDriverClient().disconnect();
@@ -714,6 +717,7 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('audio-driver-status', async() => {
+    if (appVariant.id === 'test') return { connected: false, installed: false, socketExists: false };
     try {
       const fs = await import('fs');
       const { getAudioDriverClient } = await import('@pkg/agent/services/AudioDriverClient');

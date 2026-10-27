@@ -2,6 +2,7 @@ import os from 'os';
 import path from 'path';
 
 import UnixIntegrationManager from '@pkg/integrations/unixIntegrationManager';
+import { appVariant } from '@pkg/utils/appVariant';
 import paths from '@pkg/utils/paths';
 
 /**
@@ -30,6 +31,11 @@ export interface IntegrationManager {
 }
 
 export function getIntegrationManager(): IntegrationManager {
+  if (appVariant.id === 'test') {
+    const skip = async() => console.log('[Integrations] Test variant: skipping host CLI, Docker plugin and credential-helper integration');
+
+    return { enforce: skip, remove: skip, removeSymlinksOnly: skip };
+  }
   const platform = os.platform();
   const binDir = path.join(paths.resources, platform, 'bin');
   const dockerCLIPluginSource = path.join(paths.resources, platform, 'docker-cli-plugins');
