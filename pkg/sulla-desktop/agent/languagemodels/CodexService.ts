@@ -83,6 +83,10 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * of a turn and no idle process is kept between turns, to keep VM memory low.
  */
 export class CodexService extends BaseLanguageModel {
+  override managesOwnLoop(): boolean {
+    return true;
+  }
+
   // conversationId → codex thread_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
   private readonly recallDedupe = new RecallDedupe();

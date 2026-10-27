@@ -149,6 +149,10 @@ export class CliAgentService extends BaseLanguageModel {
     super({ id: spec.id, model: spec.autoModel, baseUrl: 'local-vm' });
   }
 
+  override managesOwnLoop(): boolean {
+    return true;
+  }
+
   override getProviderName(): string {
     return this.spec.name;
   }

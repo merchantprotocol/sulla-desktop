@@ -97,6 +97,8 @@ export interface StreamCallbacks {
    * Providers with no built-in file tools simply never call it.
    */
   onFilePatch?: (info: import('../util/linePatch').FilePatchInfo) => void;
+  /** Emitted when an external CLI reports that it compacted its own session context. */
+  onContextCompaction?: (event: { provider: string; at: number; source: string }) => void;
   /**
    * Emitted once a tool_use block's matching tool_result has arrived —
    * i.e. after the tool actually ran, not at call time. Carries enough to
@@ -218,6 +220,11 @@ export abstract class BaseLanguageModel {
   protected accountId?:  string;
   protected isInitialized = false;
   protected isHealthy = false;
+
+  /** True when an external CLI owns the agent loop, session, and context window. */
+  managesOwnLoop(): boolean {
+    return false;
+  }
 
   constructor(config: LLMServiceConfig | RemoteProviderConfig) {
     this.config = config;
@@ -995,4 +1002,9 @@ export interface ILLMService {
     signal?:    AbortSignal;
   }): Promise<string | null>;
   healthCheck(): Promise<boolean>;
+}
+
+/** Sulla must not curate history for providers whose external CLI owns the loop. */
+export function isCliManagedLoop(provider: BaseLanguageModel | null | undefined): boolean {
+  return provider?.managesOwnLoop() === true;
 }
