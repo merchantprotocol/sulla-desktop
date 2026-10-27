@@ -118,8 +118,6 @@ export interface IpcMainEvents {
 
   // #region Preferences
   'preferences-open':       (section?: string) => void;
-  'preferences-close':      () => void;
-  'preferences-set-dirty':  (isDirty: boolean) => void;
   /** Open a tab (vault, integrations…) in the main window from Preferences. */
   'preferences/open-main-tab': (mode: string) => void;
   'get-debugging-statuses': () => void;
@@ -127,11 +125,8 @@ export interface IpcMainEvents {
 
   'show-logs': () => void;
 
-  'dashboard-open': () => void;
-
-
-  /** Only for the preferences window */
-  'preferences/load': () => void;
+  /** Open the Docker tab in the main window, optionally on one of its pages. */
+  'dashboard-open': (section?: string) => void;
 
   'help/preferences/open-url': () => void;
 

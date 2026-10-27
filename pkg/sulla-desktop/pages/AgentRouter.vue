@@ -397,6 +397,17 @@ function onRoute(_event: any, args: any) {
   }
 }
 
+// Preferences and Docker each get one tab. Opening one again focuses it and
+// moves it to the requested section.
+function openSingleTab(mode: 'preferences' | 'docker', section?: unknown) {
+  const target = typeof section === 'string' && section ? section : undefined;
+  const existing = browserTabs.find(t => t.mode === mode);
+  const tab = existing ?? createTab('about:blank', { mode, section: target });
+
+  if (existing && target) updateTab(existing.id, { section: target });
+  router.push(`/Browser/${ tab.id }`);
+}
+
 function onAgentCommand(_event: any, args: any) {
   if (!args?.command) return;
 
@@ -480,7 +491,11 @@ function onAgentCommand(_event: any, args: any) {
     const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
     // My Account moved into Preferences › Account & Cloud.
     if (mode === 'account') {
-      ipcRenderer.send('preferences-open', 'account');
+      openSingleTab('preferences', 'account');
+      break;
+    }
+    if (mode === 'preferences' || mode === 'docker') {
+      openSingleTab(mode, args.section);
       break;
     }
     if (mode === 'files' && args.fileId && args.path && supportsDocumentEditor(args.path)) {

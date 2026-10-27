@@ -8,26 +8,18 @@
 -->
 <template>
   <div
-    class="wrapper docker-dashboard-shell"
+    class="wrapper"
     :class="{
       blur,
       dark: isDark,
-      'docker-dashboard-main': activeMainTab,
     }"
   >
-    <rd-nav
-      class="nav"
-      :items="routes"
-      @open-preferences="openPreferences"
-    />
     <the-title ref="title" />
     <main
       ref="body"
-      class="body main-preferences"
+      class="body"
     >
-      <Docker v-if="activeMainTab" />
-      <!-- Non-main routes (sub-pages, dialogs) still use RouterView -->
-      <RouterView v-if="!activeMainTab" />
+      <RouterView />
     </main>
     <status-bar class="status-bar" />
     <!-- The ActionMenu is used by SortableTable for per-row actions. -->
@@ -41,23 +33,17 @@ import { mapState } from 'vuex';
 
 import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
-import Nav from '@pkg/components/Nav.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
-import Docker from '@pkg/pages/Docker.vue';
-import initDockerClient from '@pkg/utils/dockerClient';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { mainRoutes } from '@pkg/window/constants';
 
 export default {
   name:       'App',
   components: {
     StatusBar,
     ActionMenu,
-    rdNav: Nav,
     TheTitle,
-    Docker,
   },
 
   setup() {
@@ -72,26 +58,6 @@ export default {
   },
 
   computed: {
-    routes() {
-      const badges = {
-      };
-
-      return mainRoutes.map((route) => {
-        if (route.route in badges) {
-          return { ...route, error: badges[route.route] };
-        }
-
-        return route;
-      });
-    },
-    paths() {
-      return mainRoutes.map(r => r.route);
-    },
-    activeMainTab() {
-      const currentPath = this.$route.path;
-
-      return this.paths.find(p => currentPath.toLowerCase() === p.toLowerCase()) || null;
-    },
     ...mapState('credentials', ['credentials']),
   },
 
@@ -102,12 +68,10 @@ export default {
 
     this.fetch().catch(ex => console.error(ex));
 
-    initDockerClient();
     ipcRenderer.on('window/blur', (event, blur) => {
       this.blur = blur;
     });
     ipcRenderer.on('backend-locked', (_event, action) => {
-      ipcRenderer.send('preferences-close');
       this.showCreatingSnapshotDialog(action);
     });
     ipcRenderer.on('backend-unlocked', () => {
@@ -118,9 +82,6 @@ export default {
 
     ipcRenderer.on('k8s-check-state', (event, state) => {
       this.$store.dispatch('k8sManager/setK8sState', state);
-    });
-    ipcRenderer.on('route', (event, args) => {
-      this.goToRoute(args);
     });
     ipcRenderer.on('preferences/changed', () => {
       this.$store.dispatch('preferences/fetchPreferences');
@@ -150,25 +111,6 @@ export default {
       await this.$store.dispatch('preferences/fetchPreferences');
     },
 
-    openPreferences() {
-      ipcRenderer.send('preferences-open');
-    },
-    goToRoute(args) {
-      const { path, direction } = args;
-
-      if (path) {
-        this.$router.push({ path });
-
-        return;
-      }
-
-      if (direction) {
-        const dir = (direction === 'forward' ? 1 : -1);
-        const idx = (this.paths.length + this.paths.indexOf(this.$router.currentRoute.path) + dir) % this.paths.length;
-
-        this.$router.push({ path: this.paths[idx] });
-      }
-    },
     showCreatingSnapshotDialog(action) {
       ipcRenderer.invoke(
         'show-snapshots-blocking-dialog',
@@ -196,10 +138,9 @@ export default {
 .wrapper {
   display: grid;
   grid-template:
-    "nav        title"
-    "nav        body"    1fr
-    "status-bar status-bar"
-    / var(--nav-width) 1fr;
+    "title"
+    "body"    1fr
+    "status-bar";
   background-color: var(--body-bg);
   color: var(--body-text);
   width: 100vw;
@@ -212,12 +153,6 @@ export default {
   .header {
     grid-area: header;
     border-bottom: var(--header-border-size) solid var(--header-border);
-  }
-
-  .nav {
-    grid-area: nav;
-    border-right: var(--nav-border-size) solid var(--nav-border);
-    background: var(--nav-bg, var(--body-bg));
   }
 
   .title {
@@ -243,326 +178,6 @@ export default {
     grid-area: status-bar;
     border-top: 1px solid var(--header-border);
     background: var(--status-bar-bg, var(--body-bg));
-  }
-}
-</style>
-<style lang="scss">
-.docker-page-intro {
-  display: none;
-}
-
-.theme-noir .docker-dashboard-shell {
-  --docker-hairline: var(--nx-hair);
-  --docker-steel: var(--nx-accent);
-  --docker-steel-bright: var(--nx-accent-2);
-  --docker-read: var(--nx-read-1);
-  --docker-read-soft: var(--nx-read-3);
-  --docker-read-dim: var(--nx-read-4);
-  grid-template:
-    "nav        title"
-    "nav        body" 1fr
-    "status-bar status-bar"
-    / 230px 1fr;
-  background: radial-gradient(110% 60% at 0% 0%, color-mix(in srgb, var(--nx-accent) 12%, transparent), transparent 55%), var(--nx-surface);
-
-  > .title {
-    min-height: 52px;
-    padding: 10px 34px;
-    border-color: var(--docker-hairline);
-    background: color-mix(in srgb, var(--bg-surface-alt) 28%, transparent);
-
-    .title-top {
-      justify-content: flex-end;
-    }
-
-    h1 {
-      color: var(--docker-read);
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: 24px;
-      font-weight: 600;
-    }
-  }
-
-  &.docker-dashboard-main > .title {
-    h1,
-    .description {
-      display: none;
-    }
-  }
-
-  > .body {
-    padding: 0 34px 30px;
-    background: transparent;
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--nx-hair-strong) 93.75%, transparent) transparent;
-  }
-
-  .main-preferences > div {
-    padding-top: 0;
-    animation: docker-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
-  }
-
-  .docker-page-intro {
-    display: block;
-    flex: none;
-    padding: 28px 0 24px;
-    animation: docker-noir-enter .48s cubic-bezier(.22, 1, .36, 1) both;
-
-    .docker-page-eyebrow {
-      margin-bottom: 6px;
-      color: var(--docker-steel-bright);
-      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      font-size: 10.5px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      margin: 0 0 6px;
-      color: var(--docker-read);
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: 30px;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      line-height: 1.1;
-    }
-
-    p {
-      margin: 0;
-      color: var(--docker-read-soft);
-      font-size: 14px;
-    }
-  }
-
-  .sortable-table-header {
-    margin-bottom: 4px;
-  }
-
-  .fixed-header-actions {
-    align-items: end;
-    padding-bottom: 14px;
-  }
-
-  .search-box,
-  select,
-  input[type="number"] {
-    min-height: 40px;
-    border: 1px solid color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
-    border-radius: 12px;
-    color: var(--docker-read);
-    background: color-mix(in srgb, var(--bg-surface-alt) 60%, transparent);
-    box-shadow: none;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  }
-
-  table.sortable-table {
-    border-collapse: separate;
-    border-spacing: 0 6px;
-    overflow: visible;
-    outline: 0;
-    background: transparent;
-
-    thead th {
-      padding: 0 12px 6px;
-      border: 0;
-      color: var(--docker-read-dim);
-      background: transparent;
-      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    tbody tr.main-row,
-    tbody tr:not(.group-row):not(.no-rows):not(.no-results) {
-      height: 44px;
-      border: 0;
-      color: var(--nx-read-2);
-      background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
-      box-shadow: inset 0 0 0 1px var(--docker-hairline);
-      transition: background .16s, box-shadow .2s, transform .3s cubic-bezier(.22, 1, .36, 1);
-
-      &:hover {
-        background: color-mix(in srgb, var(--nx-accent) 8%, transparent);
-        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nx-accent-2) 20%, transparent);
-        transform: translateX(2px);
-
-        .actions,
-        .action-div {
-          opacity: 1;
-        }
-      }
-
-      .actions,
-      .action-div {
-        opacity: 0.2;
-        transition: opacity .16s;
-      }
-
-      td {
-        padding: 9px 12px;
-        border: 0;
-
-        &:first-child {
-          border-radius: 12px 0 0 12px;
-        }
-
-        &:last-child {
-          border-radius: 0 12px 12px 0;
-        }
-      }
-    }
-
-    tbody tr.group-row {
-      background: transparent;
-
-      .group-tab {
-        color: var(--docker-read-soft);
-        background: transparent;
-        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-        font-size: 11px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-
-        &::after {
-          display: none;
-        }
-      }
-    }
-
-    tbody .no-rows td,
-    tbody .no-results td {
-      padding: 46px 20px;
-      border-radius: 18px;
-      color: var(--docker-read-soft);
-      background: color-mix(in srgb, var(--nx-hair) 31.25%, transparent);
-      box-shadow: inset 0 0 0 1px var(--docker-hairline);
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: 20px;
-    }
-
-    td:nth-child(n+2) code,
-    td:nth-child(n+2) .port-container,
-    td[data-testid*="mountpoint"],
-    td[data-testid*="driver"],
-    td[data-testid*="name"] {
-      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-      font-size: 11.5px;
-    }
-  }
-
-  .paging {
-    color: var(--docker-read-dim);
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 11px;
-  }
-
-  .btn {
-    border-radius: 16px;
-  }
-
-  .btn.role-primary {
-    border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
-    background: linear-gradient(180deg, var(--nx-accent-2), var(--nx-accent));
-    box-shadow: 0 0 16px color-mix(in srgb, var(--nx-accent) 22%, transparent);
-  }
-
-  .containersTable .port-container,
-  .imagesTable td:nth-child(3),
-  .imagesTable td:nth-child(4),
-  .listen-port-p {
-    color: #a8c0dc;
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  }
-
-  .badge-state {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 10px;
-  }
-
-  .troubleshooting-items,
-  .snapshots .cards,
-  .general {
-    gap: 14px;
-  }
-
-  .troubleshooting-items > *,
-  .snapshots .cards > div,
-  .general > div {
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
-    box-shadow: inset 0 0 0 1px var(--docker-hairline);
-  }
-
-  .snapshots .cards > div {
-    overflow: hidden;
-  }
-
-  .snapshots .cards .empty-state-container {
-    min-height: 180px;
-    display: grid;
-    place-items: center;
-  }
-
-  .snapshot-card,
-  .card-container,
-  .scanning-results,
-  .container-info,
-  .volume-files {
-    border-color: var(--docker-hairline);
-    border-radius: 18px;
-    background: color-mix(in srgb, var(--nx-hair) 43.75%, transparent);
-    box-shadow: inset 0 0 0 1px var(--docker-hairline);
-  }
-
-  .troubleshooting-items > * {
-    margin-bottom: 12px;
-    padding: 18px;
-  }
-
-  .troubleshooting .text-xl {
-    color: var(--docker-read);
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .status-bar {
-    border-color: var(--docker-hairline);
-    background: color-mix(in srgb, var(--bg-surface-alt) 75%, transparent);
-  }
-}
-
-.theme-noir-light .docker-dashboard-shell {
-  .containersTable .port-container,
-  .imagesTable td:nth-child(3),
-  .imagesTable td:nth-child(4),
-  .listen-port-p {
-    color: var(--nx-accent);
-  }
-}
-
-@keyframes docker-noir-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-    filter: blur(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .theme-noir .docker-dashboard-shell {
-    .main-preferences > div,
-    .docker-page-intro,
-    table.sortable-table tbody tr {
-      animation: none;
-      transition: none;
-    }
   }
 }
 </style>

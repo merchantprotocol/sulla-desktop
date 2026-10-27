@@ -111,18 +111,6 @@ export function resolvePreferencesSection(name?: string | null): PreferencesSect
   return byLabel?.id ?? LEGACY_SECTION_NAMES[key];
 }
 
-/** The section before or after `current`, wrapping around (Cmd+[ and Cmd+]). */
-export function stepPreferencesSection(
-  current: PreferencesSectionId,
-  direction: 'forward' | 'back',
-): PreferencesSectionId {
-  const ids = PREFERENCES_SECTION_IDS;
-  const index = Math.max(0, ids.indexOf(current));
-  const offset = direction === 'forward' ? 1 : -1;
-
-  return ids[(index + offset + ids.length) % ids.length];
-}
-
 export interface ProposalSeverities {
   reset:   boolean;
   restart: boolean;

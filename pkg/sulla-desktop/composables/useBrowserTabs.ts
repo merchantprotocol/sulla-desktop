@@ -10,7 +10,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
@@ -37,6 +37,8 @@ export interface BrowserTab {
   recipeAppSlug?: string;
   /** Studio sidebar page a Workflows / Use Cases tab is showing. */
   studioSection?: StudioSection;
+  /** Section a Preferences or Docker tab should show next. The tab clears it once it has navigated. */
+  section?: string;
   /**
    * Last time something touched this tab (create, updateTab, URL/title/content
    * change from backend). Used for idle-close of agent tabs. Only populated
@@ -471,9 +473,11 @@ export function useBrowserTabs() {
     files:        'File Manager',
     paper:        'Paper',
     decide:       'Decide',
+    preferences:  'Preferences',
+    docker:       'Docker',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -488,6 +492,7 @@ export function useBrowserTabs() {
       ...(opts?.documentFile ? { documentFile: opts.documentFile } : {}),
       ...(opts?.recipeAppSlug ? { recipeAppSlug: opts.recipeAppSlug } : {}),
       ...(opts?.studioSection ? { studioSection: opts.studioSection } : {}),
+      ...(opts?.section ? { section: opts.section } : {}),
     };
 
     tabs.push(tab);

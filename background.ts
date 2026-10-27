@@ -84,7 +84,6 @@ import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
-import { openPreferences, preferencesSetDirtyFlag } from '@pkg/window/preferences';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
@@ -1409,26 +1408,18 @@ ipcMainProxy.on('images-namespaces-read', (event) => {
   }
 });
 
-// Preferences' "Open" links for snapshots and Docker land on the Docker window.
-ipcMainProxy.on('dashboard-open', () => {
-  window.openDockerDashboard();
+// Renderers outside the main window (tray panel, dialogs) open Preferences or Docker as main-window tabs.
+ipcMainProxy.on('dashboard-open', (_event, section) => {
+  window.openDocker(section);
 });
 
 ipcMainProxy.on('preferences-open', (_event, section) => {
-  openPreferences(section);
+  window.openPreferences(section);
 });
 
-// Preferences is its own window; links like "Open Passwords" open the tab in the main window.
+// Links in Preferences like "Open Passwords" open that tab in the main window.
 ipcMainProxy.on('preferences/open-main-tab', (_event, mode) => {
   sendAgentCommand('open-tab', { mode });
-});
-
-ipcMainProxy.on('preferences-close', () => {
-  window.getWindow('preferences')?.close();
-});
-
-ipcMainProxy.on('preferences-set-dirty', (_event, dirtyFlag) => {
-  preferencesSetDirtyFlag(dirtyFlag);
 });
 
 ipcMainProxy.on('get-debugging-statuses', () => {

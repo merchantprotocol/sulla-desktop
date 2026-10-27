@@ -12,8 +12,9 @@ import type { ConversationHistoryRecord } from '@pkg/agent/database/models/Conve
 import mainEvents from '@pkg/main/mainEvents';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import { openDockerDashboard, openMain, getWindow, openUrlInApp } from '@pkg/window';
-import { openPreferences } from '@pkg/window/preferences';
+import {
+  openDocker, openMain, openPreferences, getWindow, openUrlInApp,
+} from '@pkg/window';
 import { openProcessManager } from '@pkg/window/processManager';
 
 const console = Logging.mainmenu;
@@ -314,8 +315,8 @@ function getFileMenu(): MenuItem {
       },
       { type: 'separator' },
       {
-        label:   'Open Docker Dashboard',
-        click:   openDockerDashboard,
+        label:   'Open Docker',
+        click:   () => openDocker(),
       },
       { type: 'separator' },
       {
@@ -750,8 +751,8 @@ function getWindowsApplicationMenu(): MenuItem[] {
         },
         { type: 'separator' },
         {
-          label: 'Open Docker Dashboard',
-          click: openDockerDashboard,
+          label: 'Open Docker',
+          click: () => openDocker(),
         },
         { type: 'separator' },
         {

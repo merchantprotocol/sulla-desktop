@@ -11,7 +11,7 @@
  * store and command server.
  *
  * Changes that don't restart anything are saved as soon as they're made.
- * Changes that restart Docker or reset the virtual machine are held, and the window
+ * Changes that restart Docker or reset the virtual machine are held, and the tab
  * shows a bar to apply or discard them.
  */
 import _ from 'lodash';
@@ -24,14 +24,10 @@ import { decideApply } from '@pkg/utils/preferencesModel';
 
 type Held = 'restart' | 'reset';
 
-// One Preferences window per renderer, so this state is shared by every section.
+// One Preferences tab per window, so this state is shared by every section.
 const held = ref<Held | null>(null);
 const error = ref('');
 const applying = ref(false);
-
-function markDirty(dirty: boolean) {
-  ipcRenderer.send('preferences-set-dirty', dirty);
-}
 
 export function useEngineSettings() {
   const store = useStore();
@@ -73,7 +69,6 @@ export function useEngineSettings() {
     }
     // Restarting changes are held. Anything changed while they're held joins them.
     held.value = decision === 'reset' || held.value === 'reset' ? 'reset' : 'restart';
-    markDirty(true);
   }
 
   function set(path: string, value: unknown): Promise<void> {
@@ -103,7 +98,6 @@ export function useEngineSettings() {
     try {
       await store.dispatch('preferences/commitPreferences');
       held.value = null;
-      markDirty(false);
     } catch (err) {
       error.value = `Sulla could not save these settings: ${ err instanceof Error ? err.message : String(err) }`;
     } finally {
@@ -115,7 +109,6 @@ export function useEngineSettings() {
     await store.dispatch('preferences/setPreferences', store.state.preferences.initialPreferences);
     held.value = null;
     error.value = '';
-    markDirty(false);
   }
 
   return {
