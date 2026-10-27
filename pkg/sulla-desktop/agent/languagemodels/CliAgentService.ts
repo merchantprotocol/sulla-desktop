@@ -14,7 +14,7 @@ import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type Stre
 import { buildRemoteKillCommand, buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild, waitForKillHelper } from './cliFaultRecovery';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
-import { redisClient } from '../database/RedisClient';
+import { providerSessionStore } from './providerSessionStore';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { recordCliUsage } from '../usage/providerUsage';
 
@@ -25,7 +25,6 @@ import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
 const MCP_SESSION_TTL_MS = 4 * 60 * 60_000 + 30 * 60_000;
-const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const STALL_TIMEOUT_MS = 15 * 60_000;
 
 export interface CliAgentEventResult {
@@ -236,7 +235,7 @@ export class CliAgentService extends BaseLanguageModel {
     const cached = this.sessions.get(conversationId);
     if (cached) return cached;
     try {
-      const stored = await redisClient.get(`${ this.spec.id }_session:${ conversationId }`);
+      const stored = await providerSessionStore.get(`${ this.spec.id }_session:${ conversationId }`);
       if (stored) this.sessions.set(conversationId, stored);
       return stored || undefined;
     } catch { return undefined }
@@ -244,12 +243,12 @@ export class CliAgentService extends BaseLanguageModel {
 
   private async setSession(conversationId: string, sessionId: string): Promise<void> {
     this.sessions.set(conversationId, sessionId);
-    try { await redisClient.set(`${ this.spec.id }_session:${ conversationId }`, sessionId, SESSION_TTL_SECONDS) } catch { /* memory-only fallback */ }
+    try { await providerSessionStore.set(`${ this.spec.id }_session:${ conversationId }`, sessionId) } catch { /* memory-only fallback */ }
   }
 
   private async deleteSession(conversationId: string): Promise<void> {
     this.sessions.delete(conversationId);
-    try { await redisClient.del(`${ this.spec.id }_session:${ conversationId }`) } catch { /* non-fatal */ }
+    try { await providerSessionStore.delete(`${ this.spec.id }_session:${ conversationId }`) } catch { /* non-fatal */ }
   }
 
   private registerMcpSession(state?: BaseThreadState): RegisteredSession | null {

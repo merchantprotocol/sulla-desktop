@@ -57,13 +57,15 @@ jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => ({
   getSullaFilesMountManager: () => ({ guestMountAvailable: () => mount.available }),
 }));
 jest.unstable_mockModule('@pkg/agent/services/GuestRuntimeTransport', () => stubs(
-  'inspectGuestWorkspaceForCleanup removeGuestPathAtomic seedGitWorktreeIntoGuest chownGuestPath', {
+  'inspectGuestWorkspaceForCleanup removeGuestPathAtomic seedGitWorktreeIntoGuest chownGuestPath chownGuestPaths', {
     GUEST_AGENT_DOCS_ROOT:       '/mnt/data/sulla/agent-docs',
     GUEST_AGENT_WORKSPACES_ROOT: '/mnt/data/sulla/agent-workspaces',
     createGuestRuntimeDirectory: () => '/mnt/data/sulla/agent-workspaces/job-1',
     seedDirectoryIntoGuest:      () => Promise.resolve('/mnt/data/sulla/agent-docs/job-1'),
+    seedContentAddressedDirectoryIntoGuest: () => Promise.resolve('/mnt/data/sulla/agent-docs/shared'),
     GUEST_CONVERSATIONS_ROOT:    '/mnt/data/sulla/conversations',
     ensureGuestRuntimeDirectory: (parent: string, name: string) => Promise.resolve(`${ parent }/${ name }`),
+    ensureGuestRuntimeDirectories: (parent: string, names: string[]) => Promise.resolve(names.map(name => `${ parent }/${ name }`)),
     getGuestRuntimeIdentity:     () => ({ uid: 1000, gid: 1000 }),
   }));
 jest.unstable_mockModule('@pkg/agent/services/ContainerProviderFileTransport', () => ({

@@ -27,6 +27,9 @@ import { ConversationKeywordsModel } from '../database/models/ConversationKeywor
 import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getAgentOverrideService, getPrimaryService, getSubconsciousService } from '../languagemodels';
+import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
+import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
 import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -204,6 +207,21 @@ function hasAnalyzableUserMessage(state: BaseThreadState): boolean {
   });
 }
 
+/**
+ * Same provider resolution as BaseNode.resolveLoopProvider. A failed lookup
+ * counts as not CLI-managed, which keeps Sulla's own context management on.
+ */
+async function isCliManagedThread(state: BaseThreadState): Promise<boolean> {
+  try {
+    const meta = state.metadata as any;
+    const provider = await getAgentOverrideService(meta.agent) ??
+      (resolveModelSlot(meta) === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
+    return isCliManagedLoop(provider);
+  } catch {
+    return false;
+  }
+}
+
 export async function runSubconsciousMiddleware(
   state: BaseThreadState,
   options: SubconsciousMiddlewareOptions,
@@ -262,7 +280,10 @@ export async function runSubconsciousMiddleware(
   // single per-thread worker snapshots the prefix, and its result is applied
   // at the next pre-turn boundary. Ten newly appended messages are required
   // before another run, preventing threshold-hovering threads from re-firing.
-  const shouldSummarize = state.messages.length > TRIGGER_WINDOW_SIZE;
+  // CLI-managed loops (Claude Code, Codex, other CLIs) own their session and
+  // context window, so Sulla never summarizes or digests their history.
+  const cliManagedLoop = await isCliManagedThread(state);
+  const shouldSummarize = !cliManagedLoop && state.messages.length > TRIGGER_WINDOW_SIZE;
 
   // 1b. Tool-Result Digester — triggered by compactable TOKEN MASS, not
   //     message count (background: produces a pending batch). Only stale tool results
@@ -271,7 +292,7 @@ export async function runSubconsciousMiddleware(
   //     DIGEST_TRIGGER_TOKEN_MASS for why this fires in batches.
   const digestPlan = collectDigestibleToolResults(state);
   const backgroundKind = shouldSummarize ? 'summarizer' :
-    digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS ? 'digester' : null;
+    !cliManagedLoop && digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS ? 'digester' : null;
   const canLaunchBackground = !background.inFlight &&
     (!background.hasRun || background.growthSinceRun >= BACKGROUND_RETRIGGER_GROWTH);
   if (backgroundKind && canLaunchBackground) {
