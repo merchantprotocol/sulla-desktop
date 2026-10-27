@@ -112,6 +112,16 @@ const BACKGROUND_HOLD_SETTLE_MS = 60_000;
  */
 const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_HOLD_MS + 30 * 60_000;
 
+/** Idle primary-chat CLI standbys are reaped before their auth/MCP leases age. */
+const WARM_STANDBY_TTL_MS = 10 * 60_000;
+
+const CLAUDE_QUIET_ENV = {
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  DISABLE_AUTOUPDATER: '1',
+  DISABLE_TELEMETRY: '1',
+  DISABLE_ERROR_REPORTING: '1',
+} as const;
+
 /**
  * How long a turn stays open after `result` waiting for Claude to start the
  * follow-up turn for a steer it hasn't consumed yet (observed: immediate).
@@ -126,6 +136,16 @@ const STEER_FOLLOWUP_GRACE_MS = 30_000;
  * runs it.
  */
 const backgroundHolds = new Map<string, () => void>();
+
+interface ClaudeStandby {
+  key: string;
+  process: childProcess.ChildProcessWithoutNullStreams;
+  context: ProviderTransportContext;
+  session: RegisteredSession;
+  systemPromptFile: ProviderFileRef;
+  timer: NodeJS.Timeout;
+}
+const warmStandbys = new Map<string, ClaudeStandby>();
 
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
@@ -154,6 +174,43 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * part of this tier; it travels only in the synthetic assistant message.
    */
   private readonly STABLE_CTX_KEY = 'claude_code_stable_ctx_hash';
+
+  private stopStandby(convId: string): void {
+    const standby = warmStandbys.get(convId);
+    if (!standby) return;
+    warmStandbys.delete(convId);
+    clearTimeout(standby.timer);
+    standby.session.revoke();
+    standby.systemPromptFile.dispose();
+    void getProviderExecutionTransport().terminate({ context: standby.context, process: standby.process, signal: 'TERM' }).catch(() => {});
+  }
+
+  private async warmNextTurn(p: { convId: string; sessionId: string; state: BaseThreadState; systemPrompt: string; disallowedTools: string; key: string }): Promise<void> {
+    const transport = getProviderExecutionTransport();
+    // A background hold keeps the previous process (and its session lock).
+    if (transport.runtime !== 'container' || warmStandbys.has(p.convId) || backgroundHolds.has(p.convId)) return;
+    const host = getMCPServerHost();
+    if (!host.running) return;
+    const session = host.registerUnboundSession(p.state, WARM_STANDBY_TTL_MS);
+    try {
+      const context = await transport.context({ provider: 'claude-code', conversationId: p.convId, state: p.state, providerSessionId: p.sessionId, toolSessionId: session.id });
+      const providerConfig = requireBrokeredContainerAuth(context);
+      const toolConfig = requireContainerToolConfig(context);
+      if (!toolConfig.claudeConfigPath) throw new Error('standby has no MCP config');
+      const systemPromptFile = await transport.files.write({ context, purpose: 'system-prompt', suggestedName: `claude-system-${ crypto.randomUUID() }.md`, data: p.systemPrompt });
+      const command = this.buildProviderCommand({ existingSession: p.sessionId, mcpConfigPath: toolConfig.claudeConfigPath, disallowedTools: p.disallowedTools, systemPromptPath: systemPromptFile.path, environment: { ...providerConfig.environment, ...toolConfig.environment } });
+      const process = transport.spawn({ context, providerCommand: command });
+      process.on('error', () => this.stopStandby(p.convId));
+      process.on('close', () => this.stopStandby(p.convId));
+      const timer = setTimeout(() => this.stopStandby(p.convId), WARM_STANDBY_TTL_MS);
+      timer.unref?.();
+      warmStandbys.set(p.convId, { key: p.key, process, context, session, systemPromptFile, timer });
+      log.log(`[ClaudeCodeService] warmed CLI standby for convId=${ p.convId }`);
+    } catch (error) {
+      session.revoke();
+      log.warn(`[ClaudeCodeService] failed to warm standby: ${ (error as Error).message }`);
+    }
+  }
 
   private async getSession(convId: string): Promise<string | undefined> {
     const cached = this.sessions.get(convId);
@@ -250,6 +307,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
+    for (const [name, value] of Object.entries(CLAUDE_QUIET_ENV)) envAssignments.push(`${ name }=${ value }`);
     if (p.toolSessionId) envAssignments.push(`SULLA_TOOL_SESSION=${ shq(p.toolSessionId) }`);
     if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
     if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
@@ -326,7 +384,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
 
-    return { executable: 'claude', args, env: p.environment ? { ...p.environment } : undefined };
+    return { executable: 'claude', args, env: { ...p.environment, ...CLAUDE_QUIET_ENV } };
   }
 
   override getContextWindow(): number {
@@ -788,7 +846,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       }
     }
 
-    const transportContext = mcpSession
+    let transportContext = mcpSession
       ? await transport.context({
         provider:          'claude-code',
         conversationId:    convId,
@@ -798,8 +856,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       })
       : initialTransportContext;
     markPhase('toolContext');
-    const providerConfig = requireBrokeredContainerAuth(transportContext);
-    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest'
+    let providerConfig = requireBrokeredContainerAuth(transportContext);
+    let { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest'
       ? await this.resolveClaudeCreds(convId, options.state)
       : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
     markPhase('auth');
@@ -808,7 +866,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       releaseLease(authLease);
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
-    const toolConfig = mcpSession && transportContext.runtime === 'container'
+    let toolConfig = mcpSession && transportContext.runtime === 'container'
       ? requireContainerToolConfig(transportContext)
       : undefined;
     if (mcpSession && transportContext.runtime === 'container') {
@@ -832,17 +890,18 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
     // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
-    const systemPromptFile: ProviderFileRef = await transport.files.write({
+    const systemPrompt = systemPromptFromMessages(messages) || await this.fallbackSystemPrompt();
+    let systemPromptFile: ProviderFileRef = await transport.files.write({
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
-      data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+      data:          systemPrompt,
     });
-    const systemPromptPath = systemPromptFile.path;
+    let systemPromptPath = systemPromptFile.path;
     markPhase('systemPromptFile');
     const pidFile = newRemotePidFile();
     const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, disallowedTools, systemPromptPath, pidFile });
-    const providerCommand = this.buildProviderCommand({
+    let providerCommand = this.buildProviderCommand({
       existingSession,
       mcpConfigPath,
       disallowedTools,
@@ -870,16 +929,46 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       throw error;
     }
 
+    const makeStandbyKey = (session: string | undefined) => crypto.createHash('sha256').update(JSON.stringify({
+      session, model: this.getModel(),
+      systemPrompt: crypto.createHash('sha256').update(systemPrompt).digest('hex'),
+      // Tool-session env is intentionally omitted: the standby's unbound token
+      // is the value the next turn adopts. Provider auth/capability env remains
+      // part of the identity and invalidates the standby when it changes.
+      disallowedTools, environment: { ...providerConfig?.environment, ...CLAUDE_QUIET_ENV }, cwd: providerCommand.cwd,
+      container: transportContext.workspaceRoot ?? transportContext.runtime,
+    })).digest('hex');
+    const standbyKey = makeStandbyKey(existingSession);
+    let warm = false;
+    let proc: childProcess.ChildProcessWithoutNullStreams;
+    const standby = warmStandbys.get(convId);
+    if (standby && standby.key === standbyKey && existingSession && options.state && getMCPServerHost().rebindSession(standby.session.id, options.state, PROC_MCP_SESSION_TTL_MS)) {
+      warmStandbys.delete(convId);
+      clearTimeout(standby.timer);
+      // Drop only this turn's freshly minted MCP session; attachments staged
+      // for the prompt must survive.
+      if (mcpSession) { try { mcpSession.revoke() } catch { /* ignore */ } }
+      mcpConfigFile?.dispose();
+      mcpConfigFile = null;
+      systemPromptFile.dispose();
+      releaseLease(authLease);
+      transportContext = standby.context;
+      mcpSession = standby.session;
+      systemPromptFile = standby.systemPromptFile;
+      systemPromptPath = systemPromptFile.path;
+      proc = standby.process;
+      warm = true;
+    } else {
+      if (standby) this.stopStandby(convId);
+      proc = transport.spawn({
+        context: transportContext,
+        providerCommand,
+        ...(transportContext.runtime === 'guest'
+          ? { guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } } }
+          : {}),
+      });
+    }
     const setupDoneAt = Date.now();
-    const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
-      context: transportContext,
-      providerCommand,
-      ...(transportContext.runtime === 'guest'
-        ? {
-          guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
-        }
-        : {}),
-    });
     proc.once('exit', () => systemPromptFile.dispose());
     bindLeaseToProcess(proc, authLease);
 
@@ -1046,7 +1135,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           phaseLogged = true;
           const d = (a: number, b: number) => a && b ? b - a : -1;
           const setupParts = Object.entries(runPhaseMarks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
-          perf.log(`[RunPhase] provider=claude-code convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTokenAt) } totalToTextMs=${ d(runPhaseStart, firstTokenAt) }`);
+          perf.log(`[RunPhase] provider=claude-code convId=${ convId } warm=${ warm ? 'standby' : 'cold' } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTokenAt) } totalToTextMs=${ d(runPhaseStart, firstTokenAt) }`);
         };
         const noteToolStart = (id?: string, name?: string, input?: unknown) => {
           if (!id || toolStarts.has(id)) return;
@@ -1761,6 +1850,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           }
 
           log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
+          if (capturedSessionId && options.state && !(options.state.metadata as any)?.isSubAgent) {
+            void this.warmNextTurn({ convId, sessionId: capturedSessionId, state: options.state, systemPrompt, disallowedTools, key: makeStandbyKey(capturedSessionId) });
+          }
           resolve({ text: textCollected, usage: lastUsage });
         };
         proc.on('close', onProcClose);
