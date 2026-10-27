@@ -25,7 +25,6 @@ import { filesToolManifests } from './files/manifests';
 import { gdriveToolManifests } from './gdrive/manifests';
 import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
-import { kubectlToolManifests } from './kubectl/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
 import { metaToolManifests } from './meta/manifests';
@@ -61,7 +60,6 @@ toolRegistry.registerManifests([
   ...gdriveToolManifests,
   ...githubToolManifests,
   ...integrationsToolManifests,
-  ...kubectlToolManifests,
   ...marketplaceToolManifests,
   ...metaToolManifests,
   ...mobileToolManifests,

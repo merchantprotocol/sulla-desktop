@@ -186,9 +186,6 @@ github/trigger_workflow_run — Manually trigger a GitHub Actions workflow via w
 github/update_file — Update an existing file in a GitHub repository. Automatically fetches the current file SHA required for updates.
 github/update_issue — Update an existing GitHub issue — edit title, body, labels, assignees, or state.
 github/update_pr — Edit a pull request — update its title, body, base branch, or open/closed state.
-kubectl/apply — Apply a Kubernetes manifest file.
-kubectl/delete — Delete Kubernetes resources.
-kubectl/describe — Describe Kubernetes resources.
 ledger/scoreboard — Deterministic outcome-ledger scoreboard (zero LLM): outcomes shipped in the window, WORKING items and how many are staged at a gate, unilateral actions logged in AUDIT.md, and a staleness flag against the 7-day rule. The heartbeat reads this each cycle; the human reads it as the trust-ratchet evidence.
 marketplace/diff — Show files only in the marketplace, only local, or differing between your installed copy and the latest marketplace version. Read-only.
 marketplace/download — Install a marketplace listing using the same database installer as the Use Cases tab. A package (use case) installs every embedded item in one all-or-nothing transaction.

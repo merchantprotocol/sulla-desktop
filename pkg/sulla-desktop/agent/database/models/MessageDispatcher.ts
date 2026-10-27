@@ -1173,10 +1173,6 @@ const TOOL_VERB_MAP: Record<string, string> = {
   docker_stop:                 'Stopping container',
   docker_rm:                   'Removing container',
   docker_images:               'Listing images',
-  // Kubernetes
-  kubectl_apply:               'Applying manifest',
-  kubectl_delete:              'Deleting resource',
-  kubectl_describe:            'Describing resource',
   // Database
   pg_query:                    'Querying',
   pg_queryall:                 'Querying',

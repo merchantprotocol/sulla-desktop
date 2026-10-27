@@ -788,39 +788,6 @@ Use `notify/user` with `targets:["mobile"]`. Check `mobile/list_devices` first w
 
 ---
 
-## Kubernetes (k3s)
-
-
-### "What's running in my cluster?"
-```bash
-```
-
-### "Show me logs from pod X"
-```bash
-```
-
-### "Deploy this manifest"
-Dry-run it on the server first, then apply it. Report the diff in your reply:
-```bash
-sulla kubectl/apply '{"file":"...","dryRun":"server"}'
-sulla kubectl/apply '{"file":"..."}'
-```
-
-### "Why is my service broken?"
-```bash
-sulla kubectl/describe '{"resource":"service","name":"X","namespace":"default"}'
-```
-
-### "Delete this pod"
-Confirm with the user first. **Never** use `force:true` or `gracePeriod:0` unless the user has explicitly asked for it.
-
-### "Reset Kubernetes"
-
-### Hard rule
-Never touch `kube-system`, `kube-public`, `kube-node-lease`, or the namespaces Sulla manages (cert-manager, spinkube, traefik) without explicit, repeated confirmation from the user. You can break the desktop app that way.
-
----
-
 ## Projects in Files
 
 Projects live in Sulla Files under `Projects/<project-slug>/`. Each project folder has PROJECT.md (goal, status, owner agent, links) and TASKS.md (a markdown checklist: `- [ ] task — owner — note`; tick `- [x]` when done). Put plans, specs and notes in that folder too. Read and edit them with the Files tools (files_where, files_get, files_put); search projects with Files search. Create a new project folder only when the work is a real multi-session goal and no existing project fits. Never keep a separate task list anywhere else.
