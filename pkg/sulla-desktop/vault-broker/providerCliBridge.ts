@@ -7,8 +7,6 @@
 
 import crypto from 'node:crypto';
 import http from 'node:http';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 
 import { requireConfiguredCredentialBroker } from './index';
 
@@ -142,6 +140,8 @@ export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
    * return or expose credential material; failures should be handled inside.
    */
   beforeUpstream?(identity: Readonly<ProviderCliBridgeIdentity>): Promise<void>;
+  /** Emit one credential-free timing record into Desktop's perf log. */
+  logTiming?(message: string): void;
   /** Abort owned by the job/process lifecycle. Aborting it revokes the lease and active stream. */
   signal?:         AbortSignal;
   broker?:         Pick<LocalVaultBrokerClient, 'executeStream' | 'requestFor'>;
@@ -237,7 +237,7 @@ function responseHeaders(headers: Headers): Record<string, string> {
   return Object.fromEntries([...headers.entries()].filter(([name]) => !BLOCKED_RESPONSE_HEADERS.has(name.toLowerCase())));
 }
 
-async function readJsonBody(request: http.IncomingMessage, signal: AbortSignal): Promise<unknown> {
+async function readJsonBody(request: http.IncomingMessage, signal: AbortSignal): Promise<{ body: unknown; bytes: number }> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of request) {
@@ -249,7 +249,7 @@ async function readJsonBody(request: http.IncomingMessage, signal: AbortSignal):
   }
   if (signal.aborted) throw new Error('Provider CLI request was aborted');
   if (!chunks.length) throw new Error('Provider CLI request body is required');
-  return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown;
+  return { body: JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown, bytes: total };
 }
 
 function assertAdvertisedHost(raw: string): string {
@@ -303,7 +303,28 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
   options.signal?.addEventListener('abort', revoke, { once: true });
   if (options.signal?.aborted) revoke();
 
+  let beforeUpstreamCache: { expiresAt: number; promise: Promise<void> } | undefined;
+  const runBeforeUpstream = (): Promise<void> => {
+    if (!options.beforeUpstream) return Promise.resolve();
+    const now = Date.now();
+    if (beforeUpstreamCache && beforeUpstreamCache.expiresAt > now) return beforeUpstreamCache.promise;
+    const promise = options.beforeUpstream(identity);
+    beforeUpstreamCache = { expiresAt: now + 5_000, promise };
+    promise.catch(() => { if (beforeUpstreamCache?.promise === promise) beforeUpstreamCache = undefined });
+    return promise;
+  };
+
   const server = http.createServer(async(request, response) => {
+    const startedAt = performance.now();
+    let bodyBytes = 0;
+    let requestBodyReadMs = 0;
+    let liveContextMs = 0;
+    let beforeUpstreamMs = 0;
+    let upstreamHeadersMs = 0;
+    let firstChunkMs = 0;
+    let status = 500;
+    let timingPath = 'unknown';
+    response.socket?.setNoDelay(true);
     const requestAbort = new AbortController();
     const abort = () => {
       requestAbort.abort();
@@ -320,95 +341,137 @@ export async function createProviderCliBridge(options: ProviderCliBridgeOptions)
 
     try {
       if (lifetime.signal.aborted || !safeEqual(requestCapability(request), capability)) {
-        sendError(response, 401, 'invalid_bridge_capability');
+        status = 401;
+        sendError(response, status, 'invalid_bridge_capability');
         return;
       }
       const incoming = new URL(request.url ?? '/', 'http://provider-bridge.invalid');
       if (request.method !== 'POST' || incoming.hash || !incoming.pathname.startsWith(scopedPrefix)) {
-        sendError(response, 404, 'unsupported_provider_route');
+        status = 404;
+        sendError(response, status, 'unsupported_provider_route');
         return;
       }
       const incomingPath = incoming.pathname.slice(scopedPrefix.length);
       const upstreamPath = definition.routes.get(incomingPath);
+      timingPath = incomingPath;
       const upstreamSearch = definition.cli === 'claude-code' && incoming.search === '?beta=true'
         ? incoming.search
         : '';
       if (!upstreamPath || (incoming.search && !upstreamSearch)) {
-        sendError(response, 404, 'unsupported_provider_route');
+        status = 404;
+        sendError(response, status, 'unsupported_provider_route');
         return;
       }
+      const initialContextStartedAt = performance.now();
       let context: ToolExecutionContext | undefined;
       try {
         context = await liveContext(options, identity);
       } catch {
+        liveContextMs = performance.now() - initialContextStartedAt;
         revoke();
-        sendError(response, 403, 'provider_bridge_identity_changed');
+        status = 403;
+        sendError(response, status, 'provider_bridge_identity_changed');
         return;
       }
+      liveContextMs = performance.now() - initialContextStartedAt;
       if (!context) {
         revoke();
-        sendError(response, 403, 'provider_bridge_revoked');
+        status = 403;
+        sendError(response, status, 'provider_bridge_revoked');
         return;
       }
-      const body = await readJsonBody(request, requestAbort.signal);
+      const bodyStartedAt = performance.now();
+      const bodyResult = await readJsonBody(request, requestAbort.signal);
+      requestBodyReadMs = performance.now() - bodyStartedAt;
+      bodyBytes = bodyResult.bytes;
+
+      const contextStartedAt = performance.now();
       try {
         context = await liveContext(options, identity);
       } catch {
+        liveContextMs += performance.now() - contextStartedAt;
         revoke();
-        sendError(response, 403, 'provider_bridge_identity_changed');
+        status = 403;
+        sendError(response, status, 'provider_bridge_identity_changed');
         return;
       }
+      liveContextMs += performance.now() - contextStartedAt;
       if (!context) {
         revoke();
-        sendError(response, 403, 'provider_bridge_revoked');
+        status = 403;
+        sendError(response, status, 'provider_bridge_revoked');
         return;
       }
-      if (!modelAllowed(body, identity.models)) {
-        sendError(response, 403, 'provider_model_denied');
+      if (!modelAllowed(bodyResult.body, identity.models)) {
+        status = 403;
+        sendError(response, status, 'provider_model_denied');
         return;
       }
       const headers = requestHeaders(request.headers);
       if (definition.integration === 'codex') {
-        // These are routing metadata, not credentials. Bind them to trusted
-        // lifecycle identity instead of accepting container-selected values.
         headers.originator = 'codex_cli_rs';
         headers['session-id'] = context.thread_id!;
         headers['thread-id'] = context.thread_id!;
       }
-      await options.beforeUpstream?.(identity);
+      const upkeepStartedAt = performance.now();
+      await runBeforeUpstream();
+      beforeUpstreamMs = performance.now() - upkeepStartedAt;
+      const upstreamStartedAt = performance.now();
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
         ref:          { integrationId: definition.integration, accountId: options.accountId },
         url:          `${ definition.origin }${ upstreamPath }${ upstreamSearch }`,
         method:       'POST',
         headers,
-        body,
+        body:         bodyResult.body,
         injections:   [...definition.injections],
         responseType: 'stream',
       }), requestAbort.signal);
+      upstreamHeadersMs = performance.now() - upstreamStartedAt;
+      status = upstream.status;
       if (upstream.status >= 400) {
-        // The CLI often reports these as a bare stream/send failure, so record the
-        // status here. Status and route only: never headers or body.
         console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
       }
       response.writeHead(upstream.status, responseHeaders(upstream.headers));
-      if (upstream.body) await pipeline(Readable.fromWeb(upstream.body as any), response);
-      else response.end();
+      response.flushHeaders();
+      if (upstream.body) {
+        // Forward each chunk the moment it arrives (no pipeline buffering). A
+        // client that disconnects mid-stream must not leave us waiting on a
+        // drain that never comes, so back-pressure also settles on close.
+        const reader = upstream.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || response.destroyed) break;
+            if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
+            if (!response.write(value)) {
+              await new Promise<void>(resolve => {
+                const settle = () => { response.off('drain', settle); response.off('close', settle); resolve() };
+                response.once('drain', settle);
+                response.once('close', settle);
+              });
+            }
+          }
+        } finally {
+          if (response.destroyed) await reader.cancel().catch(() => {});
+        }
+      }
+      response.end();
     } catch (error) {
-      // Log only the error class/code: never the request body, headers, or any
-      // credential/token material that could be flowing through this bridge.
       const errorClass = error instanceof Error ? error.constructor.name : typeof error;
       const errorCode = (error as NodeJS.ErrnoException | undefined)?.code;
       console.error(`[ProviderCliBridge] request failed: ${ errorClass }${ errorCode ? ` (${ errorCode })` : '' }`);
-      // Reply before destroying the request/socket: once abort() tears the
-      // socket down, writeHead can no longer send a body for the caller to read.
-      if (!response.headersSent) sendError(response, 502, 'provider_bridge_failed');
+      if (!response.headersSent) {
+        status = 502;
+        sendError(response, status, 'provider_bridge_failed');
+      }
       abort();
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
+      const ms = (value: number) => value.toFixed(1);
+      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }`);
     }
   });
-
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
