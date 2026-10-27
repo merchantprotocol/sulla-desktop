@@ -23,9 +23,10 @@
  *   system/init                      (autonomous follow-up turn begins)
  *   assistant …                      result
  *
- * Nothing in Sulla's AgentGraph ever saw that second half: the warm pool
- * paused a parked process's stdout, reaped it (killing the task) after five
- * idle minutes, and discarded a buffered `result` as stale on the next claim.
+ * That second half happens after Sulla's turn has returned. ClaudeCodeService
+ * keeps such a process alive (stdin open) only while it still owns live
+ * background tasks, keeps reading its output, and closes stdin once they are
+ * done. Closing stdin earlier makes the CLI stop the tasks.
  *
  * This module owns the two halves of the fix:
  *   - ClaudeBackgroundTaskTracker — per-process stream observer: which tasks

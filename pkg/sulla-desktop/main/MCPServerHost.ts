@@ -143,10 +143,11 @@ export class MCPServerHost {
   }
 
   /**
-   * Re-point a session token at a new graph state and refresh its TTL. Used by
-   * the warm pools: one long-lived process keeps a stable token (baked into its
-   * env and MCP config at spawn), and each turn re-binds it to that turn's live
-   * state so sulla-native tools mutate the correct (current) graph.
+   * Re-point a session token at a new graph state and refresh its TTL. Used
+   * when one process outlives a single graph run (Codex MCP sessions, agent
+   * containers): it keeps a stable token (baked into its env and MCP config at
+   * spawn), and each run re-binds it to that run's live state so sulla-native
+   * tools mutate the correct (current) graph.
    *
    * A token that was reaped while its process sat idle is revived under the
    * same id — the process cannot pick up a replacement, so minting a new one

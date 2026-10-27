@@ -14,7 +14,6 @@ import {
   getProviderExecutionTransport,
   requireBrokeredContainerAuth,
   requireContainerToolConfig,
-  type ProviderExecutionTransport,
   type ProviderFileRef,
   type ProviderTransportContext,
 } from './ProviderExecutionTransport';
@@ -23,7 +22,6 @@ import {
   ClaudeBackgroundTaskTracker,
   formatBackgroundNotices,
   wakeTargetFromState,
-  type WakeTarget,
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { disallowedToolsFor } from './claudeToolPolicy';
@@ -70,6 +68,18 @@ const perf = Logging.perf;
  *   - Session-lock collisions (another spawn holds the same session): drop
  *     the cached id and retry once with a fresh session (full history).
  *
+ * Process lifetime — one `claude -p` per turn:
+ *   - The process is spawned when a turn starts and exits when it ends
+ *     (stdin is closed at the turn's `result`). Nothing is booted ahead of a
+ *     turn and no idle process is kept between turns: each idle process
+ *     held ~150 MB of VM memory. Continuity comes from --resume, not from a
+ *     live process.
+ *   - One exception: if the model left background work running (Bash
+ *     run_in_background, Monitor), closing stdin would make the CLI stop it.
+ *     That process alone stays up, stdin open, until the work finishes and
+ *     the CLI has run its follow-up turn, then exits. The turn itself has
+ *     already returned. See holdForBackground in runClaude.
+ *
  * OAuth token refresh is the CLI's job. We only pass CLAUDE_CODE_OAUTH_TOKEN
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
@@ -80,47 +90,25 @@ const perf = Logging.perf;
 // Task/Agent are disallowed on every spawn — delegation goes through
 // `sulla agents/spawn_agent`, whose completions durably wake the parent graph.
 
-/** Idle timeout for a speculatively-booted process that is never claimed. */
-const PREWARM_IDLE_REAP_MS = 60_000;
+/**
+ * Ceiling on how long a process is kept alive after its turn because it still
+ * owns background tasks (Bash run_in_background, Monitor). Past this the
+ * process is stopped, which stops those tasks.
+ */
+const BACKGROUND_TASK_MAX_HOLD_MS = 4 * 60 * 60_000;
 
 /**
- * Idle timeout for a warm-pool process between turns before it's reaped.
- * Jonathon's rule: an agent idle for 30+ minutes is killed once more than
- * WARM_POOL_MIN_DEFAULT processes are idle.
+ * Once a held process reports no live background tasks, how long to wait for
+ * the CLI to start its follow-up turn before closing stdin anyway.
  */
-const WARM_IDLE_REAP_MS = 30 * 60_000;
-
-/**
- * Bounds on how many idle (prewarmed or parked) `claude` processes are kept
- * warm across all conversations. Idle reaps never take the pool below MIN;
- * parking or prewarming past MAX retires the longest-idle one. Overridable
- * via the claudeCodeWarmPoolMin / claudeCodeWarmPoolMax settings.
- */
-const WARM_POOL_MIN_DEFAULT = 3;
-const WARM_POOL_MAX_DEFAULT = 5;
-
-/**
- * Ceiling on how long a parked process is kept alive past WARM_IDLE_REAP_MS
- * because it still owns background tasks (Bash run_in_background, Monitor)
- * or an undelivered completion. Reaping kills those tasks, so the normal idle
- * reap is deferred while they run — but never forever.
- */
-const BACKGROUND_TASK_MAX_PARK_MS = 4 * 60 * 60_000;
-
-/**
- * How long a turn waits for a parked process to finish an autonomous
- * follow-up turn (the CLI reacting to a background completion) before giving
- * up on that process and cold-spawning instead.
- */
-const AUTONOMOUS_TURN_WAIT_MS = 15 * 60_000;
+const BACKGROUND_HOLD_SETTLE_MS = 60_000;
 
 /**
  * MCP/CLI token lifetime for a `claude` process. The token is baked into the
- * process at spawn and revoked when the process is killed, so it must outlive
- * the longest the process can sit parked (background tasks still call `sulla`
- * while parked); the default 10-min TTL expired tokens under idle warm procs.
+ * process at spawn and revoked when the process exits, so it must outlive a
+ * long turn plus a background hold (background tasks still call `sulla`).
  */
-const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_PARK_MS + WARM_IDLE_REAP_MS;
+const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_HOLD_MS + 30 * 60_000;
 
 /**
  * How long a turn stays open after `result` waiting for Claude to start the
@@ -130,76 +118,18 @@ const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_PARK_MS + WARM_IDLE_REAP_MS;
 const STEER_FOLLOWUP_GRACE_MS = 30_000;
 
 /**
- * A `claude` process speculatively booted during the pre-turn (accumulator)
- * phase, waiting to be adopted by the next runClaude for its conversation.
- * See ClaudeCodeService.prewarm().
+ * conversationId → stops the process still held open for that conversation's
+ * background tasks. Shared by every ClaudeCodeService instance (one per
+ * model/agent override) so the next turn ends the hold whichever instance
+ * runs it.
  */
-interface PrewarmRecord {
-  proc:              childProcess.ChildProcessWithoutNullStreams;
-  transport:         ProviderExecutionTransport;
-  transportContext:  ProviderTransportContext;
-  systemPromptFile?: ProviderFileRef;
-  mcpConfigFile?:    ProviderFileRef;
-  mcpSession:        RegisteredSession | null;
-  mcpConfigPath:     string | null;
-  /** VM-side pidfile of this process (see buildRemoteKillCommand). */
-  pidFile:           string;
-  model:             string;
-  createdAt:         number;
-  closed:            boolean;
-  busy:              boolean;
-  reapTimer:         ReturnType<typeof setTimeout> | null;
-  /**
-   * Output the process wrote while nobody was listening (booting prewarm, or
-   * parked between warm turns), drained at claim time. Replayed through the
-   * adopting turn's line processor so a buffered system/init line still
-   * delivers its session id. See claimPrewarm.
-   */
-  pendingStdout?:    string;
-  /**
-   * Background-task state for this process (see claudeBackgroundTasks.ts).
-   * Created on the first turn that runs on the process.
-   */
-  bgTracker?:        ClaudeBackgroundTaskTracker;
-  /** Graph thread to wake when a background task finishes while parked. */
-  wakeTarget?:       WakeTarget | null;
-  /** stdout/stderr listeners that keep reading while the process is parked. */
-  parkedStdout?:     (chunk: Buffer) => void;
-  parkedStderr?:     (chunk: Buffer) => void;
-  /** Partial NDJSON line the parked reader was holding when claimed. */
-  parkedBuffer?:     string;
-  /** When the idle reap was first deferred for live background work. */
-  bgHoldSince?:      number;
-  /** Conversation this process is pooled under, and when it went idle. */
-  convId?:           string;
-  idleSince?:        number;
-}
-
-/**
- * The process pool is shared by EVERY ClaudeCodeService instance. There is
- * one instance per model/agent override (primary, opus, sonnet, workers…);
- * when each kept its own pool, each held its own MIN idle processes forever,
- * and a conversation parked in one instance was invisible to another, which
- * then cold-spawned a second `claude --resume` of the same session — two or
- * three live copies of one chat working (and deploying) in parallel.
- */
-const sharedPrewarmed = new Map<string, PrewarmRecord>();
-const sharedIdle = new Set<PrewarmRecord>();
+const backgroundHolds = new Map<string, () => void>();
 
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
 
-  // conversationId → a speculatively-booted process warming up during the
-  // pre-turn phase, claimed by the next runClaude. See prewarm().
-  private prewarmed = sharedPrewarmed;
-
-  // Every idle process (prewarmed or parked), for the pool min/max bounds.
-  private idle = sharedIdle;
-  private poolMin = WARM_POOL_MIN_DEFAULT;
-  private poolMax = WARM_POOL_MAX_DEFAULT;
-
-  // Routes background-task completions from parked CLI processes back into
+  // Routes background-task completions from held CLI processes back into
   // their graph threads. See claudeBackgroundTasks.ts.
   private readonly bgDelivery = new BackgroundCompletionDelivery();
 
@@ -253,8 +183,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Resolve how the VM's `claude` authenticates. With the container-owned
    * Vault the secret never leaves the vault, so the process gets a bridge
    * capability + base URL (and a lease the caller must bind to the process).
-   * Otherwise: integration vault first, SullaSettingsModel fallback. Shared by
-   * runClaude and prewarm so both resolve identically.
+   * Otherwise: integration vault first, SullaSettingsModel fallback.
    */
   private async resolveClaudeCreds(
     convId: string,
@@ -284,94 +213,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Whether speculative boot (prewarm) is enabled. Default ON — cuts the
-   * cold-spawn tax on every turn by overlapping the ~1.5-2s CLI boot with
-   * the subconscious/recall phase that already runs before it. No UI
-   * toggle; override by setting the row to 'false' via SullaSettingsModel
-   * (e.g. `sulla settings/set` or the settings_set tool) if it ever needs
-   * to be disabled for a specific install.
-   */
-  private async speculativeBootEnabled(): Promise<boolean> {
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'true')) === 'true';
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Whether the warm pool (keep the process alive across turns) is enabled.
-   * Default ON. Implies speculative boot — a warm process is just a
-   * pre-warmed one that is re-parked instead of closed after each turn. No
-   * UI toggle; override by setting the row to 'false' via SullaSettingsModel
-   * if a specific install needs to fall back to cold spawns.
-   */
-  private async warmPoolEnabled(): Promise<boolean> {
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'true')) === 'true';
-    } catch {
-      return false;
-    }
-  }
-
-  /** Load the idle-pool bounds from settings (falls back to the defaults). */
-  private async refreshPoolLimits(): Promise<void> {
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      const min = parseInt(String(await SullaSettingsModel.get('claudeCodeWarmPoolMin', String(WARM_POOL_MIN_DEFAULT))), 10);
-      const max = parseInt(String(await SullaSettingsModel.get('claudeCodeWarmPoolMax', String(WARM_POOL_MAX_DEFAULT))), 10);
-      this.poolMin = Number.isFinite(min) && min >= 0 ? min : WARM_POOL_MIN_DEFAULT;
-      this.poolMax = Math.max(1, this.poolMin, Number.isFinite(max) ? max : WARM_POOL_MAX_DEFAULT);
-    } catch { /* keep current bounds */ }
-  }
-
-  /** Idle processes that are still alive. */
-  private liveIdleCount(): number {
-    let n = 0;
-    for (const rec of this.idle) if (!rec.closed) n++;
-    return n;
-  }
-
-  /**
-   * Add a process to the idle pool, then retire the longest-idle ones until
-   * the pool is back at poolMax. Processes still running background tasks
-   * are retired last, since killing them kills those tasks.
-   */
-  private markIdle(rec: PrewarmRecord, convId: string): void {
-    rec.convId = convId;
-    rec.idleSince = Date.now();
-    this.idle.add(rec);
-    for (const r of [...this.idle]) if (r.closed) this.retireIdle(r);
-    while (this.idle.size > this.poolMax) {
-      const holds = (r: PrewarmRecord) => !!r.bgTracker && (r.bgTracker.liveTaskCount > 0 || r.bgTracker.inAutonomousTurn || r.bgTracker.pendingCount > 0);
-      const victim = [...this.idle]
-        .filter(r => r !== rec)
-        .sort((a, b) => Number(holds(a)) - Number(holds(b)) || (a.idleSince ?? 0) - (b.idleSince ?? 0))[0];
-      if (!victim) break;
-      log.log(`[ClaudeCodeService] warm pool over max (${ this.poolMax }) — retiring idle proc for convId=${ victim.convId }`);
-      this.retireIdle(victim);
-    }
-  }
-
-  /** Kill an idle process and drop it from the pool map if it's the pooled one. */
-  private retireIdle(rec: PrewarmRecord): void {
-    if (rec.convId && this.prewarmed.get(rec.convId) === rec) this.prewarmed.delete(rec.convId);
-    this.killPrewarmRecord(rec);
-  }
-
-  /** Remove a specific pool record (if still current) and tear it down. */
-  private disposePrewarmRecord(rec: PrewarmRecord, convId: string): void {
-    if (this.prewarmed.get(convId) === rec) this.prewarmed.delete(convId);
-    this.killPrewarmRecord(rec);
-  }
-
-  /**
-   * Build the `sulla-runtime exec` argv that launches `claude -p` in the VM. Shared
-   * by runClaude (fresh spawn) and prewarm (speculative boot) so both stay
-   * identical. `streamJsonInput` adds --input-format stream-json so the process
-   * can boot before the prompt is written to stdin.
+   * Build the `sulla-runtime exec` argv that launches `claude -p` in the VM.
+   * Input is always stream-json: the prompt is written to stdin as a JSON
+   * user message, and steers can be written into the running turn.
    */
   private buildSpawnArgs(p: {
     oauthToken:        string;
@@ -381,7 +225,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
     existingSession?:  string;
     mcpConfigPath:     string | null;
     toolSessionId?:    string;
-    streamJsonInput:   boolean;
     /**
      * Full --disallowedTools value for this spawn's role (disallowedToolsFor):
      * observers lose the native actor toolset (Read/Write/Edit/Bash/…),
@@ -436,12 +279,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // Every acting agent (primary, workers, reviewers) gets the same set.
       '--disallowedTools', p.disallowedTools,
     ];
-    // stream-json input lets the process boot before the prompt exists (the
-    // prompt is fed as a JSON user message on stdin by the caller), and lets
-    // "Send now" messages be written into a running turn. Replay echoes each
-    // stdin message back at the moment Claude consumes it — that's how
-    // runClaude knows a steer has been seen.
-    if (p.streamJsonInput) claudeArgs.push('--input-format', 'stream-json', '--replay-user-messages');
+    // stream-json input: the prompt is fed as a JSON user message on stdin,
+    // and "Send now" messages can be written into a running turn. Replay
+    // echoes each stdin message back at the moment Claude consumes it — that's
+    // how runClaude knows a steer has been seen.
+    claudeArgs.push('--input-format', 'stream-json', '--replay-user-messages');
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
@@ -462,7 +304,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private buildProviderCommand(p: {
     existingSession?:  string;
     mcpConfigPath:     string | null;
-    streamJsonInput:   boolean;
     disallowedTools:   string;
     systemPromptPath?: string | null;
     environment?:      Readonly<Record<string, string>>;
@@ -474,339 +315,14 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--include-partial-messages',
       '--dangerously-skip-permissions',
       '--disallowedTools', p.disallowedTools,
+      '--input-format', 'stream-json', '--replay-user-messages',
     ];
-    if (p.streamJsonInput) args.push('--input-format', 'stream-json', '--replay-user-messages');
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
     if (p.existingSession) args.push('--resume', p.existingSession);
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
 
     return { executable: 'claude', args, env: p.environment ? { ...p.environment } : undefined };
-  }
-
-  /**
-   * Speculatively boot a `claude` process for this conversation while the
-   * caller does pre-turn work (recall / observations). The process reaches
-   * system/init and idles on stdin; the next runClaude adopts it and just
-   * writes the prompt — hiding the ~1.5-2s cold start. Fire-and-forget: every
-   * failure mode falls back to a normal cold spawn. No-op unless the
-   * claudeCodeSpeculativeBoot setting is on.
-   */
-  async prewarm(state: BaseThreadState): Promise<void> {
-    // Broker bridge minted for this boot; bound to the process once spawned,
-    // released here if anything throws first.
-    let prewarmLease: ProviderCliBridgeLease | undefined;
-    try {
-      const transport = getProviderExecutionTransport();
-      if (transport.runtime === 'guest' && process.platform === 'win32') return;
-      if (!await this.speculativeBootEnabled()) return;
-      await this.refreshPoolLimits();
-
-      const convId = typeof (state.metadata as any)?.threadId === 'string'
-        ? (state.metadata as any).threadId
-        : '__default__';
-
-      const existing = this.prewarmed.get(convId);
-      if (existing && !existing.closed) return;          // already warming
-      if (existing) this.disposePrewarm(convId);         // stale/dead — replace
-
-      const existingSession = await this.getSession(convId);
-
-      // Mint an MCP session bound to the live graph state — the SAME object the
-      // turn will use (the pre-turn phase mutates it in place before any tool
-      // fires), so no rebinding is needed for this single-turn adoption.
-      let mcpSession: RegisteredSession | null = null;
-      let mcpConfigPath: string | null = null;
-      let mcpConfigFile: ProviderFileRef | undefined;
-      try {
-        const host = getMCPServerHost();
-        if (host.running) {
-          mcpSession = host.registerSession(state, PROC_MCP_SESSION_TTL_MS);
-        }
-      } catch { /* continue without sulla-native tools */ }
-
-      const transportContext = await transport.context({
-        provider:          'claude-code',
-        conversationId:    convId,
-        state,
-        providerSessionId: existingSession,
-        toolSessionId:     mcpSession?.id,
-      });
-      const providerConfig = requireBrokeredContainerAuth(transportContext);
-      const { oauthToken, apiKey, baseUrl, lease } = transportContext.runtime === 'guest'
-        ? await this.resolveClaudeCreds(convId, state)
-        : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
-      prewarmLease = lease;
-      if (transportContext.runtime === 'guest' && !oauthToken && !apiKey) return;
-      const toolConfig = mcpSession && transportContext.runtime === 'container'
-        ? requireContainerToolConfig(transportContext)
-        : undefined;
-      if (mcpSession) {
-        if (transportContext.runtime === 'container') {
-          mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
-        } else {
-          mcpConfigFile = this.writeMcpConfig(mcpSession, transportContext);
-          mcpConfigPath = mcpConfigFile.path;
-        }
-        if (transportContext.runtime === 'container' && !mcpConfigPath) {
-          throw new Error('Container Claude execution requires an opaque broker MCP config');
-        }
-      }
-
-      // The turn's own system message doesn't exist yet at prewarm time, so a
-      // pre-booted primary gets the full Sulla prompt (byte-stable by design).
-      const systemPromptFile = transport.files.write({
-        context:       transportContext,
-        purpose:       'system-prompt',
-        suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
-        data:          await this.fallbackSystemPrompt(),
-      });
-      const systemPromptPath = systemPromptFile.path;
-      const disallowedTools = disallowedToolsFor(state.metadata as any);
-      const pidFile = newRemotePidFile();
-      const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: true, disallowedTools, systemPromptPath, pidFile });
-      const providerCommand = this.buildProviderCommand({
-        existingSession,
-        mcpConfigPath,
-        streamJsonInput: true,
-        disallowedTools,
-        systemPromptPath,
-        environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
-      });
-      const proc = transport.spawn({
-        context: transportContext,
-        providerCommand,
-        ...(transportContext.runtime === 'guest'
-          ? {
-            guestCommand: { executable: paths.sullaRuntime, args, env: { ...process.env, TERM: 'dumb' } },
-          }
-          : {}),
-      });
-      proc.once('exit', () => systemPromptFile.dispose());
-      bindLeaseToProcess(proc, prewarmLease);
-      prewarmLease = undefined;
-
-      const record: PrewarmRecord = {
-        proc,
-        transport,
-        transportContext,
-        systemPromptFile,
-        mcpConfigFile,
-        mcpSession,
-        mcpConfigPath,
-        pidFile,
-        model:     this.model || 'claude-code',
-        createdAt: Date.now(),
-        closed:    false,
-        busy:      false,
-        reapTimer: null,
-      };
-      // Deliberately attach NO stdout 'data' listener: leaving stdout paused
-      // lets Node buffer the early system/init line so the adopting runClaude
-      // receives it intact when it switches the stream to flowing mode.
-      proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
-      proc.once('exit', () => { record.closed = true });
-      proc.once('error', () => { record.closed = true });
-      const armPrewarmReap = () => {
-        record.reapTimer = setTimeout(() => {
-          if (this.prewarmed.get(convId) !== record) return;
-          if (this.liveIdleCount() <= this.poolMin) { armPrewarmReap(); return }   // keep the pool at min
-          this.disposePrewarm(convId);
-        }, PREWARM_IDLE_REAP_MS);
-        record.reapTimer.unref?.();
-      };
-      armPrewarmReap();
-
-      this.prewarmed.set(convId, record);
-      this.markIdle(record, convId);
-      log.log(`[ClaudeCodeService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
-    } catch (err) {
-      log.log(`[ClaudeCodeService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
-    } finally {
-      releaseLease(prewarmLease);
-    }
-  }
-
-  /** Claim a live pre-warmed process for this conversation, or null. */
-  private claimPrewarm(convId: string, model: string, transport: ProviderExecutionTransport): PrewarmRecord | null {
-    const rec = this.prewarmed.get(convId);
-    if (!rec) return null;
-    this.prewarmed.delete(convId);
-    this.idle.delete(rec);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    if (rec.closed || rec.model !== model || rec.transport !== transport) {
-      this.killPrewarmRecord(rec);                       // dead, model, or runtime mismatch
-      return null;
-    }
-
-    // A warm-parked process has been read continuously by its parked reader
-    // (see parkProcess), so there is nothing stale to drain — and any
-    // `result` it produced while parked was a background-completion turn that
-    // has already been routed to the graph. Hand back only the partial line.
-    if (rec.parkedStdout) {
-      this.unparkProcess(rec);
-      if (rec.parkedBuffer) rec.pendingStdout = rec.parkedBuffer;
-      rec.parkedBuffer = undefined;
-      return rec;
-    }
-
-    // Drain anything the process wrote while unclaimed. A prewarm that sat
-    // past the CLI's stdin-wait can emit an empty `result` (observed as an
-    // instant "claude produced no output" failure on the adopting turn) —
-    // a process that already resulted with no prompt is useless, so decline
-    // it and let the caller cold-spawn. Anything else (system/init) is kept
-    // for replay so the adopting turn still sees the session id.
-    let drained = '';
-    try {
-      let chunk: Buffer | string | null;
-      while ((chunk = rec.proc.stdout.read()) !== null) drained += chunk.toString('utf-8');
-    } catch { /* stream already ended — closed flag handling covers it */ }
-    if (drained) {
-      const staleResult = drained.split('\n').some((line) => {
-        try { return JSON.parse(line.trim())?.type === 'result' } catch { return false }
-      });
-      if (staleResult) {
-        log.warn(`[ClaudeCodeService] claimPrewarm: discarding pooled proc for convId=${ convId } — stale result buffered while unclaimed`);
-        this.killPrewarmRecord(rec);
-        return null;
-      }
-      rec.pendingStdout = drained;
-    }
-    return rec;
-  }
-
-  /** Tear down and forget the pre-warmed process for a conversation. */
-  private disposePrewarm(convId: string): void {
-    const rec = this.prewarmed.get(convId);
-    if (!rec) return;
-    this.prewarmed.delete(convId);
-    this.killPrewarmRecord(rec);
-  }
-
-  /**
-   * Keep reading a parked process's output instead of pausing it. The CLI
-   * runs an autonomous turn when a background task finishes; its events feed
-   * the tracker, which hands finished completions to bgDelivery. Stderr is
-   * drained too so a chatty CLI can't block on a full pipe while parked.
-   * `carry` is the partial NDJSON line the finishing turn had buffered.
-   */
-  private parkProcess(rec: PrewarmRecord, convId: string, carry = ''): void {
-    const tracker = this.ensureBackgroundTracker(rec, convId);
-    rec.parkedBuffer = carry;
-    rec.parkedStdout = (chunk: Buffer) => {
-      rec.parkedBuffer = (rec.parkedBuffer ?? '') + chunk.toString('utf-8');
-      const lines = rec.parkedBuffer.split('\n');
-      rec.parkedBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let parsed: any;
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          continue;
-        }
-        if (parsed?.session_id) this.setSession(convId, parsed.session_id).catch(() => {});
-        tracker.observe(parsed, true);
-      }
-    };
-    rec.parkedStderr = () => { /* discard — nobody owns this process right now */ };
-    rec.proc.stdout.on('data', rec.parkedStdout);
-    rec.proc.stderr.on('data', rec.parkedStderr);
-    rec.proc.stdout.resume();
-    rec.proc.stderr.resume();
-  }
-
-  /** Detach the parked readers and pause the streams for the adopting turn. */
-  private unparkProcess(rec: PrewarmRecord): void {
-    // Pause first, in the same tick, so no chunk is emitted to zero listeners.
-    rec.proc.stdout.pause();
-    rec.proc.stderr.pause();
-    if (rec.parkedStdout) rec.proc.stdout.removeListener('data', rec.parkedStdout);
-    if (rec.parkedStderr) rec.proc.stderr.removeListener('data', rec.parkedStderr);
-    rec.parkedStdout = undefined;
-    rec.parkedStderr = undefined;
-    rec.bgHoldSince = undefined;
-  }
-
-  /** The record's tracker, created on first use and bound to its conversation. */
-  private ensureBackgroundTracker(rec: PrewarmRecord, convId: string): ClaudeBackgroundTaskTracker {
-    rec.bgTracker ??= new ClaudeBackgroundTaskTracker((notices) => {
-      log.log(`[ClaudeCodeService] ${ notices.length } background completion(s) for convId=${ convId } — delivering to graph`);
-      this.bgDelivery.deliver(convId, rec.wakeTarget ?? null, notices);
-    });
-
-    return rec.bgTracker;
-  }
-
-  /**
-   * Idle-reap a parked process after WARM_IDLE_REAP_MS — unless it still owns
-   * live background work, in which case reaping would kill that work before
-   * it can report back. Deferred up to BACKGROUND_TASK_MAX_PARK_MS.
-   */
-  private armParkedReap(rec: PrewarmRecord, convId: string): void {
-    if (rec.reapTimer) clearTimeout(rec.reapTimer);
-    rec.reapTimer = setTimeout(() => {
-      rec.reapTimer = null;
-      if (this.prewarmed.get(convId) !== rec) return;
-      const t = rec.bgTracker;
-      const holding = !!t && (t.liveTaskCount > 0 || t.inAutonomousTurn || t.pendingCount > 0);
-      if (holding && !rec.closed) {
-        rec.bgHoldSince ??= Date.now();
-        if (Date.now() - rec.bgHoldSince < BACKGROUND_TASK_MAX_PARK_MS) {
-          this.armParkedReap(rec, convId);
-          return;
-        }
-        log.warn(`[ClaudeCodeService] Reaping parked proc for convId=${ convId } with ${ t?.liveTaskCount ?? 0 } background task(s) still live after ${ Math.round(BACKGROUND_TASK_MAX_PARK_MS / 60_000) }min`);
-      }
-      if (this.liveIdleCount() <= this.poolMin) {   // keep the pool at min
-        this.armParkedReap(rec, convId);
-        return;
-      }
-      this.disposePrewarm(convId);
-    }, WARM_IDLE_REAP_MS);
-    rec.reapTimer.unref?.();
-  }
-
-  /**
-   * If the parked process for this conversation is mid autonomous turn (the
-   * CLI reacting to a background completion), wait for it to finish before
-   * claiming — adopting it mid-turn would settle the new turn on the
-   * autonomous turn's `result`. Gives up after AUTONOMOUS_TURN_WAIT_MS and
-   * discards the process so the caller cold-spawns.
-   */
-  private async waitForAutonomousTurn(convId: string): Promise<void> {
-    const rec = this.prewarmed.get(convId);
-    if (!rec?.bgTracker?.inAutonomousTurn) return;
-    log.log(`[ClaudeCodeService] convId=${ convId } parked proc is finishing a background-completion turn — waiting before adopting`);
-    const deadline = Date.now() + AUTONOMOUS_TURN_WAIT_MS;
-    while (this.prewarmed.get(convId) === rec && rec.bgTracker.inAutonomousTurn && !rec.closed) {
-      if (Date.now() >= deadline) {
-        log.warn(`[ClaudeCodeService] convId=${ convId } autonomous turn still running after ${ Math.round(AUTONOMOUS_TURN_WAIT_MS / 60_000) }min — discarding proc`);
-        this.disposePrewarm(convId);
-        return;
-      }
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-  }
-
-  private killPrewarmRecord(rec: PrewarmRecord): void {
-    this.idle.delete(rec);
-    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null }
-    try { rec.proc.kill('SIGTERM') } catch { /* already dead */ }
-    Promise.resolve(rec.transport.terminate({
-      context: rec.transportContext, process: rec.proc, signal: 'TERM', remotePidFile: rec.pidFile,
-    })).catch(() => {});
-    const escalation = setTimeout(() => {
-      try { if (rec.proc.exitCode === null) rec.proc.kill('SIGKILL'); } catch { /* already dead */ }
-      Promise.resolve(rec.transport.terminate({
-        context: rec.transportContext, process: rec.proc, signal: 'KILL', remotePidFile: rec.pidFile,
-      })).catch(() => {});
-    }, 5_000);
-    escalation.unref?.();
-    if (rec.mcpSession) { try { rec.mcpSession.revoke() } catch { /* ignore */ } }
-    rec.mcpConfigFile?.dispose();
-    rec.systemPromptFile?.dispose();
   }
 
   override getContextWindow(): number {
@@ -1176,6 +692,10 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
     const convId = options.conversationId ?? '__default__';
+    // A process still held open for this conversation's background tasks
+    // ends here: the new turn's `--resume` must be the only live copy of the
+    // session (the launch command would stop it anyway).
+    backgroundHolds.get(convId)?.();
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
@@ -1223,32 +743,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
     const runtimePath = paths.sullaRuntime;
 
-    // Speculative boot: adopt a process pre-warmed for this conversation during
-    // the accumulator phase; otherwise spawn fresh below. Flag off → adopted is
-    // always null and the legacy text path runs byte-for-byte as before.
-    const warm = await this.warmPoolEnabled();
-    const speculative = warm || await this.speculativeBootEnabled();
-    if (warm) await this.refreshPoolLimits();
-    if (speculative) await this.waitForAutonomousTurn(convId);
-    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code', transport) : null;
-
     // Mint an MCP session bound to the calling graph state, if we have one AND
-    // the in-process MCP server is listening. An adopted process already
-    // carries its own (minted at prewarm against the same live state object).
-    // Lifetime: revoke + delete config when the spawn promise settles.
+    // the in-process MCP server is listening. Lifetime: revoked + config
+    // deleted when the process is done (turn end, or end of a background hold).
     let mcpSession: RegisteredSession | null = null;
     let mcpConfigPath: string | null = null;
     let mcpConfigFile: ProviderFileRef | null = null;
-    if (adopted) {
-      mcpSession = adopted.mcpSession;
-      mcpConfigPath = adopted.mcpConfigPath;
-      mcpConfigFile = adopted.mcpConfigFile ?? null;
-      // Re-point the stable MCP token at THIS turn's live state — required when
-      // the process is reused across turns; a no-op on first adoption.
-      if (mcpSession && options.state) {
-        try { getMCPServerHost().rebindSession(mcpSession.id, options.state, PROC_MCP_SESSION_TTL_MS) } catch { /* ignore */ }
-      }
-    } else if (options.state) {
+    if (options.state) {
       try {
         const host = getMCPServerHost();
         if (host.running) {
@@ -1264,7 +765,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       }
     }
 
-    const transportContext = adopted?.transportContext ?? (mcpSession
+    const transportContext = mcpSession
       ? await transport.context({
         provider:          'claude-code',
         conversationId:    convId,
@@ -1272,21 +773,20 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         providerSessionId: existingSession,
         toolSessionId:     mcpSession.id,
       })
-      : initialTransportContext);
+      : initialTransportContext;
     const providerConfig = requireBrokeredContainerAuth(transportContext);
-    // An adopted process already carries its own auth; only a fresh spawn needs one.
-    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest' && !adopted
+    const { oauthToken, apiKey, baseUrl, lease: authLease } = transportContext.runtime === 'guest'
       ? await this.resolveClaudeCreds(convId, options.state)
       : { oauthToken: '', apiKey: '', baseUrl: undefined, lease: undefined };
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
-    if (transportContext.runtime === 'guest' && !adopted && !oauthToken && !apiKey) {
+    if (transportContext.runtime === 'guest' && !oauthToken && !apiKey) {
       releaseLease(authLease);
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
     }
     const toolConfig = mcpSession && transportContext.runtime === 'container'
       ? requireContainerToolConfig(transportContext)
       : undefined;
-    if (!adopted && mcpSession && transportContext.runtime === 'container') {
+    if (mcpSession && transportContext.runtime === 'container') {
       mcpConfigPath = toolConfig?.claudeConfigPath ?? null;
       if (!mcpConfigPath) throw new Error('Container Claude execution requires an opaque broker MCP config');
     }
@@ -1296,9 +796,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // multiplexing channel and the spawn dies with "mux_client_request_session:
     // write packet: Broken pipe", bricking any sufficiently long conversation.
     // Build the launch argv. `exec` replaces the inner sh with claude so there's
-    // no shell layer between the SSH session and the CLI. When speculative,
-    // buildSpawnArgs adds --input-format stream-json and the prompt is delivered
-    // as a JSON line on stdin (see below) instead of raw text.
+    // no shell layer between the SSH session and the CLI. The prompt is
+    // delivered as a stream-json line on stdin (see below).
     // Observer runs (subconscious writers/recalls/summarizer/digester) lose the
     // native actor tools so they can only observe + write memory, never act on
     // the host. Keyed off the resolved model slot (isObserverSpawn), NOT bare
@@ -1306,27 +805,23 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
     const disallowedTools = disallowedToolsFor(options.state?.metadata as any);
-    // An adopted process already booted with its prompt file; a fresh spawn
-    // gets the caller-built system prompt (primary chat, observer, trainer…),
+    // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
-    const systemPromptFile: ProviderFileRef | null = adopted
-      ? null
-      : transport.files.write({
-        context:       transportContext,
-        purpose:       'system-prompt',
-        suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
-        data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
-      });
-    const systemPromptPath = systemPromptFile?.path ?? null;
-    const pidFile = adopted ? adopted.pidFile : newRemotePidFile();
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, streamJsonInput: speculative, disallowedTools, systemPromptPath, pidFile });
+    const systemPromptFile: ProviderFileRef = transport.files.write({
+      context:       transportContext,
+      purpose:       'system-prompt',
+      suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
+      data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+    });
+    const systemPromptPath = systemPromptFile.path;
+    const pidFile = newRemotePidFile();
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, disallowedTools, systemPromptPath, pidFile });
     const providerCommand = this.buildProviderCommand({
       existingSession,
       mcpConfigPath,
-      streamJsonInput: speculative,
       disallowedTools,
       systemPromptPath,
-      environment:     { ...providerConfig?.environment, ...toolConfig?.environment },
+      environment: { ...providerConfig?.environment, ...toolConfig?.environment },
     });
 
     const cleanupMcp = () => {
@@ -1343,79 +838,37 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     if (options.signal?.aborted) {
       cleanupMcp();
       releaseLease(authLease);
-      if (adopted) this.disposePrewarmRecord(adopted, convId);
-      if (systemPromptPath) {
-        systemPromptFile?.dispose();
-      }
+      systemPromptFile.dispose();
       const error = new Error('Claude Code run aborted');
       error.name = 'AbortError';
       throw error;
     }
 
-    // Adopt the pre-warmed process if we claimed one; otherwise spawn fresh.
-    let proc: childProcess.ChildProcessWithoutNullStreams;
-    let adoptedSpawned = false;
-    let poolEntry: PrewarmRecord | null = adopted;
-    if (adopted) {
-      proc = adopted.proc;
-      adoptedSpawned = true;
-      // Drop the prewarm holding listeners; this run attaches its own below.
-      proc.removeAllListeners('exit');
-      proc.removeAllListeners('error');
-      proc.stdin.removeAllListeners('error');
-    } else {
-      proc = transport.spawn({
-        context: transportContext,
-        providerCommand,
-        ...(transportContext.runtime === 'guest'
-          ? {
-            guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
-          }
-          : {}),
-      });
-      proc.once('exit', () => systemPromptFile?.dispose());
-      bindLeaseToProcess(proc, authLease);
-      // Warm mode with no prewarm available: still track this fresh process so
-      // it can be parked for reuse after the turn.
-      if (warm) {
-        poolEntry = {
-          proc,
-          transport,
-          transportContext,
-          systemPromptFile: systemPromptFile ?? undefined,
-          mcpConfigFile:    mcpConfigFile ?? undefined,
-          mcpSession,
-          mcpConfigPath,
-          pidFile,
-          model:            this.model || 'claude-code',
-          createdAt:        Date.now(),
-          closed:           false,
-          busy:             false,
-          reapTimer:        null,
-        };
-      }
-    }
-    if (poolEntry) poolEntry.busy = true;
+    const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
+      context: transportContext,
+      providerCommand,
+      ...(transportContext.runtime === 'guest'
+        ? {
+          guestCommand: { executable: runtimePath, args, env: { ...process.env, TERM: 'dumb' } },
+        }
+        : {}),
+    });
+    proc.once('exit', () => systemPromptFile.dispose());
+    bindLeaseToProcess(proc, authLease);
 
-    // Background-task tracking. Pooled processes keep their tracker across
-    // turns (tasks outlive the turn that started them); a cold, non-pooled
-    // process gets a turn-local one. The wake target is refreshed every turn.
+    // Background-task tracking for this process (see claudeBackgroundTasks.ts).
+    // Completions that land after the turn has returned are delivered to the
+    // graph thread that owns the conversation.
     const wakeTarget = wakeTargetFromState(options.state);
-    let bgTracker: ClaudeBackgroundTaskTracker;
-    if (poolEntry) {
-      poolEntry.wakeTarget = wakeTarget;
-      bgTracker = this.ensureBackgroundTracker(poolEntry, convId);
-    } else {
-      bgTracker = new ClaudeBackgroundTaskTracker((notices) => {
-        log.log(`[ClaudeCodeService] ${ notices.length } background completion(s) for convId=${ convId } — delivering to graph`);
-        this.bgDelivery.deliver(convId, wakeTarget, notices);
-      });
-    }
+    const bgTracker = new ClaudeBackgroundTaskTracker((notices) => {
+      log.log(`[ClaudeCodeService] ${ notices.length } background completion(s) for convId=${ convId } — delivering to graph`);
+      this.bgDelivery.deliver(convId, wakeTarget, notices);
+    });
 
     // Declared at method scope so the `finally` block below can read it: set
-    // true when a warm turn parks its process, which tells finally to skip MCP
-    // cleanup (the parked proc keeps its session for the next turn).
-    let parked = false;
+    // true while the process outlives its turn for background tasks, which
+    // tells finally to leave MCP cleanup to the end of that hold.
+    let holding = false;
 
     try {
       return await new Promise((resolve, reject) => {
@@ -1425,18 +878,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // limit. Guard against EPIPE in case claude exits before we finish.
         const onStdinError = () => { /* EPIPE — claude already gone, non-fatal */ };
         proc.stdin.on('error', onStdinError);
+        // stream-json input: deliver the prompt as one user message. stdin stays
+        // open until the turn completes so steers can still be written (see
+        // completeTurn); closing it then lets claude exit.
         try {
-          if (speculative) {
-            // stream-json input: deliver the prompt as one user message.
-            proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } }) }\n`);
-          } else {
-            proc.stdin.write(prompt);
-          }
-          // Warm mode keeps stdin open so the process survives for the next turn.
-          // Other stream-json turns keep it open until the turn completes so
-          // steers can still be written (see completeTurn). Text mode closes
-          // it now so claude exits when this turn completes.
-          if (!speculative) proc.stdin.end();
+          proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } }) }\n`);
         } catch { /* stdin already closed */ }
 
         // Heartbeat ticker — keeps the renderer (and routine canvas) informed
@@ -1457,7 +903,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
 
         const onSpawned = () => {
-          directActivity(adoptedSpawned ? 'Isolated environment ready…' : 'Booting isolated environment…');
+          directActivity('Booting isolated environment…');
           let tick = 0;
           heartbeatTimer = setInterval(() => {
             tick += 1;
@@ -1550,7 +996,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // behind and answers it ("No response requested.") BEFORE reading our
         // prompt. Settling on that result failed the turn as "claude produced
         // no output" while the CLI went on to answer the real prompt unseen.
-        let promptConsumed = !speculative;
+        let promptConsumed = false;
 
         // ── Perf: per-tool execution timing inside the claude CLI ──────────
         // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -1649,11 +1095,8 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           });
         };
 
-        // Start the heartbeat + stall watchdog. A fresh spawn fires 'spawn'; an
-        // adopted (pre-warmed) process already spawned during prewarm, so start
-        // immediately — every timer/handler onSpawned references is now declared.
-        if (adoptedSpawned) onSpawned();
-        else proc.once('spawn', onSpawned);
+        // Start the heartbeat + stall watchdog once the process has spawned.
+        proc.once('spawn', onSpawned);
 
         /**
        * Summarise a tool_use block into a short activity message like
@@ -1807,9 +1250,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         // right after. The replay echo marks the moment Claude consumed it; a
         // `result` doesn't end this turn while any steer is still unconsumed.
         const steersInFlight: { content: string; message: ChatMessage }[] = [];
-        let steeringOpen = speculative;
+        let steeringOpen = true;
         let steerGraceTimer: NodeJS.Timeout | null = null;
-        const unsubscribeSteer = onSteer(speculative ? options.state : null, (message) => {
+        const unsubscribeSteer = onSteer(options.state, (message) => {
           if (!steeringOpen || settled || proc.stdin.writableEnded || proc.stdin.destroyed) return false;
           const content = this.extractLatestUserMessage([message]);
           if (!content.trim()) return false;
@@ -1853,11 +1296,14 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
           if (parsed.session_id) capturedSessionId = parsed.session_id;
 
-          // Background-task bookkeeping. Once this turn has settled (cold mode
-          // kept listening for background completions), nobody owns the
-          // process's output any more, so completions must be delivered.
+          // Background-task bookkeeping. Once this turn has settled (the process
+          // is held for background tasks), nobody owns the process's output any
+          // more, so completions must be delivered.
           bgTracker.observe(parsed, settled);
-          if (settled) return;
+          if (settled) {
+            if (holding) checkBackgroundHold(parsed);
+            return;
+          }
 
           // Replay echo of a stdin message — a steer Claude just consumed.
           if (parsed.type === 'user' && parsed.isReplay) {
@@ -2041,22 +1487,22 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           }
         };
 
-        // The turn is over at `result`. Warm mode settles now and keeps the
-        // process alive for the next turn; cold mode with live background tasks
-        // settles now and keeps listening; otherwise closing stdin lets claude
-        // exit and onProcClose settles. Defined here, invoked only at runtime
-        // (after finishWarmTurn / settleForBackground below exist).
+        // The turn is over at `result`. If the process still owns live
+        // background tasks, settle now and hold it open until they finish (see
+        // holdForBackground); otherwise close stdin so claude exits and
+        // onProcClose settles. Defined here, invoked only at runtime.
         const completeTurn = (ok: boolean) => {
           closeSteering();
-          if (warm) finishWarmTurn();
-          else if (ok && bgTracker.liveTaskCount > 0 && textCollected.trim()) settleForBackground();
-          else if (speculative) {
-            try { proc.stdin.end() } catch { /* already closed */ }
-          }
+          if (ok && bgTracker.liveTaskCount > 0 && textCollected.trim()) holdForBackground();
+          else closeStdin();
+        };
+
+        const closeStdin = () => {
+          try { proc.stdin.end() } catch { /* already closed */ }
         };
 
         const onStdoutData = (chunk: Buffer) => {
-          if (settled) return;
+          if (settled && !holding) return;
           lastStreamActivityAt = Date.now();
           stdoutBuffer += chunk.toString('utf-8');
           const lines = stdoutBuffer.split('\n');
@@ -2081,31 +1527,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
         proc.stderr.on('data', onStderrData);
 
-        // Replay output drained while the process sat unclaimed (see
-        // claimPrewarm) so a buffered system/init line still delivers its
-        // session id and "tools connected" signal to THIS turn.
-        if (adopted?.pendingStdout) {
-          const pending = adopted.pendingStdout;
-          adopted.pendingStdout = undefined;
-          onStdoutData(Buffer.from(pending, 'utf-8'));
-        }
-
-        // Adopted processes need an explicit resume: finishWarmTurn parks the
-        // proc with stdout/stderr paused, and attaching a 'data' listener does
-        // NOT restart a stream that was explicitly paused. Without this, a
-        // re-adopted warm proc runs the whole turn with its output pipe frozen —
-        // nothing streams to the UI until the process is killed, at which point
-        // every buffered event floods through at once. Harmless on fresh spawns
-        // (resume on an already-flowing stream is a no-op).
-        proc.stdout.resume();
-        proc.stderr.resume();
-
         const onProcError = (err: Error) => {
           stopHeartbeat();
           stopStallWatchdog();
           closeSteering();
           options.signal?.removeEventListener('abort', onAbort);
-          if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
+          if (holding) endHold();
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
           if (!settled) {
             settled = true;
@@ -2116,78 +1543,75 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         };
         proc.on('error', onProcError);
 
-        // Warm mode: settle the turn on the `result` message and RETURN the
-        // process to the pool without closing it. Detaches this turn's stream
-        // listeners so the next turn's don't double-process; errors / no-output
-        // evict the process (a broken session must not be reused).
-        const finishWarmTurn = () => {
-          if (settled) return;
-          settled = true;
-          stopHeartbeat();
-          stopStallWatchdog();
-          options.signal?.removeEventListener('abort', onAbort);
-          proc.stdout.removeListener('data', onStdoutData);
-          proc.stderr.removeListener('data', onStderrData);
-          proc.removeListener('error', onProcError);
-          proc.removeListener('close', onProcClose);
-          proc.stdout.pause();
-          proc.stderr.pause();
-          if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-
-          if (errored || !textCollected.trim()) {
-            if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
-            const msg = errorMessage || textCollected || 'claude produced no output';
-            log.warn(`[ClaudeCodeService] warm turn failed, evicting proc: ${ msg.slice(0, 200) }`);
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(msg);
-            const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(errored
-              ? new Error(`Claude Code: ${ msg }`)
-              : new CliFaultError('protocol', `Claude Code: ${ msg }${ safety }`, undefined, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+        // ── Background hold ─────────────────────────────────────────────
+        // The turn is over but the CLI still owns live background tasks (Bash
+        // run_in_background, Monitor). Closing stdin now would make the CLI
+        // stop them, so settle the turn and keep THIS process alive with stdin
+        // open: when a task finishes the CLI emits task_notification and runs
+        // its own follow-up turn, which the tracker hands to the graph. Once
+        // no task is left, stdin is closed and the process exits. The hold is
+        // capped at BACKGROUND_TASK_MAX_HOLD_MS and ends early when the
+        // conversation's next turn starts (that turn resumes the session in a
+        // fresh process). The stall watchdog stops here: a silent wait on a
+        // background task is not a stall.
+        let holdTimer: NodeJS.Timeout | null = null;
+        let holdSettleTimer: NodeJS.Timeout | null = null;
+        const stopHoldSettle = () => {
+          if (holdSettleTimer) { clearTimeout(holdSettleTimer); holdSettleTimer = null }
+        };
+        const stopHeldProcess = (reason: string) => {
+          if (!holding) return;
+          log.log(`[ClaudeCodeService] stopping held proc for convId=${ convId } (${ reason }; ${ bgTracker.liveTaskCount } background task(s) live)`);
+          killSpawn().catch(() => {});
+        };
+        const onNextTurn = () => stopHeldProcess('next turn started');
+        // Release everything the hold kept: timers, the registry entry, and the
+        // MCP session / config / attachments the background work was using.
+        const endHold = () => {
+          if (!holding) return;
+          holding = false;
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null }
+          stopHoldSettle();
+          if (backgroundHolds.get(convId) === onNextTurn) backgroundHolds.delete(convId);
+          cleanupMcp();
+        };
+        const checkBackgroundHold = (parsed: any) => {
+          if (bgTracker.liveTaskCount > 0 || bgTracker.inAutonomousTurn) {
+            stopHoldSettle();
             return;
           }
-
-          // Park the process for the next turn. Keep a lightweight exit/error
-          // marker so a proc that dies while idle is flagged closed (claimPrewarm
-          // then declines to hand it back). Both are cleared on the next adopt.
-          if (poolEntry) {
-            const entry = poolEntry;
-            entry.busy = false;
-            // A proc that exits while parked can't run a follow-up turn —
-            // still deliver any completion it announced before dying.
-            proc.once('exit', () => {
-              entry.closed = true;
-              entry.bgTracker?.flush();
-            });
-            proc.once('error', () => { entry.closed = true });
-            // Keep reading while parked so background completions (and the
-            // CLI's autonomous follow-up turn) reach the graph; the idle reap
-            // is deferred while background tasks are still live.
-            this.parkProcess(entry, convId, stdoutBuffer);
-            stdoutBuffer = '';
-            this.armParkedReap(entry, convId);
-            this.prewarmed.set(convId, entry);
-            this.markIdle(entry, convId);
-            parked = true;
+          // The follow-up turn finished and nothing is left running.
+          if (parsed?.type === 'result') {
+            stopHoldSettle();
+            closeStdin();
+            return;
           }
-          const liveBg = poolEntry?.bgTracker?.liveTaskCount ?? 0;
-          log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked${ liveBg ? `, ${ liveBg } background task(s) live` : '' })`);
-          resolve({ text: textCollected, usage: lastUsage });
+          // Tasks are done but no follow-up turn has started yet.
+          if (!holdSettleTimer) {
+            holdSettleTimer = setTimeout(() => {
+              holdSettleTimer = null;
+              if (holding && bgTracker.liveTaskCount === 0 && !bgTracker.inAutonomousTurn) closeStdin();
+            }, BACKGROUND_HOLD_SETTLE_MS);
+            holdSettleTimer.unref?.();
+          }
         };
-
-        // Cold mode (no warm pool): stdin is closed, so the CLI keeps running
-        // only until its background tasks finish, then exits WITHOUT a follow-up
-        // turn. Settle the turn at `result` instead of holding the graph until
-        // exit, and keep listening so each completion is delivered (onProcClose
-        // flushes them). The stall watchdog stops here: a silent wait on a
-        // background task is not a stall, and killing it would lose the task.
-        const settleForBackground = () => {
+        const holdForBackground = () => {
           if (settled) return;
           settled = true;
+          holding = true;
           stopHeartbeat();
           stopStallWatchdog();
           options.signal?.removeEventListener('abort', onAbort);
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-          log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — listening for completion)`);
+          backgroundHolds.get(convId)?.();
+          backgroundHolds.set(convId, onNextTurn);
+          holdTimer = setTimeout(() => {
+            holdTimer = null;
+            log.warn(`[ClaudeCodeService] background task(s) for convId=${ convId } still live after ${ Math.round(BACKGROUND_TASK_MAX_HOLD_MS / 60_000) }min`);
+            stopHeldProcess('hold limit reached');
+          }, BACKGROUND_TASK_MAX_HOLD_MS);
+          holdTimer.unref?.();
+          log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — holding proc until they finish)`);
           resolve({ text: textCollected, usage: lastUsage });
         };
 
@@ -2197,7 +1621,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           stopStallWatchdog();
           closeSteering();
           options.signal?.removeEventListener('abort', onAbort);
-          if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
           if (awaitingForcedSettlement && !settled) return;
           const persistenceError = await persistSession();
           if (persistenceError && !settled) {
@@ -2207,11 +1630,12 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
           }
           if (!settled && stdoutBuffer.trim()) { processLine(stdoutBuffer); stdoutBuffer = '' }
           if (settled) {
-          // Already resolved (warm result, or cold settleForBackground). Deliver
-          // any background completion the process announced before exiting.
+            // Already resolved (held for background tasks). Deliver any
+            // completion the process announced before exiting, then release.
             if (stdoutBuffer.trim()) processLine(stdoutBuffer);
             stdoutBuffer = '';
             bgTracker.flush();
+            endHold();
             return;
           }
           if (stdoutBuffer.trim()) processLine(stdoutBuffer);
@@ -2296,9 +1720,9 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         proc.on('close', onProcClose);
       });
     } finally {
-      // A parked warm process keeps its MCP session for the next turn; only
-      // clean up when we are not reusing it.
-      if (!parked) cleanupMcp();
+      // A process held for background tasks keeps its MCP session until the
+      // hold ends (endHold cleans up then).
+      if (!holding) cleanupMcp();
     }
   }
 
@@ -2380,14 +1804,6 @@ export function createClaudeCodeService(model: string): ClaudeCodeService {
   const svc = new ClaudeCodeService();
   svc.setModel(model);
   return svc;
-}
-
-/** Drop every pooled process record (tests only — does not kill anything). */
-export function resetClaudeProcessPool(): void {
-  for (const rec of sharedPrewarmed.values()) if (rec.reapTimer) clearTimeout(rec.reapTimer);
-  for (const rec of sharedIdle) if (rec.reapTimer) clearTimeout(rec.reapTimer);
-  sharedPrewarmed.clear();
-  sharedIdle.clear();
 }
 
 export function resetClaudeCodeService(): void {

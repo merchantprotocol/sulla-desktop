@@ -85,13 +85,16 @@ substitute for Files or normal VM development.
 
 ### Background task completions (Claude Code)
 
-`claude -p` runs in Sulla VM via `ClaudeCodeService`, which keeps one warm CLI process per conversation between turns (the warm pool). When the model starts background work (`Bash run_in_background`, `Monitor`) and it finishes after the turn, the CLI emits `system/task_notification` and runs its own follow-up turn. The parked process keeps being read, and `claudeBackgroundTasks.ts` routes the completion into the owning graph thread:
+`claude -p` runs in Sulla VM via `ClaudeCodeService`, one process per turn: it is started when the turn starts and exits when the turn ends (stdin is closed at `result`). Nothing is booted ahead of a turn and no idle process is kept between turns. Conversations keep their context through `--resume <sessionId>`, not through a live process.
 
-- **Idle thread** — woken immediately with a `user_message` (`metadata.source: background_task_completion`, `inputSource: system`), the same primitive `spawn_agent` uses; the next turn adopts the same process.
+The one exception is background work (`Bash run_in_background`, `Monitor`). Closing stdin makes the CLI stop it, so when a turn ends with background tasks still live, the turn returns but that process stays up with stdin open. When a task finishes, the CLI emits `system/task_notification` and runs its own follow-up turn; `claudeBackgroundTasks.ts` routes the completion into the owning graph thread:
+
+- **Idle thread** — woken immediately with a `user_message` (`metadata.source: background_task_completion`, `inputSource: system`), the same primitive `spawn_agent` uses. The woken turn resumes the session in a new process.
 - **Busy thread** — held and retried every 15s until the thread goes idle (a `user_message` on a running thread would abort it); a turn that starts first gets the notice prepended to its prompt instead.
 - **Sub-agents / observers** — never woken (they have already returned); the notice waits for that conversation's next turn.
-- The 5-minute idle reap is deferred while background tasks are live, up to 4 hours.
-- Warm pool disabled (`claudeCodeWarmPool=false` and `claudeCodeSpeculativeBoot=false`): the turn settles at `result` and the CLI stops its background tasks shortly after; the graph is woken with the `[stopped]` notice.
+- Once no background task is left, stdin is closed and the process exits.
+- The hold is capped at 4 hours; past that the process (and its tasks) is stopped.
+- If the conversation's next turn starts while the process is still held, the held process is stopped (with its tasks) so only one process runs the session. The resumed CLI tells the model which background commands did not finish.
 
 ---
 
