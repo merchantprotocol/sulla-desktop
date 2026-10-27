@@ -207,6 +207,18 @@ export class MCPServerHost {
       // can reach straight into the calling graph's BaseThreadState.
       app.post('/mcp', requireSession, async (req: Request, res: Response) => {
         const session = (req as any).sullaSession as ToolSession;
+
+        // A stateless transport cannot remember the initialize request when the
+        // client's follow-up notification arrives on a new HTTP request. Newer
+        // Claude Code clients require a successful acknowledgement here before
+        // considering the connection ready. The notification has no payload to
+        // process, so acknowledge it directly instead of handing it to a fresh,
+        // uninitialized SDK transport (which rejects it with HTTP 400).
+        if (req.body?.jsonrpc === '2.0' && req.body?.method === 'notifications/initialized') {
+          res.sendStatus(202);
+          return;
+        }
+
         let step = 'build';
         try {
           const mcp = this.buildMcpServer(session);
