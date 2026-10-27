@@ -15,7 +15,7 @@
  * Pure business logic — no HTTP/Express dependencies.
  */
 
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -327,7 +327,7 @@ export async function resolveFromDockerCompose(
   // If we have a container name, also try live docker port resolution
   let livePortMap: Map<number, number> | null = null;
   if (containerName) {
-    livePortMap = resolveDockerPorts(containerName);
+    livePortMap = await resolveDockerPorts(containerName);
   }
 
   // Figure out the internal MCP port and path
@@ -485,12 +485,22 @@ export function resolveEnvVars(
   return resolved;
 }
 
+/** Run the docker CLI without blocking the main thread; rejects on failure or after 5s. */
+function execDocker(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('docker', args, { encoding: 'utf-8', timeout: 5000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  });
+}
+
 /**
  * Resolve Docker port mappings by running `docker port <container>`.
  */
-export function resolveDockerPorts(containerName: string): Map<number, number> | null {
+export async function resolveDockerPorts(containerName: string): Promise<Map<number, number> | null> {
   try {
-    const output = execSync(`docker port ${ containerName }`, { encoding: 'utf-8', timeout: 5000 });
+    const output = await execDocker(['port', containerName]);
     const portMap = new Map<number, number>();
 
     for (const line of output.split('\n')) {
@@ -634,10 +644,7 @@ async function findDockerContainerForStdioServer(
 ): Promise<{ containerName: string; hostUrl: string } | null> {
   try {
     // Look for containers with 'mcp' in the name matching this server
-    const output = execSync(
-      `docker ps --format '{{.Names}}\\t{{.Ports}}' 2>/dev/null`,
-      { encoding: 'utf-8', timeout: 5000 },
-    );
+    const output = await execDocker(['ps', '--format', '{{.Names}}\\t{{.Ports}}']);
 
     const packageName = args.find(a => a.startsWith('mcp-') || a.includes('mcp')) || '';
 
@@ -675,7 +682,7 @@ async function findDockerContainerForStdioServer(
           const svcCommand = typeof svcDef.command === 'string' ? svcDef.command : '';
           if (svcCommand.includes(packageName) || svcName.includes('mcp')) {
             const containerNameFromCompose = svcDef.container_name || svcName;
-            const livePortMap = resolveDockerPorts(containerNameFromCompose);
+            const livePortMap = await resolveDockerPorts(containerNameFromCompose);
             if (livePortMap) {
               const { internalPort, mcpPath } = detectMCPEndpoint(svcDef);
               const hostPort = livePortMap.get(internalPort);

@@ -62,11 +62,18 @@ jest.unstable_mockModule('@pkg/agent/services/GuestRuntimeTransport', () => stub
     GUEST_AGENT_WORKSPACES_ROOT: '/mnt/data/sulla/agent-workspaces',
     createGuestRuntimeDirectory: () => '/mnt/data/sulla/agent-workspaces/job-1',
     seedDirectoryIntoGuest:      () => Promise.resolve('/mnt/data/sulla/agent-docs/job-1'),
+    GUEST_CONVERSATIONS_ROOT:    '/mnt/data/sulla/conversations',
+    ensureGuestRuntimeDirectory: (parent: string, name: string) => Promise.resolve(`${ parent }/${ name }`),
     getGuestRuntimeIdentity:     () => ({ uid: 1000, gid: 1000 }),
   }));
 jest.unstable_mockModule('@pkg/agent/services/ContainerProviderFileTransport', () => ({
   assertWorkspacePath:            any,
-  ContainerProviderFileTransport: class { bindMount = '/mnt/data/sulla/provider-files:/run/sulla-provider:rw'; close() { return Promise.resolve() } dispose() {} },
+  ContainerProviderFileTransport: class {
+    bindMount = '/mnt/data/sulla/provider-files:/run/sulla-provider:rw';
+    static create() { return Promise.resolve(new this()) }
+    close() { return Promise.resolve() }
+    dispose() { return Promise.resolve() }
+  },
 }));
 jest.unstable_mockModule('@pkg/agent/services/AgentContainerCleanup', () => ({
   AgentContainerCleanupOwner: class { constructor() { return any } },

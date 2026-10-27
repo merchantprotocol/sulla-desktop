@@ -561,20 +561,20 @@ async function cleanupContainerResources(
   }
   if (containerRemoved) {
     if (providerFiles) {
-      try { providerFiles.dispose() } catch (error) { failures.push(error) }
+      try { await providerFiles.dispose() } catch (error) { failures.push(error) }
     }
     for (const guestPath of guestPaths) {
       try {
-        removeGuestPathAtomic(guestPath);
+        await removeGuestPathAtomic(guestPath);
         receipt.removedGuestPaths.push(guestPath);
       } catch (error) {
         failures.push(error);
       }
     }
     if (workspacePath) {
-      let decision: ReturnType<typeof inspectGuestWorkspaceForCleanup>;
+      let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
-        decision = inspectGuestWorkspaceForCleanup(workspacePath);
+        decision = await inspectGuestWorkspaceForCleanup(workspacePath);
       } catch {
         decision = {
           remove: false,
@@ -584,7 +584,7 @@ async function cleanupContainerResources(
       receipt.workspaceDecisionReason = decision.reason;
       if (decision.remove) {
         try {
-          removeGuestPathAtomic(workspacePath);
+          await removeGuestPathAtomic(workspacePath);
           receipt.removedGuestPaths.push(workspacePath);
         } catch (error) {
           failures.push(error);
@@ -819,7 +819,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let providerFiles: ContainerProviderFileTransport | undefined;
 
   try {
-    const identity = getGuestRuntimeIdentity();
+    const identity = await getGuestRuntimeIdentity();
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
@@ -854,20 +854,20 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
       : undefined;
     const persistentRoot = stableKey
-      ? ensureGuestRuntimeDirectory(GUEST_CONVERSATIONS_ROOT, stableKey)
+      ? await ensureGuestRuntimeDirectory(GUEST_CONVERSATIONS_ROOT, stableKey)
       : undefined;
     workspacePath = checkout ?? (persistentRoot
-      ? ensureGuestRuntimeDirectory(persistentRoot, 'workspace')
-      : createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`));
-    const providerHome = persistentRoot ? ensureGuestRuntimeDirectory(persistentRoot, 'home') : undefined;
-    const claudeHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'claude') : undefined;
-    const codexHome = providerHome ? ensureGuestRuntimeDirectory(providerHome, 'codex') : undefined;
+      ? await ensureGuestRuntimeDirectory(persistentRoot, 'workspace')
+      : await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`));
+    const providerHome = persistentRoot ? await ensureGuestRuntimeDirectory(persistentRoot, 'home') : undefined;
+    const claudeHome = providerHome ? await ensureGuestRuntimeDirectory(providerHome, 'claude') : undefined;
+    const codexHome = providerHome ? await ensureGuestRuntimeDirectory(providerHome, 'codex') : undefined;
     const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
     guestRuntimePaths.push(docsPath);
-    chownGuestPath(workspacePath, identity);
-    chownGuestPath(docsPath, identity);
+    await chownGuestPath(workspacePath, identity);
+    await chownGuestPath(docsPath, identity);
     const providerWorkspace = workspacePath;
-    providerFiles = new ContainerProviderFileTransport();
+    providerFiles = await ContainerProviderFileTransport.create();
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, {
       SULLA_API_TOKEN: issueLease(), SULLA_TOOL_SESSION: toolSession.id,
     }, identity);
@@ -1150,7 +1150,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   let unregisterRuntime: (() => void) | undefined;
   const guestRuntimePaths: string[] = [];
   try {
-    const identity = getGuestRuntimeIdentity();
+    const identity = await getGuestRuntimeIdentity();
     const installationSecret = getChatCompletionsServer().getApiToken();
     if (!installationSecret) throw new Error('Desktop tool API is not initialized');
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
@@ -1180,11 +1180,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     );
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
-    workspacePath = checkout ?? createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    workspacePath = checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
     const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
     guestRuntimePaths.push(docsPath);
-    chownGuestPath(workspacePath, identity);
-    chownGuestPath(docsPath, identity);
+    await chownGuestPath(workspacePath, identity);
+    await chownGuestPath(docsPath, identity);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets, identity);
     const egress = await prepareAgentEgress();
     const binds = [

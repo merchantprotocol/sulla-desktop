@@ -18,7 +18,7 @@ import {
 import type { ProviderTransportContext } from '../../languagemodels/ProviderExecutionTransport';
 
 describe('container filesystem isolation', () => {
-  test('keeps host writes out of a symlinked workspace provider directory', () => {
+  test('keeps host writes out of a symlinked workspace provider directory', async() => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-provider-files-'));
     const workspace = path.join(fixture, 'workspace');
     const outside = path.join(fixture, 'outside');
@@ -27,11 +27,11 @@ describe('container filesystem isolation', () => {
     fs.mkdirSync(outside);
     fs.symlinkSync(outside, path.join(workspace, '.sulla-provider-files'), 'dir');
 
-    const transport = new ContainerProviderFileTransport(storageParent);
+    const transport = await ContainerProviderFileTransport.create(storageParent);
     const previousUmask = process.umask(0o077);
-    const ref = (() => {
+    const ref = await (async() => {
       try {
-        return transport.write({
+        return await transport.write({
           context:       {} as ProviderTransportContext,
           purpose:       'system-prompt',
           suggestedName: 'prompt.md',
@@ -52,7 +52,7 @@ describe('container filesystem isolation', () => {
     expect(fs.readdirSync(outside)).toEqual([]);
 
     ref.dispose();
-    transport.dispose();
+    await transport.dispose();
     expect(fs.existsSync(storageRoot)).toBe(false);
     fs.rmSync(fixture, { recursive: true, force: true });
   });

@@ -45,21 +45,26 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   readonly bindMount:   string;
   private readonly storageRoot: string;
 
-  constructor(storageParent = GUEST_PROVIDER_FILES_ROOT) {
-    this.storageRoot = createGuestRuntimeDirectory(storageParent, 'container-');
-    // The provider runs as a different UID. Allow traversal without directory
-    // listing; the Docker bind remains read-only.
-    chmodGuestPath(this.storageRoot, 0o711);
+  private constructor(storageRoot: string) {
+    this.storageRoot = storageRoot;
     this.bindMount = `${ this.storageRoot }:${ CONTAINER_PROVIDER_FILES_PATH }:ro`;
   }
 
-  write(request: ProviderFileRequest): ProviderFileRef {
+  static async create(storageParent = GUEST_PROVIDER_FILES_ROOT): Promise<ContainerProviderFileTransport> {
+    const storageRoot = await createGuestRuntimeDirectory(storageParent, 'container-');
+    // The provider runs as a different UID. Allow traversal without directory
+    // listing; the Docker bind remains read-only.
+    await chmodGuestPath(storageRoot, 0o711);
+    return new ContainerProviderFileTransport(storageRoot);
+  }
+
+  async write(request: ProviderFileRequest): Promise<ProviderFileRef> {
     const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 120) || 'provider-file';
     const name = `${ crypto.randomUUID() }-${ safeName }`;
     const storageTarget = assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name));
     const providerTarget = assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name));
     const mode = ((request.mode ?? 0o600) & 0o700) | 0o044;
-    writeGuestFileAtomic(storageTarget, request.data, mode);
+    await writeGuestFileAtomic(storageTarget, request.data, mode);
     let disposed = false;
 
     return {
@@ -67,12 +72,12 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
       dispose() {
         if (disposed) return;
         disposed = true;
-        try { removeGuestPathAtomic(storageTarget) } catch { /* already removed */ }
+        removeGuestPathAtomic(storageTarget).catch(() => { /* already removed */ });
       },
     };
   }
 
-  dispose(): void {
-    removeGuestPathAtomic(this.storageRoot);
+  async dispose(): Promise<void> {
+    await removeGuestPathAtomic(this.storageRoot);
   }
 }
