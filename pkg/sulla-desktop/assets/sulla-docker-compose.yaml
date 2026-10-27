@@ -19,16 +19,35 @@ services:
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - "sulla_postgres_data:/var/lib/postgresql/data"
+    # Sized for a small guest (2 GB on an 8 GB Mac) that also holds Docker,
+    # the kernel and every other service. shared_buffers is shared memory the
+    # kernel cannot reclaim, so it stays small; the guest page cache does the
+    # rest of the caching. Durability settings (fsync, synchronous_commit,
+    # full_page_writes) keep their safe defaults.
     command:
       - postgres
       - -c
-      - shared_buffers=512MB
+      - shared_buffers=64MB
+      # Planner hint only; allocates nothing.
       - -c
-      - effective_cache_size=1536MB
+      - effective_cache_size=256MB
+      # Per sort/hash step per backend.
       - -c
-      - work_mem=16MB
+      - work_mem=4MB
       - -c
-      - maintenance_work_mem=256MB
+      - maintenance_work_mem=64MB
+      - -c
+      - autovacuum_work_mem=32MB
+      - -c
+      - autovacuum_max_workers=2
+      # Each parallel worker is another backend with its own work_mem; a
+      # single-user desktop gains little from them.
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - max_parallel_maintenance_workers=0
+      - -c
+      - huge_pages=off
       - -c
       - idle_in_transaction_session_timeout=60s
       - -c
@@ -36,7 +55,7 @@ services:
       - -c
       - shared_preload_libraries=pg_stat_statements
     restart: unless-stopped
-    mem_limit: 2g
+    mem_limit: 512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sulla"]
       interval: 10s
@@ -48,15 +67,21 @@ services:
     container_name: sulla_redis
     ports:
       - "127.0.0.1:30117:6379"
-    command: redis-server --save "" --appendonly no
+    # Cache and coordination only: no persistence. maxmemory bounds growth;
+    # noeviction because some keys (workflow stop/pause flags, settings cache,
+    # agent registry) carry no TTL and must not silently disappear: past the
+    # cap writes fail loudly instead.
+    command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy noeviction
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 192m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
 
+  # The function runtimes start on first use and stop when idle
+  # (backend/onDemandServices.ts); boot does not start them.
   python_runtime:
     image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
     container_name: sulla_python_runtime
@@ -73,6 +98,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
   shell_runtime:
     image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
@@ -89,6 +117,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
   node_runtime:
     image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
@@ -108,6 +139,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+      # Started on first use: probe quickly while starting so the caller waits ~1 s, not 10.
+      start_period: 30s
+      start_interval: 1s
 
 volumes:
   sulla_postgres_data:

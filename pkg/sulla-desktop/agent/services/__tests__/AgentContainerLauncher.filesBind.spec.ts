@@ -92,6 +92,10 @@ jest.unstable_mockModule('@pkg/main/MCPServerHost', () => ({
 }));
 jest.unstable_mockModule('@pkg/main/chatCompletionsServer', () => ({ getChatCompletionsServer: () => ({ getApiToken: () => 'x'.repeat(48) }) }));
 jest.unstable_mockModule('@pkg/main/threat-proxy', () => ({ egressEnforced: () => Promise.resolve(true) }));
+jest.unstable_mockModule('@pkg/backend/onDemandServices', () => ({
+  ensureOnDemandService:    () => Promise.resolve(),
+  setOnDemandServiceDemand: () => undefined,
+}));
 jest.unstable_mockModule('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: () => Promise.resolve('device-1') }));
 jest.unstable_mockModule('@pkg/utils/logging', () => ({ default: new Proxy({}, { get: () => ({ log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} }) }) }));
 jest.unstable_mockModule('@pkg/utils/paths', () => ({ default: { sullaRuntime: 'sulla-runtime' } }));

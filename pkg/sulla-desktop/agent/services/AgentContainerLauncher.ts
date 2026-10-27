@@ -49,6 +49,7 @@ import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaDocsDir } from '../utils/sullaPaths';
 
+import { ensureOnDemandService, setOnDemandServiceDemand } from '@pkg/backend/onDemandServices';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
@@ -71,6 +72,12 @@ const log = Logging.background;
 const IDLE_MS = 30 * 60_000;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
+/**
+ * On a small guest the 4g limit is larger than the guest itself, so the guest
+ * kernel's OOM killer is what bounds an agent. Make it pick the agent (whose
+ * job fails and can be retried) before Postgres, the vault or Files.
+ */
+const AGENT_OOM_SCORE_ADJ = 500;
 const LEASE_MS = 15 * 60_000;
 
 /** Boot brings sulla-tools up after Desktop is usable, so agents wait for it instead of failing. */
@@ -200,6 +207,7 @@ class GuestDockerRuntimeDriver implements ContainerRuntimeDriver {
     for (const host of spec.extraHosts ?? []) args.push('--add-host', host);
     if (spec.memoryLimit) args.push('--memory', spec.memoryLimit);
     if (spec.cpuLimit) args.push('--cpus', spec.cpuLimit);
+    if (spec.oomScoreAdj !== undefined) args.push('--oom-score-adj', String(spec.oomScoreAdj));
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const [key, value] of Object.entries(spec.env ?? {})) args.push('--env', `${ key }=${ value }`);
     for (const bind of spec.binds ?? []) args.push('--volume', bind);
@@ -376,6 +384,10 @@ async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<stri
 
   await guestExec(egressPolicyCommand(enforce));
   if (!enforce) return { binds: [], env: {} };
+  // The proxy runs only while agents do. Start it and wait until it accepts
+  // connections; if it cannot start, the launch fails here. (Even without this
+  // the redirect fails closed: a stopped proxy means refused connections.)
+  await ensureOnDemandService('threat_proxy');
   const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
 
   while (!await guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false)) {
@@ -387,6 +399,20 @@ async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<stri
   const trust = agentCaTrust();
 
   return { binds: [trust.bind], env: trust.env };
+}
+
+/**
+ * Keep the on-demand threat proxy up while any agent container runs with
+ * scanning on (this also starts it within a minute when scanning is turned on
+ * under running agents); with no agents it stops after its idle period.
+ */
+export function keepThreatProxyForRunningAgents(): void {
+  setOnDemandServiceDemand('threat_proxy', async() => {
+    if (!await egressEnforced()) return false;
+    const { stdout } = await guestExec(['docker', 'ps', '--quiet', '--filter', 'label=com.sulla.workload=agent']);
+
+    return stdout.trim().length > 0;
+  });
 }
 
 let imageReady: Promise<string> | null = null;
@@ -908,6 +934,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+      oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, agentId, run.jobId);
     await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
@@ -1211,6 +1238,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       },
       memoryLimit: MEMORY,
       cpuLimit:    CPUS,
+      oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
     await guestExec(connectServiceNetworkCommand('sulla_default', containerName));

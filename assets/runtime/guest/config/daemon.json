@@ -3,5 +3,7 @@
   "features": { "containerd-snapshotter": true },
   "iptables": true,
   "storage-driver": "overlayfs",
-  "userland-proxy": true
+  "userland-proxy": true,
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
 }

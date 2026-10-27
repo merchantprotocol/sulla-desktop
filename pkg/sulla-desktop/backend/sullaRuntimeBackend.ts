@@ -28,10 +28,11 @@ import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
 import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
 import { FILES_ADAPTER_MOUNTS, planUnhealthyRecreates, type ManagedContainerRow } from './sullaContainerHealth';
-import { reconcileComposeService } from './sullaServiceReconcile';
 import {
-  ensureAgentNetworkCommand, provisionStateCommand, THREAT_PROXY_CONTAINER, threatProxyComposeService,
-} from './threatProxyEgress';
+  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
+} from './onDemandServices';
+import { reconcileComposeService } from './sullaServiceReconcile';
+import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
@@ -86,6 +87,17 @@ const ROOT_DOCKER_CONFIG_PATH = '/root/.docker/config.json';
 /** The Mac's loopback as seen from the guest. */
 const HOST_GATEWAY = '192.168.5.2';
 
+/**
+ * NODE_OPTIONS for a Node service container. The old-space cap is the heap
+ * the service may grow to; mem_limit is that plus ~100 MB for code, buffers
+ * and native memory. A small young generation (semi-space, MB) keeps idle
+ * services from holding on to tens of MB of nursery after a burst. Only flags
+ * Node accepts in NODE_OPTIONS belong here (e.g. not --single-threaded-gc).
+ */
+function serviceNodeOptions(heapMiB: number, semiSpaceMiB = 2): string {
+  return `--max-old-space-size=${ heapMiB } --max-semi-space-size=${ semiSpaceMiB }`;
+}
+
 function logStartupPhase(phase: string, startedAt: number, details = ''): void {
   const suffix = details ? ` ${ details }` : '';
 
@@ -114,6 +126,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   readonly executor = this;
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
+  /** Settles when the background start of the optional services finishes. */
+  #optionalServicesSettled: Promise<void> = Promise.resolve();
   #optionalSullaFallbackImages = new Map<string, { env: string; image: string }>();
   #managedSullaRefreshImages = new Map<string, string>();
   /** Services running an image bundled with the app: the exact reference they must run. */
@@ -618,6 +632,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
     void import('@pkg/main/threat-proxy').then(threatProxy => threatProxy.clearGuest(this)).catch(() => undefined);
+    clearOnDemandServices();
     setSullaRuntimeActive(false);
     this.#containerEngineClient = undefined;
     try {
@@ -664,9 +679,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.waitForSullaCredentials(generation);
       this.assertManagedServicesGeneration(generation);
 
-      const { resetAgentContainerImageResolution } = await import('@pkg/agent/services/AgentContainerLauncher');
+      const { resetAgentContainerImageResolution, keepThreatProxyForRunningAgents } = await import('@pkg/agent/services/AgentContainerLauncher');
 
       resetAgentContainerImageResolution();
+      keepThreatProxyForRunningAgents();
       await this.reconcileSullaDockerEnvironment(generation);
       markSullaDockerServicesStarted();
       getSullaFilesBackups().configureGuest(this);
@@ -712,9 +728,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.loadBundledImages(image => !image.onDemand);
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
-      // Images used later (agent containers) load in the background.
-      void this.loadBundledImages(image => !!image.onDemand, false)
-        .catch(error => console.warn('[bundled-images] background load failed:', error));
     });
 
     await this.progressTracker.action('Preparing the threat proxy', 40, async() => {
@@ -731,6 +744,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
     });
+
+    // Images used later (agent containers) load in the background, after the
+    // services have started, so a large docker load does not land on top of
+    // the boot peak. An agent launched before then loads its image itself.
+    void this.#optionalServicesSettled
+      .then(() => this.loadBundledImages(image => !!image.onDemand, false))
+      .catch(error => console.warn('[bundled-images] background load failed:', error));
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
@@ -1111,7 +1131,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         container_name: 'sulla_accounts',
         depends_on:     { postgres: { condition: 'service_healthy' } },
         environment:    {
-          NODE_OPTIONS:                                '--max-old-space-size=384',
+          NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
           SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
@@ -1128,7 +1148,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
-        mem_limit:    '512m',
+        mem_limit:    '256m',
         healthcheck: {
           test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
           interval: '5s',
@@ -1170,7 +1190,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
-          NODE_OPTIONS: '--max-old-space-size=512',
+          // 36 MB JSON bodies in desktop mode; Argon2 (libsodium wasm, up to
+          // 256 MB at moderate cost) lives outside the heap, so the limit stays.
+          NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
           SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
           SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
@@ -1234,7 +1256,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       env_file: ['/etc/sulla-env'],
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=768',
+        NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
@@ -1247,7 +1269,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       ports: ['127.0.0.1:30122:8788'],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
       restart: 'unless-stopped',
-      mem_limit: '1g',
+      mem_limit: '384m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1272,7 +1294,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       container_name: 'sulla_relay',
       depends_on: { redis: { condition: 'service_healthy' } },
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=384',
+        NODE_OPTIONS: serviceNodeOptions(128),
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_DEVICE_TOKEN_SECRET: sullaApiToken,
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
@@ -1280,7 +1302,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       ports: ['127.0.0.1:30126:8790'],
       restart: 'unless-stopped',
-      mem_limit: '512m',
+      mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1315,7 +1337,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       env_file: ['/etc/sulla-env'],
       environment: {
-        NODE_OPTIONS: '--max-old-space-size=768',
+        // The image runs TypeScript through tsx, whose esbuild helper process
+        // also counts against mem_limit.
+        NODE_OPTIONS: serviceNodeOptions(320),
+        // The agent tool code in this image opens its own PostgresClient pool
+        // (default 20) next to the service pool above; one caller needs few.
+        SULLA_DATABASE_POOL_MAX: '5',
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
@@ -1337,7 +1364,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         filesTlsBind(true),
       ],
       restart: 'unless-stopped',
-      mem_limit: '1g',
+      mem_limit: '512m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/healthz'], interval: '5s', timeout: '3s', retries: 10 },
     };
 
@@ -1364,7 +1391,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(vaultIdentities ? { sulla_vault: { condition: 'service_healthy' } } : {}),
       },
       environment: {
-        NODE_OPTIONS:                      '--max-old-space-size=1536',
+        // The image entrypoint appends --max-old-space-size=512 (#1363), so
+        // 512 is the real heap; the rest of mem_limit covers the Potion table,
+        // chunk buffers and the OCR/Whisper/ffmpeg child processes.
+        NODE_OPTIONS:                      serviceNodeOptions(512, 4),
         SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
@@ -1417,7 +1447,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           : []),
       ],
       restart: 'unless-stopped',
-      mem_limit: '2g',
+      mem_limit: '1g',
       healthcheck: {
         test: [
           'CMD', 'node', '-e',
@@ -1645,6 +1675,23 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     });
   }
 
+  /**
+   * How many optional services may be starting at once: a few on a guest
+   * under 3 GiB, otherwise all of them.
+   */
+  private async optionalServiceStartSlots(): Promise<number> {
+    try {
+      const meminfo = await this.execCommand({ capture: true, expectFailure: true }, 'cat', '/proc/meminfo');
+      const totalKiB = Number(/^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo)?.[1]);
+
+      if (totalKiB > 0 && totalKiB < 3 * 1024 * 1024) return 3;
+    } catch {
+      // Unknown size: keep the full parallel start.
+    }
+
+    return Number.POSITIVE_INFINITY;
+  }
+
   private async applySullaCompose(generation: number): Promise<void> {
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Verifying compose file', 62.5, async() => {
@@ -1731,11 +1778,17 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       ]);
 
       this.#activeOptionalSullaServices.clear();
-      const optionalServices: Array<{ service: string; container: string }> = [
-        { service: 'python_runtime', container: 'sulla_python_runtime' },
-        { service: 'shell_runtime', container: 'sulla_shell_runtime' },
-        { service: 'node_runtime', container: 'sulla_node_runtime' },
-      ];
+      // The function runtimes start on first use (backend/onDemandServices.ts)
+      // and stop again when idle; boot leaves them alone.
+      const onDemandRefreshImages: Partial<Record<OnDemandServiceName, string>> = {};
+
+      for (const service of Object.keys(ON_DEMAND_SERVICES) as OnDemandServiceName[]) {
+        const image = this.#managedSullaRefreshImages.get(service);
+
+        if (image) onDemandRefreshImages[service] = image;
+      }
+      configureOnDemandServices(args => this.execCommand({ capture: true, root: true }, ...args), onDemandRefreshImages);
+      const optionalServices: Array<{ service: string; container: string }> = [];
 
       const configuredServices = await this.execCommand(
         { capture: true, root: true }, ...composeCommand, 'config', '--services',
@@ -1771,16 +1824,18 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
         expectVaultContainer();
       }
+      // The threat proxy is on demand too: the agent launcher starts it (and
+      // waits for it) before any agent runs; until then the egress rules
+      // refuse agent web traffic rather than let it out unscanned.
       optionalServices.push(
-        { service: 'threat_proxy', container: THREAT_PROXY_CONTAINER },
         { service: 'sulla_relay', container: 'sulla_relay' },
         { service: 'sulla_files', container: 'sulla_files' },
         { service: 'workflow_manager', container: 'sulla_workflow_manager' },
         { service: 'tools', container: 'sulla_tools' },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
-        const order = ['sulla_vault', 'threat_proxy', 'sulla_accounts', 'sulla_relay', 'sulla_files',
-          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager', 'python_runtime', 'shell_runtime', 'node_runtime'];
+        const order = ['sulla_vault', 'sulla_accounts', 'sulla_relay', 'sulla_files',
+          'sulla_files_fuse', 'sulla_files_fuse_logs', 'sulla_files_fuse_training_data', 'tools', 'workflow_manager'];
 
         return order.indexOf(left.service) - order.indexOf(right.service);
       });
@@ -1795,6 +1850,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         sulla_files_fuse_training_data: ['sulla_files'],
         tools:                          ['sulla_relay', 'sulla_files', 'sulla_vault'],
         workflow_manager:               ['sulla_files'],
+      };
+      // Every Node service peaks while it loads code and runs migrations. On a
+      // small guest, starting them all at once stacks those peaks; limit how
+      // many are between "start" and "healthy" at a time. A service takes a
+      // slot only after its dependencies are healthy, so slots cannot deadlock.
+      let freeStartSlots = await this.optionalServiceStartSlots();
+      const startSlotWaiters: Array<() => void> = [];
+      const takeStartSlot = async(): Promise<void> => {
+        while (freeStartSlots <= 0) await new Promise<void>(resolve => startSlotWaiters.push(resolve));
+        freeStartSlots -= 1;
+      };
+      const releaseStartSlot = (): void => {
+        freeStartSlots += 1;
+        startSlotWaiters.shift()?.();
       };
       const reconcileInBackground = async(): Promise<void> => {
         const bootStatus = new Map<string, string>();
@@ -1826,6 +1895,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                 return false;
               }
             }
+            await takeStartSlot();
             try {
               // Files can legitimately spend minutes applying a first-start
               // schema upgrade. Do not re-run compose against a live starter;
@@ -1857,6 +1927,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               console.warn(`[Sulla] Optional service ${ service } unavailable (attempt ${ attempt }/3); Desktop remains usable: ${ reason }`);
 
               return false;
+            } finally {
+              releaseStartSlot();
             }
           };
 
@@ -1874,7 +1946,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // Optional services must never hold the backend STARTED/unlock transition.
       // Compose health dependencies preserve ordering; bounded retries repair a
       // cold or transiently broken service after Desktop is already usable.
-      void reconcileInBackground().catch(error => {
+      this.#optionalServicesSettled = reconcileInBackground().catch(error => {
         if (!(error instanceof ManagedServicesReconciliationCancelled)) {
           console.warn('[Sulla] Optional service background reconciliation stopped:', error);
         }

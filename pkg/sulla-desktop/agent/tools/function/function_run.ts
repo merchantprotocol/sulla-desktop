@@ -10,17 +10,27 @@ import { DEPS_FILES, RUNTIME_URLS } from './constants';
 import { materializeStoredFunctionInGuest, removeGuestFunctionMaterialization } from './guestFunctionMaterialization';
 
 async function runtimePost(url: string, body: unknown): Promise<any> {
-  const res = await fetch(url, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
-  const json = await res.json().catch(() => ({ detail: `non-JSON response (status ${ res.status })` }));
-  if (!res.ok) {
-    const detail = (json)?.detail ?? JSON.stringify(json);
-    throw new Error(`HTTP ${ res.status }: ${ detail }`);
+  // The runtime containers start on first use and stop when idle; hold the
+  // runtime for the whole request so the idle reaper never stops it mid-call.
+  const runtime = Object.keys(RUNTIME_URLS).find(name => url.startsWith(`${ RUNTIME_URLS[name] }/`));
+  const { acquireFunctionRuntime } = await import('@pkg/backend/onDemandServices');
+  const release = runtime ? await acquireFunctionRuntime(runtime) : () => undefined;
+
+  try {
+    const res = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({ detail: `non-JSON response (status ${ res.status })` }));
+    if (!res.ok) {
+      const detail = (json)?.detail ?? JSON.stringify(json);
+      throw new Error(`HTTP ${ res.status }: ${ detail }`);
+    }
+    return json;
+  } finally {
+    release();
   }
-  return json;
 }
 
 interface RunRecord {

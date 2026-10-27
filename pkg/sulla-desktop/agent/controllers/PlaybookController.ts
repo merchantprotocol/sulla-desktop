@@ -1719,19 +1719,24 @@ export class PlaybookController<TState = any> {
               `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } runtime=${ runtime }`,
             );
 
-            const loadResponse = await fetch(`${ baseUrl }/load`, {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({
-                name:    step.functionRef,
-                version: 'HEAD',
-                ...(materializedRuntimePath ? { path: materializedRuntimePath } : {}),
-              }),
-            });
-            if (!loadResponse.ok) throw new Error(`Function load failed: HTTP ${ loadResponse.status }`);
-
+            // The runtime container starts on first use and stops when idle;
+            // hold it from load through invoke.
+            const { acquireFunctionRuntime } = await import('@pkg/backend/onDemandServices');
+            let releaseRuntime: () => void = () => undefined;
             let resp: Response;
             try {
+              releaseRuntime = await acquireFunctionRuntime(runtime);
+              const loadResponse = await fetch(`${ baseUrl }/load`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  name:    step.functionRef,
+                  version: 'HEAD',
+                  ...(materializedRuntimePath ? { path: materializedRuntimePath } : {}),
+                }),
+              });
+              if (!loadResponse.ok) throw new Error(`Function load failed: HTTP ${ loadResponse.status }`);
+
               resp = await fetch(`${ baseUrl }/invoke`, {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1746,6 +1751,7 @@ export class PlaybookController<TState = any> {
               });
             } finally {
               clearTimeout(timer);
+              releaseRuntime();
             }
 
             if (!resp.ok) {

@@ -24,6 +24,10 @@ export interface WorkflowLauncher {
   runnerExists(runnerId: string): Promise<boolean>;
 }
 
+/** Heap cap for one workflow runner, and its container limit (heap + ~128 MiB). */
+const RUNNER_HEAP_MIB = 256;
+const RUNNER_MEMORY_BYTES = (RUNNER_HEAP_MIB + 128) * 1024 * 1024;
+
 export class DockerWorkflowLauncher implements WorkflowLauncher {
   constructor(
     private readonly docker = new DockerRuntimeDriver(),
@@ -37,6 +41,9 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       image:      config.workflowImage,
       command:    ['node', 'dist/services/sulla-workflows/src/runner.js'],
       env:        {
+        // A runner walks one playbook and calls tools over HTTP; it needs a
+        // small heap. Without a cap V8 sizes the heap from the whole guest.
+        NODE_OPTIONS:         `--max-old-space-size=${ RUNNER_HEAP_MIB } --max-semi-space-size=2`,
         SULLA_WORKFLOW_ROLE:  'runner',
         SULLA_WORKFLOW_MODE:  config.mode,
         SULLA_EXECUTION_ID:   run.executionId,
@@ -51,6 +58,9 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
       },
       network:    config.dockerNetwork,
       autoRemove: true,
+      memoryBytes: RUNNER_MEMORY_BYTES,
+      // Under guest memory pressure a runner goes before the core services.
+      oomScoreAdj: 300,
       // Docker rejects an rslave bind of a non-shared path, so the Files mount
       // is bound only when Desktop confirmed its anchor.
       binds:      [
