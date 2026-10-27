@@ -295,10 +295,24 @@ n.createServer(c => {
     const u = ${ upstream };
     u.setNoDelay(true);
 ${ portLine }    u.write(Buffer.concat([Buffer.from(head, 'latin1'), b.subarray(i)]));
+    // The host may still answer keep-alive (the MCP SDK's SSE replies set it
+    // explicitly). Rewrite the response head to close too, or the client reuses
+    // this socket and its next request reaches the host with the prefix on.
     let firstUpstream = true;
+    let rb = Buffer.alloc(0);
     u.on('data', x => {
       if (firstUpstream) { console.log('[RelayTiming] firstByteMs=' + (performance.now() - startedAt).toFixed(1)); firstUpstream = false; }
-      c.write(x);
+      if (!rb) { c.write(x); return; }
+      rb = Buffer.concat([rb, x]);
+      const j = rb.indexOf('\r\n\r\n');
+      if (j < 0) {
+        if (rb.length > 65536) { c.write(rb); rb = null; }
+        return;
+      }
+      const resHead = rb.toString('latin1', 0, j).split('\r\n')
+        .filter(l => !/^(connection|keep-alive)\s*:/i.test(l)).concat('Connection: close').join('\r\n');
+      c.write(Buffer.concat([Buffer.from(resHead, 'latin1'), rb.subarray(j)]));
+      rb = null;
     });
     u.on('end', () => c.end());
     u.on('error', () => c.destroy());
