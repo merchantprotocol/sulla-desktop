@@ -781,9 +781,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (result.loaded.length || result.failed.length) {
       console.log(`[bundled-images] present=${ result.present.join(',') || '-' } loaded=${ result.loaded.join(',') || '-' } failed=${ result.failed.map(f => f.name).join(',') || '-' }`);
     }
-    // Loading streams every image through the guest's page cache once and
-    // never reads it again: drop it so the balloon can return it to macOS.
-    if (result.loaded.length) void this.#sullaRuntime?.reclaimMemory();
   }
 
   private async loadOrCreateVaultServiceIdentities(): Promise<{

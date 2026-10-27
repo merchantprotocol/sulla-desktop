@@ -132,7 +132,6 @@ func main() {
 	// re-checks it every few seconds, so an early image pull would otherwise
 	// fall back to a resolver on localhost.
 	configureUser(a.log)
-	tuneMemory(a.log.Printf)
 	configureNetwork(a.log)
 	configureHostLoopback(a.log)
 	go a.controlServer()
@@ -143,7 +142,6 @@ func main() {
 	go a.supervise("containerd", "/usr/bin/containerd", "--address", "/run/containerd/containerd.sock", "--state", "/run/containerd")
 	go a.supervise("dockerd", "/usr/bin/dockerd", "--host=unix:///run/docker.sock", "--data-root=/var/lib/docker", "--exec-root=/run/docker", "--pidfile=/run/docker.pid", "--containerd=/run/containerd/containerd.sock")
 	go a.watchDocker()
-	go a.watchMemory()
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGPWR)
 	select {
@@ -337,36 +335,6 @@ func (a *agent) emit(name, unit, detail, state string) {
 	}
 }
 
-// emitQuiet sends a transient event to the host without recording or logging
-// it: memory-low can fire every second under pressure, and the host logs what
-// it does about it.
-func (a *agent) emitQuiet(name, detail string) {
-	e := event{Type: "event", Name: name, UptimeMS: uptime(), Detail: detail}
-	a.subsMu.Lock()
-	defer a.subsMu.Unlock()
-	for ch := range a.subs {
-		select {
-		case ch <- e:
-		default:
-		}
-	}
-}
-
-func syncDisks() { syscall.Sync() }
-
-// lockedWriter serializes frames on one control stream: events, replies and
-// slow replies finished in their own goroutine all write to it.
-type lockedWriter struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (l *lockedWriter) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(p)
-}
-
 func (a *agent) supervise(name, path string, args ...string) {
 	backoff := 100 * time.Millisecond
 	for a.ctx.Err() == nil {
@@ -474,10 +442,9 @@ func (a *agent) controlServer() {
 func (a *agent) control(c net.Conn) {
 	defer c.Close()
 	a.log.Printf("control connection accepted")
-	w := &lockedWriter{w: c}
-	_ = writeFrame(w, map[string]any{"type": "hello", "protocol": 1, "agentVersion": version, "bootUptimeMs": uptime()})
+	_ = writeFrame(c, map[string]any{"type": "hello", "protocol": 1, "agentVersion": version, "bootUptimeMs": uptime()})
 	for _, e := range a.state.replay() {
-		_ = writeFrame(w, e)
+		_ = writeFrame(c, e)
 	}
 	ch := make(chan event, 16)
 	a.subsMu.Lock()
@@ -486,7 +453,7 @@ func (a *agent) control(c net.Conn) {
 	defer func() { a.subsMu.Lock(); delete(a.subs, ch); a.subsMu.Unlock() }()
 	go func() {
 		for e := range ch {
-			if writeFrame(w, e) != nil {
+			if writeFrame(c, e) != nil {
 				return
 			}
 		}
@@ -494,51 +461,41 @@ func (a *agent) control(c net.Conn) {
 	r := bufio.NewReaderSize(c, maxMessage)
 	for {
 		var req struct {
-			ID         int64  `json:"id"`
-			Method     string `json:"method"`
-			UnixMS     int64  `json:"unixMs"`
-			Bytes      uint64 `json:"bytes"`
-			DropCaches bool   `json:"dropCaches"`
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+			UnixMS int64  `json:"unixMs"`
 		}
 		if readFrame(r, &req) != nil {
 			return
 		}
 		switch req.Method {
 		case "status":
-			_ = writeFrame(w, map[string]any{"id": req.ID, "result": a.status()})
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": a.status()})
 		case "set-time":
 			// The guest has no clock of its own: the host sets it after a
 			// restore from a saved state, and periodically against drift.
 			if req.UnixMS <= 0 {
-				_ = writeFrame(w, map[string]any{"id": req.ID, "error": map[string]string{"code": "invalid_time", "message": "unixMs is required"}})
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "invalid_time", "message": "unixMs is required"}})
 				continue
 			}
 			tv := syscall.NsecToTimeval(req.UnixMS * int64(time.Millisecond))
 			if err := syscall.Settimeofday(&tv); err != nil {
-				_ = writeFrame(w, map[string]any{"id": req.ID, "error": map[string]string{"code": "set_time_failed", "message": err.Error()}})
+				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "set_time_failed", "message": err.Error()}})
 				continue
 			}
-			_ = writeFrame(w, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 		case "prepare-suspend":
 			// Clean page cache is the bulk of a saved state; dropping it first
 			// makes saving and restoring proportionally faster.
 			syscall.Sync()
 			_ = os.WriteFile("/proc/sys/vm/drop_caches", []byte("3\n"), 0)
-			_ = writeFrame(w, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
-		case "reclaim":
-			// sync and compaction can take seconds; status polls on this
-			// stream must not wait behind them.
-			go func(id int64, bytes uint64, drop bool) {
-				method, freed := reclaimMemory(bytes, drop)
-				a.log.Printf("memory reclaim method=%s requested_mib=%d freed_mib=%d", method, bytes>>20, freed>>10)
-				_ = writeFrame(w, map[string]any{"id": id, "result": map[string]any{"ok": true, "method": method, "freedKiB": freed}})
-			}(req.ID, req.Bytes, req.DropCaches)
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 		case "shutdown":
-			_ = writeFrame(w, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
 			go a.shutdown()
 			return
 		default:
-			_ = writeFrame(w, map[string]any{"id": req.ID, "error": map[string]string{"code": "unknown_method", "message": "unknown method: " + req.Method}})
+			_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "unknown_method", "message": "unknown method: " + req.Method}})
 		}
 	}
 }
@@ -550,13 +507,25 @@ func (a *agent) status() any {
 		units = append(units, map[string]string{"name": n, "state": s})
 	}
 	a.state.mu.RUnlock()
+	var mt, ma uint64
+	b, _ := os.ReadFile("/proc/meminfo")
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) > 1 {
+			v, _ := strconv.ParseUint(f[1], 10, 64)
+			if f[0] == "MemTotal:" {
+				mt = v
+			}
+			if f[0] == "MemAvailable:" {
+				ma = v
+			}
+		}
+	}
 	load := 0.0
 	if b, e := os.ReadFile("/proc/loadavg"); e == nil {
 		fmt.Sscanf(string(b), "%f", &load)
 	}
-	memory := memoryStatus()
-	m := memory["meminfo"].(memInfo)
-	return map[string]any{"units": units, "memTotalKiB": m.TotalKiB, "memAvailableKiB": m.AvailableKiB, "loadAvg1": load, "memory": memory}
+	return map[string]any{"units": units, "memTotalKiB": mt, "memAvailableKiB": ma, "loadAvg1": load}
 }
 
 func (a *agent) dockerProxy() {

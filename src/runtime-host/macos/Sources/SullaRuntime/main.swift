@@ -252,7 +252,6 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private let controlLock = NSLock()
     private var liveControl: Int32 = -1
     private var dockerReady = false
-    private var balloon: BalloonController?
 
     init(options: StartOptions) { self.options = options }
 
@@ -264,7 +263,6 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         self.configuration = configuration
         machine = VZVirtualMachine(configuration: configuration, queue: queue)
         machine.delegate = self
-        balloon = makeBalloonController()
         dockerListener = try makeUnixListener(path: dockerSocketURL.path)
         controlListener = try makeUnixListener(path: controlSocketURL.path)
         guestListener = try makeUnixListener(path: guestSocketURL.path)
@@ -333,7 +331,6 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             directories.append(device)
         }
         config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-        config.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         let console = VZVirtioConsoleDeviceSerialPortConfiguration()
         FileManager.default.createFile(atPath: serialLogURL.path, contents: nil)
         let log = try FileHandle(forWritingTo: serialLogURL)
@@ -349,31 +346,6 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
 #endif
         config.directorySharingDevices = directories
         return config
-    }
-
-    /// Drives the balloon so the guest's memory follows what it uses. Opt-in
-    /// (SULLA_RUNTIME_BALLOON=on): the first real boot showed the controller shrinking the VM,
-    /// the guest then counting the balloon's pages as unavailable, its low-memory alarm firing,
-    /// and the controller growing straight back to ~20 GB (host footprint 21.8 GB, worse than
-    /// with no controller). It stays out of the default path until that is fixed.
-    private func makeBalloonController() -> BalloonController? {
-        let mode = ProcessInfo.processInfo.environment["SULLA_RUNTIME_BALLOON"]
-        guard mode == "on" || mode == "probe",
-              let device = machine.memoryBalloonDevices.compactMap({ $0 as? VZVirtioTraditionalMemoryBalloonDevice }).first
-        else { return nil }
-        return BalloonController(
-            configured: configuration.memorySize, startedAt: Date(), probe: mode == "probe",
-            send: { [weak self] line in
-                guard let self else { return false }
-                self.controlLock.lock(); defer { self.controlLock.unlock() }
-                guard self.liveControl >= 0 else { return false }
-                writeAll(self.liveControl, Data((line + "\n").utf8))
-                return true
-            },
-            setTarget: { [weak self] bytes in
-                // The device, like the machine, may only be touched on the VM's queue.
-                self?.queue.async { device.targetVirtualMachineMemorySize = bytes }
-            })
     }
 
     /// A fingerprint of everything the saved state depends on. A state saved
@@ -581,19 +553,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 while let newline = pending.firstIndex(of: 0x0a) {
                     let line = pending.prefix(upTo: newline); pending.removeSubrange(...newline)
                     guard line.count <= 65_536,
-                          let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-                    if let id = (object["id"] as? NSNumber)?.intValue, id >= BalloonController.firstRequestID {
-                        self.balloon?.handleReply(id: id, result: object["result"] as? [String: Any])
-                        continue
-                    }
-                    guard let type = object["type"] as? String else { continue }
+                          let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                          let type = object["type"] as? String else { continue }
                     let elapsed = monotonicMilliseconds(since: self.startedAt)
                     if type == "hello" {
                         self.helloSeen = true; print("hello \(elapsed)")
-                        self.balloon?.start()
-                    } else if type == "event", let name = object["name"] as? String, name == "memory-low" {
-                        // Up to once a second under pressure: the balloon logs what it does instead.
-                        self.balloon?.guestAlarm(object["detail"] as? String ?? "")
                     } else if type == "event", let name = object["name"] as? String {
                         print("event \(name) \(elapsed)")
                         if name == "docker-ready", !self.dockerReady {
@@ -633,9 +597,6 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             let running = queue.sync { machine.state == .running }
             let state = running ? (dockerReady ? "docker-ready" : "starting") : "stopped"
             writeAll(descriptor, Data("{\"state\":\"\(state)\",\"hello\":\(helloSeen),\"uptimeMs\":\(monotonicMilliseconds(since: startedAt))}\n".utf8))
-        } else if command == "reclaim" {
-            let sent = balloon?.reclaimNow() ?? false
-            writeAll(descriptor, Data((sent ? "{\"ok\":true}\n" : "{\"error\":\"no guest control stream or balloon\"}\n").utf8))
         } else if command == "suspend" {
             writeAll(descriptor, Data(suspend().utf8))
         } else if command == "stop" {
@@ -836,14 +797,13 @@ signal(SIGPIPE, SIG_IGN)
 
 do {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|reclaim|exec|copy") }
+    guard arguments.count >= 2 else { throw RuntimeError.usage("usage: sulla-runtime start|status|stop|exec|copy") }
     switch arguments[1] {
     case "start": try RuntimeDaemon(options: parseStartOptions(arguments.dropFirst(2))).run()
     case "exec": exit(runExecCommand(socketPath: guestSocketURL.path, arguments.dropFirst(2)))
     case "copy": exit(runCopyCommand(socketPath: guestSocketURL.path, Array(arguments.dropFirst(2))))
     case "status": try runClientCommand("status")
     case "stop": try runClientCommand("stop")
-    case "reclaim": try runClientCommand("reclaim")
     case "suspend": try runClientCommand("suspend")
     default: throw RuntimeError.usage("unknown command: \(arguments[1])")
     }
