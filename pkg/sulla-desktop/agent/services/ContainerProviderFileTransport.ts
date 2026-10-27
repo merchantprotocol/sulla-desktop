@@ -44,6 +44,9 @@ export function assertWorkspacePath(root: string, candidate: string): string {
 export class ContainerProviderFileTransport implements ProviderFileTransport {
   readonly bindMount:   string;
   private readonly storageRoot: string;
+  /** Content-addressed files live for the container lifecycle. This makes an
+   * unchanged system prompt a zero-I/O cache hit on subsequent turns. */
+  private readonly contentFiles = new Map<string, Promise<{ storageTarget: string; providerTarget: string }>>();
 
   private constructor(storageRoot: string) {
     this.storageRoot = storageRoot;
@@ -59,22 +62,28 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   }
 
   async write(request: ProviderFileRequest): Promise<ProviderFileRef> {
-    const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 120) || 'provider-file';
-    const name = `${ crypto.randomUUID() }-${ safeName }`;
-    const storageTarget = assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name));
-    const providerTarget = assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name));
+    const data = typeof request.data === 'string' ? request.data : Buffer.from(request.data);
+    const digest = crypto.createHash('sha256').update(data).digest('hex');
     const mode = ((request.mode ?? 0o600) & 0o700) | 0o044;
-    await writeGuestFileAtomic(storageTarget, request.data, mode);
-    let disposed = false;
-
-    return {
-      path: providerTarget,
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        removeGuestPathAtomic(storageTarget).catch(() => { /* already removed */ });
-      },
-    };
+    const cacheKey = `${ mode.toString(8) }:${ digest }`;
+    let cached = this.contentFiles.get(cacheKey);
+    if (!cached) {
+      cached = (async() => {
+        const safeName = request.suggestedName.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80) || 'provider-file';
+        const name = `${ digest }-${ safeName }`;
+        const storageTarget = assertWorkspacePath(this.storageRoot, path.join(this.storageRoot, name));
+        const providerTarget = assertWorkspacePath(CONTAINER_PROVIDER_FILES_PATH, path.posix.join(CONTAINER_PROVIDER_FILES_PATH, name));
+        await writeGuestFileAtomic(storageTarget, request.data, mode);
+        return { storageTarget, providerTarget };
+      })();
+      this.contentFiles.set(cacheKey, cached);
+      cached.catch(() => this.contentFiles.delete(cacheKey));
+    }
+    const file = await cached;
+    // Cached provider inputs are immutable and owned by this transport. A run
+    // releases its reference without deleting the shared file; dispose() wipes
+    // the bounded storage root when the container lifecycle ends.
+    return { path: file.providerTarget, dispose() {} };
   }
 
   async dispose(): Promise<void> {
