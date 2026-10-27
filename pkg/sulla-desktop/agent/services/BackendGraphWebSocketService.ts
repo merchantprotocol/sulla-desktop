@@ -10,6 +10,7 @@
 // heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
+import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
@@ -80,7 +81,8 @@ export class BackendGraphWebSocketService {
         return;
       }
       this.conversationContainers.delete(key);
-      lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to reap idle conversation container:', error));
+      lifecycle.close('conversation-idle-timeout', 'BackendGraphWebSocketService.armConversationIdle')
+        .catch(error => console.warn('[BackendGraphWS] Failed to reap idle conversation container:', error));
     }, CONVERSATION_CONTAINER_IDLE_MS);
     timer.unref();
     return timer;
@@ -104,7 +106,8 @@ export class BackendGraphWebSocketService {
     this.activeAborts.clear();
     for (const [, record] of this.conversationContainers) {
       clearTimeout(record.idleTimer);
-      record.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
+      record.lifecycle.close('service-dispose', 'BackendGraphWebSocketService.dispose')
+        .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
     }
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
@@ -132,7 +135,8 @@ export class BackendGraphWebSocketService {
     }
     if (existing) {
       clearTimeout(existing.idleTimer);
-      await existing.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
+      await existing.lifecycle.close('provider-or-model-switch', 'BackendGraphWebSocketService.conversationContainer')
+        .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
     }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
@@ -144,6 +148,25 @@ export class BackendGraphWebSocketService {
     const idleTimer = this.armConversationIdle(key, lifecycle);
     this.conversationContainers.set(key, { provider, model, lifecycle, idleTimer });
     return lifecycle;
+  }
+
+  private async recoverConversationContainer(
+    channelId: string,
+    threadId: string,
+    provider: string,
+    state: AgentGraphState,
+    lost: import('./AgentContainerLauncher').AgentContainerLifecycle,
+  ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
+    const key = this.abortKey(channelId, threadId);
+    const current = this.conversationContainers.get(key);
+    if (current?.lifecycle === lost) {
+      clearTimeout(current.idleTimer);
+      this.conversationContainers.delete(key);
+    }
+    await lost.close('container-disappeared', 'BackendGraphWebSocketService.recoverConversationContainer')
+      .catch(error => console.warn('[BackendGraphWS] Failed to close vanished conversation container:', error));
+    console.warn(`[BackendGraphWS] Rebuilding vanished conversation container for ${ key }; retrying the same provider`);
+    return await this.conversationContainer(channelId, threadId, provider, state);
   }
 
   /**
@@ -276,7 +299,8 @@ export class BackendGraphWebSocketService {
         if (container) {
           clearTimeout(container.idleTimer);
           this.conversationContainers.delete(key);
-          await container.lifecycle.close().catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
+          await container.lifecycle.close('new-conversation', 'BackendGraphWebSocketService.handleChannelMessage')
+            .catch(error => console.warn('[BackendGraphWS] Failed to close conversation container:', error));
         }
       }
       return;
@@ -559,8 +583,11 @@ export class BackendGraphWebSocketService {
       if (runLocation === 'container') {
         const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
         const provider = String(state.metadata.agent?.provider || await SullaSettingsModel.get('primaryProvider', 'grok')).trim();
-        const lifecycle = await this.conversationContainer(channelId, threadId, provider, state);
-        await lifecycle.execute(() => graph.execute(state, startNode));
+        await executeWithContainerLifecycleRecovery(
+          () => this.conversationContainer(channelId, threadId, provider, state),
+          lost => this.recoverConversationContainer(channelId, threadId, provider, state, lost),
+          () => graph.execute(state, startNode),
+        );
       } else {
         await graph.execute(state, startNode);
       }

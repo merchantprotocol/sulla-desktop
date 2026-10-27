@@ -36,6 +36,25 @@ export class CliRecoveryExhaustedError extends Error {
   }
 }
 
+/** Infrastructure loss is recovered by the container lifecycle owner, not by provider failover. */
+export class ContainerLifecycleLostError extends Error {
+  readonly containerLifecycleLost = true;
+
+  constructor(cause: unknown) {
+    super('Agent container disappeared while starting the provider process', { cause });
+    this.name = 'ContainerLifecycleLostError';
+  }
+}
+
+export function isContainerLifecycleLost(error: unknown): boolean {
+  let current: any = error;
+  for (let depth = 0; current && depth < 6; depth++) {
+    if (current.containerLifecycleLost === true || /no such container|container .* is not running/i.test(String(current.message ?? current))) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 export const CLI_RECOVERY_PROMPT = [
   '[CLI fault recovery]',
   'The prior CLI process ended unexpectedly. Continue this same turn from the preserved session.',
@@ -144,6 +163,7 @@ export async function runWithCliFaultRecovery<T>(
       return await operation(attempt);
     } catch (error) {
       if (isAbortFailure(error, options.signal)) throw abortError();
+      if (isContainerLifecycleLost(error)) throw new ContainerLifecycleLostError(error);
       if (!isCliFault(error)) throw error;
       lastFault = error;
       if (attempt >= maxAttempts) break;
