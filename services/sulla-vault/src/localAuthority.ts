@@ -2714,9 +2714,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           return;
         }
         const bodyless = streamResponseIsBodyless(method, response.statusCode ?? 0, response.headers['content-length']);
-        if (!binary && !bodyless && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
+        // Untyped bodies still pass through the redactor; providers (chatgpt.com)
+        // send untyped error replies, and blocking them hid the real status.
+        if (!binary && !bodyless && contentType && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
           response.resume();
-          request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Streaming adapter requires a textual upstream response (content-type: ${ contentType || 'none' })`));
+          request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Streaming adapter requires a textual upstream response (status: ${ response.statusCode ?? 'none' }, content-type: ${ contentType })`));
           return;
         }
         const blockedResponseHeaders = /^(set-cookie|cookie|authorization|proxy-authenticate|www-authenticate|x-api-key|content-length)$/i;
