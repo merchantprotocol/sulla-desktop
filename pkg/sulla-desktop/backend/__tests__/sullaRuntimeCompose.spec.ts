@@ -114,7 +114,7 @@ function fakeBackend() {
       if (args[1] === '-l' && index !== undefined) lines.splice(index, 1);
       guest.mountinfo = lines.join('\n');
     }
-    if (args[0] === 'mount' && args[1] === '--bind' && ['/mnt/sulla-files', '/mnt/sulla-logs', '/mnt/sulla-training-data'].includes(args[2])) {
+    if (args[0] === 'mount' && args[1] === '--bind' && args[2] === '/mnt/sulla-files') {
       guest.mountinfo += `612 22 0:20 ${ args[2] } ${ args[2] } rw,relatime shared:300 - tmpfs tmpfs rw\n`;
     }
 
@@ -188,7 +188,7 @@ describe.each([
         const source = volumeSource(volume);
 
         if (source === undefined) continue; // named volume
-        expect({ name, source }).toEqual({ name, source: expect.stringMatching(/^\/(mnt\/data\/|var\/lib\/sulla\/|mnt\/sulla-files$|mnt\/sulla-logs$|mnt\/sulla-training-data$|mnt\/sulla-backups$|proc$|var\/run\/docker\.sock$)/) });
+        expect({ name, source }).toEqual({ name, source: expect.stringMatching(/^\/(mnt\/data\/|var\/lib\/sulla\/|mnt\/sulla-files$|mnt\/sulla-backups$|proc$|var\/run\/docker\.sock$)/) });
         expect(source.startsWith(appHome)).toBe(false);
         expect(source.startsWith(home)).toBe(false);
         expect(source.startsWith('/Users')).toBe(false);
@@ -246,49 +246,15 @@ describe('guest Files mount preparation never blocks compose generation', () => 
     .filter(([, service]) => (service.volumes ?? []).some((v: any) => typeof v === 'string' && v.startsWith('/mnt/sulla-files:')))
     .map(([name]) => name).sort();
 
-  test('a dead logs adapter stacked on its anchor is detached and recreated, and never blocks the main mount', async() => {
-    guest.mountinfo += '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw\n710 489 0:91 / /mnt/sulla-logs ro - fuse sulla-files ro,user_id=0\n';
-    const { compose, commands } = await generate();
-    const run = commands.map(c => c.command.join(' '));
-
-    expect(run).toContain('umount -l /mnt/sulla-logs');
-    expect(run.join('\n')).not.toMatch(/umount.*training-data/);
-    expect(compose.services).toHaveProperty('sulla_files_fuse');
-    expect(compose.services).toHaveProperty('sulla_files_fuse_logs');
-    expect(mountReports[mountReports.length - 1]).toBeUndefined();
-  });
-
-  test('start after a crash converges: a second pass over the repaired state changes nothing', async() => {
-    guest.mountinfo += [
-      '489 29 0:26 /mnt/sulla-logs /mnt/sulla-logs rw - tmpfs tmpfs rw',
-      '710 489 0:91 / /mnt/sulla-logs ro - fuse sulla-files ro,user_id=0',
-      '708 29 0:91 / /mnt/sulla-logs ro - fuse sulla-files ro,user_id=0',
-      '490 29 0:26 /mnt/sulla-training-data /mnt/sulla-training-data rw - tmpfs tmpfs rw',
-      '800 490 0:95 / /mnt/sulla-training-data ro - fuse sulla-files ro,user_id=0',
-    ].join('\n') + '\n';
-    const first = await generate();
-    const repaired = first.commands.map(c => c.command.join(' ')).filter(c => c.startsWith('umount'));
-
-    expect(repaired.length).toBeGreaterThan(0);
-    expect(guest.mountinfo).not.toMatch(/- fuse sulla-files/);
-
-    const second = await generate();
-
-    expect(second.commands.map(c => c.command.join(' ')).filter(c => c.startsWith('umount'))).toEqual([]);
-    expect(Object.keys(second.compose.services).sort()).toEqual(Object.keys(first.compose.services).sort());
-    expect(mountReports[mountReports.length - 1]).toBeUndefined();
-  });
-
   test('BusyBox guest without findmnt: binds once, makes shared, keeps the adapter', async() => {
     const { compose, commands } = await generate();
     const mounts = commands.filter(c => c.command[0] === 'mount').map(c => c.command.join(' ')).filter(c => !c.includes('/mnt/sulla-backups'));
 
     expect(mounts).toEqual([
       'mount --bind /mnt/sulla-files /mnt/sulla-files', 'mount --make-shared /mnt/sulla-files',
-      'mount --bind /mnt/sulla-logs /mnt/sulla-logs', 'mount --make-shared /mnt/sulla-logs',
-      'mount --bind /mnt/sulla-training-data /mnt/sulla-training-data', 'mount --make-shared /mnt/sulla-training-data',
     ]);
     expect(compose.services).toHaveProperty('sulla_files_fuse');
+    expect(Object.keys(compose.services).filter(name => name.startsWith('sulla_files_fuse'))).toEqual(['sulla_files_fuse']);
     expect(filesBinds(compose)).toEqual(['sulla_files_fuse', 'workflow_manager']);
     expect(mountReports).toEqual([undefined]);
     expect(compose.services.workflow_manager.environment.SULLA_FILES_GUEST_MOUNT).toBe('1');

@@ -19,9 +19,9 @@ export async function runSearchCleanup(db:pg.Pool, log:(message:string)=>void = 
     if (!(await lock.query('SELECT pg_try_advisory_lock($1) ok', [LOCK_KEY])).rows[0].ok) return;
     let total = 0;
     const deletes = [
-      `DELETE FROM file_search_chunks sc USING (SELECT sc2.id FROM file_search_chunks sc2 JOIN files f ON f.id=sc2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area IN ('logs','training-data') OR sc2.version_id IS DISTINCT FROM f.current_version_id LIMIT ${ BATCH_SIZE }) batch WHERE sc.id=batch.id`,
-      `DELETE FROM file_search_text st USING (SELECT st2.file_id FROM file_search_text st2 JOIN files f ON f.id=st2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area IN ('logs','training-data') LIMIT ${ BATCH_SIZE }) batch WHERE st.file_id=batch.file_id`,
-      `DELETE FROM file_index_jobs j USING (SELECT j2.version_id FROM file_index_jobs j2 JOIN files f ON f.id=j2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area IN ('logs','training-data') OR j2.version_id IS DISTINCT FROM f.current_version_id LIMIT ${ BATCH_SIZE }) batch WHERE j.version_id=batch.version_id`,
+      `DELETE FROM file_search_chunks sc USING (SELECT sc2.id FROM file_search_chunks sc2 JOIN files f ON f.id=sc2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area = 'logs' OR sc2.version_id IS DISTINCT FROM f.current_version_id LIMIT ${ BATCH_SIZE }) batch WHERE sc.id=batch.id`,
+      `DELETE FROM file_search_text st USING (SELECT st2.file_id FROM file_search_text st2 JOIN files f ON f.id=st2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area = 'logs' LIMIT ${ BATCH_SIZE }) batch WHERE st.file_id=batch.file_id`,
+      `DELETE FROM file_index_jobs j USING (SELECT j2.version_id FROM file_index_jobs j2 JOIN files f ON f.id=j2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area = 'logs' OR j2.version_id IS DISTINCT FROM f.current_version_id LIMIT ${ BATCH_SIZE }) batch WHERE j.version_id=batch.version_id`,
     ];
     for (const sql of deletes) for (;;) {
       const result = await db.query(sql); if (!result.rowCount) break;

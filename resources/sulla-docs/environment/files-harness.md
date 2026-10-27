@@ -85,9 +85,9 @@ Use Cases/<type>/<slug>/
 - **Don't write to Postgres directly** (`agent_definitions`, `skill_definitions`, `workflows`, `files`, `file_versions`, and the like). That skips locks, retention, audit, and publish rules. Use the Files tools.
 - **Don't save to random folders.** Check `_folder-metadata.yaml` files to find the right place, or use `sulla files/search`.
 - **Don't treat a draft as live.** Only published versions run.
-- **Don't write to `Logs/` or `Training Data/`.** They are read-only to callers (`403`, `EROFS`).
+- **Don't write to the `Logs` audit store.** It is read-only to callers (`403`, `EROFS`).
 - **Don't save to `~/sulla/skills`, `~/sulla/agents`, or `~/sulla/workflows` expecting them to load.** The runtime does not read them.
-- **Don't expect Files to index `/mnt/worktrees`.** Git worktrees are outside Files. Files watches only its configured roots (the docs folder, conversation JSONL, app logs, and folders you track).
+- **Don't expect Files to index `/mnt/worktrees`.** Git worktrees are outside Files. Files watches only its configured roots (the docs folder and folders you track).
 - **Don't try to reach wallet or vault paths.** Protected names are rejected by the Files service.
 
 ## Read the docs from Files

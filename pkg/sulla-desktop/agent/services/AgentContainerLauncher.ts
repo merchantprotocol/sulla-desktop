@@ -146,33 +146,13 @@ export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'ins
   persistenceKey?: string;
 };
 
-/** True when `path` can be listed from the Sulla guest; a dead FUSE adapter fails ENOTCONN here. */
-async function guestPathUsable(path: string): Promise<boolean> {
-  try {
-    await guestExec(['sudo', 'ls', '-A', path]);
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The Files guest mount binds, only when the backend confirmed the shared
  * anchor this generation. Docker rejects an rslave bind of a path that is not
  * a shared or slave mount, so without the anchor the agent starts without it.
- * The logs/training-data adapters have no mount manager of their own, so a
- * dead one is dropped instead of failing the whole agent launch.
  */
-export async function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): Promise<string[]> {
-  if (!available) return [];
-  const optional: Array<[path: string, bind: string]> = [
-    ['/mnt/sulla-logs', '/mnt/sulla-logs:/mnt/sulla-logs:ro,rslave'],
-    ['/mnt/sulla-training-data', '/mnt/sulla-training-data:/mnt/sulla-training-data:ro,rslave'],
-  ];
-  const usable = await Promise.all(optional.map(([path]) => guestPathUsable(path)));
-
-  return ['/mnt/sulla-files:/mnt/sulla-files:rslave', ...optional.filter((_entry, index) => usable[index]).map(([, bind]) => bind)];
+export function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): string[] {
+  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : [];
 }
 
 function safeName(value: string): string {
@@ -900,7 +880,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       `${ docsPath }:/opt/sulla-docs:ro`,
       ...(claudeHome ? [`${ claudeHome }:/home/sulla/.claude:rw`] : []),
       ...(codexHome ? [`${ codexHome }:/home/sulla/.codex:rw`] : []),
-      ...await sullaFilesGuestBinds(),
+      ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
     containerId = await runtime.create({
@@ -1211,7 +1191,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
       `${ docsPath }:/opt/sulla-docs:ro`,
-      ...await sullaFilesGuestBinds(),
+      ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
     containerId = await runtime.create({

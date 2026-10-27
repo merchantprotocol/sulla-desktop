@@ -124,14 +124,14 @@ export class PgCloudSyncRepository implements PullRepository {
     return (await this.db.query(`SELECT c.id::text AS collection_id,c.name,s.enabled,COALESCE(s.status,'off') AS status,s.last_sync_at,
         COALESCE(s.pending_bytes,0) AS pending_bytes,COALESCE(s.conflicts,0) AS conflicts,s.last_error
       FROM collections c LEFT JOIN files_cloud_sync s ON s.collection_id=c.id
-      WHERE c.published=TRUE AND c.legacy_source=FALSE AND (c.system_area IS NULL OR c.system_area NOT IN ('logs','training-data'))
+      WHERE c.published=TRUE AND c.legacy_source=FALSE AND (c.system_area IS NULL OR c.system_area <> 'logs')
       ORDER BY c.name,c.id`)).rows;
   }
 
   async backupCandidate(collectionId:string):Promise<boolean> {
     if (!UUID.test(collectionId)) return false;
     return Boolean((await this.db.query(`SELECT 1 FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE
-      AND (system_area IS NULL OR system_area NOT IN ('logs','training-data'))`, [collectionId])).rowCount);
+      AND (system_area IS NULL OR system_area <> 'logs')`, [collectionId])).rowCount);
   }
 
   async localCollectionIds(ids:string[]):Promise<Set<string>> {

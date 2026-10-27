@@ -24,11 +24,7 @@ import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 
-import {
-  resolveSullaConversationsDir,
-  resolveSullaDocsDir,
-  resolveSullaLogsDir,
-} from '@pkg/agent/utils/sullaPaths';
+import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -196,11 +192,9 @@ class SullaFilesWatcher {
 
   /** Native handles stay in Electron; guests only see Files identities and encrypted snapshots. */
   private readonly systemIngest = new SullaFilesSystemIngestJob({
-    // Read-only inputs, in priority order of their lanes (P1 Sulla, P2 training data, P3 logs).
+    // Read-only input: the bundled Sulla docs.
     sources: () => [
       { area: 'sulla', lane: 'sulla', root: resolveSullaDocsDir(), prefix: 'Docs/', filter: () => true, ignore: rel => ignored(rel, DEFAULT_IGNORES) },
-      { area: 'training-data', lane: 'training', root: resolveSullaConversationsDir(), prefix: '', filter: name => name.endsWith('.jsonl') },
-      { area: 'logs', lane: 'logs', root: resolveSullaLogsDir(), prefix: 'app/', filter: () => true },
     ],
     fetchAreas: async() => {
       const response = await this.rawLocalRequest('/v1/local/system-areas');
@@ -298,7 +292,7 @@ class SullaFilesWatcher {
   }
 
   /**
-   * Arms the system-area ingest (logs, training data, docs, use cases). It only
+   * Arms the system-area ingest (the bundled Sulla docs). It only
    * sets an unref'd timer for after the startup grace delay; the work never runs
    * inside the unlock or lifecycle promise chain.
    */

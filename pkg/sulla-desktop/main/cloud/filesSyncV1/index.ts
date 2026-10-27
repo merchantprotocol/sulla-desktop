@@ -75,7 +75,7 @@ class FilesSyncV1Impl {
   }
   // Profile › Files on means every collection Desktop Files shows is listed
   // in Cloud Files and backed up, including folders added later. System
-  // areas (logs, training data, Sulla) never leave the machine.
+  // areas (Sulla) never leave the machine.
   private async enrollCollections():Promise<void> {
     const collections=await getSullaFilesClient().json<Array<{id:string;system_area:string|null;cloud_catalog_sync?:boolean}>>('/v1/collections');
     const backup=new Map((await this.status()).collections.map(c=>[c.collectionId,c.enabled]));

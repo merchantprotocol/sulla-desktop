@@ -85,10 +85,7 @@ export class HeartbeatNode extends BaseNode {
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
     if (!isToolCallLoop) {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
-      await runSubconsciousMiddleware(state, {
-        includeObservations: shouldInjectObservations,
-        turnKind:            'heartbeat',
-      });
+      await runSubconsciousMiddleware(state, { includeObservations: shouldInjectObservations });
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent
