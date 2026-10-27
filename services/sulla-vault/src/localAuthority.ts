@@ -173,6 +173,23 @@ function serializeBrokerBody(body: unknown): Buffer {
   return Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
 }
 
+function headerValue(headers: Record<string, string>, name: string): string | undefined {
+  const key = Object.keys(headers).find(entry => entry.toLowerCase() === name);
+  return key === undefined ? undefined : headers[key];
+}
+
+/** Sets content-type once, dropping any differently-cased copy the caller sent. */
+function setContentType(headers: Record<string, string>, value: string): void {
+  for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key];
+  headers['content-type'] = value;
+}
+
+function formFromObject(body: unknown): URLSearchParams {
+  return new URLSearchParams(Object.entries(body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {})
+    .filter(([, entry]) => ['string', 'number', 'boolean'].includes(typeof entry))
+    .map(([name, entry]) => [name, String(entry)]));
+}
+
 export class LocalVaultError extends Error {
   constructor(public readonly code: string, public readonly status: number, message: string) {
     super(message);
@@ -2470,16 +2487,21 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       } else if (injection.target === 'form') {
         const form = body instanceof URLSearchParams
           ? body
-          : typeof body === 'string' ? new URLSearchParams(body)
-            : new URLSearchParams(Object.entries(body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {})
-              .filter(([, entry]) => ['string', 'number', 'boolean'].includes(typeof entry))
-              .map(([name, entry]) => [name, String(entry)]));
+          : typeof body === 'string' ? new URLSearchParams(body) : formFromObject(body);
         form.set(injection.name, injected);
         body = form;
-        headers['content-type'] = 'application/x-www-form-urlencoded';
+        setContentType(headers, 'application/x-www-form-urlencoded');
       } else {
         body = applyJsonPath(body, injection.name, injected);
       }
+    }
+    // Public OAuth clients (PKCE, no secret) get no form injection, so an object body declared as a
+    // form would otherwise go out as JSON; token endpoints like auth.x.ai reject that with a 415.
+    const declaredType = headerValue(headers, 'content-type');
+    if (declaredType && /^application\/x-www-form-urlencoded\b/i.test(declaredType) &&
+        body && typeof body === 'object' && !Array.isArray(body) && !Buffer.isBuffer(body) && !(body instanceof URLSearchParams)) {
+      body = formFromObject(body);
+      setContentType(headers, 'application/x-www-form-urlencoded');
     }
     if (input.operation === 'provider.transcription') {
       try {
@@ -2491,7 +2513,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         throw new LocalVaultError('invalid_operation', 400, 'Transcription request is invalid');
       }
     }
-    if (input.operation === 'oauth.register') headers['content-type'] = 'application/json';
+    if (input.operation === 'oauth.register') setContentType(headers, 'application/json');
     this.requireGeneration(generation);
     return {
       target,
@@ -2769,10 +2791,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       payload = serializeBrokerBody(bodyInput);
       if (payload.byteLength > maxRequestBytes) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
       headers['content-length'] = String(payload.byteLength);
-      headers['content-type'] ??= Buffer.isBuffer(bodyInput)
-        ? 'application/octet-stream'
-        : bodyInput instanceof URLSearchParams ? 'application/x-www-form-urlencoded'
-          : typeof bodyInput === 'string' ? 'text/plain; charset=utf-8' : 'application/json';
+      if (!headerValue(headers, 'content-type')) {
+        headers['content-type'] = Buffer.isBuffer(bodyInput)
+          ? 'application/octet-stream'
+          : bodyInput instanceof URLSearchParams ? 'application/x-www-form-urlencoded'
+            : typeof bodyInput === 'string' ? 'text/plain; charset=utf-8' : 'application/json';
+      }
     }
 
     return new Promise<BrokerExecuteResponse>((resolve, reject) => {
@@ -2837,7 +2861,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           }
           let body: unknown = raw;
           if (responseType === 'json' && raw) {
-            try { body = JSON.parse(raw); } catch { reject(new LocalVaultError('invalid_upstream_response', 502, 'Expected a JSON response')); return; }
+            // Error responses are often plain text; keep them so the caller sees the real HTTP status.
+            const ok = (response.statusCode ?? 502) >= 200 && (response.statusCode ?? 502) < 300;
+            try { body = JSON.parse(raw); } catch {
+              if (ok) { reject(new LocalVaultError('invalid_upstream_response', 502, 'Expected a JSON response')); return; }
+            }
           }
           this.inFlight.delete(request);
           resolve({ status: response.statusCode ?? 502, headers: outputHeaders, body });
