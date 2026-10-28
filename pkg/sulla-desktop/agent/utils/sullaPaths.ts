@@ -52,26 +52,6 @@ export function resolveSullaResourcesDir(): string {
 export function resolveMemorySeedDir(): string {
   const envPath = String(process.env[SULLA_MEMORY_SEED_DIR_ENV] || '').trim();
   if (envPath) return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-  if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
-    const bundled = path.join(resourcesPath, 'resources', 'memory-seed');
-    if (fs.existsSync(bundled)) return bundled;
-  }
-  let cursor = MODULE_DIR;
-  for (let depth = 0; depth < 8; depth += 1) {
-    const candidate = path.join(cursor, 'resources', 'memory-seed');
-    if (fs.existsSync(candidate)) return candidate;
-    const parent = path.dirname(cursor);
-    if (parent === cursor) break;
-    cursor = parent;
-  }
-  throw new Error(`resolveMemorySeedDir: memory-seed not found (resourcesPath=${ resourcesPath ?? 'unset' }, moduleDir=${ MODULE_DIR })`);
-}
-
-/** Resolve the shipped memory seed pack in packaged and development runs. */
-export function resolveMemorySeedDir(): string {
-  const envPath = String(process.env[SULLA_MEMORY_SEED_DIR_ENV] || '').trim();
-  if (envPath) return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
 
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
