@@ -57,14 +57,18 @@ describe('observer transcript', () => {
 describe('extractRecallTerms', () => {
   it('keeps distinctive words, newest text first, without stopwords or harness tags', () => {
     const terms = extractRecallTerms([
-      'Continue the TrueUp snake demo <turn_context>agents: Heartbeat Mobile</turn_context> https://example.com/path',
-      'We were working on the landing page for TrueUp',
+      'Keep the TrueUp snake demo <turn_context>agents: Heartbeat Mobile</turn_context> https://example.com/path',
+      'We were done with the landing page for TrueUp',
     ]);
 
     expect(terms.slice(0, 3)).toEqual(['trueup', 'snake', 'demo']);
     expect(terms).toEqual(expect.arrayContaining(['landing', 'page']));
-    expect(terms).not.toEqual(expect.arrayContaining(['continue', 'working', 'heartbeat', 'mobile', 'example.com']));
+    expect(terms).not.toEqual(expect.arrayContaining(['keep', 'done', 'heartbeat', 'mobile', 'example.com']));
     expect(new Set(terms).size).toBe(terms.length);
+  });
+
+  it('treats only words of 4 letters or fewer as stopwords', () => {
+    expect(extractRecallTerms(['what about the tuning suggestions for this system'])).toEqual(['about', 'tuning', 'suggestions', 'system']);
   });
 
   it('caps the number of terms', () => {
