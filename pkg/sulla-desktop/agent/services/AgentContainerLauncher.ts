@@ -593,7 +593,7 @@ async function cleanupContainerResources(
   providerFiles?: ContainerProviderFileTransport,
   workspacePath?: string,
   guestPaths: string[] = [],
-  removal: { name: string; reason: string; caller: string; removeWorkspace?: boolean } = {
+  removal: { name: string; reason: string; caller: string } = {
     name: containerId ?? 'unknown', reason: 'resource-cleanup', caller: 'cleanupContainerResources',
   },
 ): Promise<AgentContainerCleanupReceipt> {
@@ -626,20 +626,13 @@ async function cleanupContainerResources(
     }
     if (workspacePath) {
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
-      if (removal.removeWorkspace) {
+      try {
+        decision = await inspectGuestWorkspaceForCleanup(workspacePath);
+      } catch {
         decision = {
-          remove: true,
-          reason: 'ephemeral workspace removed after the delegated contract completed',
+          remove: false,
+          reason: 'workspace retained because its cleanup state could not be inspected safely',
         };
-      } else {
-        try {
-          decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-        } catch {
-          decision = {
-            remove: false,
-            reason: 'workspace retained because its cleanup state could not be inspected safely',
-          };
-        }
       }
       receipt.workspaceDecisionReason = decision.reason;
       if (decision.remove) {
@@ -1218,10 +1211,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         providerBridgeRefs.clear();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         return await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
-          name: containerName,
-          reason: closeRemoval.reason,
-          caller: closeRemoval.caller,
-          removeWorkspace: closeRemoval.reason === 'delegated-job-completed',
+          name: containerName, reason: closeRemoval.reason, caller: closeRemoval.caller,
         });
       });
       return closePromise;
