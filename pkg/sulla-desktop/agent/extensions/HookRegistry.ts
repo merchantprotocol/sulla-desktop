@@ -84,7 +84,7 @@ export class HookRegistry {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([
-        Promise.resolve(entry.handler(payload)),
+        Promise.resolve(entry.handler(payload as Readonly<unknown>)),
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('HOOK_TIMEOUT')), timeoutMs) }),
       ]);
       this.audit(entry, (result as any)?.denied === true || (result as any)?.allow === false ? 'denied' : 'ok', started);
