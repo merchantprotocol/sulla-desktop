@@ -605,7 +605,10 @@ export class SpawnAgentWorker extends BaseTool {
         return taskResult;
       } finally {
         try {
-          const cleanupReceipt = await containerLifecycle?.close('delegated-job-finished', 'spawn_agent.finally');
+          const cleanupReason = taskResult?.status === 'completed'
+            ? 'delegated-job-completed'
+            : 'delegated-job-finished';
+          const cleanupReceipt = await containerLifecycle?.close(cleanupReason, 'spawn_agent.finally');
           if (taskResult && cleanupReceipt) {
             taskResult.cleanupReceipt = cleanupReceipt;
             if (cleanupReceipt.recoveryWorkspacePath) {
