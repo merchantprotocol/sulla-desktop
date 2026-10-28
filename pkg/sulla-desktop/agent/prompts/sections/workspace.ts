@@ -16,6 +16,8 @@
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export function buildWorkspaceSection(ctx: PromptBuildContext): PromptSection | null {
+  if (ctx.subconsciousRecallMode === 'v7') return null;
+
   const sullaHome = ctx.templateVars['{{sulla_home}}'] || '~/sulla';
 
   const content = `## Environment

@@ -42,7 +42,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 
 Make parallel tool calls when possible.
 
-${ FILES_AND_PROJECTS }`;
+${ ctx.subconsciousRecallMode === 'v7' ? '' : FILES_AND_PROJECTS }`;
 
     return {
       id:             'tooling',
@@ -78,11 +78,22 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 
 Make parallel tool calls when possible.
 
-${ FILES_AND_PROJECTS }`;
+${ ctx.subconsciousRecallMode === 'v7' ? '' : FILES_AND_PROJECTS }`;
 
     return {
       id:             'tooling',
       content:        slimContent,
+      priority:       40,
+      cacheStability: 'stable',
+    };
+  }
+
+  if (ctx.subconsciousRecallMode === 'v7') {
+    return {
+      id:             'tooling',
+      content:        `## Tools
+
+Call catalog tools through \`exec({ command: "sulla <category>/<tool> '<json>'" })\`. Use \`browse_tools\` first when the exact command or schema is unknown. Never pass CLI commands to \`execute_workflow\`. Make independent calls in parallel.`,
       priority:       40,
       cacheStability: 'stable',
     };

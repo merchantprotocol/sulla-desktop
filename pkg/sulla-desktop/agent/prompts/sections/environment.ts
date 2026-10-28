@@ -37,7 +37,7 @@ For simple text: use markdown.`;
  */
 export function buildEnvironmentDynamic(ctx: PromptBuildContext): string {
   const installedExtensions = ctx.templateVars['{{installed_extensions}}'] || '';
-  const folderMap = ctx.templateVars['{{folder_map}}'] || '';
+  const folderMap = ctx.subconsciousRecallMode === 'v7' ? '' : (ctx.templateVars['{{folder_map}}'] || '');
   return [folderMap, installedExtensions].filter(Boolean).join('\n\n');
 }
 
@@ -48,7 +48,7 @@ export function buildEnvironmentSection(ctx: PromptBuildContext): PromptSection 
   // default. The runtime-generated tail (installed extensions, etc.) is always
   // appended after it — this is why `environment` is flagged is_generated and
   // the builder does not blindly replace it.
-  const dbStatic = ctx.dbSections?.get('environment')?.content;
+  const dbStatic = ctx.subconsciousRecallMode === 'v7' ? undefined : ctx.dbSections?.get('environment')?.content;
   const staticPart = dbStatic && dbStatic.trim() ? dbStatic : ENVIRONMENT_STATIC_PREAMBLE;
 
   const dynamic = buildEnvironmentDynamic(ctx);

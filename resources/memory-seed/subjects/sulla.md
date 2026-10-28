@@ -11,6 +11,7 @@ Sulla Desktop is an Electron application and agent harness. Its host process run
 
 ## Facts
 - Sulla Desktop has three main execution layers: the Electron main process, the Linux Sulla VM, and Vue renderer windows.
+- In v7 recall mode, environment knowledge belongs in recalled `sulla.md`, `project-<subject>.md`, and `skills.md` pages rather than duplicated system-prompt boilerplate.
 - The Sulla CLI is `/usr/local/bin/sulla` in the VM and uses `sulla <category>/<tool> '<json>'` for built-in tools.
 - Integrations use `sulla <account_id>/<slug> '<json>'`; MCP tools use `sulla <account_id>/mcp/<tool> '<json>'`.
 
