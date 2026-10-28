@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sulladesktop.com/contracts/base-image-metadata.schema.json",
+  "title": "Sulla Desktop immutable base image metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "source", "image", "digest", "platforms"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "source": { "type": "object", "additionalProperties": false, "required": ["repository", "commit"], "properties": { "repository": { "const": "merchantprotocol/sulla-desktop" }, "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } },
+    "image": { "type": "string", "pattern": "^ghcr\\.io/merchantprotocol/sulla-[a-z0-9-]+$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["linux/amd64", "linux/arm64"] } }
+  }
+}

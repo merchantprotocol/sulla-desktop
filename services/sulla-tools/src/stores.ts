@@ -6,7 +6,7 @@
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 
-import type { CapabilityRevocationStore } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import type { CapabilityRevocationStore } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 
 export class RedisRevocationStore implements CapabilityRevocationStore {
   constructor(private readonly redis: Redis) {}

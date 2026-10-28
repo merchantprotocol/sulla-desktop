@@ -1,0 +1,44 @@
+name: Server split contracts
+on:
+  pull_request:
+    paths:
+      - 'packages/workflow-engine/**'
+      - 'packages/runtime-protocol/**'
+      - 'packages/relay-protocol/**'
+      - 'contracts/server-split/**'
+      - 'scripts/contracts/**'
+      - 'services/sulla-workflows/**'
+      - 'services/sulla-tools/**'
+      - 'services/sulla-relay/**'
+      - '.github/workflows/server-split-contracts.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/workflow-engine/**'
+      - 'packages/runtime-protocol/**'
+      - 'packages/relay-protocol/**'
+      - 'contracts/server-split/**'
+      - 'scripts/contracts/**'
+      - 'services/sulla-workflows/**'
+      - 'services/sulla-tools/**'
+      - 'services/sulla-relay/**'
+      - '.github/workflows/server-split-contracts.yml'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: yarn
+      - run: yarn install --frozen-lockfile --ignore-scripts
+      - name: Build extracted packages independently
+        run: |
+          yarn workspace @sulla/workflow-engine build
+          yarn workspace @sulla/runtime-protocol build
+          yarn workspace @sulla/relay-protocol build
+      - name: Verify manifest and import contracts
+        run: yarn test:server-split-contracts

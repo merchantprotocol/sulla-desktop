@@ -11,8 +11,8 @@ import {
   processNextStep,
   resolveDecision,
   type PlaybookStepResult,
-} from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.js';
-import type { WorkflowPlaybookState } from '../../../pkg/sulla-desktop/agent/workflow/types.js';
+} from '../../../packages/workflow-engine/src/WorkflowPlaybook.js';
+import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
 import { config } from './config.js';
 import { agentOccurrence, consumeAgentOccurrence } from './agentInvocation.js';

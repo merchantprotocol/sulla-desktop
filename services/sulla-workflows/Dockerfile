@@ -6,12 +6,8 @@ RUN cd services/sulla-workflows && npm ci --ignore-scripts
 
 COPY services/sulla-workflows/tsconfig.json ./services/sulla-workflows/tsconfig.json
 COPY services/sulla-workflows/src ./services/sulla-workflows/src
-COPY pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts ./pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts
-COPY pkg/sulla-desktop/agent/workflow/types.ts ./pkg/sulla-desktop/agent/workflow/types.ts
-COPY pkg/sulla-desktop/agent/workflow/workflowConcurrency.ts ./pkg/sulla-desktop/agent/workflow/workflowConcurrency.ts
-COPY pkg/sulla-desktop/pages/editor/workflow/types.ts ./pkg/sulla-desktop/pages/editor/workflow/types.ts
-COPY pkg/sulla-desktop/runtime/containerRuntime.ts ./pkg/sulla-desktop/runtime/containerRuntime.ts
-COPY pkg/sulla-desktop/runtime/capabilityToken.ts ./pkg/sulla-desktop/runtime/capabilityToken.ts
+COPY packages/workflow-engine/src ./packages/workflow-engine/src
+COPY packages/runtime-protocol/src ./packages/runtime-protocol/src
 RUN cd services/sulla-workflows && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime

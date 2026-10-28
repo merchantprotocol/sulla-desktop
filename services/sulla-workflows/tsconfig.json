@@ -9,17 +9,20 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "baseUrl": "../..",
-    "paths": { "@pkg/*": ["pkg/sulla-desktop/*"] }
+    "paths": {
+      "@pkg/*": [
+        "pkg/sulla-desktop/*"
+      ]
+    }
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.ts",
-    "../../pkg/sulla-desktop/agent/workflow/types.ts",
-    "../../pkg/sulla-desktop/agent/workflow/workflowConcurrency.ts",
-    "../../pkg/sulla-desktop/pages/editor/workflow/types.ts",
     "../../pkg/sulla-desktop/runtime/containerRuntime.ts",
-    "../../pkg/sulla-desktop/runtime/capabilityToken.ts"
+    "../../packages/workflow-engine/src/**/*.ts",
+    "../../packages/runtime-protocol/src/**/*.ts"
   ]
 }
