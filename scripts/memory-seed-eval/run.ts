@@ -24,7 +24,10 @@ const fixtures: Cue[] = [
   { cue:'find the Slack channel for engineering', subjects:['tool-slack'], skills:['sulla-tool-slack'] },
   { cue:'Sulla Desktop should use its shipped tools', subjects:[], skills:[] },
 ];
-const cues: Cue[] = fixtureMode ? fixtures : JSON.parse(fs.readFileSync(path.join(here,'cues.json'),'utf8'));
+const cuesArg = process.argv.indexOf('--cues');
+const cuesFile = cuesArg > 0 ? path.resolve(process.argv[cuesArg + 1]) : path.join(here,'cues.json');
+// use-cases.json rows graded 'gap' have no expected answer yet; they are reported, not scored.
+const cues: Cue[] = fixtureMode ? fixtures : JSON.parse(fs.readFileSync(cuesFile,'utf8'));
 
 async function main(): Promise<void> {
   const admin = new Client({ connectionString:adminUrl });
