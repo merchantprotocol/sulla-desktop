@@ -316,11 +316,6 @@ function getFileMenu(): MenuItem {
       },
       { type: 'separator' },
       {
-        label:   'Troubleshooting',
-        click:   () => openPreferences('troubleshooting'),
-      },
-      { type: 'separator' },
-      {
         id:      'extensions-list',
         label:   'Installed Extensions',
         submenu: getExtensionsSubmenu(),
@@ -349,6 +344,8 @@ function getEditMenu(isMac: boolean): MenuItem {
 }
 
 function getInspectMenu(): MenuItem {
+  // The renderer already handles Cmd+U and Cmd+`; on Windows and Linux the
+  // menu only shows those shortcuts so a key press doesn't open two tabs.
   return new MenuItem({
     label:   '&Inspect',
     submenu: [
@@ -357,18 +354,37 @@ function getInspectMenu(): MenuItem {
         click: () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'live' }),
       },
       {
-        label:       'Token Usage',
-        accelerator: 'CmdOrCtrl+U',
-        click:       () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'usage' }),
+        label:               'Token Usage',
+        accelerator:         'CmdOrCtrl+U',
+        registerAccelerator: false,
+        click:               () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'usage' }),
+      },
+      { type: 'separator' },
+      {
+        label: 'Process Manager…',
+        click: openProcessManager,
       },
       {
         label: 'Docker',
         click: () => openDocker(),
       },
       {
-        label: 'Process Manager…',
-        click: openProcessManager,
+        label:               'Terminal',
+        accelerator:         'CmdOrCtrl+`',
+        registerAccelerator: false,
+        click:               () => sendAgentCommand('open-tab', { mode: 'terminal' }),
       },
+      { type: 'separator' },
+      {
+        label: 'Troubleshooting',
+        click: () => openPreferences('troubleshooting'),
+      },
+      ...(!Electron.app.isPackaged
+        ? [
+          { type: 'separator' } as MenuItemConstructorOptions,
+          { role: 'toggleDevTools', label: 'Toggle &Developer Tools' } as MenuItemConstructorOptions,
+        ]
+        : []),
     ],
   });
 }
@@ -711,15 +727,6 @@ function getMacApplicationMenu(): MenuItem[] {
           accelerator: 'Shift+CmdOrCtrl+R',
           click:       (_item, focusedWindow) => reloadFocusedSurface(focusedWindow, true),
         },
-        ...(!Electron.app.isPackaged
-          ? [
-            { type: 'separator' } as MenuItemConstructorOptions,
-            {
-              label:   'Developer Tools',
-              submenu: [{ role: 'toggleDevTools', label: 'Toggle &Developer Tools' }],
-            } as MenuItemConstructorOptions,
-          ]
-          : []),
       ],
     }),
     new MenuItem({
