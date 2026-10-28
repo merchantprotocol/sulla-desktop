@@ -1,6 +1,6 @@
 <!--
   Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-  Licensed under the Sulla Fair-Code License. See LICENSE.
+  Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 -->
 
 # Sulla Server sign-in card: spec for the Keycloak `sulla` login theme

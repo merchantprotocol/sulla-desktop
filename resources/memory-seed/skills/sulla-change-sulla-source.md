@@ -10,7 +10,7 @@ scope: [sulla-repository, sulla-repo-agent-runtime]
 **When:** You are changing repository source, especially agent runtime wiring.
 
 **Do:**
-1. Read `AGENTS.md`, `CLAUDE.md`, the target code, and the nearest tests. Preserve the Fair-Code header and existing conventions.
+1. Read `AGENTS.md`, `CLAUDE.md`, the target code, and the nearest tests. Give new files the license header the files around them use (GPL-2.0-or-later SPDX header in Desktop code, the Fair-Code header in the Sulla Server directories) and follow existing conventions.
 2. For a tool, add implementation and manifest under `pkg/sulla-desktop/agent/tools/<category>/`, then register the category or manifest where the existing registry requires it. Verify the live catalog with `sulla meta/browse_tools '{"category":"<category>"}'`.
 3. For a migration, add the next numbered file under `pkg/sulla-desktop/agent/database/migrations/` and register it through the migration index. Make it forward-safe and reversible where the existing migration pattern supports that.
 4. For a seeder, add it under `pkg/sulla-desktop/agent/database/seeders/`, register it in the seeder index, and make repeated runs safe.
@@ -20,5 +20,5 @@ scope: [sulla-repository, sulla-repo-agent-runtime]
 8. Review `git diff`, check for secrets and generated files, commit with the repository's required co-author line, push the branch, and open the PR required by the task.
 
 **Don't:**
-- Use npm, edit another worktree, bypass license checks, or remove source headers.
+- Use npm, edit another worktree, or remove source or third-party license headers.
 - Add a manifest entry without an implementation or add a migration/seeder without its index registration.

@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Sulla Server: Use Cases need an active license key. When the key isn't valid the catalog is
 // locked; installed use cases keep working. The server enforces this too (403 license_required).

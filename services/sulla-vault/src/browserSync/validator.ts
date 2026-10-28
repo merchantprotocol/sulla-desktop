@@ -1,5 +1,5 @@
-// Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Copyright © 2026 Merchant Protocol, LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // Strict request checks for the vault-origin API. The server holds no key, so
 // it can't check a MAC; it checks shape instead. The field allowlists come from

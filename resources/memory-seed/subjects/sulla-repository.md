@@ -7,7 +7,7 @@ aliases: [sulla-desktop repo, merchantprotocol/sulla-desktop, source code, repos
 ---
 
 ## Overview
-The Sulla Desktop repository is the source for the Electron desktop app, its agent harness, VM runtime integration, bundled services, and packaging. The main application code is under `pkg/sulla-desktop`; container services are under `services`; documentation and the memory seed are under `resources`. Use `yarn`, not npm, for repository commands. The repository is source-available under the Sulla Fair-Code License 1.0; Rancher-derived files retain Apache 2.0 notices.
+The Sulla Desktop repository is the source for the Electron desktop app, its agent harness, VM runtime integration, bundled services, and packaging. The main application code is under `pkg/sulla-desktop`; container services are under `services`; documentation and the memory seed are under `resources`. Use `yarn`, not npm, for repository commands. Sulla Desktop is licensed GPL-2.0-or-later; the Sulla Server parts (services/sulla-accounts, services/sulla-console, resources/sulla-console, deploy/server, deploy/accounts, packaging/npx/server) stay under the Sulla Fair-Code License 1.0 (LICENSES/), and Rancher-derived files keep their Apache 2.0 notices.
 
 ## Facts
 - `pkg/sulla-desktop/agent` contains agent nodes, prompts, tools, memory, workflows, integrations, built-in agents and skills, database migrations, and agent services.

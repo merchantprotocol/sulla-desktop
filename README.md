@@ -9,7 +9,7 @@
       <img src="https://img.shields.io/github/v/release/merchantprotocol/sulla-desktop?label=Latest&color=3d7fa0" alt="Latest Release" />
     </a>
     <a href="LICENSE">
-      <img src="https://img.shields.io/badge/License-Fair--code-blue.svg" alt="Sulla Fair-Code License" />
+      <img src="https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg" alt="GPL-2.0-or-later" />
     </a>
     <a href="https://github.com/merchantprotocol/sulla-desktop/stargazers">
       <img src="https://img.shields.io/github/stars/merchantprotocol/sulla-desktop?style=flat&color=yellow" alt="GitHub Stars" />
@@ -166,12 +166,10 @@ Sulla runs on your machine, so scheduled work runs while it's on. It prevents sl
 
 ## License
 
-Sulla is **fair-code**: source-available under the [Sulla Fair-Code License](LICENSE). It is not open source.
+Sulla Desktop is **free and open source** under the [GNU General Public License v2.0 or later](LICENSE), the same license as WordPress.
 
-**In short:** You can read, run, modify and share Sulla for free for your own company, team or personal use. You **cannot** resell it, rebrand or white-label it, run it as a hosted service for others, charge people to use it, or remove or bypass its license-key checks. Sulla Server is free up to a set number of users; beyond that it needs a paid license key. See the [Trademark Policy](TRADEMARK.md) for branding requirements.
+**In short:** you can use, study, change and share Sulla, including commercially. You can charge for setting it up, hosting it, supporting it, or selling add-ons built for it. If you distribute a modified version, you have to share its source under the same license.
 
-Portions that come from Rancher Desktop remain under the [Apache License 2.0](LICENSES/Apache-2.0.txt). See [NOTICE.md](NOTICE.md).
+**The name is not part of the license.** "Sulla" and the Sulla logo are trademarks. A fork must use its own name and logo. See the [Trademark Policy](TRADEMARK.md).
 
-Original Rancher Desktop copyright: © Rancher Labs, Inc. and contributors.
-
-— Jonathon Byrdziak, Coeur d'Alene, Idaho · Founder, Sulla Desktop
+**Sulla Server** (team seats, the server console and the accounts service) is the exception. It stays under the [Sulla Fair-Code License 1.0](LICENSES/Sulla-Fair-Code-1.0.txt) and is free up to a set number of users. The folders it covers are listed in [LICENSE](LICENSE).

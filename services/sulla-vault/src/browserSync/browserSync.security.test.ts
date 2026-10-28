@@ -1,5 +1,5 @@
-// Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Copyright © 2026 Merchant Protocol, LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // The vault origin's server path, against a real Postgres (synthetic data only):
 // 1. the Passwords sync v3 known-answer fixture the browser wrote goes in

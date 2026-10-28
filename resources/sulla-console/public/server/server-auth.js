@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Sulla Server: the console's sign-in adapter. It replaces Cloud's js/sulla-auth.js and exposes the
 // same window.SullaAuth surface, so Cloud's shell/api.js and every screen run unchanged.

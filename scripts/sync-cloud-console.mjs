@@ -1,5 +1,5 @@
-// Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Copyright © 2026 Merchant Protocol, LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // Vendors Sulla Cloud's frontend (merchantprotocol/www-sulladesktop) into the Sulla Server console.
 //

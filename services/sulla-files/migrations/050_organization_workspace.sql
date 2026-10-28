@@ -1,5 +1,5 @@
--- Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
--- Licensed under the Sulla Fair-Code License. See LICENSE.
+-- Copyright © 2026 Merchant Protocol, LLC.
+-- SPDX-License-Identifier: GPL-2.0-or-later
 --
 -- Additive only: existing collections retain their principal scope and is_default value.
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS workspace_scope TEXT NOT NULL DEFAULT 'principal';

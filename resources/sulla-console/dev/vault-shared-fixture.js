@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Development only: a synthetic shared collection ("Field crew", two read-only logins) sealed to the
 // public fixture account in vault-fixture.js, plus one collection whose key doesn't open (it must be
