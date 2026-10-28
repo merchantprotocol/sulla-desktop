@@ -103,7 +103,8 @@ function render(category) {
     const json = JSON.stringify(args);
     const req = tool.params.filter(p => p.required).map(p => p.name).join(', ') || 'none';
     const opt = tool.params.filter(p => !p.required).map(p => p.name).join(', ') || 'none';
-    return `- \`sulla ${category}/${tool.name} ${json}\`: ${tool.description} Required: ${req}. Optional: ${opt}.`;
+    const commandName = category === 'agents' && tool.name === 'agents_directory' ? 'directory' : tool.name;
+    return `- \`sulla ${category}/${commandName} ${json}\`: ${tool.description} Required: ${req}. Optional: ${opt}.`;
   }), end].join('\n');
 }
 let changed = false;
