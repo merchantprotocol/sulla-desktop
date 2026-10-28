@@ -113,7 +113,7 @@ export class IntegrationPackageLoader {
     }
     const declared = new Set((pkg.manifest.proxyPaths ?? []).map(route => `${ route.method.toUpperCase() } ${ route.path }`));
     const api: IntegrationRuntimeApi = Object.freeze({
-      proxy: async(input) => {
+      proxy: async(input: { method: string; path: string; body?: unknown }) => {
         const key = `${ input.method.toUpperCase() } ${ input.path }`;
         if (!declared.has(key)) throw new Error(`Integration proxy path is not declared: ${ key }`);
         return await this.proxy.request({ integrationId: pkg.manifest.id, ...input });
