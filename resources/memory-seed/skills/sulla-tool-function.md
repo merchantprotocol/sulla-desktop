@@ -10,9 +10,11 @@ scope: [tool-function]
 **When:** When you need to list and run a registered Sulla custom function.
 
 **Do:**
-1. Discover functions: `sulla function/list '{}'`.
-2. Run a known function with its declared input: `sulla function/run '{"slug":"<function-slug>","input":{}}'`.
-3. Review execution history: `sulla function/runs '{"slug":"<function-slug>"}'`.
+1. Discover registered functions: `sulla function/list '{}'`.
+2. Run a known function with declared inputs: `sulla function/run '{"slug":"<function-slug>","inputs":{}}'`.
+3. Review failures without loading successful payloads: `sulla function/runs '{"slug":"<function-slug>","only_failures":true}'`.
+4. Use `verbose:true` only when input or output detail is needed to debug one run.
+5. Reuse the same slug in a workflow `function` node through `config.functionRef`.
 
 **Tools:**
 <!-- tools:generated:start -->
