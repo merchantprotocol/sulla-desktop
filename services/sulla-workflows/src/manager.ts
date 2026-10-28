@@ -33,7 +33,7 @@ import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/
 import { agentOccurrence } from './agentInvocation.js';
 
 import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
-import { metaToolManifests } from '../../../pkg/sulla-desktop/agent/tools/meta/manifests.js';
+import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
 
 import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
@@ -67,8 +67,7 @@ function hashToken(token: string): string {
 
 function canonicalToolScope(toolName: string): string {
   if (toolName.includes('/')) return toolName;
-  const manifest = metaToolManifests.find(candidate => candidate.name === toolName);
-  return `${ manifest?.category ?? 'meta' }/${ toolName }`;
+  return `${ META_TOOL_CATEGORIES[toolName] ?? 'meta' }/${ toolName }`;
 }
 
 function runnerTools(nodes: any[]): string[] {
