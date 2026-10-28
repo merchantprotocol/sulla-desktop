@@ -357,8 +357,17 @@ function getInspectMenu(): MenuItem {
         click: () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'live' }),
       },
       {
+        label:       'Token Usage',
+        accelerator: 'CmdOrCtrl+U',
+        click:       () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'usage' }),
+      },
+      {
         label: 'Docker',
         click: () => openDocker(),
+      },
+      {
+        label: 'Process Manager…',
+        click: openProcessManager,
       },
     ],
   });
@@ -631,10 +640,6 @@ function getMacApplicationMenu(): MenuItem[] {
           async click() {
             await updateManager.checkForUpdates('manual');
           },
-        },
-        {
-          label: 'Process Manager…',
-          click: openProcessManager,
         },
         { type: 'separator' },
         {

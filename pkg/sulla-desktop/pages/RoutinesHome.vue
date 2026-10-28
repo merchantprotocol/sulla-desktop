@@ -163,8 +163,8 @@ const emit = defineEmits<{
   (e: 'update:section', section: StudioSection): void
 }>();
 
-// The sidebar page is owned by the tab, so the mode rail can open Live
-// Agents or Token Usage directly and light the matching icon.
+// The sidebar page is owned by the tab, so the mode rail and the Inspect
+// menu can open Live Agents or Token Usage directly.
 const section = ref<StudioSection>(props.section);
 
 watch(() => props.section, (next) => { if (next !== section.value) section.value = next; });
