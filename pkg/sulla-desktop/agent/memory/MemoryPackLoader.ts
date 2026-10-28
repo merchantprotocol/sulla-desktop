@@ -10,13 +10,14 @@ import { parse as parseYaml } from 'yaml';
 import type { PoolClient } from 'pg';
 
 import { postgresClient } from '../database/PostgresClient';
+import { resolveMemorySeedDir } from '../utils/sullaPaths';
 import { resetV7SubjectMemoryCache } from './V7SubjectMemory';
 
 export const MEMORY_SEED_WORKER = 'memory-seed';
 export const PACK_VERSION_BASE = 1_000_000_000_000;
 
 export interface MemoryPackFile { name:string; content:string; }
-export interface MemoryPackValidationError { file:string; line:number; message:string; }
+export interface MemoryPackValidationError { file:string; line:number; message:string; severity?:'error'|'warning'; }
 export interface MemoryPackDocument { front:Record<string,any>; body:string; file:string; }
 interface MemoryItem { id:string; subject:string; kind:'policy'|'conclusion'; ptype:string|null; text:string; why:string|null; alwaysOn:boolean; }
 interface MemorySubject extends MemoryPackDocument { slug:string; overview:string; items:MemoryItem[]; }
@@ -39,7 +40,7 @@ function itemFor(owner:string, subject:string, raw:string):MemoryItem {
   const whyAt=content.search(/\s+Why:\s*/i), text=(whyAt<0?content:content.slice(0,whyAt)).trim(), why=whyAt<0?null:content.slice(whyAt).replace(/^\s*Why:\s*/i,'').trim();
   const hash=crypto.createHash('sha1').update(`${ptype || ''}${text}`).digest('hex').slice(0,12);
   const prefix=owner===MEMORY_SEED_WORKER?'seed':`pack:${owner.slice('memory-pack:'.length)}`;
-  return { id:`${prefix}:${subject}:${hash}`,subject,kind:ptype?'policy':'conclusion',ptype,text,why,alwaysOn:subject==='sulla'&&Boolean(ptype) };
+  return { id:`${prefix}:${subject}:${hash}`,subject,kind:ptype?'policy':'conclusion',ptype,text,why,alwaysOn:owner===MEMORY_SEED_WORKER&&subject==='sulla'&&Boolean(ptype) };
 }
 function parentFirst(subjects:MemorySubject[]):MemorySubject[] {
   const pending=new Map(subjects.map(x=>[x.slug,x])), output:MemorySubject[]=[];
@@ -58,7 +59,18 @@ function parseFiles(files:MemoryPackFile[], owner:string):ParsedPack {
   const hash=crypto.createHash('sha256').update([...map].sort(([a],[b])=>a.localeCompare(b)).map(([n,c])=>`${n}\0${c}`).join('\0')).digest('hex');
   return {version,subjects:parentFirst(subjects),skills,hash};
 }
-export function validateMemoryPackFiles(files:MemoryPackFile[], owner='memory-pack:validate'):MemoryPackValidationError[] { try { parseFiles(files,owner); return []; } catch(error) { const m=String(error instanceof Error?error.message:error).match(/^(.*?):(\d+):\s*(.*)$/); return [{file:m?.[1]||'memory',line:Number(m?.[2]||1),message:m?.[3]||String(error)}]; } }
+export function validateMemoryPackFiles(files:MemoryPackFile[], owner='memory-pack:validate'):MemoryPackValidationError[] {
+  try {
+    const pack=parseFiles(files,owner);
+    if(owner===MEMORY_SEED_WORKER)return [];
+    const core=parseFiles(readMemoryPackDirectory(resolveMemorySeedDir()),MEMORY_SEED_WORKER);
+    const coreSubjects=new Set(core.subjects.map(subject=>subject.slug));
+    return pack.subjects.filter(subject=>coreSubjects.has(subject.slug)).map(subject=>({file:subject.file,line:2,message:`subject "${subject.slug}" is part of the core seed's sulla root; pack content can override it while installed`,severity:'warning' as const}));
+  } catch(error) {
+    const m=String(error instanceof Error?error.message:error).match(/^(.*?):(\d+):\s*(.*)$/);
+    return [{file:m?.[1]||'memory',line:Number(m?.[2]||1),message:m?.[3]||String(error),severity:'error'}];
+  }
+}
 export function readMemoryPackDirectory(dir:string):MemoryPackFile[] { const out:MemoryPackFile[]=[]; const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile())out.push({name:r,content:fs.readFileSync(p,'utf8')})}}; walk(dir); return out; }
 
 async function apply(client:PoolClient, slug:string, pack:ParsedPack, source:string):Promise<MemoryPackResult> {
