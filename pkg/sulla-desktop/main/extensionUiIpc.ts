@@ -58,7 +58,7 @@ export function initExtensionUiIpc(): void {
   });
   ipcMain.handle('extension-permissions:set-rail-hidden', async(_event, input: { extensionId: string; hidden: boolean }) => {
     const current = await SullaSettingsModel.get('extensionHiddenRailItems', []);
-    const next = input.hidden ? [...new Set([...current, input.extensionId])] : current.filter(id => id !== input.extensionId);
+    const next = input.hidden ? [...new Set([...current, input.extensionId])] : current.filter((id: string) => id !== input.extensionId);
     await SullaSettingsModel.set('extensionHiddenRailItems', next, 'json');
   });
 }
