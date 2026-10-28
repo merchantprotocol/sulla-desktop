@@ -207,24 +207,18 @@
  {
   "cue": "write a video script with a strong hook",
   "area": "Writing, marketing and content",
-  "subjects": [
-   "sulla-agents"
-  ],
+  "subjects": [],
   "skills": [
-   "sulla-spawn-and-manage-agents"
+   "sulla-write-for-a-human"
   ],
   "coverage": "partial"
  },
  {
   "cue": "make a short explainer video for this feature",
   "area": "Writing, marketing and content",
-  "subjects": [
-   "sulla-agents"
-  ],
-  "skills": [
-   "sulla-spawn-and-manage-agents"
-  ],
-  "coverage": "partial"
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
  },
  {
   "cue": "plan a content calendar for next month",
@@ -804,20 +798,6 @@
    "sulla-manage-a-project"
   ],
   "coverage": "covered"
- },
- {
-  "cue": "we crashed, pick up where you left off",
-  "area": "Goals and projects (being improved)",
-  "subjects": [],
-  "skills": [],
-  "coverage": "gap"
- },
- {
-  "cue": "did everything from last night get in?",
-  "area": "Goals and projects (being improved)",
-  "subjects": [],
-  "skills": [],
-  "coverage": "gap"
  },
  {
   "cue": "where should I save this report?",
@@ -1589,6 +1569,20 @@
  },
  {
   "cue": "I just restarted, run some diagnostics",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "did everything from last night get in?",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "we crashed, pick up where you left off",
   "area": "System health, Docker and the VM",
   "subjects": [],
   "skills": [],
