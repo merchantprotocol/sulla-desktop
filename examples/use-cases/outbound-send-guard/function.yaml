@@ -1,0 +1,33 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks:
+  - name: before_tool_call
+    priority: 5
+kind: Function
+id: function-outbound-send-guard
+slug: outbound-send-guard
+name: Outbound send guard
+description: A before_tool_call filter that stops tool calls which send, post, pay or delete, so the owner approves them by hand.
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    hook:
+      type: string
+      description: Hook name supplied by Sulla (before_tool_call).
+      required: true
+    payload:
+      type: object
+      description: Secret-redacted hook payload with toolName, args and toolRunId.
+      required: true
+  outputs:
+    denied:
+      type: boolean
+      description: True when the tool call is blocked.
+    reason:
+      type: string
+      description: Why the call was blocked.
+  timeout: 5s
+  permissions:
+    network: []

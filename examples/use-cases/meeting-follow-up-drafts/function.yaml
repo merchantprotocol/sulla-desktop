@@ -1,8 +1,6 @@
 apiVersion: sulla/v1
 sullaApi: ^1.0.0
-hooks:
-  - name: after_model_response
-    priority: 20
+hooks: []
 kind: Function
 id: function-meeting-follow-up-drafts
 slug: meeting-follow-up-drafts

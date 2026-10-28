@@ -1,8 +1,6 @@
 apiVersion: sulla/v1
 sullaApi: ^1.0.0
-hooks:
-  - name: before_tool_call
-    priority: 10
+hooks: []
 kind: Function
 id: function-invoice-due-reminders
 slug: invoice-due-reminders
