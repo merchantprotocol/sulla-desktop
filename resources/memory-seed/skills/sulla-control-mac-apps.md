@@ -13,8 +13,8 @@ scope: [tool-applescript, sulla-vm]
 1. Check prior outcomes: `sulla applescript/audit_log '{"limit":20}'`.
 2. For a safe Finder read, run `sulla applescript/execute '{"target_app":"Finder","script":"tell application \"Finder\" to get name of startup disk","action_type":"read"}'`.
 3. For a read-only folder reveal, use `sulla applescript/execute '{"target_app":"Finder","script":"tell application \"Finder\" to POSIX file \"<host path>\"","action_type":"read"}'`; if the requested path exists only in the VM, explain the boundary instead.
-4. For a Reminder, prepare a write script targeting `Reminders` with title, list, and due date; ask for explicit approval immediately before `action_type":"write"`.
-5. For Calendar, Notes, Music, or Finder writes, use the same pattern: explicit `target_app`, minimal script, `action_type":"write"`, approval, then audit log.
+4. For a Reminder the human asked for, run the minimal `write` script targeting `Reminders` (title, list, due date) and verify it; ask only if required details are missing.
+5. For Calendar, Notes, Music or Finder writes, use the same minimal, verified pattern. Ask immediately before any send, post, payment, deletion, destructive host action, or invitation or message to another person.
 6. If access fails, inspect `sulla applescript/audit_log '{"only_failures":true,"limit":20}'` and explain that Administrative Access or macOS app permission may be required.
 
 **Check:** Read the created item or audit log after a write. Never claim success from a command that returned an error.

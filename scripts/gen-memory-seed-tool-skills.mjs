@@ -50,7 +50,8 @@ function valueFor(name, spec) {
   if (type === 'array') return [];
   if (type === 'object') return {};
   if (type === 'any') return null;
-  if (/path/i.test(name)) return '<absolutePath>';
+  if (/^absolute/i.test(name)) return '<absolutePath>';
+  if (/path/i.test(name)) return `<${name}>`;
   if (/sql/i.test(name)) return '<sql>';
   if (/url/i.test(name)) return 'https://example.com';
   if (/email/i.test(name)) return 'user@example.com';
@@ -69,7 +70,8 @@ function parseSchema(block) {
     if (quote) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === quote) quote = null; continue; }
     if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
     if (c === '{') depth++; else if (c === '}') depth--;
-    if (depth === 0 && c === '\n') {
+    // A param ends at a top-level comma or newline, so one-line schemas parse too.
+    if (depth === 0 && (c === '\n' || c === ',')) {
       const line = body.slice(lineStart, i);
       const m = line.match(/^\s*([A-Za-z_][\w]*)\s*:\s*\{(.*)\}\s*,?\s*$/s);
       if (m) params.push({ name: m[1], spec: m[2], required: !/\boptional\s*:\s*true\b/.test(m[2]) });

@@ -23,7 +23,7 @@ scope: [sulla-files]
 7. For an approval-controlled Use Case draft, request publication through Decide:
    `sulla files/request_publish '{"file_id":"<file-id>","version_id":"<version-id>","reason":"Finished deliverable"}'`
    The human approves or rejects the request in Decide. Do not treat a draft as runtime-active.
-8. For a share, prepare (but do not create without the human's tap): `sulla files/link '{"path":"/mnt/sulla-files/<folder>/<name>","access_mode":"view"}'`. Revoke an authorized link with `sulla files/revoke_link '{"id":"<share-id>"}'`.
+8. For a share, prepare (but do not create without the human's tap): `sulla files/link '{"path":"/mnt/sulla-files/<folder>/<name>","access_mode":"view"}'`. Revoke a link only after the human's **Approve** through `ask_user_question`, with `sulla files/revoke_link '{"id":"<share-id>"}'`.
 
 **Check:** The file is readable at its canonical path, the folder is described, the version state is understood, and all agent scratch is outside Files and cleaned up. For a Use Case, publication is approved in Decide before claiming it is active.
 

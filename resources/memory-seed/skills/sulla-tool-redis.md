@@ -33,4 +33,4 @@ scope: [tool-redis]
 
 **Don't:**
 - Don't store secrets or large payloads in Redis.
-- Don't delete or overwrite a key before checking its current value and TTL.
+- Don't call `redis/del` or a destructive `redis/lpop` until you have shown the exact keys and received **Approve** through `ask_user_question`; capture each value and TTL first so it can be restored.

@@ -19,7 +19,7 @@ For an end-to-end local build, test-data seed, browser check and clean stop, use
 
 **Tools:**
 <!-- tools:generated:start -->
-- `sulla docker/build '{"path":"<absolutePath>","tag":"<tag>"}'`: Build a Docker image from a Dockerfile. Required: path, tag. Optional: options.
+- `sulla docker/build '{"path":"<path>","tag":"<tag>"}'`: Build a Docker image from a Dockerfile. Required: path, tag. Optional: options.
 - `sulla docker/exec '{"container":"<container>","command":"<command>"}'`: Execute a command in a running Docker container. Required: container, command. Optional: none.
 - `sulla docker/images '{}'`: List Docker images. Required: none. Optional: all.
 - `sulla docker/logs '{"container":"<container>"}'`: Fetch the logs of a Docker container. Required: container. Optional: follow, tail.

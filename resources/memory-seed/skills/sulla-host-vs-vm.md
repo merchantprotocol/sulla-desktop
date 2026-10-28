@@ -13,7 +13,7 @@ scope: [sulla-vm]
 1. Run ordinary shell, search, edit, build, Git, and Sulla CLI work with VM `exec`.
 2. Check whether the need is already met through `/mnt/sulla-files`, `/mnt/worktrees`, or gateway `192.168.5.2`.
 3. If it is truly host-only, inspect the live tool: `sulla meta/browse_tools '{"query":"exechost"}'`.
-4. Run the smallest host command with `sulla meta/exechost '{"command":"<command>","cwd":"<host-directory>"}'`.
+4. Run the smallest host-only command with `sulla meta/exechost '{"command":"<command>","cwd":"<host-directory>"}'`. If it deletes data, kills or removes a host service, changes security or system settings, or is otherwise destructive, show the exact command and its impact and wait for **Approve** through `ask_user_question` first.
 5. Check the setting before crossing the boundary: `sulla settings/get '{"property":"application.adminAccess"}'`; if false, direct the human to Preferences → Application → Administrative Access → Allow access to the host machine.
 6. Return to VM execution immediately afterward.
 

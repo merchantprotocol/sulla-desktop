@@ -24,7 +24,7 @@ scope: [tool-slack]
 1. `sulla slack/connection_health '{}'` to confirm the integration.
 2. `sulla slack/search_users '{"query":"<name or email>"}'` to resolve a user.
 3. `sulla slack/thread '{"channel":"<channel>","ts":"<timestamp>"}'` to read replies.
-4. Send only an authorized message with `sulla slack/send_message '{"channel":"<channel>","text":"<text>"}'`.
+4. Prepare the exact channel, resolved recipients and text; ask once with `sulla meta/ask_user_question` and only after **Approve** send that unchanged message with `sulla slack/send_message '{"channel":"<channel>","text":"<text>"}'`. Messages to the human themselves in a DM they asked for need no extra tap.
 5. Re-read or update an existing message with its exact channel and timestamp.
 
 **Don't:**

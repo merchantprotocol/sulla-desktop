@@ -17,7 +17,7 @@ scope: [sulla-extensions, sulla-marketplace]
 5. For an integration, include the signed `apiVersion: sulla/v1` manifest, semver version, permissions, entry file, HTTPS/localhost `baseUrls`, canonical integrity, Ed25519 publisher signature, and every allowed `proxyPaths` route. Entry code may call only `runtime.proxy({method,path,body})`.
 6. Scaffold or validate with `sulla marketplace/scaffold '{"kind":"<kind>","slug":"<slug>"}'` and `sulla marketplace/validate '{"kind":"<kind>","slug":"<slug>"}'`. For workflows used by the extension, also run `sulla meta/validate_sulla_workflow`.
 7. Test with synthetic data and least privilege. Request the human's grant for hooks or integration permissions; unsigned or untrusted integrations must fail closed.
-8. Publish only after review: use `sulla marketplace/publish` for the local artifact, then verify it is `pending`; it is not live until marketplace approval.
+8. After review, prepare the exact marketplace submission and ask once with `ask_user_question`; only after **Approve**, use `sulla marketplace/publish` for the local artifact, then verify it is `pending`; it is not live until marketplace approval.
 
 **Don't:**
 - Don't read vault credentials or environment secrets from an extension.

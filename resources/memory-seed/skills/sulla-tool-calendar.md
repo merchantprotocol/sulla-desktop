@@ -27,7 +27,7 @@ scope: [tool-calendar]
 4. `sulla calendar/update '{"eventId":"<eventId>","title":"<new title>"}'` to change it.
 5. For meeting prep, bound the query: `sulla calendar/list '{"startAfter":"<week-start-ISO>","endBefore":"<week-end-ISO>"}'`. Use only event facts plus verified project context. Produce purpose, known attendees, location or link, decisions needed, and preparation tasks; mark a missing agenda instead of inventing one.
 6. For a weekly plan, list the fixed week first. Draft focus blocks around events, transition time, preparation, breaks, and buffer. Show conflicts before proposing calendar writes.
-7. When creating several planning blocks, show the exact titles and times and get approval once with `sulla meta/ask_user_question '{"questions":[{"header":"Update calendar","question":"Create these reviewed calendar blocks?","options":[{"label":"Approve","description":"Create exactly these events."},{"label":"Deny","description":"Keep the weekly plan as a draft."}]}]}'`.
+7. When creating several personal planning blocks the human asked for, show the exact titles and times, create them, and verify them, with no second approval. If an event will invite or notify another person, prepare the recipients and details and ask once with `ask_user_question` before creating it.
 
 **Check:** List the same bounded range again and match returned event ids, titles, starts, ends, calendar, and timezone to the request. A draft plan is not a calendar update.
 

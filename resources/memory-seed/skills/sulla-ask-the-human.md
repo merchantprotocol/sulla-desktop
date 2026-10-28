@@ -11,7 +11,7 @@ scope: [sulla-chat]
 
 **Do:**
 1. Ask one focused question with the smallest useful set of choices.
-2. Use `sulla meta/ask_user_question '{"question":"<question>","options":[{"label":"<choice>","description":"<impact>"},{"label":"<choice>","description":"<impact>"}]}'` when an interactive answer is needed.
+2. Use `sulla meta/ask_user_question '{"questions":[{"header":"Decision","question":"<question>","options":[{"label":"<choice>","description":"<impact>"},{"label":"<choice>","description":"<impact>"}]}]}'` (under Claude Code, the `mcp__sulla-native__ask_user_question` tool takes the same `questions` array) when an interactive answer is needed.
 3. End the reply with `<AGENT_BLOCKED>` naming the exact blocker and required input.
 
 **Don't:**
