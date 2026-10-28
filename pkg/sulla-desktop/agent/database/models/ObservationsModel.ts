@@ -137,7 +137,9 @@ export class ObservationsModel {
        RETURNING *`,
       [id, input.priority || 'medium', input.content, input.source ?? null, input.created_at ?? new Date().toISOString()],
     );
-    return rows[0];
+    const inserted = rows[0];
+    void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_memory_write', inserted));
+    return inserted;
   }
 
   /**

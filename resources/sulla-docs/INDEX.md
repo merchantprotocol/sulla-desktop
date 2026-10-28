@@ -106,6 +106,9 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `user-consent.md` — 🚦 When to call `meta/ask_user_question` vs when to charge ahead vs when to end the turn blocked; how to phrase the question / approval card
 - `writing-voice.md` — ✍️ Required reading before writing any prose for a human; bans end-summary wrap-ups and bullet-burst fact dumps; full AI-tell catalogue + positive rules
 
+## Extension platform
+- [`extensions.md`](extensions.md) — Extension Contract v1, manifest envelope, versioned CLI API, hooks/filters, permissions and UI slots
+
 ## marketplace/
 - `overview.md` — Use Cases (the marketplace) and recipes (Docker compose): catalog, install/uninstall, start/stop, extension UIs
 
