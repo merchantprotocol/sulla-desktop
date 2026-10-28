@@ -12,7 +12,8 @@
 --
 -- This is a Trash, not a purge: like every Files delete, each file gets a new tombstone version
 -- whose parent is the mirrored version, so the content stays restorable from Files history.
--- Folder rows are removed only for Docs folders left with no live files.
+-- Folder rows are left alone: a folder and its description may be the user's, and a restored
+-- file needs its folder back. An emptied Docs folder can be removed by hand.
 -- Idempotent: a second run matches no files and does nothing.
 
 CREATE TEMP TABLE retired_bundled_docs ON COMMIT DROP AS
@@ -49,10 +50,3 @@ INSERT INTO audit_log(who_type, who_id, device_or_run_id, file_id, version_id, a
 SELECT 'service', 'sulla-files', 'sulla-files-migration', file_id, version_id,
        'bundled-docs-retired', jsonb_build_object('path', path, 'collectionId', collection_id)
   FROM retired_bundled_docs_tombstones;
-
--- Docs folder rows (and their descriptions) left with no live files.
-DELETE FROM file_folders d
- WHERE (d.path = 'Docs' OR d.path LIKE 'Docs/%')
-   AND EXISTS (SELECT 1 FROM retired_bundled_docs r WHERE r.collection_id = d.collection_id)
-   AND NOT EXISTS (SELECT 1 FROM files f WHERE f.collection_id = d.collection_id AND f.deleted_at IS NULL
-                    AND (f.path = d.path OR f.path LIKE d.path || '/%'));

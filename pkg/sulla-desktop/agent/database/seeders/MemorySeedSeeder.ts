@@ -93,7 +93,7 @@ export async function initialize(): Promise<void> {
       if (s.overview) { const r=await client.query(`INSERT INTO subject_memory.overviews(subject,ts,text,status,worker) VALUES($1,$2,$3,'active',$4) ON CONFLICT DO NOTHING RETURNING subject`,[s.slug,MEMORY_SEED_VERSION,s.overview,MEMORY_SEED_WORKER]); count.overviews += r.rowCount || 0; }
       for (const i of s.items) { const r=await client.query(`INSERT INTO subject_memory.items(id,kind,ptype,text,why,scope,origin,ts,always_on,worker) VALUES($1,$2,$3,$4,$5,$6,'seeded',$7,$8,$9) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,ptype=excluded.ptype,text=excluded.text,why=excluded.why,scope=excluded.scope,always_on=excluded.always_on,superseded_by=NULL,superseded_ts=NULL,worker=excluded.worker WHERE subject_memory.items.origin='seeded' RETURNING id`,[i.id,i.kind,i.ptype,i.text,i.why,[i.subject],now,i.alwaysOn,MEMORY_SEED_WORKER]); count.items += r.rowCount || 0; }
     }
-    const retired=await client.query(`UPDATE subject_memory.items SET superseded_ts=$1 WHERE id LIKE 'seed:%' AND superseded_ts IS NULL AND NOT(id=ANY($2::text[])) RETURNING id`,[now,activeItemIds]); count.retiredItems=retired.rowCount || 0;
+    const retired=await client.query(`UPDATE subject_memory.items SET superseded_ts=$1 WHERE id LIKE 'seed:%' AND origin='seeded' AND worker=$3 AND superseded_ts IS NULL AND NOT(id=ANY($2::text[])) RETURNING id`,[now,activeItemIds,MEMORY_SEED_WORKER]); count.retiredItems=retired.rowCount || 0;
     for (const skill of skills) {
       const f=skill.front, slug=String(f.slug);
       const authored=await client.query(`SELECT 1 FROM subject_memory.skills WHERE slug=$1 AND version_ts>1000000000000 AND worker IS DISTINCT FROM $2 LIMIT 1`,[slug,MEMORY_SEED_WORKER]);
