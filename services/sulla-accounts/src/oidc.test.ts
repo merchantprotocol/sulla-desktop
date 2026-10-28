@@ -20,11 +20,6 @@ const config: AccountsConfig = {
   sessionSecret: Buffer.alloc(32),
   encryptionKey: Buffer.alloc(32),
   serviceTokens: new Map(),
-  keycloakIssuer: 'https://authority.example/auth/realms/sulla',
-  keycloakResourceAudiences: new Set(),
-  serverId: 'local-desktop',
-  serverDisplayName: 'Sulla Desktop',
-  secureCookies: false,
   trustedProxy: false,
 };
 

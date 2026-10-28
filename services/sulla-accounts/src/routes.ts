@@ -469,25 +469,15 @@ export function privateRoutes(db: Database, config: AccountsConfig): Router {
         throw new HttpError(403, 'schedule grant is no longer allowed for this service');
       }
       let membership: MembershipContext;
-      if (config.mode === 'server' && authority.issuer === config.keycloakIssuer) {
-        membership = await currentMembership(
-          db,
-          config,
-          authority,
-          { issuer: grant.issuer, subject: grant.subject },
-          grant.organization_id,
-        );
-      } else {
-        try {
-          const accessToken = await authorityAccessToken(db, config, authority);
-          const identity = await verifyOidcToken(accessToken, authority.issuer, grant.audience, authority.jwks_uri);
-          if (identity.subject !== grant.subject || authority.subject !== grant.subject)
-            throw new Error('schedule authority subject has changed');
-          membership = await currentMembership(db, config, authority, identity, grant.organization_id, accessToken);
-        } catch (error) {
-          if (error instanceof HttpError && error.status === 403) throw error;
-          throw new HttpError(403, 'schedule authority membership could not be confirmed');
-        }
+      try {
+        const accessToken = await authorityAccessToken(db, config, authority);
+        const identity = await verifyOidcToken(accessToken, authority.issuer, grant.audience, authority.jwks_uri);
+        if (identity.subject !== grant.subject || authority.subject !== grant.subject)
+          throw new Error('schedule authority subject has changed');
+        membership = await currentMembership(db, config, authority, identity, grant.organization_id, accessToken);
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 403) throw error;
+        throw new HttpError(403, 'schedule authority membership could not be confirmed');
       }
       requireRoles(membership, grant.required_roles);
       response.json({
