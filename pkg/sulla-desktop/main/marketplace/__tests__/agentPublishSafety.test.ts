@@ -25,7 +25,7 @@ describe('agent marketplace publish safety', () => {
   });
 
   it('allows ordinary agent configuration', () => {
-    const result = checkAgentManifestForPublish(baseManifest({ config: { temperature: 0.2 } }));
+    const result = checkAgentManifestForPublish(baseManifest({ config: { temperature: 0.2, maxTokens: 4000, memoryEnabled: true, tokenBudget: 10 } }));
     expect(result.secret).toBeNull();
     expect(result.sensitiveField).toBeNull();
   });
