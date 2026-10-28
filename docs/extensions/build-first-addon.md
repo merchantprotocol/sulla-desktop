@@ -13,7 +13,7 @@ Sulla add-ons are small, reviewable bundles that extend the assistant without ch
 | **Integration** | Versioned auth and endpoint manifests | You need to describe a service connection for agents to call. |
 | **Agent** | A named prompt, tools, and model configuration | You need a specialized assistant with a distinct role. Agents can be created locally; they are not currently published through the marketplace. |
 
-See [`examples/extensions/`](../../../examples/extensions/) for minimal hello-world bundles.
+See [`examples/extensions/`](../../examples/extensions/) for minimal hello-world bundles.
 
 ## The afternoon path
 
