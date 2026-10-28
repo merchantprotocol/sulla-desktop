@@ -431,6 +431,11 @@ export class SpawnAgentWorker extends BaseTool {
       let subStateRef: any;
       let containerLifecycle: import('../../services/AgentContainerLauncher').AgentContainerLifecycle | undefined;
       let taskResult: AgentJobResult | undefined;
+      const returnedTask = async() => {
+        if (!activityJobId) return undefined;
+        const settled = (await getJob(activityJobId))?.tasks[index];
+        return settled?.returnedAt ? settled : undefined;
+      };
       try {
         const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
           agentConfigChannel,
@@ -524,11 +529,6 @@ export class SpawnAgentWorker extends BaseTool {
           ? containerLifecycle.execute(() => graph.execute(subState))
           : graph.execute(subState);
         let finalState = await executeGraph();
-        const returnedTask = async() => {
-          if (!activityJobId) return undefined;
-          const settled = (await getJob(activityJobId))?.tasks[index];
-          return settled?.returnedAt ? settled : undefined;
-        };
 
         // A caller schema means free text is not an answer: remind once.
         let returned = await returnedTask();
@@ -568,6 +568,17 @@ export class SpawnAgentWorker extends BaseTool {
         }
         return taskResult;
       } catch (err) {
+        // return_result is the completion commit point. A graph/provider error
+        // racing after it must not overwrite the valid contract with failure.
+        const returned = await returnedTask();
+        if (returned) {
+          taskResult = returnedJobResult(returned, label, threadId);
+          await safeFinishDelegation(delegationId, { outcome: 'completed', detail: '' });
+          if (activityJobId) {
+            await updateJobTask(activityJobId, index, { status: taskResult.status, threadId, finishedAt: Date.now() });
+          }
+          return taskResult;
+        }
         const output = `Error: ${ (err as Error).message }`;
         const stopped = jobAbortSignal?.aborted === true;
         await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `${ stopped ? 'stopped' : 'error' }: ${ output }` });
