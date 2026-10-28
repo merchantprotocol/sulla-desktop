@@ -8,7 +8,7 @@ import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '..
 import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { isOverheardProtocolTurn, stripProtocolTags } from '../utils/stripProtocolTags';
 import { requeuePendingSteers } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
 
@@ -68,7 +68,12 @@ export class AgentNode extends BaseNode {
     // bubble above the rest of the turn's thinking.
     const _isFirstEntry = ((state.metadata as any).consecutiveSameNode ?? 0) === 0;
     const _inWorkflow   = (state.metadata as any).workflowNodeId || (state.metadata as any).activeWorkflow || (state.metadata as any).scopedWorkflowId;
-    if (_isFirstEntry && !_inWorkflow) {
+    const _inputSource = String((state.metadata as any).inputSource || '');
+    const _isConversationalistVoice = String((state.metadata as any).agentId || state.metadata.wsChannel || '') === 'conversationalist'
+      && (_inputSource === 'microphone' || _inputSource === 'voice');
+    // Voice output has its own immediate <speak> path. Avoid a transient text/
+    // activity bubble here so an overheard turn can remain truly invisible.
+    if (_isFirstEntry && !_inWorkflow && !_isConversationalistVoice) {
       console.log(`[ThinkingTrace] AgentNode emit "Thinking…" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel })`);
       await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
     }
@@ -121,7 +126,11 @@ export class AgentNode extends BaseNode {
       (state.metadata as any).reflexContext = '';
       (state.metadata as any).reflexDecision = null;
       (state.metadata as any).turnToolEvents = [];
-      if (!(state.metadata as any).isSubAgent && !_inWorkflow) {
+      const isConversationalist = String((state.metadata as any).agentId || state.metadata.wsChannel || '') === 'conversationalist';
+      // A reflex can execute a learned tool before the model has classified a
+      // microphone transcript. Voice turns for the Conversationalist must reach
+      // that classification gate first so overheard speech can do no work.
+      if (!(state.metadata as any).isSubAgent && !_inWorkflow && !isConversationalist) {
         const { runReflex, formatReflexContext, latestHumanText } = await import('../reflex/ReflexService');
         const reflex = await runReflex(latestHumanText(state.messages), state);
         if (reflex) {
@@ -144,7 +153,9 @@ export class AgentNode extends BaseNode {
         // The mobile relay translates these into activity frames, so the
         // phone's status line moves during the (unbounded) recall wait
         // instead of freezing on the initial "Thinking…".
-        onProgress: (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
+        onProgress: _isConversationalistVoice
+          ? undefined
+          : (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
       });
       subconsciousMs = Date.now() - subStart;
       perf.log(`[TurnPhase] threadId=${ (state.metadata as any).threadId } turnReceivedToSubconsciousDoneMs=${ Date.now() - turnReceivedAt }`);
@@ -295,7 +306,7 @@ export class AgentNode extends BaseNode {
     // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
     // their turns routinely take that path — gating on the wrapper alone
     // silently skipped every post-turn writer, the Reflex Trainer included.
-    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
+    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls) && !isOverheardProtocolTurn(agentResultText)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
         runSubconsciousObservationWriters(state, { includeObservations });

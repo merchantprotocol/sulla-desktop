@@ -16,7 +16,7 @@ import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 export const COMPLETION_WRAPPERS_CONTENT = `## Completion Wrappers
 
 You MUST end every response with exactly ONE of the three wrapper blocks: DONE, BLOCKED, or CONTINUE.
-- If the task is fully accomplished, output the DONE wrapper.
+- If the task is fully accomplished, output the DONE wrapper. A deliberate silent turn may put its private `<overheard>...</overheard>` note before an empty `<AGENT_DONE></AGENT_DONE>`; do not add a user-facing summary.
 - If execution is blocked and you cannot proceed, output the BLOCKED wrapper.
 - If you have made progress but the task is not yet complete, output the CONTINUE wrapper with a one-line status message of what you are working on right now.
 
@@ -69,6 +69,7 @@ CONTINUE (made progress, not done yet):
 </AGENT_CONTINUE>
 
 Rules:
+- A deliberate silent turn may put its private `<overheard>...</overheard>` note before an empty `<AGENT_DONE></AGENT_DONE>`; do not add a user-facing summary.
 - Questions for the user MUST use BLOCKED wrapper — the system cannot detect questions otherwise.
 - This is a persistent conversation. Review history before acting. Never restart completed steps.
 - Always end with exactly one wrapper. Never end without one.`;

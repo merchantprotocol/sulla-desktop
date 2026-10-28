@@ -29,7 +29,7 @@ import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
-import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
+import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
 
 import type { BaseThreadState, NodeResult } from './Graph';
@@ -1456,13 +1456,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): void {
     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
     const normalizedContent = stripProtocolTags(contentStr);
+    const keepPrivateOverheardContext = isOverheardProtocolTurn(contentStr);
 
     // Determine if the raw provider content has tool_use blocks
     const hasToolUseBlocks = Array.isArray(rawProviderContent) &&
             rawProviderContent.some((b: any) => b?.type === 'tool_use');
 
     // If pure tool_use response with no text, still store the native content
-    if (!normalizedContent && !hasToolUseBlocks) {
+    if (!normalizedContent && !hasToolUseBlocks && !keepPrivateOverheardContext) {
       return;
     }
 
@@ -1472,12 +1473,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (hasToolUseBlocks) {
       messageContent = rawProviderContent.map((block: any) => {
         if (block?.type === 'text' && typeof block.text === 'string') {
-          return { ...block, text: stripProtocolTags(block.text) };
+          return { ...block, text: isOverheardProtocolTurn(block.text) ? block.text.trim() : stripProtocolTags(block.text) };
         }
         return block;
       });
     } else {
-      messageContent = normalizedContent;
+      messageContent = keepPrivateOverheardContext ? contentStr.trim() : normalizedContent;
     }
 
     const messageMeta: Record<string, any> = {

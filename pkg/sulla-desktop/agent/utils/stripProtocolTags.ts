@@ -19,6 +19,11 @@ const AGENT_DONE_RE = /<AGENT_DONE>([\s\S]*?)<\/AGENT_DONE>/gi;
 const AGENT_BLOCKED_RE = /<AGENT_BLOCKED>([\s\S]*?)<\/AGENT_BLOCKED>/gi;
 const AGENT_CONTINUE_RE = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/gi;
 
+// Deliberately silent voice turn. The body is a private, short-lived note kept
+// in graph history so the model can recognise the same overheard conversation
+// on later turns. It must never reach UI, TTS, relay, logs, or observations.
+const OVERHEARD_RE = /<overheard>([\s\S]*?)<\/overheard>/gi;
+
 // Voice TTS tags (extracted earlier by BaseNode; strip if they leak through)
 const SPEAK_RE = /<speak>([\s\S]*?)<\/speak>/gi;
 
@@ -51,6 +56,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(AGENT_DONE_RE, '')
     .replace(AGENT_BLOCKED_RE, '')
     .replace(AGENT_CONTINUE_RE, '')
+    .replace(OVERHEARD_RE, '')
     .replace(ABORT_WORKFLOW_RE, '')
     .replace(CITATIONS_RE, '')
     .replace(CHANNEL_RE, '')
@@ -67,7 +73,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
  *  tag is an internal control payload the user must never see. The opening
  *  tag alone is a complete signal to stop rendering, even before the close
  *  arrives. */
-const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak|citations|channel:[\w.-]+)\b/i;
+const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|overheard|speak|citations|channel:[\w.-]+)\b/i;
 
 /**
  * Streaming-aware strip. Runs the same pair-removal as `stripProtocolTags`
@@ -89,7 +95,7 @@ export function stripProtocolTagsStreaming(text: string | null | undefined): str
   return holdBackPartialOpener(cleaned);
 }
 
-const WRAPPER_OPENERS = ['<agent_done', '<agent_blocked', '<agent_continue', '<abort_workflow', '<speak', '<citations', '<channel:'];
+const WRAPPER_OPENERS = ['<agent_done', '<agent_blocked', '<agent_continue', '<abort_workflow', '<overheard', '<speak', '<citations', '<channel:'];
 
 /** A flush can land mid-tag (`…answer. <AGE`). Emitting that and then the
  *  truncated `…answer.` on the next flush shrinks the stream, and consumers
@@ -102,4 +108,11 @@ function holdBackPartialOpener(text: string): string {
   if (/\s/.test(tail)) return text;
   const partial = WRAPPER_OPENERS.some(opener => opener.startsWith(tail) || (opener === '<channel:' && tail.startsWith(opener)));
   return partial ? text.slice(0, lt).trim() : text;
+}
+
+/** True when a model response deliberately represents an overheard, silent turn. */
+export function isOverheardProtocolTurn(text: string | null | undefined): boolean {
+  if (!text) return false;
+  OVERHEARD_RE.lastIndex = 0;
+  return OVERHEARD_RE.test(text);
 }
