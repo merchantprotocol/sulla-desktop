@@ -3,7 +3,7 @@ slug: sulla-show-mockups
 label: Create and show branded HTML mockup options
 trigger_when: When the human wants several UI directions, hero variations, a brand-matched restyle, or a mockup opened for review before implementation.
 trigger_actions: [make mockups, compare design options, create hero variations, match a brand, serve HTML mockups]
-trigger_phrases: [show me three mockups, ten hero variations, restyle this to match our brand, open the mockup in my browser, serve these HTML files, pick a design option, build option two]
+trigger_phrases: [show me three mockups, ten hero variations, restyle this to match our brand, open the mockup in my browser, serve these HTML files, pick a design option, build option two, option two, I like this option, build it into the real app, pick a design]
 scope: [sulla-agents, tool-browser, tool-docker, sulla-files]
 ---
 

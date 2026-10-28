@@ -3,7 +3,7 @@ slug: sulla-change-sulla-source
 label: Change Sulla Desktop source safely
 trigger_when: When you need to add or modify a Sulla Desktop tool, migration, seeder, prompt section, or built-in agent or skill.
 trigger_actions: [add a tool, add a migration, add a seeder, add a prompt section, add a built-in agent, change Sulla source]
-trigger_phrases: [change Sulla source, add a Sulla tool, migration, seeder, prompt section, built-in agent]
+trigger_phrases: [change Sulla source, add a Sulla tool, migration, seeder, prompt section, built-in agent, Sulla has a bug, fix Sulla itself, its own code, Sulla's source]
 scope: [sulla-repository, sulla-repo-agent-runtime]
 ---
 

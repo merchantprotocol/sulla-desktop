@@ -3,7 +3,7 @@ slug: sulla-tool-files
 label: Use the Sulla Files tools
 trigger_when: When you need to find, read, version, share and publish deliverables in Sulla Files.
 trigger_actions: [files, files tool]
-trigger_phrases: [files, files tools, use files, manage files, check files]
+trigger_phrases: [files, files tools, use files, manage files, check files, read this PDF, pull out the key, this document, attached file]
 scope: [tool-files]
 ---
 

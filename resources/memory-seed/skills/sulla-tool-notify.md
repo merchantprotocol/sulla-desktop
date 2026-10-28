@@ -3,7 +3,7 @@ slug: sulla-tool-notify
 label: Use the Sulla notify tools
 trigger_when: When you need to send a desktop or mobile notification or inspect notification history.
 trigger_actions: [notify, Sulla notify tool, tool call]
-trigger_phrases: [desktop notification, mobile notification, notify me, notification history, failed notifications]
+trigger_phrases: [desktop notification, mobile notification, notify me, notification history, failed notifications, let me know if, if anything fails, overnight, ping me]
 scope: [tool-notify]
 ---
 

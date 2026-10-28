@@ -3,7 +3,7 @@ slug: sulla-remember-and-recall
 label: Remember and recall durable context
 trigger_when: When a fact, rule, preference, lesson, or prior conversation must persist or be found again.
 trigger_actions: [remember a fact, recall a rule, search memory, find a prior conversation, store research]
-trigger_phrases: [remember this, recall, memory, observation, prior conversation, what did we decide, update my business goals, change my goals]
+trigger_phrases: [remember this, recall, memory, observation, prior conversation, what did we decide, update my business goals, change my goals, my goals changed, update my goals, business goals, about me]
 scope: [sulla-memory, sulla-identity]
 ---
 

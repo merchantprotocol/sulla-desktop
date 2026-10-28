@@ -3,7 +3,7 @@ slug: sulla-resume-after-restart
 label: Resume work after a restart or crash
 trigger_when: When Desktop restarted, crashed, or lost a session and you need diagnostics plus a safe inventory of unfinished work before resuming.
 trigger_actions: [run post-restart diagnostics, inspect unfinished jobs, resume interrupted work]
-trigger_phrases: [I just restarted, we crashed, pick up where you left off, did everything get in, check Postgres first, resume last night's work]
+trigger_phrases: [I just restarted, we crashed, pick up where you left off, did everything get in, check Postgres first, resume last night's work, last night, what got finished, after the restart]
 scope: [sulla, sulla-desktop, sulla-vm]
 ---
 

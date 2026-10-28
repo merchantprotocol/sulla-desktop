@@ -3,7 +3,7 @@ slug: sulla-research-and-write-brief
 label: Research a question and save a cited brief
 trigger_when: When the human wants competitor research, a company or market explained, reliable sources compared, or a research brief saved.
 trigger_actions: [research a company, compare competitors, investigate a market, verify sources, save a cited brief]
-trigger_phrases: [research our top competitors, how does this company get customers, what does this business do, most popular tools in this space, find reliable research, give me the takeaways, save a research brief]
+trigger_phrases: [research our top competitors, how does this company get customers, what does this business do, most popular tools in this space, find reliable research, give me the takeaways, save a research brief, find out how, look into, what they do, how they get customers, dig into this company]
 scope: [tool-browser, sulla-files, sulla-memory]
 ---
 

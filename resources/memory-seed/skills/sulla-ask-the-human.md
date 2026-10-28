@@ -3,7 +3,7 @@ slug: sulla-ask-the-human
 label: Ask the human for a decision
 trigger_when: When a real user choice, credential, approval, or irreversible action blocks progress.
 trigger_actions: [ask a question, request approval, need credentials, need a choice]
-trigger_phrases: [ask me, need approval, which option, I need your decision]
+trigger_phrases: [ask me, need approval, which option, I need your decision, option A or B, pick with me, before you go on, which one should we, let me choose]
 scope: [sulla-chat]
 ---
 

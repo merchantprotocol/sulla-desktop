@@ -3,7 +3,7 @@ slug: sulla-tool-pg
 label: Query and safely change PostgreSQL data
 trigger_when: When you need a database count, filtered rows, schema inspection, or a carefully verified PostgreSQL change.
 trigger_actions: [count records, query rows, inspect a table, update database, run a transaction]
-trigger_phrases: [how many signups this week, query the database, orders over 100, PostgreSQL query, database count, SQL query, update database, transaction]
+trigger_phrases: [how many signups this week, query the database, orders over 100, PostgreSQL query, database count, SQL query, update database, transaction, how many, count the, this week, signups, in the database]
 scope: [tool-pg]
 ---
 

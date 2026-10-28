@@ -3,7 +3,7 @@ slug: sulla-know-what-you-cannot-do
 label: Check a current Sulla capability gap
 trigger_when: When a user asks for an operation that may not have a tool or the docs may have drifted.
 trigger_actions: [check whether possible, find a missing tool, explain a limitation]
-trigger_phrases: [can you do this, is there a tool, not working, limitation]
+trigger_phrases: [can you do this, is there a tool, not working, limitation, does Sulla support, is this possible, not sure you can]
 scope: [sulla-tools]
 ---
 

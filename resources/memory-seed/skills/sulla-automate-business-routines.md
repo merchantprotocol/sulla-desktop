@@ -3,7 +3,7 @@ slug: sulla-automate-business-routines
 label: Run and automate recurring business operations safely
 trigger_when: When the human wants to plan inventory orders, log receipts, track contract renewals, capture web leads in a CRM, draft review replies, or re-engage inactive customers.
 trigger_actions: [plan inventory order, log expense receipt, track renewals, capture CRM leads, draft review replies, draft customer check-ins]
-trigger_phrases: [what should I order this week, log this expense receipt, track which contracts renew soon, capture leads into the CRM, draft responses to our new reviews, customers haven't ordered lately, draft check-ins, automate this business routine]
+trigger_phrases: [what should I order this week, log this expense receipt, track which contracts renew soon, capture leads into the CRM, draft responses to our new reviews, customers haven't ordered lately, draft check-ins, automate this business routine, what to order, reorder, overdue invoice, follow up with customers]
 scope: [sulla-workflows, tool-vault, sulla-files]
 ---
 

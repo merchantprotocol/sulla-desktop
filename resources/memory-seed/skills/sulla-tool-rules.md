@@ -3,7 +3,7 @@ slug: sulla-tool-rules
 label: Use the Sulla Rules tools
 trigger_when: When you need to search and maintain user-created rules enforced by the Security Conscience.
 trigger_actions: [rules, rules tool]
-trigger_phrases: [rules, rules tools, use rules, manage rules, check rules]
+trigger_phrases: [rules, rules tools, use rules, manage rules, check rules, make that a rule, rule for every agent, always do this, never do this again]
 scope: [tool-rules]
 ---
 

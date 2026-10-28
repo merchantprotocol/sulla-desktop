@@ -3,7 +3,7 @@ slug: sulla-tool-github
 label: Use the Sulla github tools
 trigger_when: When you need to manage a repository, branch, commit, push, pull request, issue, review, project board, or CI result.
 trigger_actions: [github, Sulla github tool, tool call]
-trigger_phrases: [GitHub, pull request, open a PR, push a branch, review a diff, CI status, worktree cleanup]
+trigger_phrases: [GitHub, pull request, open a PR, push a branch, review a diff, CI status, worktree cleanup, create an issue, open an issue, clean up worktrees, old worktrees]
 scope: [tool-github]
 ---
 

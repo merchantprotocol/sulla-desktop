@@ -3,7 +3,7 @@ slug: sulla-manage-a-project
 label: Manage a project through Files
 trigger_when: When work spans multiple sessions and needs a durable goal, owner, task checklist, decisions, and progress history in Sulla Files.
 trigger_actions: [find a project, create a project, update a task, record progress, close a task]
-trigger_phrases: [project, PROJECT.md, TASKS.md, project status, task list, multi-session goal]
+trigger_phrases: [project, PROJECT.md, TASKS.md, project status, task list, multi-session goal, make this your goal, don't stop until it's done, where are we, status of everything, add tasks, find the gaps, plan this out]
 scope: [sulla-projects]
 ---
 
