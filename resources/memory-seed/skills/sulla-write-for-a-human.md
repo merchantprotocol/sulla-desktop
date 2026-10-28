@@ -20,6 +20,8 @@ scope: [sulla-chat]
 
 **Check:** The intended reader, purpose, factual basis, and next action are clear. Every claim is verified or visibly marked for review.
 
+**Cleanup:** Remove working fragments and duplicate drafts from scratch. Save only the reviewed canonical deliverable when the human asked for a file.
+
 **Don't:**
 - add a closing recap, throat-clearing, or "hopefully this helps".
 - overuse em dashes, corporate buzzwords, hedging, or rule-of-three lists.

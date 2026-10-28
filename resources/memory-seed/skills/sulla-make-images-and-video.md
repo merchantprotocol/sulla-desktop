@@ -20,6 +20,8 @@ scope: [tool-vault, sulla-files]
 8. Read back file metadata and confirm the asset opens, has the requested format and dimensions or duration, and contains no placeholder material.
 9. Uploading or posting is external publication. Prepare the exact channel call and ask once with `sulla meta/ask_user_question '{"questions":[{"header":"Publish media","question":"Publish the reviewed asset to the shown destination?","options":[{"label":"Approve","description":"Publish this exact asset."},{"label":"Deny","description":"Keep it in Files only."}]}]}'`. Publish only after **Approve**.
 
+**Check:** Open the selected file and verify format, dimensions or duration, legible text and captions, audible narration when present, and the requested destination. Distinguish a prompt, preview, rendered file, and published asset.
+
 **Cleanup:** Remove rejected previews and provider downloads from scratch. Do not delete existing human assets. Keep only the selected deliverables in Files.
 
 **Traps:** Do not claim a video was rendered when only a script exists. Do not imitate a living artist, fabricate people or endorsements, use unlicensed brand assets, expose provider secrets, or publish without approval.

@@ -31,6 +31,8 @@ scope: [tool-calendar]
 
 **Check:** List the same bounded range again and match returned event ids, titles, starts, ends, calendar, and timezone to the request. A draft plan is not a calendar update.
 
+**Cleanup:** Remove only scratch planning notes. Cancel superseded events when history matters; deletion waits for the human's tap.
+
 **Don't:**
 - Don't invent event IDs; list or get the event first.
 - Don't delete when an update or cancel operation is enough. Deletion waits for the human's explicit go-ahead.

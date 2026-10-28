@@ -26,6 +26,8 @@ scope: [sulla-tools, tool-vault, tool-applescript]
 
 **Text messages:** Use a connected messaging integration such as `twilio`; Sulla has no generic SMS transport. Discover its send operation, show destination and body, get **Approve**, send once, and verify the returned message id or status.
 
+**Check:** Re-read the selected account, recipient list, reviewed content, and provider result. A send is complete only when the provider reports an id or status for every approved message; list failures and queued items.
+
 **Cleanup:** Remove scratch exports and recipient lists from the agent workspace. Do not delete inbox messages or drafts as cleanup.
 
 **Traps:**
