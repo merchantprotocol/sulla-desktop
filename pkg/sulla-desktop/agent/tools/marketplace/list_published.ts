@@ -22,8 +22,9 @@ export class MarketplaceListPublishedWorker extends BaseTool {
       const lines = items.map((i) => {
         const bundle = i.bundle_status === 'pending' ? ' (bundle not uploaded)' : '';
         const notes = i.admin_notes ? `\n     reviewer: ${ i.admin_notes.split('\n').slice(-1)[0] }` : '';
+        const memoryPack = i.kind === 'skill' && i.tags?.includes('memory-pack') ? ' [memory pack]' : '';
 
-        return `  - ${ marketplaceKindLabel(i.kind) }: ${ i.slug } v${ i.version } — ${ label[i.status] ?? i.status }${ bundle } · ${ i.download_count ?? 0 } downloads · ${ i.id }${ notes }`;
+        return `  - ${ marketplaceKindLabel(i.kind) }: ${ i.slug }${ memoryPack } v${ i.version } — ${ label[i.status] ?? i.status }${ bundle } · ${ i.download_count ?? 0 } downloads · ${ i.id }${ notes }`;
       });
 
       return {

@@ -39,8 +39,9 @@ export const KIND_LAYOUTS: Record<ArtifactKind, ArtifactLayout> = {
   // User-owned dirs — the same ones the Marketplace tab installs into and
   // the Library publishes from. (~/sulla/resources/* is app-managed.)
   skill: {
-    manifest: 'SKILL.md',
-    bundle:   'single',
+    manifest:   'SKILL.md',
+    bundle:     'multi',
+    companions: ['README.md', 'CHANGELOG.md', 'memory/'],
   },
   function: {
     manifest:   'function.yaml',

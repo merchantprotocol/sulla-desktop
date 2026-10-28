@@ -29,7 +29,7 @@ import { getAgentOverrideService, getPrimaryService, getSubconsciousService } fr
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { OBSERVATION_DOMAIN, recallRankedMemories, type RecalledMemory } from '../memory/MemoryRecallService';
-import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
+import { DEFAULT_SUBCONSCIOUS_RECALL_MODE, recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { runThroughWriterGate } from '../services/SubconsciousWriterGate';
@@ -572,7 +572,7 @@ export function runSubconsciousObservationWriters(
   // v7 replaces the old observation writers with one subject-memory elephant.
   // It uses the same Settings-backed subconscious model slot and is fully
   // asynchronous through the process-wide writer gate.
-  SullaSettingsModel.get('subconsciousRecallMode', 'ranked').then(mode => {
+  SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE).then(mode => {
     if (mode !== 'v7') return;
     Promise.resolve().then(() => runThroughWriterGate(() => runV7Elephant(state))).catch(error => {
       console.error('[SubconsciousMiddleware] Post-turn v7 elephant failed (fire-and-forget):', error instanceof Error ? error.message : error);
@@ -932,7 +932,8 @@ function turnRecallTerms(state: BaseThreadState): string[] {
 
 /**
  * Pre-turn recall mode.
- *  - 'ranked' (default): one ranking across every memory domain — BM25 + local
+ *  - 'v7' (default): subject memory recall and the v7 writer.
+ *  - 'ranked': one ranking across every memory domain — BM25 + local
  *    potion embeddings + a logistic-regression ranker, top 16 per domain (agent/memory/).
  *    Falls back to 'sql' automatically when the bundled model is unavailable.
  *  - 'sql': per-domain indexed SQL keyword recall (~0.1s), the #856 fast path.
@@ -942,11 +943,11 @@ function turnRecallTerms(state: BaseThreadState): string[] {
  */
 async function recallMode(): Promise<'ranked' | 'sql' | 'agent' | 'v7'> {
   try {
-    const mode = await SullaSettingsModel.get('subconsciousRecallMode', 'v7');
+    const mode = await SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE);
 
     return mode === 'agent' || mode === 'sql' || mode === 'v7' ? mode : 'ranked';
   } catch {
-    return 'ranked';
+    return DEFAULT_SUBCONSCIOUS_RECALL_MODE;
   }
 }
 

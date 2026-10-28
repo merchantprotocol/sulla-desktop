@@ -10,6 +10,7 @@ import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
+import { installMemoryPackForSkill, listPacks, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
 import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
@@ -225,6 +226,11 @@ export class SullaUseCaseFiles {
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
     });
+    if (kind === 'skill') {
+      const raw = text(files['SKILL.md']);
+      const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
+      await installMemoryPackForSkill(slug, parsed?.content.frontmatter, files);
+    }
   }
 
   private async disableMissing(active:Set<string>):Promise<void> {
@@ -250,10 +256,17 @@ export class SullaUseCaseFiles {
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
         // An invalid newly-published version never disables the last valid index row.
         active.add(key);
+        if (type === 'skills') {
+          const existing = await postgresClient.queryOne<{enabled:boolean;deleted_at:string|null;use_case_file_id:string|null}>('SELECT enabled,deleted_at,use_case_file_id FROM skill_definitions WHERE slug=$1',[slug]);
+          if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
+        }
         try { await this.activate(type,slug,packageRows); active.add(key) }
         catch(error) { const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
+      const enabledPackSkills = await postgresClient.query<{slug:string}>(`SELECT slug FROM skill_definitions WHERE enabled=TRUE AND deleted_at IS NULL AND use_case_version_id IS NOT NULL AND frontmatter->>'memory_pack'='true'`);
+      const activePackSlugs = new Set(enabledPackSkills.map(row => row.slug));
+      for (const pack of await listPacks()) if (!activePackSlugs.has(String(pack.slug))) await uninstallPack(String(pack.slug));
       const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry'); await skillsRegistry.invalidate();
       await postgresClient.query('UPDATE use_case_files_state SET last_scan_at=NOW(),last_error=NULL WHERE singleton=TRUE');
       this.lastSignature = signature;

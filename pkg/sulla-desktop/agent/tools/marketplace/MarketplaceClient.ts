@@ -29,6 +29,7 @@ export interface MarketplaceListing {
   tagline?:       string | null;
   category?:      string | null;
   tags:           string[];
+  memoryPack:     boolean;
   author?:        string | null;
   downloads:      number;
   bundleSize?:    number | null;
@@ -67,6 +68,7 @@ export class MarketplaceClient {
     const local = installed.find(a => a.templateId === row.id) ??
       installed.find(a => a.kind === row.kind && a.slug === row.slug) ?? null;
 
+    const tags = Array.isArray(row.tags) ? row.tags : [];
     return {
       id:          row.id,
       kind:        fromMarketplaceKind(row.kind),
@@ -76,7 +78,8 @@ export class MarketplaceClient {
       description: row.description ?? null,
       tagline:     row.tagline ?? null,
       category:    row.category ?? null,
-      tags:        Array.isArray(row.tags) ? row.tags : [],
+      tags,
+      memoryPack:  row.kind === 'skill' && tags.includes('memory-pack'),
       author:      row.author_display ?? null,
       downloads:   Number(row.download_count ?? 0),
       bundleSize:  row.bundle_size ?? null,

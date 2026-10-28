@@ -15,7 +15,6 @@ import { assertWorkspacePath, ContainerProviderFileTransport } from './Container
 import {
   chownGuestPaths,
   createGuestRuntimeDirectory,
-  GUEST_AGENT_DOCS_ROOT,
   GUEST_AGENT_WORKSPACES_ROOT,
   GUEST_CONVERSATIONS_ROOT,
   ensureGuestRuntimeDirectories,
@@ -46,7 +45,7 @@ import {
 } from '../languagemodels/ProviderExecutionTransport';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
-import { resolveSullaDocsDir } from '../utils/sullaPaths';
+import { resolveMemorySeedDir } from '../utils/sullaPaths';
 
 import { ensureOnDemandService, setOnDemandServiceDemand } from '@pkg/backend/onDemandServices';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
@@ -946,8 +945,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       );
       return { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
     });
-    const docsTask = phase('docs', () => seedContentAddressedDirectoryIntoGuest(
-      resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, 'sulla-docs',
+    const memorySeedTask = phase('memorySeed', () => seedContentAddressedDirectoryIntoGuest(
+      resolveMemorySeedDir(), '/opt/sulla-memory-seed', 'memory-seed',
     ));
     const providerFilesTask = phase('providerFiles', () => ContainerProviderFileTransport.create())
       .then(files => { providerFiles = files; return files });
@@ -960,20 +959,20 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       await chownGuestPaths([dirs.workspace], identity);
     });
     const setup = await Promise.allSettled([
-      dirsTask, docsTask, providerFilesTask, secretsTask, egressTask, chownTask,
+      dirsTask, memorySeedTask, providerFilesTask, secretsTask, egressTask, chownTask,
     ] as const);
     const failedSetup = setup.find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failedSetup) throw failedSetup.reason;
-    const [dirsResult, docsResult, providerFilesResult, secretsResult, egressResult] = setup as [
+    const [dirsResult, memorySeedResult, providerFilesResult, secretsResult, egressResult] = setup as [
       PromiseFulfilledResult<Awaited<typeof dirsTask>>,
-      PromiseFulfilledResult<Awaited<typeof docsTask>>,
+      PromiseFulfilledResult<Awaited<typeof memorySeedTask>>,
       PromiseFulfilledResult<Awaited<typeof providerFilesTask>>,
       PromiseFulfilledResult<Awaited<typeof secretsTask>>,
       PromiseFulfilledResult<Awaited<typeof egressTask>>,
       PromiseFulfilledResult<Awaited<typeof chownTask>>,
     ];
     const dirs = dirsResult.value;
-    const docsPath = docsResult.value;
+    const memorySeedPath = memorySeedResult.value;
     const egress = egressResult.value;
     providerFiles = providerFilesResult.value;
     secretDir = secretsResult.value;
@@ -984,7 +983,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       `${ workspacePath }:${ workspacePath }:rw`,
       '/mnt/worktrees:/mnt/worktrees:rw',
       providerFiles.bindMount,
-      `${ docsPath }:/opt/sulla-docs:ro`,
+      `${ memorySeedPath }:/opt/sulla-memory-seed:ro`,
       ...(dirs.claudeHome ? [`${ dirs.claudeHome }:/home/sulla/.claude:rw`] : []),
       ...(dirs.codexHome ? [`${ dirs.codexHome }:/home/sulla/.codex:rw`] : []),
       ...sullaFilesGuestBinds(),
@@ -1039,7 +1038,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     });
     log.info(`[AgentContainer] ${ containerName } can reach graph MCP host`);
     perf.log(`[ContainerStart] name=${ containerName } ${ [
-      'identity', 'vaultPrincipal', 'toolsService', 'dirs', 'docs', 'chown', 'providerFiles', 'secrets',
+      'identity', 'vaultPrincipal', 'toolsService', 'dirs', 'memorySeed', 'chown', 'providerFiles', 'secrets',
       'egress', 'create', 'filesActor', 'network', 'start', 'mcpProbe',
     ].map(name => `${ name }Ms=${ phaseMs[name] ?? 0 }`).join(' ') } totalMs=${ Date.now() - launchStartedAt }`);
     const binding = {
@@ -1302,15 +1301,15 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
     workspacePath = checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
-    const docsPath = await seedDirectoryIntoGuest(resolveSullaDocsDir(), GUEST_AGENT_DOCS_ROOT, `${ jobKey }-`);
-    guestRuntimePaths.push(docsPath);
-    await chownGuestPaths([workspacePath, docsPath], identity);
+    const memorySeedPath = await seedDirectoryIntoGuest(resolveMemorySeedDir(), '/opt/sulla-memory-seed', `${ jobKey }-`);
+    guestRuntimePaths.push(memorySeedPath);
+    await chownGuestPaths([workspacePath, memorySeedPath], identity);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets, identity);
     const egress = await prepareAgentEgress();
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
-      `${ docsPath }:/opt/sulla-docs:ro`,
+      `${ memorySeedPath }:/opt/sulla-memory-seed:ro`,
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];

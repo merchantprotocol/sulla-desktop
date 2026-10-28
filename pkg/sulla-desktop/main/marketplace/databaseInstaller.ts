@@ -11,6 +11,7 @@ import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
+import { installMemoryPackForSkill, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import type { MarketplaceTemplateDetail } from '@pkg/main/marketplace/client';
 
 import type { PoolClient } from 'pg';
@@ -346,6 +347,17 @@ async function installArtifact(
   return { installed: true };
 }
 
+async function installMarketplaceMemoryPack(slug:string, files:Record<string,StoredFile>, source:string):Promise<boolean> {
+  const { parseSkillMarkdown } = await import('@pkg/agent/services/SkillDefinitionService');
+  const skillText=textFile(files,'SKILL.md');
+  if(!skillText)return false;
+  const parsed=parseSkillMarkdown(skillText,slug,Object.fromEntries(Object.entries(files).filter(([name])=>name!=='SKILL.md')));
+  if(!parsed)throw new Error(`skill ${slug} has an invalid SKILL.md`);
+  const installed=await installMemoryPackForSkill(slug,parsed.content.frontmatter,files,source);
+  if(!installed)await uninstallPack(slug);
+  return Boolean(installed);
+}
+
 export async function installStandaloneArtifact(
   detail: MarketplaceTemplateDetail,
   artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
@@ -365,6 +377,15 @@ export async function installStandaloneArtifact(
     templateId: detail.id,
     author:     detail.author_display,
   }, overwrite));
+  if (result.installed && detail.kind === 'skill') {
+    try {
+      await installMarketplaceMemoryPack(detail.slug, artifact.files, `marketplace:${ detail.id }`);
+    } catch (error) {
+      await uninstallPack(detail.slug).catch(() => false);
+      await database.transaction(client => client.query(`DELETE FROM skill_definitions WHERE slug=$1 AND source_kind='marketplace' AND marketplace_template_id=$2`, [detail.slug, detail.id]));
+      throw new Error(`Marketplace skill ${ detail.slug } was removed because its memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
+    }
+  }
   if (result.installed) await refreshRuntimeCatalogs([detail.kind as InstallableKind]);
   return result;
 }
@@ -456,6 +477,15 @@ export async function installPackageManifest(
     return { installed, skipped };
   });
 
+  try {
+    for (const item of result.installed.filter(item => item.kind === 'skill')) {
+      const content=manifest.contents.find(candidate=>candidate.kind==='skill'&&candidate.slug===item.slug);
+      if(content){const artifact=packageContentToArtifact(content);await installMarketplaceMemoryPack(item.slug,artifact.files,`marketplace:${ templateId }`);}
+    }
+  } catch(error) {
+    await uninstallPackage(manifest.slug).catch(() => undefined);
+    throw new Error(`Marketplace package ${ manifest.slug } was removed because a memory pack failed to install: ${ error instanceof Error ? error.message : String(error) }`);
+  }
   await refreshRuntimeCatalogs(result.installed.map(item => item.kind));
 
   return { ok: true, package: { slug: manifest.slug, version: manifest.version }, ...result };
@@ -507,6 +537,8 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
     for (const item of recipeItems) await stopStoredRecipe(String(item.item_slug), removeData);
   }
 
+  const memoryPackSkills = await postgresClient.query<{slug:string}>(`SELECT s.slug FROM installed_package_items i JOIN installed_packages p ON p.slug=i.package_slug JOIN skill_definitions s ON s.slug=i.item_slug AND s.marketplace_template_id=p.template_id WHERE i.package_slug=$1 AND i.kind='skill' AND s.frontmatter->>'memory_pack'='true'`, [slug]);
+
   const result = await postgresClient.transaction(async(client) => {
     const pkg = await client.query('SELECT template_id FROM installed_packages WHERE slug=$1 FOR UPDATE', [slug]);
     if (!pkg.rowCount) {
@@ -523,6 +555,8 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
     await client.query('DELETE FROM installed_packages WHERE slug=$1', [slug]);
     return { ok: true as const, removed, revokedVersions: [] as string[] };
   });
+  const removedSkills=new Set(result.removed.filter(item=>item.kind==='skill').map(item=>item.slug));
+  for(const pack of memoryPackSkills)if(removedSkills.has(String(pack.slug)))await uninstallPack(String(pack.slug));
   for (const version of result.revokedVersions) await setIntegrationGrant(slug, version, [], false);
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
   return { ok: result.ok, removed: result.removed };

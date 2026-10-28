@@ -5,13 +5,13 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outputDir = path.join(root, 'resources/sulla-docs/tools/catalog');
+// Tool skills are hand-curated in resources/memory-seed/skills; this generator no longer writes files.
 const execFileAsync = promisify(execFile);
 const sentenceSegmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
 
@@ -125,28 +125,4 @@ await Promise.all(Array.from({ length: Math.min(2, categories.length) }, async (
   }
 }));
 const catalog = [];
-mkdirSync(outputDir, { recursive: true });
-for (const filename of readdirSync(outputDir)) {
-  if (filename.endsWith('.md')) unlinkSync(path.join(outputDir, filename));
-}
-
-for (const { category, tools } of categoryCatalogs) {
-  if (tools.length !== category.advertisedCount) {
-    throw new Error(`${ category.name } advertised ${ category.advertisedCount } tools but returned ${ tools.length }`);
-  }
-  writeFileSync(path.join(outputDir, `${ category.name }.md`), renderCategory(category, tools));
-  for (const tool of tools) catalog.push({ category: category.name, ...tool });
-}
-
-catalog.sort((a, b) => compare(`${ a.category }/${ a.name }`, `${ b.category }/${ b.name }`));
-const index = [
-  '# Live tool catalog',
-  '',
-  'Generated from the live Sulla tool catalog. Each line is `category/tool — description`.',
-  '',
-  ...catalog.map(tool => `${ tool.category }/${ tool.name } — ${ tool.description }`),
-  '',
-].join('\n');
-writeFileSync(path.join(outputDir, 'INDEX.md'), index);
-
-console.log(`Generated ${ categories.length } categories and ${ catalog.length } tools in ${ path.relative(root, outputDir) }.`);
+console.log('Tool catalog generation retired; use resources/memory-seed/skills.');

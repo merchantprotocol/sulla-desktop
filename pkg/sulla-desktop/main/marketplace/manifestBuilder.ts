@@ -334,12 +334,14 @@ function buildSkillManifest(opts: BuildOptions): Record<string, unknown> {
   const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
   const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
   const bundle = describeBundleFiles(bundleRoot, slug);
+  const isMemoryPack = frontmatter.memory_pack === true;
+  const declaredTags = Array.isArray(frontmatter.tags) ? frontmatter.tags.map(String) : [];
 
   const metadata: Record<string, unknown> = {
     name:        overrides?.name ?? frontmatter.name ?? slug,
     description: overrides?.description ?? frontmatter.summary ?? '',
     version:     overrides?.version ?? String(frontmatter.version ?? '1.0.0'),
-    tags:        overrides?.tags ?? (Array.isArray(frontmatter.tags) ? frontmatter.tags : []),
+    tags:        uniqueStrings(isMemoryPack ? [...(overrides?.tags ?? declaredTags), 'memory-pack'] : (overrides?.tags ?? declaredTags)),
   };
   if (frontmatter.tagline) metadata.tagline = String(frontmatter.tagline);
   if (frontmatter.license) metadata.license = String(frontmatter.license);
@@ -352,6 +354,7 @@ function buildSkillManifest(opts: BuildOptions): Record<string, unknown> {
   const skillSummary: Record<string, unknown> = {
     skillKey:     String(frontmatter.skillKey ?? slug),
     promptLength: body.length,
+    memoryPack:   isMemoryPack,
   };
   if (frontmatter.category) skillSummary.category = String(frontmatter.category);
   if (frontmatter.condition) skillSummary.condition = String(frontmatter.condition);
