@@ -1,0 +1,34 @@
+id: fireline
+name: Fireline incident follow-up
+description: Reviews an owner-selected incident record and prepares factual updates or a postmortem without broadcasting.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: manual
+      category: trigger
+      label: Run incident review
+      config: {triggerType: manual, triggerDescription: Review a supplied incident record; choose update or postmortem mode.}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare incident artifact
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Read only the owner-selected incident notes, logs, and deployment context. Apply Fireline severity and
+          blameless timeline rules. Prepare a factual status update or postmortem in Files when requested. Do not
+          post to Slack, notify customers, delete evidence, or change systems. Any external message must remain a
+          draft until the human approves its exact destination and content.
+        successCriteria: Source-linked incident artifact with severity, evidence, unknowns, timeline, and next actions.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}
