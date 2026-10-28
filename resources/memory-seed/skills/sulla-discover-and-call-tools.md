@@ -3,7 +3,7 @@ slug: sulla-discover-and-call-tools
 label: Discover and call Sulla tools
 trigger_when: When you need a Sulla CLI tool and are unsure of its exact category, name, parameters, or example.
 trigger_actions: [discover a tool, browse tools, call a tool, use Sulla CLI]
-trigger_phrases: [browse_tools, Sulla tool, CLI tool, integration proxy, MCP]
+trigger_phrases: [browse_tools, Sulla tool, CLI tool, integration proxy, MCP, exact command]
 scope: [sulla-tools]
 ---
 
