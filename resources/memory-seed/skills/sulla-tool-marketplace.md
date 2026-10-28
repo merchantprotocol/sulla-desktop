@@ -7,13 +7,14 @@ trigger_phrases: [marketplace, marketplace tools, use marketplace, manage market
 scope: [tool-marketplace]
 ---
 
-**When:** When you need to inspect local or published marketplace packages and review changes before publishing.
+**When:** When you need to search, inspect, validate, install, update, compare, publish, or withdraw a Marketplace artifact. Search/info/download do not require a Cloud session; publish/list_published/unpublish do.
 
 **Do:**
-1. List local packages: `sulla marketplace/list_local '{}'`; list published packages with `sulla marketplace/list_published '{}'`.
-2. Compare a package: `sulla marketplace/diff '{"id":"<id>"}'`.
-3. Update a package only with its declared fields: `sulla marketplace/update '{"id":"<id>","manifest":{}}'`.
-4. Unpublish only after checking the result and supplying the tool's required confirmation.
+1. Search the catalog first: `sulla marketplace/search '{"query":"<terms>","kinds":["workflow","skill","function"],"limit":25}'`; inspect one listing with `sulla marketplace/info '{"kind":"<kind>","slug":"<slug>"}'`.
+2. List local artifacts with `sulla marketplace/list_local '{}'`; list your submissions with `sulla marketplace/list_published '{}'`.
+3. Compare an installed artifact: `sulla marketplace/diff '{"id":"<id>"}'`.
+4. Update only after reviewing the replacement: `sulla marketplace/update '{"id":"<id>","manifest":{}}'`.
+5. Unpublish only after checking the result and supplying `confirm:true`; this removes a listing but does not delete the local copy.
 
 **Tools:**
 <!-- tools:generated:start -->
