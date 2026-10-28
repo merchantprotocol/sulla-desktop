@@ -62,3 +62,9 @@ sulla marketplace/unpublish '{"kind":"function","slug":"my-tool","confirm":true}
 - API client: `pkg/sulla-desktop/main/marketplace/client.ts`
 - Install pipeline: `pkg/sulla-desktop/main/marketplace/install.ts`, `databaseInstaller.ts`
 - Publish pipeline: `pkg/sulla-desktop/main/marketplace/publish.ts`, `bundleFiles.ts`, `manifestBuilder.ts`
+
+## Submission review and signatures
+
+`marketplace/publish` submits a version for automated and human review; it does not make the version live. Automated review checks the per-kind manifest, package size, likely secrets/credentials, declared hooks and permissions, referenced network hosts, and shell-use flags. Administrators can approve, request changes, or reject with author-visible notes. Use `marketplace/list_published` to read the current decision and notes.
+
+Approval signs the approved manifest and payload with the marketplace Ed25519 key. All marketplace installs verify that signature and integrity before writing anything locally; unsigned or tampered downloads fail closed. This applies to skills, functions, workflows, recipes, agents, integrations, and multi-item packages. Local artifacts and unpublished development copies remain installable through their existing local paths. Every update is reviewed independently and is offered only after approval.
