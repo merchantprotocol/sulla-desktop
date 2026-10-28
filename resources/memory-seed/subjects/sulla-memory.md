@@ -27,3 +27,7 @@ Sulla's v7 memory is a subject-scoped PostgreSQL store in the `subject_memory` s
 - DO: Store a durable operational fact with the observation tool and, when appropriate, a file under `Memory/`.
 - DON'T: Use memory for temporary task status. Use the project's `TASKS.md`.
 - DON'T: Assume absence from recall means absence from memory. Search explicitly when history matters.
+
+## Memory packs
+
+Memory packs are published skill Use Cases that carry seed-format memory under `memory/`. Their `SKILL.md` declares `memory_pack: true`. Use `memory/pack_validate`, `memory/pack_install`, `memory/pack_sync`, `memory/pack_uninstall`, and `memory/pack_list`. Drafts are invisible; publishing or enabling installs or syncs a pack, while disabling, deleting, or retiring it uninstalls the pack and reveals the memory it had overridden.
