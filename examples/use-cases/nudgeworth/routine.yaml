@@ -1,0 +1,29 @@
+id: nudgeworth-weekly
+name: Nudgeworth weekly aging
+ description: Weekly receivables aging and draft follow-ups from a ledger export.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekly receivables review
+      config: {triggerType: schedule, frequency: weekly, dayOfWeek: 1, time: "08:00", timezone: ""}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare draft-only aging report
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Read the configured ledger export with Nudgeworth, prepare an aging report and drafts, save them in Files, and do not send or edit anything.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}
