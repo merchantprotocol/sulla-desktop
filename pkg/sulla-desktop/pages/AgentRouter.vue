@@ -174,7 +174,8 @@ import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
-async function onPermissionNeeded(_event:unknown,event:{extensionId:string;hook:any}){if(permissionPrompt.value)return;const extensions=await ipcRenderer.invoke('extension-permissions:list');const ext=extensions.find(item=>item.extensionId===event.extensionId);permissionPrompt.value={event,name:ext?.name||event.extensionId,label:hookPromptLabels[event.hook]||event.hook}}
+async function onPermissionNeeded(_event:unknown,event:{extensionId:string;hook:any}){if(permissionPrompt.value)return;const extensions=await ipcRenderer.invoke('extension-permissions:list');const ext=extensions.find(item=>item.extensionId===event.extensionId);if(ext&&typeof ext.grants?.[event.hook]==='boolean')return;// already decided: never re-ask
+  permissionPrompt.value={event,name:ext?.name||event.extensionId,label:hookPromptLabels[event.hook]||event.hook}}
 async function answerPermission(granted:boolean){const prompt=permissionPrompt.value;if(!prompt)return;await ipcRenderer.invoke('extension-permissions:set-hook',{extensionId:prompt.event.extensionId,hook:prompt.event.hook,granted});permissionPrompt.value=undefined}
 
 const route = useRoute();

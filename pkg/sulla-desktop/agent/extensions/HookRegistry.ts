@@ -111,14 +111,23 @@ const AUDIT_LIMIT = 500;
 const auditListeners = new Set<(event: HookAuditEvent) => void>();
 export function onExtensionHookAudit(listener: (event: HookAuditEvent) => void): () => void { auditListeners.add(listener); return () => auditListeners.delete(listener); }
 let auditWrite = Promise.resolve();
-async function persistAuditEvent(event: HookAuditEvent): Promise<void> {
+// Batch audit writes: hooks can fire on every tool call, so persist at most once per second.
+let pendingAudit: HookAuditEvent[] = [];
+let auditTimer: ReturnType<typeof setTimeout> | undefined;
+async function persistAuditEvents(events: HookAuditEvent[]): Promise<void> {
   const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
   const current = await SullaSettingsModel.get('extensionHookAuditEvents', []);
-  await SullaSettingsModel.set('extensionHookAuditEvents', [...(current || []), event].slice(-AUDIT_LIMIT), 'json');
+  await SullaSettingsModel.set('extensionHookAuditEvents', [...(current || []), ...events].slice(-AUDIT_LIMIT), 'json');
 }
 function queueAuditEvent(event: HookAuditEvent): void {
   for (const listener of auditListeners) { try { listener(event) } catch { /* listeners never affect hooks */ } }
-  auditWrite = auditWrite.then(() => persistAuditEvent(event)).catch(error => console.warn('[ExtensionHookAudit] Could not persist event', error));
+  pendingAudit.push(event);
+  if (auditTimer) return;
+  auditTimer = setTimeout(() => {
+    auditTimer = undefined;
+    const batch = pendingAudit.splice(0);
+    auditWrite = auditWrite.then(() => persistAuditEvents(batch)).catch(error => console.warn('[ExtensionHookAudit] Could not persist events', error));
+  }, 1_000);
 }
 export async function listExtensionHookAuditEvents(): Promise<HookAuditEvent[]> {
   const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
