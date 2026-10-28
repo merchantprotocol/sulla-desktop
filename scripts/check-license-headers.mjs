@@ -7,7 +7,7 @@ import { extname } from 'node:path';
 const SOURCE_EXTENSIONS = new Set([
   '.applescript', '.bash', '.c', '.cc', '.cjs', '.conf', '.cpp', '.css', '.entitlements',
   '.go', '.h', '.hpp', '.html', '.js', '.jsx', '.mjs', '.mod', '.mts', '.pbxproj',
-  '.plist', '.py', '.rs', '.scss', '.sh', '.sql', '.svg', '.swift', '.toml', '.ts',
+  '.plist', '.py', '.rs', '.scss', '.sh', '.sql', '.swift', '.toml', '.ts',
   '.tsx', '.vue', '.work', '.yaml', '.yml',
 ]);
 const GPL_COMPATIBLE_IDENTIFIERS = new Set([
