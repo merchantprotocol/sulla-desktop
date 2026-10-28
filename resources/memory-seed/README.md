@@ -119,3 +119,30 @@ scope: [tool-browser]             # subject slugs this skill belongs to
   When a new seed version drops or changes a bullet, the old item is retired through supersession.
 - Skills: `version_ts` = seed version. A newer seed version replaces the older one.
 - The seeder never edits or deletes rows the install wrote itself (non-`seed:` ids).
+
+## Memory packs (installable memory)
+
+A memory pack is a **skill** that carries memory. It is distributed, installed, customized and
+uninstalled the same way as any skill Use Case. The core seed above is the memory Sulla ships with,
+and packs add to it.
+
+```
+Use Cases/skills/<pack-slug>/
+├── SKILL.md              # frontmatter includes  memory_pack: true ; body explains the pack and how to customize it
+└── memory/
+    ├── manifest.json     # { "version": <int> }  bump on every change
+    ├── subjects/<slug>.md   # same format as the core seed
+    └── skills/<slug>.md     # same format as the core seed
+```
+
+- **Provenance:** every row a pack writes is owned by `memory-pack:<pack-slug>`. Items get ids
+  `pack:<pack-slug>:<subject>:<hash>`, with `origin = 'seeded'`.
+- **Precedence:** shipped seed < installed pack < what the install wrote itself. A pack skill with the same
+  slug as a core skill overrides it while the pack is installed. A pack overview beats the seed
+  overview but never one the install wrote.
+- **Install** loads the pack (idempotent). **Sync** reloads it after the human customizes the files;
+  bullets that disappeared are retired. **Uninstall** leaves nothing of the pack active, and whatever
+  it overrode comes back. Subjects a pack created are removed only if nothing else references them.
+- Installing a pack from the marketplace, publishing an edited pack in Files, and deleting or
+  disabling the pack skill trigger install, sync and uninstall automatically. `memory/pack_*` tools
+  do the same by hand.
