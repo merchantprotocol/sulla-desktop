@@ -7,6 +7,7 @@ import { up as up_0102, down as down_0102 } from './0102_keep_wait_evidence_in_l
 import { up as up_0103, down as down_0103 } from './0103_add_agent_job_project_tasks';
 import { up as up_0104, down as down_0104 } from './0104_add_agent_job_ui_state';
 import { up as up_0105, down as down_0105 } from './0105_expand_agent_definitions';
+import { up as up_0137, down as down_0137 } from './0137_agent_model_slots';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -252,4 +253,5 @@ export const migrationsRegistry = [
   { name: '0134_create_integration_packages', up: up_0134, down: down_0134 },
   { name: '0135_seeded_subject_memory', up: up_0135, down: down_0135 },
   { name: '0136_create_memory_packs', up: up_0136, down: down_0136 },
+  { name: '0137_agent_model_slots', up: up_0137, down: down_0137 },
 ] as const;

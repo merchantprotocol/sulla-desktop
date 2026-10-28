@@ -44,6 +44,7 @@ export interface AgentOption {
   description: string;
   provider:    string | null;
   model:       string | null;
+  modelSlot:   'primary' | 'secondary' | 'subconscious' | null;
   status:      string;
   enabled:     boolean;
 }
@@ -170,7 +171,10 @@ export class AgentModelSelectorController {
     this.hasChatSelection = true;
     this.activeAgentId.value = agent.slug;
     const providerId = agent.provider ?? this.activePrimaryProvider.value;
-    const modelId = agent.model ?? this.activeModelId.value;
+    // Keep the chat's concrete selection unchanged. The agent's modelSlot is
+    // resolved by the runtime from Preferences, unless this chat explicitly
+    // picked a model.
+    const modelId = this.activeModelId.value;
     this.applyState({ primaryProvider: providerId, activeModelId: modelId });
     this.updateActiveFlags('', '');
     this.deps.onSelectForChat?.({ providerId, modelId, agentId: agent.slug, label: agent.name });
