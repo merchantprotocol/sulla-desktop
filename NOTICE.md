@@ -9,7 +9,9 @@ Original Rancher Desktop source code is Copyright (c) 2021-2025 SUSE LLC
 and is licensed under the Apache License, Version 2.0 (LICENSES/Apache-2.0.txt).
 
 All modifications and new code are Copyright (c) 2025-2026 Merchant Protocol LLC
-and are licensed under the Sulla Fair-Code License 1.0 (LICENSE).
+and are licensed under the GNU General Public License v2.0 or later (LICENSE),
+except the Sulla Server components listed in LICENSE, which are licensed under
+the Sulla Fair-Code License 1.0 (LICENSES/Sulla-Fair-Code-1.0.txt).
 
 Files carry a header that says which license applies. Files with only a
 SUSE LLC notice are unmodified Rancher Desktop code under the Apache License 2.0.

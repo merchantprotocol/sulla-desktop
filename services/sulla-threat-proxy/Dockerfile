@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Sulla Fair-Code License — see LICENSE in the repository root.
+# SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Sulla threat proxy: mitmdump in transparent mode with the Sulla URL-reputation
 # and prompt-injection addons. Built from the repository root:

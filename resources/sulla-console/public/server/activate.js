@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Sulla Server first run: activate the server with its license key, then connect a model provider.
 // Same card and controls as the Cloud sign-in screen. The key is the signed token from the Sulla

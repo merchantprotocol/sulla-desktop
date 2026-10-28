@@ -1,5 +1,5 @@
-// Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Copyright © 2026 Merchant Protocol, LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
 
 // Server-mode /cloud-vault-sync/*: the API Sulla Cloud's Passwords page
 // already speaks, over this Vault's own ciphertext store.

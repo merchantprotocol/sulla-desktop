@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Sulla Server: Server administration. A settings screen in the same settings-nav layout as Account
 // and Organization settings, built from Cloud's settings components (st-card, st-row, summary-grid,

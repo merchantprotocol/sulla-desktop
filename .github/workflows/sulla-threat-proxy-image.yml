@@ -1,4 +1,4 @@
-# Sulla Fair-Code License — see LICENSE in the repository root.
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Publish sulla-threat-proxy image
 on:
   workflow_dispatch:

@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Development only: a synthetic vault, really encrypted with the public vault-sync v3 test fixture
 // password (tests/fixtures/vault-sync-v3-kat.json in www-sulladesktop). dev/serve.mjs --mock serves it.
