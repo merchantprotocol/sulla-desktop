@@ -1,0 +1,2026 @@
+[
+ {
+  "cue": "show me last month's numbers as a chart",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-reply-with-rich-html"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "give me a quick status table of everything that's running",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-reply-with-rich-html"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "where did you get that? cite your sources",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-cite-sources"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "rewrite this so it's shorter and plainer",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "you're giving me too much at once, ask me one thing at a time",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-ask-the-human",
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "I need you to pick option A or B with me before you go on",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-ask-the-human"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "keep the plan open on the side so I can see it while we talk",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat",
+   "tool-chat"
+  ],
+  "skills": [
+   "sulla-tool-chat"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "I'm driving, keep your answers short",
+  "area": "Conversation and replies",
+  "subjects": [
+   "sulla-chat",
+   "sulla-mobile"
+  ],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "research our top competitors and save a brief",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "find out how this company gets its customers",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "look into this business's website and tell me what they do",
+  "area": "Research and the web",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "read this article and summarize it for me",
+  "area": "Research and the web",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "find the most popular tools in this space and why people like them",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "find reliable research on this question and give me the takeaways",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "browse this in the background without touching my tabs",
+  "area": "Research and the web",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "save this link so we can find it again",
+  "area": "Research and the web",
+  "subjects": [
+   "tool-bookmarks"
+  ],
+  "skills": [
+   "sulla-tool-bookmarks"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "pull all the listings from this site into a spreadsheet",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "build a lead list from these public directories",
+  "area": "Research and the web",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "check this site every day and tell me what's new",
+  "area": "Research and the web",
+  "subjects": [
+   "sulla-workflows"
+  ],
+  "skills": [
+   "sulla-build-workflow",
+   "sulla-schedule-or-trigger-workflow"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "write the homepage copy for this product",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "draft a week of social posts from our latest update",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "write a video script with a strong hook",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "make a short explainer video for this feature",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "plan a content calendar for next month",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "give me a marketing plan to get more sign-ups",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "write a newsletter for our subscribers",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "make me an image for this post",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "check this page for common SEO mistakes",
+  "area": "Writing, marketing and content",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "turn these meeting notes into a clean summary doc",
+  "area": "Writing, marketing and content",
+  "subjects": [
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-write-for-a-human",
+   "sulla-save-work-in-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "show me three mockups of this page",
+  "area": "Design and mockups",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "open the mockup in my browser",
+  "area": "Design and mockups",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "give me ten hero variations on one page so I can pick",
+  "area": "Design and mockups",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "restyle this to match our brand, not your default theme",
+  "area": "Design and mockups",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "I like option two, build it into the real app",
+  "area": "Design and mockups",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "serve these HTML files from a container so I can click around",
+  "area": "Design and mockups",
+  "subjects": [
+   "tool-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "fix this bug in my repo and open a PR",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "add this feature to my app",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github",
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-tool-github",
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "review this pull request and tell me what's wrong",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "merge all the PRs that are ready",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "push my changes",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what's the CI status on this branch?",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "CI is red, find out why and fix it",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "I got a build error, here's the log",
+  "area": "Coding and GitHub",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "create an issue for this bug",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "resolve the merge conflicts on this PR",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "clean up all the old worktrees",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "set up a GitHub Action that deploys when main changes",
+  "area": "Coding and GitHub",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "bring every PR that should ship into one release",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "cut a release and write the notes",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "add a new tool to Sulla Desktop",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "sulla-repository",
+   "sulla-repo-agent-runtime"
+  ],
+  "skills": [
+   "sulla-change-sulla-source"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "Sulla has a bug in its own code, fix it",
+  "area": "Coding and GitHub",
+  "subjects": [
+   "sulla-repository"
+  ],
+  "skills": [
+   "sulla-change-sulla-source"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "build a Chrome extension from this mockup",
+  "area": "Coding and GitHub",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "package the extension and update the store listing",
+  "area": "Coding and GitHub",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "deploy this website",
+  "area": "Deploy and hosting",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "put this site behind a simple password",
+  "area": "Deploy and hosting",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "get this out to staging",
+  "area": "Deploy and hosting",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "is this live in production yet?",
+  "area": "Deploy and hosting",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "the deployed site throws an error, find it and fix it",
+  "area": "Deploy and hosting",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "point my domain at the new site",
+  "area": "Deploy and hosting",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "run the deploy workflow on GitHub",
+  "area": "Deploy and hosting",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "bring the local dev stack back up with test data",
+  "area": "Deploy and hosting",
+  "subjects": [
+   "tool-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "test the whole app in the browser and fix what's broken",
+  "area": "Testing and QA",
+  "subjects": [
+   "tool-browser",
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-tool-browser",
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "did you actually look at it? check it visually",
+  "area": "Testing and QA",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser",
+   "sulla-validate-before-done"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "log in to the staging site and walk through signup",
+  "area": "Testing and QA",
+  "subjects": [
+   "tool-browser",
+   "sulla-vault"
+  ],
+  "skills": [
+   "sulla-tool-browser",
+   "sulla-tool-vault"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "watch the network and tell me which requests fail",
+  "area": "Testing and QA",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "make sure it's really done before you tell me",
+  "area": "Testing and QA",
+  "subjects": [],
+  "skills": [
+   "sulla-validate-before-done"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "use sub-agents to get this done faster",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents",
+   "sulla-tool-agents"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "hand the coding to cheaper workers and review their work",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "how are the workers doing?",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-tool-agents"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "kill that job",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-tool-agents"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "talk to the other agents, don't assume what they did",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents",
+   "sulla-channels"
+  ],
+  "skills": [
+   "sulla-message-another-agent"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "which agent should handle this?",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-tool-agents"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "make me a custom agent for this job",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-create-agent"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "run this agent with a different model",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-create-agent"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "what's on the work scoreboard?",
+  "area": "Sub-agents and delegation (being improved)",
+  "subjects": [
+   "tool-ledger"
+  ],
+  "skills": [
+   "sulla-tool-ledger"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "make this your goal and don't stop until it's done",
+  "area": "Goals and projects (being improved)",
+  "subjects": [
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-manage-a-project"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "start a project for this and track the tasks",
+  "area": "Goals and projects (being improved)",
+  "subjects": [
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-manage-a-project"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "where are we with all this?",
+  "area": "Goals and projects (being improved)",
+  "subjects": [
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-manage-a-project"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "plan this out before you start building",
+  "area": "Goals and projects (being improved)",
+  "subjects": [
+   "sulla-agents",
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents",
+   "sulla-manage-a-project"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "review everything, find the gaps and add tasks",
+  "area": "Goals and projects (being improved)",
+  "subjects": [
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-manage-a-project"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "where should I save this report?",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files",
+   "sulla-tool-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "put this finished document in Files",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "find the file about our pricing",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-tool-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "restore the previous version of that file",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files",
+   "sulla-tool-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "send me a share link for this file",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-tool-files"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "I don't see the files you made in my file manager",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "read this PDF and pull out the key terms",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-tool-files"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "find that doc in my Google Drive",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "tool-gdrive"
+  ],
+  "skills": [
+   "sulla-tool-gdrive"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "download the spreadsheet from Drive and analyze it",
+  "area": "Files and documents (being improved)",
+  "subjects": [
+   "tool-gdrive"
+  ],
+  "skills": [
+   "sulla-tool-gdrive"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "remember that I prefer short answers",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "sulla-memory"
+  ],
+  "skills": [
+   "sulla-remember-and-recall"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "forget that",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "sulla-memory"
+  ],
+  "skills": [
+   "sulla-remember-and-recall"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what do you know about me?",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "sulla-memory",
+   "sulla-identity"
+  ],
+  "skills": [
+   "sulla-remember-and-recall"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what did we decide about this last week?",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "sulla-memory",
+   "tool-memory"
+  ],
+  "skills": [
+   "sulla-remember-and-recall",
+   "sulla-tool-memory"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "make that a rule for every agent",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "tool-rules"
+  ],
+  "skills": [
+   "sulla-tool-rules"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "turn this process into a skill so you do it the same way",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "tool-skills"
+  ],
+  "skills": [
+   "sulla-create-skill"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "my business goals changed, update them",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "sulla-identity"
+  ],
+  "skills": [
+   "sulla-remember-and-recall"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "you keep choosing the wrong tool for this, learn it",
+  "area": "Memory, rules and identity",
+  "subjects": [
+   "tool-reflex"
+  ],
+  "skills": [
+   "sulla-tool-reflex"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "make a workflow that runs every morning",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-build-workflow",
+   "sulla-schedule-or-trigger-workflow"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "schedule this report for weekdays",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-schedule-or-trigger-workflow"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "my workflow run failed, figure out why",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-debug-workflow-run"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "restart that workflow from where it failed",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-debug-workflow-run"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what's scheduled to run?",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-schedule-or-trigger-workflow"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what do I keep doing by hand that could be automated?",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-tool-workflow"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "build me a function that converts these files",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-functions",
+   "tool-function"
+  ],
+  "skills": [
+   "sulla-build-function"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "run my function and show the output",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-functions",
+   "tool-function"
+  ],
+  "skills": [
+   "sulla-tool-function"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "why did my function fail?",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-functions",
+   "tool-function"
+  ],
+  "skills": [
+   "sulla-tool-function",
+   "sulla-build-function"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "triage my inbox every morning and send me a brief",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows"
+  ],
+  "skills": [
+   "sulla-build-workflow"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "remind customers when an invoice is overdue",
+  "area": "Workflows, functions and automation (being improved)",
+  "subjects": [
+   "sulla-workflows"
+  ],
+  "skills": [
+   "sulla-build-workflow"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "what's the heartbeat doing?",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-configure-heartbeat"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "pause the heartbeat",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-configure-heartbeat"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "only run the heartbeat during working hours",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-configure-heartbeat"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "check on the workers every five minutes and wake me if something breaks",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-configure-heartbeat"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "let me know if anything fails overnight",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "tool-notify",
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-tool-notify",
+   "sulla-configure-heartbeat"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "I'm stepping away, keep going on your own",
+  "area": "Heartbeat and background work (being improved)",
+  "subjects": [
+   "tool-bridge",
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-tool-bridge"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "what can I install?",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-marketplace"
+  ],
+  "skills": [
+   "sulla-install-from-marketplace"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "install the CRM for me",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-marketplace",
+   "sulla-extensions"
+  ],
+  "skills": [
+   "sulla-install-from-marketplace",
+   "sulla-tool-extensions"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "is that extension running? start it",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-extensions"
+  ],
+  "skills": [
+   "sulla-tool-extensions"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "update this to the latest version",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-marketplace"
+  ],
+  "skills": [
+   "sulla-install-from-marketplace"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "publish my skill to the marketplace",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-marketplace",
+   "sulla-use-cases"
+  ],
+  "skills": [
+   "sulla-publish-use-case"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "build an extension that adds a new screen",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-extensions"
+  ],
+  "skills": [
+   "sulla-build-extension"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "package this app as a one-click recipe",
+  "area": "Marketplace and extensions (being improved)",
+  "subjects": [
+   "sulla-marketplace"
+  ],
+  "skills": [
+   "sulla-build-extension"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "connect my GitHub account",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-vault",
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-tool-vault"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "what integrations do I have connected?",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-vault",
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-tool-vault"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "I put the API key in the vault, test that it works",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-vault",
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-tool-vault"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "pull the open deals from my CRM",
+  "area": "Integrations and credentials",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "create a customer in our billing system",
+  "area": "Integrations and credentials",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "call this service's API with my saved key",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-tools",
+   "sulla-vault"
+  ],
+  "skills": [
+   "sulla-discover-and-call-tools"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "connect this MCP server and use its tools",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-tools"
+  ],
+  "skills": [
+   "sulla-discover-and-call-tools"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "walk me through making an API token with the right permissions",
+  "area": "Integrations and credentials",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "log in to this site with my saved password",
+  "area": "Integrations and credentials",
+  "subjects": [
+   "sulla-vault",
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-vault",
+   "sulla-tool-browser"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "the OAuth sign-in fails with an error, fix it",
+  "area": "Integrations and credentials",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "draft a reply to this customer email",
+  "area": "Email and messaging",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "go through my inbox and tell me what needs me",
+  "area": "Email and messaging",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "send these emails five at a time until they're all out",
+  "area": "Email and messaging",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "send a Slack message to the team channel",
+  "area": "Email and messaging",
+  "subjects": [
+   "tool-slack"
+  ],
+  "skills": [
+   "sulla-tool-slack"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "read that Slack thread and summarize it",
+  "area": "Email and messaging",
+  "subjects": [
+   "tool-slack"
+  ],
+  "skills": [
+   "sulla-tool-slack"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "send a text message to this customer",
+  "area": "Email and messaging",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "send that through Mail on my Mac",
+  "area": "Email and messaging",
+  "subjects": [
+   "tool-applescript"
+  ],
+  "skills": [
+   "sulla-tool-applescript"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "what's on my calendar this week?",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [
+   "tool-calendar"
+  ],
+  "skills": [
+   "sulla-tool-calendar"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "schedule a meeting tomorrow at 2pm",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [
+   "tool-calendar"
+  ],
+  "skills": [
+   "sulla-tool-calendar"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "remind me to check the deploy in 10 minutes",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "remind me every Monday to place the order",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "notify me when it's done",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [
+   "tool-notify"
+  ],
+  "skills": [
+   "sulla-tool-notify"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "prep me for this week's meetings",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [
+   "tool-calendar"
+  ],
+  "skills": [
+   "sulla-tool-calendar"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "plan my week around these fixed commitments",
+  "area": "Calendar, reminders and notifications",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "how many signups did we get this week?",
+  "area": "Data and analytics",
+  "subjects": [
+   "tool-pg"
+  ],
+  "skills": [
+   "sulla-tool-pg",
+   "sulla-reply-with-rich-html"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "build me a dashboard of these KPIs",
+  "area": "Data and analytics",
+  "subjects": [
+   "sulla-agents"
+  ],
+  "skills": [
+   "sulla-reply-with-rich-html",
+   "sulla-spawn-and-manage-agents"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "query the database for orders over 100",
+  "area": "Data and analytics",
+  "subjects": [
+   "tool-pg"
+  ],
+  "skills": [
+   "sulla-tool-pg"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "analyze this spreadsheet and tell me the trends",
+  "area": "Data and analytics",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "why are my AI costs climbing?",
+  "area": "Data and analytics",
+  "subjects": [
+   "tool-models"
+  ],
+  "skills": [
+   "sulla-tool-models"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "make a monthly report of what we did for this client",
+  "area": "Data and analytics",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "I just restarted, run some diagnostics",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "did everything from last night get in?",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "we crashed, pick up where you left off",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "what containers are running?",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "tool-docker",
+   "sulla-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "show me the logs from that container",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "tool-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "restart Postgres",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "sulla-docker",
+   "tool-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "build and run this app in a container",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "tool-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "check Postgres before doing anything else",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "tool-pg",
+   "sulla-repo-services"
+  ],
+  "skills": [
+   "sulla-tool-pg"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "how is the VM running?",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-host-vs-vm"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "why can't you see this folder on my Mac?",
+  "area": "System health, Docker and the VM",
+  "subjects": [
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-host-vs-vm"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "something is eating memory, find it",
+  "area": "System health, Docker and the VM",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "change the default model",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "tool-settings",
+   "tool-models"
+  ],
+  "skills": [
+   "sulla-tool-settings",
+   "sulla-tool-models"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "which models can I use?",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "tool-models"
+  ],
+  "skills": [
+   "sulla-tool-models"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "is there an update? install it",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "sulla-desktop"
+  ],
+  "skills": [
+   "sulla-handle-desktop-updates"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "the app shows an error when I attach a file",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "turn on host access",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "tool-settings",
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-tool-settings",
+   "sulla-host-vs-vm"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "approve or deny what's waiting in Decide",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "sulla-decide"
+  ],
+  "skills": [
+   "sulla-decide-approval"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "can you do this? I'm not sure Sulla supports it",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "sulla-tools"
+  ],
+  "skills": [
+   "sulla-know-what-you-cannot-do"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what tools do you have for this?",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "sulla-tools",
+   "tool-meta"
+  ],
+  "skills": [
+   "sulla-discover-and-call-tools"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what is Sulla Cloud and what does it cost?",
+  "area": "Sulla Desktop app and settings",
+  "subjects": [
+   "sulla-cloud"
+  ],
+  "skills": [],
+  "coverage": "partial"
+ },
+ {
+  "cue": "add this to my Reminders app",
+  "area": "Mac and host control",
+  "subjects": [
+   "tool-applescript"
+  ],
+  "skills": [
+   "sulla-tool-applescript"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "open this folder in Finder",
+  "area": "Mac and host control",
+  "subjects": [
+   "tool-applescript",
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-tool-applescript",
+   "sulla-host-vs-vm"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "run this command on my Mac",
+  "area": "Mac and host control",
+  "subjects": [
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-host-vs-vm"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "control my Chrome tabs and set it up for me",
+  "area": "Mac and host control",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "which apps have Accessibility permission?",
+  "area": "Mac and host control",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "take a screenshot of my whole screen",
+  "area": "Capture, voice and meetings",
+  "subjects": [
+   "sulla-capture-studio",
+   "tool-capture"
+  ],
+  "skills": [
+   "sulla-tool-capture"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "record this meeting",
+  "area": "Capture, voice and meetings",
+  "subjects": [
+   "sulla-capture-studio"
+  ],
+  "skills": [
+   "sulla-record-with-capture-studio"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "where are my recordings?",
+  "area": "Capture, voice and meetings",
+  "subjects": [
+   "sulla-capture-studio"
+  ],
+  "skills": [
+   "sulla-record-with-capture-studio"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "take notes for this meeting",
+  "area": "Capture, voice and meetings",
+  "subjects": [
+   "sulla-secretary-mode"
+  ],
+  "skills": [
+   "sulla-use-secretary-mode"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "what were the action items from the call?",
+  "area": "Capture, voice and meetings",
+  "subjects": [
+   "sulla-secretary-mode"
+  ],
+  "skills": [
+   "sulla-use-secretary-mode"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "transcribe this old recording",
+  "area": "Capture, voice and meetings",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "voice mode didn't pick anything up",
+  "area": "Capture, voice and meetings",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "how do I pair my phone?",
+  "area": "Mobile and Cloud",
+  "subjects": [
+   "sulla-mobile"
+  ],
+  "skills": [],
+  "coverage": "partial"
+ },
+ {
+  "cue": "is my phone connected?",
+  "area": "Mobile and Cloud",
+  "subjects": [
+   "tool-mobile",
+   "sulla-mobile"
+  ],
+  "skills": [
+   "sulla-tool-mobile"
+  ],
+  "coverage": "covered"
+ },
+ {
+  "cue": "my phone won't connect to my desktop",
+  "area": "Mobile and Cloud",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "can I see my desktop chats from the cloud?",
+  "area": "Mobile and Cloud",
+  "subjects": [
+   "sulla-cloud"
+  ],
+  "skills": [],
+  "coverage": "partial"
+ },
+ {
+  "cue": "help me figure out what to order this week",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "log this expense receipt",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "track which contracts renew soon",
+  "area": "Business operations",
+  "subjects": [
+   "sulla-workflows"
+  ],
+  "skills": [
+   "sulla-build-workflow"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "capture leads from the website form into the CRM",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "draft responses to our new reviews",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "which customers haven't ordered lately? draft check-ins",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "write a policy page for privacy requests",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [
+   "sulla-write-for-a-human"
+  ],
+  "coverage": "partial"
+ },
+ {
+  "cue": "is this business idea worth it? run the numbers",
+  "area": "Business operations",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "what devices are on my network?",
+  "area": "Devices, networks and IT",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "help me get into this old server",
+  "area": "Devices, networks and IT",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "can you control my smart TV?",
+  "area": "Devices, networks and IT",
+  "subjects": [],
+  "skills": [],
+  "coverage": "gap"
+ },
+ {
+  "cue": "watch my site and alert me when it goes down",
+  "area": "Devices, networks and IT",
+  "subjects": [
+   "sulla-marketplace"
+  ],
+  "skills": [
+   "sulla-install-from-marketplace"
+  ],
+  "coverage": "partial"
+ }
+]
