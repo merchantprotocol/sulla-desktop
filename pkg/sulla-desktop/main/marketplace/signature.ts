@@ -42,15 +42,16 @@ export function isSignedMarketplaceManifest(manifest: MarketplaceSignatureManife
 }
 
 export function verifyMarketplaceArtifact(manifest: MarketplaceSignatureManifest, payload: Buffer): void {
-  if (!isSignedMarketplaceManifest(manifest)) {
+  const { integrity, signature } = manifest;
+  if (!integrity || !signature) {
     if (marketplaceSignaturesRequired()) throw new Error('Marketplace download is unsigned; installation was refused.');
     console.warn('[marketplace] Installing an unsigned listing; signatures are not required yet.');
     return;
   }
   const actual = marketplaceArtifactHash(manifest, payload);
-  if (actual !== manifest.integrity) throw new Error('Marketplace download integrity check failed; the package may have been tampered with.');
+  if (actual !== integrity) throw new Error('Marketplace download integrity check failed; the package may have been tampered with.');
   const verifier = trustedPublisherVerifier(resolveTrustedPublisherKeysPath());
-  if (!verifier.verify({ integrity: actual, signature: manifest.signature })) {
+  if (!verifier.verify({ integrity: actual, signature })) {
     throw new Error('Marketplace publisher signature is not trusted; installation was refused.');
   }
 }
