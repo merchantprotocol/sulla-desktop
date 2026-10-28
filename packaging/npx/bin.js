@@ -83,7 +83,7 @@ function printHelp() {
 
 Usage:
   npx ${ CMD }                   Install (first run) or open ${ APP_NAME }
-  npx ${ CMD } server            Install Sulla Server on Linux
+  npx ${ CMD } server            Show the new Sulla Server package and guide
   npx ${ CMD } --update          Update to the latest release, then open it
   npx ${ CMD } --version v1.6.1  Install a specific release
   npx ${ CMD } --no-launch       Install or update without opening the app

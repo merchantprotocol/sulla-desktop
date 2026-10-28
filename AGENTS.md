@@ -9,7 +9,7 @@ Sulla Desktop is licensed under **GPL-2.0-or-later** (`LICENSE`). New files carr
 // "Sulla" is a trademark. See TRADEMARK.md.
 ```
 
-**Exception: Sulla Server.** Files in `services/sulla-accounts/`, `services/sulla-console/`, `resources/sulla-console/`, `deploy/server/`, `deploy/accounts/` and `packaging/npx/server/` stay under the Sulla Fair-Code License 1.0 (`LICENSES/Sulla-Fair-Code-1.0.txt`). Keep their existing headers, and don't move GPL code into those folders or Server code out of them without the owner's say-so.
+**Temporary exception: remaining Sulla Server Accounts code.** Server-only leaf assets live in the separately licensed `merchantprotocol/sulla-server` repository. The still-interleaved files under `services/sulla-accounts/` remain under the Sulla Fair-Code License 1.0 (`LICENSES/Sulla-Fair-Code-1.0.txt`) until the Accounts adapter phase completes. Keep their existing headers, and don't move GPL code into that folder or Server code out of it without the owner's say-so.
 
 Keep any third-party copyright notice a file already carries.
 

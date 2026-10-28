@@ -31,7 +31,7 @@ protocol paths. Desktop bootstrap remains private and exists only in desktop mod
 Private `/v1/admin/` and `/v1/private/` routes and the loopback Keycloak
 management endpoint are not published by the packaged gateway configuration.
 
-`deploy/accounts/compose.preview.yaml` is a synthetic smoke topology: one local
+the `deploy/accounts/compose.preview.yaml` kit in `merchantprotocol/sulla-server` is a synthetic smoke topology: one local
 desktop broker and two isolated server authorities share only the PostgreSQL
 host, with separate Accounts and Keycloak databases and durable Keycloak data
 volumes for each authority. The local broker is published directly on `127.0.0.1:3020`.

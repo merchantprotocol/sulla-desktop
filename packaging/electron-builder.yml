@@ -47,7 +47,6 @@ asarUnpack:
 electronLanguages: [ en-US ]
 extraResources:
   - resources/
-  - '!resources/sulla-console/**'
   - '!resources/host/'
   - '!resources/**/*.js.map'
 files:

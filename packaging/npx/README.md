@@ -1,6 +1,6 @@
 # sulla-desktop
 
-Install [Sulla Desktop](https://sulladesktop.com) or Sulla Server with one package:
+Install [Sulla Desktop](https://sulladesktop.com):
 
 ```bash
 npx sulla-desktop
@@ -8,11 +8,7 @@ npx sulla-desktop
 
 That's it. The first run downloads the latest release for your computer, checks it, installs it and opens it. After that, the same command just opens Sulla (and tells you when there's an update).
 
-On a Linux server, launch the guided Docker Compose or Kubernetes installer with:
-
-```bash
-npx sulla-desktop server
-```
+Sulla Server now ships separately. The transition command `npx sulla-desktop server` prints the new `npx sulla-server` handoff and does not bundle or execute Server code.
 
 Needs [Node.js](https://nodejs.org) 18 or newer. Works on macOS (Apple Silicon and Intel), Linux (x64) and Windows.
 
@@ -46,13 +42,7 @@ No `sudo` and no admin prompt. It installs where your user account can write:
 
 ## Sulla Server
 
-`npx sulla-desktop server` keeps the terminal attached for the complete setup wizard and hidden password/token prompts. It asks for root access through `sudo` when needed; secrets are generated inside the installer or read from the terminal and are never placed in command arguments.
-
-The npm package includes the server deployment kit and pins new installations to source commit `43ac3ede766509792c81d91e2ffd2c4c555b6ab9`, whose matching multi-architecture server image is published. Rerunning against an existing installation preserves its saved source, configuration, service secrets, first owner, and data. If that saved source differs from the package pin, the installer downloads the matching kit for the saved commit instead of mixing versions.
-
-Server installation supports Linux and requires Node.js 18+, `curl`, and `openssl`. Docker mode requires Docker Engine with Compose v2. Kubernetes mode can use an existing `kubectl` context or install pinned k3s on a native Ubuntu 24.04 LTS server. Run `npx sulla-desktop server --help` for command details or read the [full server guide](https://github.com/merchantprotocol/sulla-desktop/tree/main/deploy/server).
-
-Hitting GitHub's rate limit on a shared network? Set `GITHUB_TOKEN` and run it again.
+Install from the separately licensed Server package with `npx sulla-server`. See the [Server installation guide](https://github.com/merchantprotocol/sulla-server#install-transition-build).
 
 ## Other ways to install
 

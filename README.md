@@ -32,11 +32,11 @@
 > ```bash
 > npx sulla-desktop
 > ```
-> Installing Sulla Server on Linux? The same package launches its guided Docker/Kubernetes setup:
+> Installing Sulla Server on Linux? It now ships from its separately licensed repository and package:
 > ```bash
-> npx sulla-desktop server
+> npx sulla-server
 > ```
-> Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
+> See the [Sulla Server installation guide](https://github.com/merchantprotocol/sulla-server#install-transition-build). For one transition release, `npx sulla-desktop server` prints this handoff without bundling Server code.
 
 <div align="center">
   <img src="./docs/screenshots/workflow.webp" alt="An Invoice Follow-up automation in Sulla: a Monday trigger, a QuickBooks lookup, a branch by how overdue, an approval step, and a Gmail send" width="820" />
@@ -172,4 +172,4 @@ Sulla Desktop is **free and open source** under the [GNU General Public License 
 
 **The name is not part of the license.** "Sulla" and the Sulla logo are trademarks. A fork must use its own name and logo. See the [Trademark Policy](TRADEMARK.md).
 
-**Sulla Server** (team seats, the server console and the accounts service) is the exception. It stays under the [Sulla Fair-Code License 1.0](LICENSES/Sulla-Fair-Code-1.0.txt) and is free up to a set number of users. The folders it covers are listed in [LICENSE](LICENSE).
+**Sulla Server** (team seats, the server console and server deployment) now lives in the separately licensed [`merchantprotocol/sulla-server`](https://github.com/merchantprotocol/sulla-server) repository under the Sulla Fair-Code License 1.0. The remaining interleaved Server Accounts code is the temporary exception listed in [LICENSE](LICENSE).

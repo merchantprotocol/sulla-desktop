@@ -64,10 +64,9 @@ jobs:
       run: |
         node --check bin.js
         node --check server.js
-        diff -qr ../../deploy/server server
         node bin.js --help
         node bin.js server --help
-        node bin.js server --dry-run
+        node bin.js server --help | grep -q 'npx sulla-server'
         npm pack --dry-run
     - name: Publish
       if: steps.token.outputs.present == 'true'
