@@ -8,6 +8,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { isIP } from 'node:net';
 
+import { PRODUCTION_ENTITLEMENT_PUBLIC_KEY } from './entitlement.js';
+
 export type AccountsMode = 'desktop' | 'server';
 
 export interface ServiceGrant {
@@ -178,7 +180,7 @@ export async function loadConfig(): Promise<AccountsConfig> {
     serverDisplayName: process.env.SULLA_SERVER_DISPLAY_NAME?.trim() || 'Sulla Server',
     secureCookies: new URL(publicUrl).protocol === 'https:' && process.env.SULLA_ACCOUNTS_INSECURE_COOKIES !== '1',
     trustedProxy: process.env.SULLA_ACCOUNTS_TRUSTED_PROXY === '1',
-    entitlementPublicKey: process.env.SULLA_SERVER_ENTITLEMENT_PUBLIC_KEY ?? 'RELEASE_TODO_ED25519_SPKI_BASE64',
+    entitlementPublicKey: process.env.SULLA_SERVER_ENTITLEMENT_PUBLIC_KEY ?? PRODUCTION_ENTITLEMENT_PUBLIC_KEY,
     entitlementCloudUrl: process.env.SULLA_SERVER_ENTITLEMENT_CLOUD_URL,
   };
 }

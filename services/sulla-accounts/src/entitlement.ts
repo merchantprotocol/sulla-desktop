@@ -15,6 +15,9 @@ export const ENTITLEMENT_TYPE = 'server-entitlement';
 export const ENTITLEMENT_VERSION = 1;
 // TODO(release): replace this deliberately unusable placeholder with the production
 // Ed25519 SPKI public key during the signed Server release process.
+// TODO(release): replace this non-key placeholder with the production Cloud
+// entitlement Ed25519 SPKI before the first Phase 2 Server release.
+// TODO(release): replace this non-key placeholder with the production Cloud entitlement SPKI.
 export const PRODUCTION_ENTITLEMENT_PUBLIC_KEY = 'RELEASE_TODO_ED25519_SPKI_BASE64';
 
 export interface EntitlementClaims {
