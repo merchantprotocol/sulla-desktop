@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "serverVersion": "0.1.0",
+  "desktopSource": { "repository": "merchantprotocol/sulla-desktop", "commit": "1111111111111111111111111111111111111111" },
+  "packages": { "@sulla/workflow-engine": "0.1.0", "@sulla/runtime-protocol": "0.1.0", "@sulla/relay-protocol": "0.1.0" },
+  "images": {
+    "workflows": { "repository": "ghcr.io/merchantprotocol/sulla-workflows", "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
+    "tools": { "repository": "ghcr.io/merchantprotocol/sulla-tools", "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222" },
+    "relay": { "repository": "ghcr.io/merchantprotocol/sulla-relay", "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333" }
+  },
+  "protocols": { "workflow": 1, "capability": 1, "relay": 1 },
+  "schemas": { "accounts": { "min": 1, "max": 6 }, "vault": { "min": 1, "max": 1 } }
+}

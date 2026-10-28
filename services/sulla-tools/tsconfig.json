@@ -23,6 +23,7 @@
     "../../pkg/sulla-desktop/runtime/desktopExecutor.ts",
     "../../pkg/sulla-desktop/agent/tools/executionContext.ts",
     "../../pkg/sulla-desktop/agent/tools/executionTargets.ts",
-    "../../packages/runtime-protocol/src/**/*.ts"
+    "../../packages/runtime-protocol/src/**/*.ts",
+    "../../packages/relay-protocol/src/**/*.ts"
   ]
 }

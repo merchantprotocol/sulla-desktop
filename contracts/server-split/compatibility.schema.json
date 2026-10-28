@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sulladesktop.com/contracts/compatibility.schema.json",
+  "title": "Sulla Server to Desktop compatibility manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "serverVersion", "desktopSource", "packages", "images", "protocols", "schemas"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "serverVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "desktopSource": { "type": "object", "additionalProperties": false, "required": ["repository", "commit"], "properties": { "repository": { "const": "merchantprotocol/sulla-desktop" }, "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } },
+    "packages": { "type": "object", "additionalProperties": false, "required": ["@sulla/workflow-engine", "@sulla/runtime-protocol", "@sulla/relay-protocol"], "properties": { "@sulla/workflow-engine": { "$ref": "#/$defs/version" }, "@sulla/runtime-protocol": { "$ref": "#/$defs/version" }, "@sulla/relay-protocol": { "$ref": "#/$defs/version" } } },
+    "images": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/image" } },
+    "protocols": { "type": "object", "additionalProperties": false, "required": ["workflow", "capability", "relay"], "properties": { "workflow": { "type": "integer", "minimum": 1 }, "capability": { "type": "integer", "minimum": 1 }, "relay": { "type": "integer", "minimum": 1 } } },
+    "schemas": { "type": "object", "additionalProperties": { "$ref": "#/$defs/range" } }
+  },
+  "$defs": {
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "image": { "type": "object", "additionalProperties": false, "required": ["repository", "digest"], "properties": { "repository": { "type": "string", "pattern": "^ghcr\\.io/merchantprotocol/sulla-[a-z0-9-]+$" }, "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } } },
+    "range": { "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } }
+  }
+}

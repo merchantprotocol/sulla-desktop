@@ -7,8 +7,8 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { githubRepositoryFromArgs, scopeToolExecutionContext as scopeCredentialExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/credentialScope.js';
-import type { ToolExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/executionContext.js';
-import type { ToolExecutionTarget } from '../../../pkg/sulla-desktop/agent/tools/executionTargets.js';
+import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
+import type { ToolExecutionTarget } from '../../../packages/runtime-protocol/src/executionTargets.js';
 
 export interface CatalogTool {
   name:            string;

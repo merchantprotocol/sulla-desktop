@@ -9,6 +9,8 @@ on:
     paths:
       - 'services/sulla-vault/**'
       - 'packages/vault-crypto/**'
+      - 'contracts/server-split/**'
+      - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-vault-image.yml'
 permissions:
   contents: read
@@ -36,7 +38,8 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: services/sulla-vault/Dockerfile
@@ -44,3 +47,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Write immutable base image metadata
+        run: node scripts/contracts/write-base-image-metadata.mjs ghcr.io/merchantprotocol/sulla-vault ${{ steps.build.outputs.digest }} ${{ github.sha }} sulla-vault-base-image.json
+      - name: Upload immutable base image metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: sulla-vault-base-image-${{ github.sha }}
+          path: sulla-vault-base-image.json
+          if-no-files-found: error

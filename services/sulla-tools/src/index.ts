@@ -14,11 +14,11 @@ import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToo
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
-import { HttpDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/desktopExecutor.js';
-import { RelayDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/relayDesktopExecutor.js';
+import { HttpDesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
+import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
 
-import type { ToolExecutionContext } from '../../../pkg/sulla-desktop/agent/tools/executionContext.js';
-import type { DesktopExecutor } from '../../../pkg/sulla-desktop/runtime/desktopExecutor.js';
+import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
+import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 
 validateConfig();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;

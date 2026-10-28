@@ -8,7 +8,6 @@ COPY services/sulla-workflows/tsconfig.json ./services/sulla-workflows/tsconfig.
 COPY services/sulla-workflows/src ./services/sulla-workflows/src
 COPY packages/workflow-engine/src ./packages/workflow-engine/src
 COPY packages/runtime-protocol/src ./packages/runtime-protocol/src
-COPY pkg/sulla-desktop/runtime/containerRuntime.ts ./pkg/sulla-desktop/runtime/containerRuntime.ts
 RUN cd services/sulla-workflows && npm run build && npm prune --omit=dev
 
 FROM node:22-alpine AS runtime
