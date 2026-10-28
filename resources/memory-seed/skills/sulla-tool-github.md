@@ -1,0 +1,80 @@
+---
+slug: sulla-tool-github
+label: Use the Sulla github tools
+trigger_when: When you need to manage Git repositories and GitHub issues, pull requests, branches, projects, or files.
+trigger_actions: [github, Sulla github tool, tool call]
+trigger_phrases: [github]
+scope: [tool-github]
+---
+
+**When:** Use `exec` to dispatch an exact `sulla github/<tool>` command. Discover current tools with `sulla meta/browse_tools '{"category":"github"}'` before an unfamiliar call.
+
+**Tools:**
+- `sulla github/add_remote '{"absolutePath":"<absolutePath>","remoteName":"<remoteName>","remoteUrl":"<remoteUrl>"}'`: Add a remote repository to an existing git repository. Required: absolutePath, remoteName, remoteUrl.
+- `sulla github/comment_on_issue '{"owner":"<owner>","repo":"<repo>","issue_number":"1","body":"<body>"}'`: Add a comment to a GitHub issue. Required: owner, repo, issue_number, body.
+- `sulla github/create_file '{"owner":"<owner>","repo":"<repo>","path":"<path>","content":"<content>","message":"<message>"}'`: Create a new file in a GitHub repository. Required: owner, repo, path, content, message.
+- `sulla github/get_issue '{"owner":"<owner>","repo":"<repo>","issue_number":"1"}'`: Get details of a specific GitHub issue. Required: owner, repo, issue_number.
+- `sulla github/get_issue_comments '{"owner":"<owner>","repo":"<repo>","issue_number":"1"}'`: Read the comment thread on a GitHub issue or pull request (PRs are issues in the API — pass the PR number). Returns each comment with author, association, timestamp, and body. Required: owner, repo, issue_number.
+- `sulla github/get_issues '{"owner":"<owner>","repo":"<repo>","state":"<state>"}'`: Get issues from a GitHub repository. Required: owner, repo, state.
+- `sulla github/heartbeat_new_issues '{"issues":"[]"}'`: Heartbeat issue-discovery (#500) "touched-before" filter: given the open-issue union from scan_active_issues, returns only issues Heartbeat has NOT handled before — anti-joined against the heartbeat_seen_issues seen-set and excluding issues already assigned to Heartbeat or bearing the claim label. Deterministic, zero-LLM, read-only. Call before triaging so the same issue is never picked up twice. Required: issues.
+- `sulla github/heartbeat_claim_issue '{"owner":"<owner>","repo":"<repo>","issue_number":"1"}'`: Heartbeat issue-discovery (#500) atomic claim + collision guard: records an issue in the heartbeat_seen_issues seen-set via INSERT ... ON CONFLICT DO NOTHING. Returns won=true if THIS call staked the claim (proceed to self-assign on GitHub + triage) or won=false if another cycle/agent already claimed it (back off). Call this FIRST, before any GitHub-side self-assign, so two agents cannot both pick up the same issue. Required: owner, repo, issue_number.
+- `sulla github/list_projects '{"owner":"<owner>"}'`: List Projects V2 boards for an org or user, with each board\'s node id (projectId, PVT_…), fields, and — for single-select fields like Status — every option id/name. Projects V2 is GraphQL-only (no REST). This is the orientation step: you need the projectId + fieldId + optionId before adding cards or moving them between columns. Returns open boards only. Required: owner.
+- `sulla github/add_issue_to_project '{"project_id":"<project_id>"}'`: Add an issue (or PR) as a card on a Projects V2 board via addProjectV2ItemById (GraphQL-only). Address the board by project_id (PVT_… from github_list_projects) and the issue by content_node_id, or supply owner + repo + issue_number to resolve it. Idempotent — an issue already on the board returns its existing item id. Returns the itemId (PVTI_…) needed by github_set_project_field. Required: project_id.
+- `sulla github/set_project_field '{"project_id":"<project_id>","item_id":"<item_id>","field_id":"<field_id>"}'`: Set one field on one Projects V2 card via updateProjectV2ItemFieldValue (GraphQL-only) — most often the Status single-select, i.e. moving a card between columns. All ids come from the prior steps: project_id + field_id (+ option_id) from github_list_projects, item_id from github_add_issue_to_project. Provide exactly one value: option_id (single-select), text, number, or date. Required: project_id, item_id, field_id.
+- `sulla github/init '{"absolutePath":"<absolutePath>"}'`: Initialize a git repository at the specified absolute path. Required: absolutePath.
+- `sulla github/list_branches '{"owner":"<owner>","repo":"<repo>"}'`: List branches in a GitHub repository. Required: owner, repo.
+- `sulla github/create_ref '{"owner":"<owner>","repo":"<repo>","branch":"<branch>"}'`: Create a remote branch (or tag) on GitHub, pointed at an explicit SHA or the current tip of another branch (from_branch). Completes remote-branch lifecycle with github_list_branches / github_delete_ref. Required: owner, repo, branch.
+- `sulla github/delete_ref '{"owner":"<owner>","repo":"<repo>","branch":"<branch>"}'`: Delete a remote branch (or tag) on GitHub. Destructive + outward-facing — refuses without {"confirm":true}; reports the deleted SHA so it can be restored via github_create_ref. Required: owner, repo, branch.
+- `sulla github/read_file '{"owner":"<owner>","repo":"<repo>","path":"<path>"}'`: Read the contents of a file from a GitHub repository. Required: owner, repo, path.
+- `sulla github/update_file '{"owner":"<owner>","repo":"<repo>","path":"<path>","content":"<content>","message":"<message>"}'`: Update an existing file in a GitHub repository. Automatically fetches the current file SHA required for updates. Required: owner, repo, path, content, message.
+- `sulla github/git_blame '{"absolutePath":"<absolutePath>"}'`: Show who last modified each line of a file. Optionally limit to a line range. Required: absolutePath.
+- `sulla github/git_pull '{"absolutePath":"<absolutePath>"}'`: Pull commits from a remote repository. Automatically reports any merge conflicts after pull. Required: absolutePath.
+- `sulla github/git_fetch '{"absolutePath":"<absolutePath>"}'`: Fetch authenticated remote refs without changing the working tree. Reports remote-tracking refs that were added, updated, or pruned. Required: absolutePath.
+- `sulla github/git_conflicts '{"absolutePath":"<absolutePath>"}'`: List files with merge conflicts and show the conflict diffs for each file. Required: absolutePath.
+- `sulla github/git_add '{"absolutePath":"<absolutePath>"}'`: Stage files for commit. If no files are specified, stages all changes. Required: absolutePath.
+- `sulla github/git_commit '{"absolutePath":"<absolutePath>","message":"<message>"}'`: Stage files and create a git commit. If no files are specified, stages all changes. Required: absolutePath, message.
+- `sulla github/git_push '{"absolutePath":"<absolutePath>"}'`: Push commits to a remote repository. Required: absolutePath.
+- `sulla github/git_worktree '{"absolutePath":"<absolutePath>","action":"<action>"}'`: Add, list, remove, or prune git worktrees — check out multiple branches of one repo into separate directories at once (ideal for reviewing/building several PRs in parallel). Required: absolutePath, action.
+- `sulla github/create_issue '{"owner":"<owner>","repo":"<repo>","title":"<title>"}'`: Create a new issue in a GitHub repository. Required: owner, repo, title.
+- `sulla github/update_issue '{"owner":"<owner>","repo":"<repo>","issue_number":"1"}'`: Update an existing GitHub issue — edit title, body, labels, assignees, or state. Required: owner, repo, issue_number.
+- `sulla github/close_issue '{"owner":"<owner>","repo":"<repo>","issue_number":"1"}'`: Close a GitHub issue with an optional reason (completed or not_planned). Required: owner, repo, issue_number.
+- `sulla github/create_pr '{"owner":"<owner>","repo":"<repo>","title":"<title>","head":"<head>"}'`: Create a pull request in a GitHub repository. Required: owner, repo, title, head.
+- `sulla github/ready_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: Flip a draft pull request to "ready for review" (draft PRs cannot be merged). Uses the GraphQL markPullRequestReadyForReview mutation. Required: owner, repo, pull_number.
+- `sulla github/draft_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1","comment":"<comment>"}'`: Return a ready pull request to draft via the GraphQL convertPullRequestToDraft mutation (the inverse of github_ready_pr; REST cannot do this). Requires a "comment" saying what needs to be fixed — the comment is posted before the conversion so a PR never leaves the ready queue unexplained. Reversible with github_ready_pr. Required: owner, repo, pull_number, comment.
+- `sulla github/merge_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1","confirm":"true"}'`: Merge a GitHub pull request. Destructive — refuses without {"confirm":true}. Supports merge, squash, and rebase methods. Required: owner, repo, pull_number, confirm.
+- `sulla github/create_release '{"owner":"<owner>","repo":"<repo>","tag_name":"<tag_name>"}'`: Cut a GitHub release (and its git tag). Publishing a non-draft release is outward-facing — refuses without {"confirm":true}; use {"draft":true} for a safe draft. Supports auto-generated release notes. Required: owner, repo, tag_name.
+- `sulla github/check_runs '{"owner":"<owner>","repo":"<repo>","ref":"<ref>"}'`: List CI check runs for a ref (branch name, SHA, or tag). Use this to answer "is CI green?" — shows status / conclusion / timing for each check. Required: owner, repo, ref.
+- `sulla github/ci_logs '{"owner":"<owner>","repo":"<repo>"}'`: Inspect CI failures by workflow run, Actions job, or ref. Returns check annotations and a bounded job-log excerpt around each failure. Required: owner, repo.
+- `sulla github/claim_files '{"absolutePath":"<absolutePath>","paths":"[]","ownerLabel":"<ownerLabel>"}'`: Claim repository-relative file globs for a worker. Claims are shared across every worktree of the same repository and warn rather than block. Required: absolutePath, paths, ownerLabel.
+- `sulla github/release_files '{"absolutePath":"<absolutePath>"}'`: Release active file claims in one repository by owner label or explicit claim ids. Required: absolutePath.
+- `sulla github/list_claims '{}'`: List active worker file claims, optionally scoped to the repository containing absolutePath. Required: none.
+- `sulla github/trigger_workflow_run '{"owner":"<owner>","repo":"<repo>","workflow_id":"<workflow_id>"}'`: Manually trigger a GitHub Actions workflow via workflow_dispatch. The target workflow must declare a workflow_dispatch trigger in its "on:" block. Required: owner, repo, workflow_id.
+- `sulla github/git_branch '{"absolutePath":"<absolutePath>","action":"<action>"}'`: Create, switch, delete, or list git branches. Required: absolutePath, action.
+- `sulla github/git_status '{"absolutePath":"<absolutePath>"}'`: Show the working tree status — current branch, staged/unstaged/untracked files. Required: absolutePath.
+- `sulla github/git_log '{"absolutePath":"<absolutePath>"}'`: Show commit history for a repository. Required: absolutePath.
+- `sulla github/git_diff '{"absolutePath":"<absolutePath>"}'`: Show changes between working tree, staging area, or commits. Required: absolutePath.
+- `sulla github/git_stash '{"absolutePath":"<absolutePath>","action":"<action>"}'`: Save, list, apply, pop, or drop stashed changes. Required: absolutePath, action.
+- `sulla github/git_checkout '{"absolutePath":"<absolutePath>","files":"[]"}'`: Restore files from a commit or branch, or discard working tree changes. Required: absolutePath, files.
+- `sulla github/create_repo '{"name":"<name>"}'`: Create a new GitHub repository for the authenticated user or an organization. Required: name.
+- `sulla github/get_repo '{"owner":"<owner>","repo":"<repo>"}'`: Get metadata and stats for a GitHub repository — stars, forks, language, topics, default branch, license, push times. Required: owner, repo.
+- `sulla github/list_repos '{}'`: List repositories for the authenticated user, a specific user, or an organization. Required: none.
+- `sulla github/delete_repo '{"owner":"<owner>","repo":"<repo>","confirm":"true","confirm_name":"<confirm_name>"}'`: Permanently delete a GitHub repository. Irreversible — requires confirm:true AND confirm_name matching the repo name. Required: owner, repo, confirm, confirm_name.
+- `sulla github/fork_repo '{"owner":"<owner>","repo":"<repo>"}'`: Fork a GitHub repository into the authenticated user\'s account or a specified organization. Required: owner, repo.
+- `sulla github/get_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: Get full details of a specific pull request — head/base, diff stats, reviewer list, labels, mergeable state. Required: owner, repo, pull_number.
+- `sulla github/list_prs '{"owner":"<owner>","repo":"<repo>"}'`: List one page of pull requests with optional filters. Follow the returned next-page instruction to inventory every PR, including drafts. Required: owner, repo.
+- `sulla github/update_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: Edit a pull request — update its title, body, base branch, or open/closed state. Required: owner, repo, pull_number.
+- `sulla github/close_pr '{"owner":"<owner>","repo":"<repo>","pull_number":"1","confirm":"true"}'`: Close a pull request without merging it. Requires confirm:true. Optionally posts a closing comment. Required: owner, repo, pull_number, confirm.
+- `sulla github/add_pr_review '{"owner":"<owner>","repo":"<repo>","pull_number":"1","event":"<event>"}'`: Submit a pull request review — APPROVE, REQUEST_CHANGES, or COMMENT. Body is required for REQUEST_CHANGES and COMMENT. Required: owner, repo, pull_number, event.
+- `sulla github/list_pr_reviews '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: List all reviews on a pull request with their state (APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED) and authors. Required: owner, repo, pull_number.
+- `sulla github/request_pr_reviewers '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: Request specific users or teams to review a pull request. Required: owner, repo, pull_number.
+- `sulla github/get_pr_files '{"owner":"<owner>","repo":"<repo>","pull_number":"1"}'`: List all files changed in a pull request with their status (added/modified/removed/renamed) and line diff counts. Required: owner, repo, pull_number.
+
+**Do:**
+1. Discover the category when names or parameters may have changed.
+2. Run the command through `exec`, passing one JSON object with required parameters.
+3. Treat returned IDs, cursors, and SHAs as inputs to the next call; verify destructive or outward-facing results.
+
+**Don't:**
+- Don't use raw git network commands for authenticated GitHub operations; use `sulla github/git_push` or the matching tool.
+- Don't delete refs, close PRs, merge, comment, review, or send outward changes without the required confirmation/safety gate.
+- Don't use a guessed owner, repo, branch, or project ID.
