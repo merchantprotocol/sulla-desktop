@@ -10,19 +10,18 @@
  * (~45s each). The SQL path instead scores rows by which distinctive terms
  * of the current turn they contain, weighted by inverse document frequency
  * (see IdentityObservationsModel.recallRelevant). This module turns recent
- * user text into those terms: lowercase words of 4+ chars, minus stopwords
- * and generic conversational verbs, most recent message first.
+ * user text into those terms: lowercase words of 4+ chars, minus common
+ * filler words, most recent message first. Stopwords are 4 letters or fewer:
+ * longer words are rare enough to carry signal, and IDF weighting handles
+ * the rest (Jonathon, 2026-10-27).
  */
 
 const STOPWORDS = new Set(`
-the and for with that this from have what your you are was were will would could should about into they them their there then
-than just like also some more most very much make made does done did can not but all any our out its get got want wants wanted
-need needs please thanks thank okay yes now new use using used here when where which while who whom why how been being able
-still only even over under after before again each every other same such own too via per may might must shall let lets ill
-dont cant isnt really sure know think going continue pursuing goal goals review system good success looking ways trying within
-improve ready work working works thing things stuff help start started starting look looked keep take took give gave put find
-found show tell told said says call called time times today yesterday tomorrow week day days lot lots little big small great
-better best right wrong fine gone come came into onto upon well back down doing having maybe yeah yea hey okay alright
+the and for with that this from have what your you are was were will into they them then than just like also some more most very
+much make made does done did can not but all any our out its get got want need okay yes now new use used here when who whom why
+how been able only even over each same such own too via per may must let lets ill dont cant isnt sure know goal good ways work
+help look keep take took give gave put find show tell told said says call time week day days lot lots big best fine gone come came
+onto upon well back down yeah yea hey
 `.split(/\s+/).filter(Boolean));
 
 /** Tagged blocks injected by the harness (turn_context, recalled context…) are not the user's words. */
