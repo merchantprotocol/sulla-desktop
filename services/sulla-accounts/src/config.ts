@@ -60,6 +60,14 @@ export function normalizeIssuer(input: string): string {
   return input;
 }
 
+export function assertTrustedUrl(input: string, issuer: string): string {
+  const value = new URL(input);
+  const trusted = new URL(issuer);
+  if (value.username || value.password || value.hash || value.origin !== trusted.origin) throw new Error('OIDC endpoint must share the explicitly trusted issuer origin');
+  if (value.protocol !== 'https:' && !(value.protocol === 'http:' && (value.hostname === 'localhost' || value.hostname.startsWith('127.')))) throw new Error('OIDC endpoint must use HTTPS');
+  return value.href;
+}
+
 export async function loadConfig(): Promise<AccountsConfig> {
   if ((process.env.SULLA_ACCOUNTS_MODE ?? 'desktop') !== 'desktop') throw new Error('Server mode requires the Sulla Server Accounts adapter image');
   const serviceTokens = new Map<string, ServiceGrant>();
