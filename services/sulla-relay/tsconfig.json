@@ -8,11 +8,13 @@
     "rootDir": "../..",
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/sulla-desktop/runtime/relayProtocol.ts",
-    "../../pkg/sulla-desktop/runtime/relayTunnelClient.ts"
+    "../../pkg/sulla-desktop/runtime/relayTunnelClient.ts",
+    "../../packages/relay-protocol/src/**/*.ts"
   ]
 }

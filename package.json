@@ -40,7 +40,8 @@
     "postuninstall": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 electron-builder install-app-deps",
     "rddepman": "node scripts/ts-wrapper.js scripts/rddepman.ts",
     "ucmonitor": "node scripts/ts-wrapper.js scripts/unreleased-change-monitor.ts",
-    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts"
+    "dcmonitor": "node scripts/ts-wrapper.js scripts/docker-cli-monitor.ts",
+    "test:server-split-contracts": "node --test scripts/contracts/server-split-contract.test.mjs"
   },
   "main": "dist/app/background.js",
   "dependencies": {
@@ -280,5 +281,11 @@
     "pretty-format": {
       "ansi-styles": "5.2.0"
     }
-  }
+  },
+  "private": true,
+  "workspaces": [
+    "packages/workflow-engine",
+    "packages/runtime-protocol",
+    "packages/relay-protocol"
+  ]
 }

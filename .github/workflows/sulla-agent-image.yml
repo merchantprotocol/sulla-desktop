@@ -6,6 +6,8 @@ on:
     paths:
       - 'services/sulla-agent/**'
       - 'resources/darwin/bin/sulla'
+      - 'contracts/server-split/**'
+      - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-agent-image.yml'
 permissions:
   contents: read
@@ -32,7 +34,8 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=transport-v1,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: services/sulla-agent/Dockerfile
@@ -40,3 +43,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Write immutable base image metadata
+        run: node scripts/contracts/write-base-image-metadata.mjs ghcr.io/merchantprotocol/sulla-agent ${{ steps.build.outputs.digest }} ${{ github.sha }} sulla-agent-base-image.json
+      - name: Upload immutable base image metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: sulla-agent-base-image-${{ github.sha }}
+          path: sulla-agent-base-image.json
+          if-no-files-found: error
