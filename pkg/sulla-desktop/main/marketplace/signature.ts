@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 
 import { resolveTrustedPublisherKeysPath, trustedPublisherVerifier } from '@pkg/agent/integrations/packageLoader';
 
@@ -28,8 +29,24 @@ export function marketplaceArtifactHash(manifestValue: MarketplaceSignatureManif
   return `sha256:${ createHash('sha256').update(stableJson({ manifest, files })).digest('hex') }`;
 }
 
+/** True once the trusted-keys file sets requireSignatures. Until then unsigned listings install with a warning. */
+export function marketplaceSignaturesRequired(): boolean {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(resolveTrustedPublisherKeysPath(), 'utf8'));
+    return parsed?.requireSignatures === true;
+  } catch { return false }
+}
+
+export function isSignedMarketplaceManifest(manifest: MarketplaceSignatureManifest | undefined): boolean {
+  return !!manifest?.integrity && !!manifest?.signature;
+}
+
 export function verifyMarketplaceArtifact(manifest: MarketplaceSignatureManifest, payload: Buffer): void {
-  if (!manifest.integrity || !manifest.signature) throw new Error('Marketplace download is unsigned; installation was refused.');
+  if (!isSignedMarketplaceManifest(manifest)) {
+    if (marketplaceSignaturesRequired()) throw new Error('Marketplace download is unsigned; installation was refused.');
+    console.warn('[marketplace] Installing an unsigned listing; signatures are not required yet.');
+    return;
+  }
   const actual = marketplaceArtifactHash(manifest, payload);
   if (actual !== manifest.integrity) throw new Error('Marketplace download integrity check failed; the package may have been tampered with.');
   const verifier = trustedPublisherVerifier(resolveTrustedPublisherKeysPath());

@@ -11,7 +11,7 @@ import path from 'node:path';
 import * as yauzl from 'yauzl';
 
 import { fetchPublicTemplate, publicFetch, type MarketplaceKind } from './client';
-import { verifyMarketplaceArtifact, verifySelfContainedMarketplaceArtifact } from './signature';
+import { isSignedMarketplaceManifest, marketplaceSignaturesRequired, verifyMarketplaceArtifact, verifySelfContainedMarketplaceArtifact } from './signature';
 
 import { MARKETPLACE_KINDS as MARKETPLACE_KIND_DEFINITIONS } from '@pkg/composables/marketplaceKinds';
 
@@ -152,6 +152,23 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
       name:     detail.name ?? result.package.slug,
       version:  result.package.version,
       warnings: result.skipped.map(item => `${ item.kind } "${ item.slug }" skipped: ${ item.reason }`),
+    };
+  }
+
+  if (detail.kind === 'agent' && !isSignedMarketplaceManifest(detail.manifest as Record<string, unknown>)) {
+    // Unsigned agents keep the manifest-only install path until signatures are required.
+    if (marketplaceSignaturesRequired()) throw new Error('Marketplace download is unsigned; installation was refused.');
+    const { installStandaloneArtifact } = await import('./databaseInstaller');
+    const outcome = await installStandaloneArtifact(detail, { manifest: detail.manifest as Record<string, any>, files: {} }, opts.overwrite === true);
+    return {
+      kind:             detail.kind,
+      slug:             detail.slug,
+      path:             `database:agent_definitions/${ detail.slug }`,
+      name:             detail.name ?? detail.slug,
+      version:          detail.version,
+      alreadyInstalled: !outcome.installed,
+      updated:          opts.overwrite === true && outcome.installed,
+      ...(outcome.reason ? { warnings: [outcome.reason] } : {}),
     };
   }
 
