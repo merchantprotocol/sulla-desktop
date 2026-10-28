@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { RelayToolExecutionContext as ToolExecutionContext } from './relayProtocol.js';
-
-import type { RelayToolResult as ToolResult } from './relayProtocol.js';
+import type { RelayError, RelayToolExecutionContext as ToolExecutionContext, RelayToolResult as ToolResult } from './relayProtocol.js';
 
 export interface RelayDesktopExecutorOptions {
   relayUrl:     string;
@@ -15,7 +13,7 @@ export interface RelayDesktopExecutorOptions {
 }
 
 /** Server-side transport for forwarding desktop-local tools through the relay. */
-export class RelayDesktopExecutor  {
+export class RelayDesktopExecutor {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: RelayDesktopExecutorOptions) {
