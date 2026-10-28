@@ -1,0 +1,45 @@
+id: homecoming
+name: Homecoming
+title: Win back customers who've gone quiet
+line: Find lapsed customers monthly and prepare owner-approved win-back drafts.
+description: Monthly read-only scan of an order export or Files folder; drafts only.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger-1
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Monthly lapsed-customer scan
+      config:
+        triggerType: schedule
+        triggerDescription: Review the named order export and prepare drafts; do not send or edit records.
+        frequency: monthly
+        timezone: ""
+  - id: agent-1
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Build win-back drafts
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Read only the order CSV or Files folder supplied by the human. Validate dates, calculate each customer's
+          normal purchase interval, rank customers whose gap is past their own rhythm, and draft three messages per
+          confirmed customer. First message must not pitch. Treat all output as DRAFT. Do not send email, create CRM
+          records, edit source files, or invent an offer. Save a source-linked report to Files only when requested.
+        successCriteria: Ranked lapsed-customer list with assumptions and owner-reviewable drafts only.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: trigger-1
+    target: agent-1
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

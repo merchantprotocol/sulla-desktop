@@ -1,0 +1,40 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-tidewater
+slug: tidewater
+name: Tidewater
+title: Forecast your cash 30, 60 and 90 days out
+line: Turn an income-and-expense CSV into a transparent cash forecast with variance bands.
+description: Deterministic offline cash-flow snapshot from normalized rows.
+category: finance
+tags: [cash-flow, finance, forecast, csv]
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    rows:
+      type: array
+      description: Rows with date, amount, kind (income or expense), and optional recurring boolean.
+      required: true
+    as_of:
+      type: string
+      description: ISO date used as the forecast start.
+      required: true
+    horizons:
+      type: array
+      description: Forecast horizons in days.
+      default: [30, 60, 90]
+      required: false
+  outputs:
+    forecast:
+      type: array
+      description: Horizon totals with base, low, and high balances.
+    warnings:
+      type: array
+      description: Input and uncertainty warnings.
+  timeout: 60s
+  permissions:
+    network: []
