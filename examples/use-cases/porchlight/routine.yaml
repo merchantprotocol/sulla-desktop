@@ -1,0 +1,54 @@
+sullaApi: ^1.0.0
+hooks: []
+id: porchlight
+name: Porchlight
+title: Answer every inbound lead before it goes cold
+line: Prepare a decision-ready morning queue of new lead replies without sending them.
+description: Reviews overnight inquiries, checks calendar availability, drafts replies, and notifies the owner of urgent leads.
+version: "1"
+category: sales
+tags: [leads, email, calendar, daily]
+enabled: true
+nodes:
+  - id: porchlight-schedule
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekdays at 7:00 AM
+      config:
+        triggerType: schedule
+        triggerDescription: Review overnight inbound leads each weekday morning.
+        frequency: daily
+        hour: 7
+        minute: 0
+        timezone: ""
+  - id: porchlight-agent
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare lead replies
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Follow the installed Porchlight skill. Read only overnight inbound inquiries through a connected
+          email integration. If email is unavailable, report that the manual pasted-message or CSV fallback
+          is needed and stop cleanly. Extract source facts, rank urgency from explicit evidence, check real
+          calendar availability, and prepare concise replies labeled DRAFT — not sent. Save only the minimal
+          lead brief in Files and notify the owner only for urgent leads. Do not send email, post to Slack,
+          update a CRM, create an event, delete, archive, or change labels. Those actions require a later
+          human Approve for the exact action.
+        successCriteria: A source-linked queue with urgency evidence, tentative slots, and unsent reply drafts.
+        orchestratorInstructions: Follow the Porchlight skill and preserve every approval gate.
+        completionContract: default
+edges:
+  - id: porchlight-edge
+    source: porchlight-schedule
+    target: porchlight-agent
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }
