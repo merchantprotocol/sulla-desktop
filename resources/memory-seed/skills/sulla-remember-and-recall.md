@@ -12,7 +12,7 @@ scope: [sulla-memory, sulla-identity]
 **Do:**
 1. Search operational memory: `sulla observation/search_observations '{"query":"<topic>"}'`.
 2. Search identity memory: `sulla observation/search_identity_observations '{"domain":"<domain>","query":"<topic>"}'`.
-3. Search conversations: `sulla memory/recall_conversations '{"query":"<topic>"}'`.
+3. Search conversations: `sulla memory/recall_conversations '{"action":"search","query":"<topic>"}'`.
 4. Add a durable operational fact: `sulla observation/add_observational_memory '{"priority":"high","content":"<verified fact and why it matters>"}'`.
 5. Add a domain fact: `sulla observation/add_identity_observation '{"domain":"<domain>","level":3,"category":"<category>","content":"<fact>","basis":"Stated directly by the human."}'`.
 6. For memory files, use `/mnt/sulla-files/Memory/<provider>/` and also record the fact with an observation tool.
