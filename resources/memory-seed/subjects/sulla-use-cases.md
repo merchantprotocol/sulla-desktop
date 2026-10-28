@@ -3,18 +3,20 @@ slug: sulla-use-cases
 kind: system
 name: Sulla Use Cases
 parent: sulla
-aliases: [Use Cases, skills, workflows, agents, functions, recipes, publish]
+aliases: [Use Cases, use cases, recipes, skills, agents, workflows, functions]
 ---
 
 ## Overview
-Use Case definitions live in Sulla Files under `/mnt/sulla-files/Use Cases/<type>/<slug>/`. Types are `agents`, `skills`, `workflows`, `functions`, and `recipes`. Files is the source of truth; database rows are runtime indexes. Every edit is a draft and does not activate until the human approves publication in Decide. The runtime polls published versions and keeps the last valid definition active if a new one is invalid.
+Use Cases are installable artifacts stored in Sulla Files under the Use Cases area. A use case can bundle an agent, skill, workflow, function, recipe, or integration. New or edited artifacts remain drafts until a file version is requested for publication and a human approves it in Decide. Marketplace download installs artifacts transactionally; it is separate from local authoring and publication.
 
 ## Facts
-- Agent definitions use `agent.json`; skills use `SKILL.md`; workflows use `workflow.yaml` or `routine.yaml`.
-- Functions use `function.yaml` plus an entrypoint; recipes use an installation or manifest file plus a Compose file.
-- Publishing an older version is the rollback path.
+- The supported artifact kinds include package, workflow, agent, skill, function, integration, and recipe.
+- New bundles keep kind-specific required files together: `SKILL.md`, `function.yaml` plus entrypoint, `routine.yaml`, or `installation.yaml` plus Compose.
+- `marketplace/scaffold` generates a local skeleton; `marketplace/validate` checks its kind-specific shape.
+- Agents are local-only for marketplace publishing at present; they can be exported as manifests but are not currently published through the catalog.
+- A missing `sullaApi` can use the legacy compatibility path, but new Extension Contract v1 artifacts should declare `sullaApi: ^1.0.0`.
 
 ## Rules
-- DO: Review the draft, then call `sulla files/request_publish` with its file and version identifiers.
-- DON'T: Treat a draft as active or write runtime index tables directly.
-- DON'T: Save definitions under `~/sulla/skills`, `~/sulla/agents`, or `~/sulla/workflows` and expect them to activate.
+- DO: Validate before requesting publication. Why: drafts are invisible to runtime until approved and published.
+- DO: Request publication through Files and wait for Decide approval. Why: writing a draft is not authorization to activate it.
+- DON'T: call a draft as if it were installed. Why: only published/installed versions become runtime-visible.
