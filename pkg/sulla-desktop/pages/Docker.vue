@@ -757,13 +757,25 @@ const diskUsed = ref<number>();
 function readSettings(_e: any, value: any) {
   settings.value = value;
 }
+// The Sulla runtime reports DISABLED (not STARTED) once the container engine is ready.
+const backendReady = computed(() => backendState.value === 'STARTED' || backendState.value === 'DISABLED');
+const backendBusy = computed(() => ['STARTING', 'STOPPING', 'STOPPED'].includes(backendState.value));
 function onBackendState(_e: any, state: any) {
+  const wasReady = backendReady.value;
+
   backendState.value = String(state);
+  if (backendReady.value && !wasReady) {
+    void connect();
+  }
+}
+// Sent once the backend can run Docker commands for this window, including after a restart.
+function onBackendReady() {
+  void connect();
 }
 const engineLabel = computed(() => ({
-  STARTED: 'Docker is running', STARTING: 'Docker is starting', STOPPING: 'Docker is stopping', STOPPED: 'Docker is stopped', ERROR: 'Docker has a problem', DISABLED: 'Docker is off',
+  STARTED: 'Docker is running', STARTING: 'Docker is starting', STOPPING: 'Docker is stopping', STOPPED: 'Docker is stopped', ERROR: 'Docker has a problem', DISABLED: 'Docker is running',
 } as Record<string, string>)[backendState.value] ?? 'Docker');
-const engineDot = computed(() => ({ STARTED: 'dot', STARTING: 'dot warn', STOPPING: 'dot warn', ERROR: 'dot bad' } as Record<string, string>)[backendState.value] ?? 'dot off');
+const engineDot = computed(() => ({ STARTED: 'dot', DISABLED: 'dot', STARTING: 'dot warn', STOPPING: 'dot warn', ERROR: 'dot bad' } as Record<string, string>)[backendState.value] ?? 'dot off');
 const meters = computed(() => {
   const vm = settings.value?.virtualMachine ?? {};
   const memGB = Object.values(usage.value).reduce((n, u) => n + u.mem, 0) / 2 ** 30;
@@ -812,10 +824,21 @@ const NAV: { id: Section, icon: string, label: string, count?: keyof typeof navC
 ];
 
 /* ── Loading ── */
-async function subscribe(type: 'containers' | 'volumes') {
+// The store holds one subscription at a time, and switching its type clears the other list,
+// so containers stay subscribed and volumes are fetched with the same client.
+async function subscribe() {
   if (window.ddClient) {
-    await store.dispatch('container-engine/subscribe', { type, client: window.ddClient, owner: 'sulla-docker' });
+    await store.dispatch('container-engine/subscribe', { type: 'containers', client: window.ddClient, owner: 'sulla-docker' });
   }
+}
+const loadVolumes = () => store.dispatch('container-engine/fetchVolumes');
+// The tab is restored at launch, before the backend can run Docker commands; (re)connect once it can.
+async function connect() {
+  if (backendBusy.value) {
+    return;
+  }
+  await subscribe().catch(fail);
+  await refresh();
 }
 async function refresh() {
   error.value = '';
@@ -824,7 +847,7 @@ async function refresh() {
       loadRowInfo(),
       loadImages(),
       loadNetworks(),
-      subscribe('volumes'),
+      loadVolumes(),
       section.value === 'volumes' ? loadVolumeSizes() : undefined,
       section.value === 'volumes' ? loadRowInfo().then(loadVolumeMounts) : undefined,
       section.value === 'snapshots' ? store.dispatch('snapshots/fetch') : undefined,
@@ -877,7 +900,7 @@ watch(() => containers.value && Object.keys(containers.value).join(','), () => {
   void loadRowInfo();
 });
 
-onMounted(async() => {
+onMounted(() => {
   ipcRenderer.on('settings-read', readSettings);
   ipcRenderer.on('settings-update', readSettings);
   ipcRenderer.on('images-process-output', onImageOutput);
@@ -885,16 +908,22 @@ onMounted(async() => {
   ipcRenderer.on('backend-locked', onBackendLocked);
   ipcRenderer.on('backend-unlocked', onBackendUnlocked);
   ipcRenderer.on('k8s-check-state' as any, onBackendState);
+  ipcRenderer.on('extensions/changed', onBackendReady);
   ipcRenderer.send('settings-read');
   try {
     backendState.value = String(ipcRenderer.sendSync('k8s-state' as any) ?? '');
   } catch { /* shown as plain "Docker" */ }
   store.dispatch('credentials/fetchCredentials').catch(console.error);
-  await subscribe('containers').catch(fail);
-  void refresh();
+  void connect();
   void loadUsage();
   void loadDiskUsed();
   usageTimer = setInterval(() => {
+    // Containers stay null until a list succeeds; keep retrying until Docker answers.
+    if (!containers.value) {
+      void connect();
+    } else {
+      void loadVolumes();
+    }
     void loadUsage();
     void loadDiskUsed();
   }, 5000);
@@ -914,6 +943,7 @@ onBeforeUnmount(() => {
   ipcRenderer.removeListener('backend-locked', onBackendLocked);
   ipcRenderer.removeListener('backend-unlocked', onBackendUnlocked);
   ipcRenderer.removeListener('k8s-check-state' as any, onBackendState);
+  ipcRenderer.removeListener('extensions/changed', onBackendReady);
   store.dispatch('container-engine/unsubscribe', 'sulla-docker');
   if (engine.held.value) {
     void engine.discardHeld();

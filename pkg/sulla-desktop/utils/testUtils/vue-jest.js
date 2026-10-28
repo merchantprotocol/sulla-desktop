@@ -9,7 +9,7 @@ import crypto from 'crypto';
 
 import babelJest from 'babel-jest';
 import typescript from 'typescript';
-import { compileTemplate, parse } from 'vue/compiler-sfc';
+import { compileScript, compileTemplate, parse } from 'vue/compiler-sfc';
 
 /**
  * @import { SFCDescriptor, SFCParseOptions } from 'vue/compiler-sfc'
@@ -37,6 +37,8 @@ function compileTypeScript(source, fileName) {
     fileName,
     compilerOptions: {
       module: typescript.ModuleKind.ESNext,
+      // Match the app build; the ES5 default drops iteration over Maps and Sets.
+      target: typescript.ScriptTarget.ESNext,
     },
   });
 
@@ -63,6 +65,22 @@ function processScript(descriptor, options) {
   }
 
   return content.replace(/^export default/m, 'const __default__ =');
+}
+
+/**
+ * `<script setup>` components: compile the script with the template inlined,
+ * so there is no separate render function to attach.
+ * @type (descriptor: SFCDescriptor) => string
+ */
+function processScriptSetup(descriptor) {
+  const lang = descriptor.scriptSetup?.lang ?? descriptor.script?.lang ?? 'js';
+  let { content } = compileScript(descriptor, { id: descriptor.filename, inlineTemplate: true });
+
+  if (/typescript|^ts/.test(lang)) {
+    content = compileTypeScript(content, descriptor.filename);
+  }
+
+  return `${ content.replace(/^export default/m, 'const __default__ =') }\nexport default __default__;`;
 }
 
 /** @type (descriptor: SFCDescriptor) => string */
@@ -107,6 +125,10 @@ export default {
 
   process(sourceText, filename, options) {
     const { descriptor } = parse(sourceText, { filename, ...options.transformerConfig });
+
+    if (descriptor.scriptSetup) {
+      return { code: processScriptSetup(descriptor) };
+    }
     const code = `
       ${ processScript(descriptor, options) }
       ${ processTemplate(descriptor) }
