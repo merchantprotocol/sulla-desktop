@@ -25,6 +25,7 @@ import { githubToolManifests } from './github/manifests';
 import { integrationsToolManifests } from './integrations/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
+import { memoryPackToolManifests } from './memorypacks/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { mobileToolManifests } from './mobile/manifests';
 import { modelsToolManifests } from './models/manifests';
@@ -59,6 +60,7 @@ toolRegistry.registerManifests([
   ...githubToolManifests,
   ...integrationsToolManifests,
   ...marketplaceToolManifests,
+  ...memoryPackToolManifests,
   ...metaToolManifests,
   ...mobileToolManifests,
   ...modelsToolManifests,

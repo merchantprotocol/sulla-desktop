@@ -10,6 +10,7 @@ import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
+import { installPackFiles, listPacks, uninstallPack, type MemoryPackFile } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
 import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
@@ -225,6 +226,14 @@ export class SullaUseCaseFiles {
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
     });
+    if (kind === 'skill') {
+      const raw = text(files['SKILL.md']);
+      const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
+      if (parsed?.content.frontmatter?.memory_pack === true) {
+        const memoryFiles:MemoryPackFile[] = Object.entries(files).filter(([name]) => name.startsWith('memory/')).map(([name,value]) => ({ name, content:text(value) }));
+        await installPackFiles(slug, memoryFiles);
+      }
+    }
   }
 
   private async disableMissing(active:Set<string>):Promise<void> {
@@ -254,6 +263,8 @@ export class SullaUseCaseFiles {
         catch(error) { const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
+      const activeSkillSlugs = new Set([...active].filter(key => key.startsWith('skills/')).map(key => key.slice(7)));
+      for (const pack of await listPacks()) if (!activeSkillSlugs.has(String(pack.slug))) await uninstallPack(String(pack.slug));
       const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry'); await skillsRegistry.invalidate();
       await postgresClient.query('UPDATE use_case_files_state SET last_scan_at=NOW(),last_error=NULL WHERE singleton=TRUE');
       this.lastSignature = signature;
