@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 function denied(status, code) { return Object.assign(new Error(code), { status }); }
 export async function resolveFilesUiSession(config, token, request = fetch) {
     if (!token || token.length > 1024)

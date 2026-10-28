@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Checks if Sulla Desktop is running in a development or test environment
  * @returns True if Sulla Desktop is running in a development or test

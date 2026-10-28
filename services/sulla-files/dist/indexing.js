@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { extractIndexText } from './extractor.js';
 import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 const CHUNK_CHARS = 3_500;

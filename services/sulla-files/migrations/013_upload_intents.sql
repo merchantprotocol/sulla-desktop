@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS file_upload_intents (
   id UUID PRIMARY KEY,
   collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export async function adoptVaultPrincipal(db, config, principalId) {
     if (config.userId === principalId)
         return;

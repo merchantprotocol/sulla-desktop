@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <!-- This is the VM backend progress notification in the bottom left
    - corner of the default layout.
    -->

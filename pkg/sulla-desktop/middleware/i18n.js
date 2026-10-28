@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export default async function({
   isHMR, app, store, route, params, error, redirect,
 }) {

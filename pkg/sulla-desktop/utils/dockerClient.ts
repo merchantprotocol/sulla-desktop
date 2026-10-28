@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * window.ddClient: the Docker CLI client used by the main window's container,
  * image and volume views.  Commands run in the main process through the

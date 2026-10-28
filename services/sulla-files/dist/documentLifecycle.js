@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 function httpError(status, message) {
     return Object.assign(new Error(message), { status });
 }

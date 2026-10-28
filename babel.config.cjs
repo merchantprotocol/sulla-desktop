@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 const packageJson = require('./package.json');
 
 const electronVersion = parseInt(/\d+/.exec(packageJson.devDependencies.electron), 10);

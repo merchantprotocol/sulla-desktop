@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable agent memory under the Sulla system collection's Memory tree is live as soon as it is written,
 -- even when an agent writes it. Recall reads published versions only, so memory must not sit as a draft.
 CREATE OR REPLACE FUNCTION files_prepare_version_lifecycle() RETURNS TRIGGER LANGUAGE plpgsql AS $$

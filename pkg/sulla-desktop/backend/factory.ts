@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import os from 'os';
 
 import { Architecture, VMBackend } from './backend';

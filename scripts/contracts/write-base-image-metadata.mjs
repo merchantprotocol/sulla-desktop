@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import fs from 'node:fs';
 
 const [image, digest, commit, output = 'base-image-metadata.json'] = process.argv.slice(2);

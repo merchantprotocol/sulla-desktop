@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import { auditContext } from './auditContext.js';

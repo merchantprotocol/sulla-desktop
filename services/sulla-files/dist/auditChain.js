@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 function canonical(value) {
     if (value === null || typeof value !== 'object')

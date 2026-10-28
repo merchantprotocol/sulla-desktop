@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { ref, computed, onBeforeMount } from 'vue';
 import { useStore } from 'vuex';
 

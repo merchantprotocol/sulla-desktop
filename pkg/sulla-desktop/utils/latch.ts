@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Interface Latch is a simple extension on Promise that is resolved via calling
  * a method.  It is essentially a simplified barrier.

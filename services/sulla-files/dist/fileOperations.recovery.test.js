@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';

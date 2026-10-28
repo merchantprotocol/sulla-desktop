@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Cloud · Passwords (vault origin): Trusted Types default policy.
 // Loaded first. The vault CSP requires Trusted Types for script sinks: no
 // string may become script, and the only script URL allowed is this

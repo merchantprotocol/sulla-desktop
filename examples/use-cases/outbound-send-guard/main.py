@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 import re
 
 # Tool names that act outside the machine or destroy data. Matched on whole name segments.

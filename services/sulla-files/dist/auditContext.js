@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { AsyncLocalStorage } from 'node:async_hooks';
 export const auditContext = new AsyncLocalStorage();
 /** Tag checked-out connections, not the pool: identities cannot leak between requests. */

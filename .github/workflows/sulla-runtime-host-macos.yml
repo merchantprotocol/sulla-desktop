@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Sulla runtime host (macOS)
 
 # Pushes to main are built, bundled and published by sulla-runtime.yml, which

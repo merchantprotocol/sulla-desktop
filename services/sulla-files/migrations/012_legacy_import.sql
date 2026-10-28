@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Legacy collections are never modified or exposed after conversion. Import
 -- builds native shadows first, then publishes the complete set atomically.
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS legacy_source BOOLEAN NOT NULL DEFAULT FALSE;

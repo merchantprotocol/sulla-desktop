@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export function camelToTitle(str) {
   return dasherize((str || '')).split('-').map((str) => {
     return ucFirst(str);

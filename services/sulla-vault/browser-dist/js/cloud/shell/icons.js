@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Cloud app: icon set. The Desktop icons (FilesBrowser.vue +
 // MyAccount.vue) as used by the approved mockup, plus a few Cloud glyphs in
 // the same stroke style. CloudIcons.get(name) returns SVG markup.

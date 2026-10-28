@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { IntlMessageFormat } from 'intl-messageformat';
 
 import en from '@pkg/assets/translations/en-us.yaml';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Server app: the shared shell every /cloud/ page renders.
 //
 // A page is plain HTML: <body data-route="files"> plus these scripts. The

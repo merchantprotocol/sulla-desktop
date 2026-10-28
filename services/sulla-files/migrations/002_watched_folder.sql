@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE journal DROP CONSTRAINT IF EXISTS journal_op_check;
 ALTER TABLE journal ADD CONSTRAINT journal_op_check CHECK(op IN('put','restore','delete','promote','conflict','rename'));
 CREATE TABLE IF NOT EXISTS watched_folder_state (

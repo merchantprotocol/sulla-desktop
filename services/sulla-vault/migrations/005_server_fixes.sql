@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS recovery_public_key text;
 ALTER TABLE items ADD COLUMN IF NOT EXISTS change_seq bigint;
 CREATE SEQUENCE IF NOT EXISTS items_change_seq_seq;

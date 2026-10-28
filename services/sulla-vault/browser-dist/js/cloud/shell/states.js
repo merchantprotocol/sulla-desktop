@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Server app: loading / error / empty states shared by every screen.
 // Each helper fills a container and returns it. Text is always set through
 // textContent, so API error messages can't inject markup.

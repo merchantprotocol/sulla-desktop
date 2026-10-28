@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { appendAuditLine } from './auditChain.js';
 import { lockStoredNamespace } from './storedNamespace.js';
 import { auditContext } from './auditContext.js';

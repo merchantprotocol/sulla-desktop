@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';

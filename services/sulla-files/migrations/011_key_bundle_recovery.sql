@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Authoritative rotation metadata stays beside the local wrapped keys. Bundle
 -- rows are immutable, opaque Vault-custody envelopes for that exact context.
 ALTER TABLE files_collection_keys

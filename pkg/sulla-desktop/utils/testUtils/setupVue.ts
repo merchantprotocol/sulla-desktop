@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * This file is preloaded into all Jest tests (see package.json,
  * `jest.setupFiles`) and is used to set up default plugins in Vue.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * This is a typed version of Electron.ipcRenderer
  */

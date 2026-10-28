@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Feature Request
 description: "Suggest a feature or idea for Sulla Desktop."
 labels: ["kind/enhancement"]

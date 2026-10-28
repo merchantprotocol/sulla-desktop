@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import * as process from 'process';
 
 import semver from 'semver';

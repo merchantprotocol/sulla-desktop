@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import fs from 'fs';
 
 import fsExtra from 'fs-extra';

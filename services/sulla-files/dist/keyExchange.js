@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { timingSafeEqual } from 'node:crypto';
 import { generateX25519RecipientKeyPair, openFilesKeyBundle, } from '@sulla/vault-crypto';
 import { FilesKeyBundleRecovery } from './keyBundleRecovery.js';

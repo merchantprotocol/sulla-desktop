@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Files cloud sync v1 (FILES-SYNC-DESIGN.md §5). Ciphertext-only backup to Sulla Cloud.
 -- wrapped_root is the per-collection sync root R wrapped for local at-rest storage; it never leaves the VM.
 CREATE TABLE IF NOT EXISTS files_cloud_sync (

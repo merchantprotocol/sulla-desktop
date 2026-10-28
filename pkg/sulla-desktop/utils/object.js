@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { JSONPath } from 'jsonpath-plus';
 import cloneDeep from 'lodash/cloneDeep.js';
 import compact from 'lodash/compact.js';

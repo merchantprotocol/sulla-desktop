@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE workflows
   ADD COLUMN IF NOT EXISTS owner_issuer TEXT,
   ADD COLUMN IF NOT EXISTS owner_subject TEXT,

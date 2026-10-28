@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // This file creates PRs when releases are published to merge back to the main
 // branch.
 

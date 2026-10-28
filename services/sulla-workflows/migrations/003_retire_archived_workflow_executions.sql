@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 UPDATE workflow_executions AS execution
    SET status = 'failed', auto_restart = FALSE,
        completed_at = COALESCE(execution.completed_at, NOW()),

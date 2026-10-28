@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS file_share_links (
   id TEXT PRIMARY KEY,
   owner_user_id TEXT NOT NULL,

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- System areas (logs, training data, Sulla docs/use cases) are read-only inputs ingested as plain files
 -- (PUT /v1/local/system-areas/ingest). Remove the native-source tracking an earlier Desktop scan created
 -- for them. Only rows of system-area collections match: user-picked native sources live in ordinary

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 id: contract-renewal-tracker
 name: Contract renewal tracker
 description: Finds upcoming contract renewals and prepares reminder drafts without changing Files or Calendar.

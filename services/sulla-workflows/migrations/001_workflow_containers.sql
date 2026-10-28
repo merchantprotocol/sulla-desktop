@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE workflows
   ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT 'desktop'
     CHECK (location IN ('desktop', 'server'));

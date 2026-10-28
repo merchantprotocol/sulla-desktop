@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 UPDATE orgs SET encrypted_join_org_key = NULL, join_kdf = NULL
 WHERE encrypted_join_org_key IS NOT NULL OR join_kdf IS NOT NULL;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 declare module 'linux-ca' {
   import * as forge from 'node-forge';
 

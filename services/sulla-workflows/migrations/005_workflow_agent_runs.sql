@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS workflow_agent_runs (
   execution_id TEXT NOT NULL,
   node_id TEXT NOT NULL,

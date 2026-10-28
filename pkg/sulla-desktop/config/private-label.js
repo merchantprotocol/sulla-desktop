@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export const ANY = 0;
 export const STANDARD = 1;
 export const CUSTOM = 2;

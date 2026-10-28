@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Ensure this augments the package, instead of overwriting it.
 // See https://vuejs.org/guide/typescript/options-api.html#type-augmentation-placement
 export {};

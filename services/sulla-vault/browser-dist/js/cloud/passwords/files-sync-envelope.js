@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Files sync envelope v1 (FILES-SYNC-DESIGN.md §3). Reference implementation.
 // WebCrypto only, so the same code runs in Node (globalThis.crypto → OpenSSL 3) and browsers.
 // Desktop (TS) and web (JS) copies must stay byte-compatible with files-sync-v1-kat.json.

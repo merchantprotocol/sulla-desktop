@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * EventEmitter wrapper, where the events are defined by the given interface.
  * Each property on the given interface is an event name, and the value should

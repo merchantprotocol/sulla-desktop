@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Extend the existing native journal; no second recovery authority.
 ALTER TABLE files_database_operation_receipts ADD COLUMN folder_plan JSONB;
 ALTER TABLE file_folders ADD COLUMN deleted_at TIMESTAMPTZ;

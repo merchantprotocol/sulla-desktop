@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: porchlight
 name: Porchlight
 description: Reviews overnight inquiries, checks calendar availability, drafts replies, and notifies the owner of urgent leads.

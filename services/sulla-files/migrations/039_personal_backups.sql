@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE files_backup_destinations (
   id UUID PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('local', 'nas', 's3')),

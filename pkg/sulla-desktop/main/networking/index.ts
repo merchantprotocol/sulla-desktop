@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import dns from 'dns';
 import http from 'http';
 import https from 'https';

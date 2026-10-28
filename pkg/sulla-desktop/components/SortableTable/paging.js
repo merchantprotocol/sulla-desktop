@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { ROWS_PER_PAGE } from '@pkg/store/prefs';
 
 export default {

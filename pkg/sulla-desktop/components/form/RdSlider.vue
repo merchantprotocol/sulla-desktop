@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <script lang="ts">
 import { defineComponent } from 'vue';
 import VueSlider from 'vue-3-slider-component';

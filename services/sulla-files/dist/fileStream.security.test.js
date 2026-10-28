@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { appendFile, mkdtemp, rm } from 'node:fs/promises';

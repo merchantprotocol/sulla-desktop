@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /** @jest-environment node */
 
 import mockModules from '@pkg/utils/testUtils/mockModules';

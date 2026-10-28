@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Human edits inside the Sulla system collection's Use Cases tree are drafts too. Publication is the explicit
 -- human-controlled activation step, just like agent-authored versions.
 CREATE OR REPLACE FUNCTION files_prepare_version_lifecycle() RETURNS TRIGGER LANGUAGE plpgsql AS $$

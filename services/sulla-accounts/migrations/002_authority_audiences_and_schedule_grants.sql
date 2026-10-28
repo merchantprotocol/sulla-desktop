@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE accounts.authorities ADD COLUMN resource_audiences text[] NOT NULL DEFAULT '{}';
 UPDATE accounts.authorities SET resource_audiences = ARRAY[audience] WHERE audience <> '';
 ALTER TABLE accounts.authorities DROP COLUMN audience;

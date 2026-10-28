@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import Electron from 'electron';
 
 import { spawnFile } from '@pkg/utils/childProcess';

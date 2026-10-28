@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS accounts_identities (
   issuer text NOT NULL,
   subject text NOT NULL,

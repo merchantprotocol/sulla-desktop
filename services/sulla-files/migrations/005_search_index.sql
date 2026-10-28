@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Phase 6 search index.  The JSON embedding is the portable fallback used by
 -- installations without pgvector; shipped Desktop and Server Postgres images
 -- install the native vector extension and HNSW index below.

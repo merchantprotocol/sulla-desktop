@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Empty folders are first-class Files metadata. They are not materialized in a
 -- watched host root, so they survive restarts in stored-only Desktop and server
 -- collections without inventing placeholder files.

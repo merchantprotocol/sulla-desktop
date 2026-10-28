@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * capture-loopback — captures audio from a loopback/virtual input device
  * via CoreAudio HALOutput AudioUnit.

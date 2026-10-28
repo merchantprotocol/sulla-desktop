@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { _EDIT, _VIEW } from '@pkg/config/query-params';
 import { getWidth, setWidth } from '@pkg/utils/width';
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 const encode = (value) => Buffer.from(value).toString('base64url');

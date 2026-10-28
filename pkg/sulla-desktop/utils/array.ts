@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import xor from 'lodash/xor.js';
 
 import { get, isEqual } from '@pkg/utils/object';

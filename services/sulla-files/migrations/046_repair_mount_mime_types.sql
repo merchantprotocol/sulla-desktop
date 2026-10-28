@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Files written through the Files mount were stored as application/octet-stream
 -- (the adapter never sends a type) or text/plain (empty creates), so images,
 -- video, audio and documents showed as plain files with no preview. New writes

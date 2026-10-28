@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { HookRegistry } from '../HookRegistry';
 const granted = () => true;
 describe('HookRegistry', () => {

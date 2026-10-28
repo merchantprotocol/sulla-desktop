@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 version = 2
 # Kubernetes (CRI) is a separate add-on; Docker does not need it at boot.
 disabled_plugins = ["io.containerd.grpc.v1.cri"]

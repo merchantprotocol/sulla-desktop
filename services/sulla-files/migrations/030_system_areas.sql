@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS system_area TEXT NULL;
 
 DO $$ BEGIN

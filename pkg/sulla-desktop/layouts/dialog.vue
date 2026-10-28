@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <!--
   - This layout is used by dialog boxes that do not want navigation.
   - With the help of .../pkg/sulla-desktop/window/index.ts, this also handles automatic sizing

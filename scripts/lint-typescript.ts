@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * This script launches ESLint.
  * This is only needed because cross-env does not portably support setting

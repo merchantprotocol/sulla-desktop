@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // This script creates GitHub issues when new releases of the Docker CLI are
 // found.
 

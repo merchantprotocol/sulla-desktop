@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS file_stars (
   principal_type TEXT NOT NULL CHECK (principal_type IN ('user', 'agent')),
   principal_id TEXT NOT NULL,

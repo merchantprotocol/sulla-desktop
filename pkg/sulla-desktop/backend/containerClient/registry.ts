@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { net } from 'electron';
 
 import registryAuth from '@pkg/backend/containerClient/auth';

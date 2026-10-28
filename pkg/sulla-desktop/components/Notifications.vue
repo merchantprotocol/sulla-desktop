@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <!--
   - This is a component which displays notifications which will be stacked on
   - top of each other, in a bar above the rest of the content.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { Store } from 'vuex/types';
 
 import type { Modules } from '@pkg/entry/store';

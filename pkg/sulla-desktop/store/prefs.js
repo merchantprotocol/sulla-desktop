@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { STEVE } from '@pkg/config/types';
 import { clone } from '@pkg/utils/object';
 

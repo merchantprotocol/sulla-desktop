@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Release uploader Worker. Deploy from this folder (see README.md).
 # The account is chosen by your `wrangler login` or CLOUDFLARE_ACCOUNT_ID.
 name = "sulla-release-uploader"

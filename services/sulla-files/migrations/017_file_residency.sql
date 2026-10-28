@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable per-file residency state. Remote proof rows are intentionally tied
 -- to an immutable version and exact collection-key context.
 CREATE TABLE files_remote_key_recovery (

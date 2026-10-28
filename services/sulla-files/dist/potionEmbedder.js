@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import fs from 'node:fs';
 import path from 'node:path';
 const MAGIC = 'PTN1';

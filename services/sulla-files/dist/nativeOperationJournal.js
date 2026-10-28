@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash, randomUUID } from 'node:crypto';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import { isProtectedPath, protectedPathError } from './protectedFiles.js';

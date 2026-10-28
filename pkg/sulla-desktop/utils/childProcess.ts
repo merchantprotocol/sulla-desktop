@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import {
   spawn, CommonOptions, IOType, MessagingOptions, StdioOptions, StdioNull, StdioPipe,
 } from 'node:child_process';

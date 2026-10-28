@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS recording_enrichment_jobs (
   file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   version_id UUID PRIMARY KEY REFERENCES file_versions(id) ON DELETE CASCADE,

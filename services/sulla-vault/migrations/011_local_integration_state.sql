@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS local_integration_state (
   owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   integration_id text NOT NULL,

@@ -1,10 +1,9 @@
 {
-  "name": "@sulla/accounts-service",
+  "name": "@sulla/accounts-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "sulla-accounts-bootstrap": "dist/serverBootstrapCli.js" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js"

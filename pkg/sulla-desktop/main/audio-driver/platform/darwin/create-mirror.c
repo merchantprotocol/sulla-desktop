@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * create-mirror.c — creates a Multi-Output aggregate device
  * using CoreFoundation directly (same approach as sulla-audio C++).

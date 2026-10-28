@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // @TODO replace this with popper.js...
 
 export const LEFT = 'left';

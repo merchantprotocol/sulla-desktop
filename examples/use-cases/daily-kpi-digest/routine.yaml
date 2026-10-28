@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 id: daily-kpi-digest
 name: Daily KPI digest
 description: Summarizes permitted KPI sources into a daily digest without changing source files or sending it.

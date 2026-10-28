@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { decrypt, encrypt } from './crypto.js';
 const CONTEXT = 'sulla:files:master-check:v1';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Keyset-paginated native source inventory (ORDER BY created_at, source_handle
  * LIMIT n, backed by files_native_sources_created). It replaces an unbounded

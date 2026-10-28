@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { randomUUID } from 'node:crypto';
 import { FilesBootstrapError } from './bootstrapAuthority.js';
 import { FilesMasterKeyRejectedError } from './keyring.js';

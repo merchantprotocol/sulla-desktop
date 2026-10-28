@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Human- and agent-authored placement guidance for collection roots and folders.
 -- Descriptions guide agents without restricting where they may save files.
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS description TEXT;

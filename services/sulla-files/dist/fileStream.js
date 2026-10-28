@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { decryptAndVerifyChunk, maxEncryptedChunkBytes } from './crypto.js';
 import { assertUnprotectedFile } from './protectedFiles.js';
 const CHUNK_BYTES = 4 * 1024 * 1024;

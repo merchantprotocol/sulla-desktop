@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Same schema as 026_stored_folders on the native integration branch.
 CREATE TABLE IF NOT EXISTS file_folders (
   collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,

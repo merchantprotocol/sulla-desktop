@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Update feed
 
 # Promotes a release to the update channel in the releases bucket

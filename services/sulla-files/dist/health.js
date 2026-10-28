@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * /healthz body. Desktop gates the unlock handshake on a top-level
  * `legacyImport.state`, so it must be present even before the first unlock

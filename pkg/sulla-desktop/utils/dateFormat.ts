@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Friendly date formatting utility
  * Source: https://stackoverflow.com/a/7641812

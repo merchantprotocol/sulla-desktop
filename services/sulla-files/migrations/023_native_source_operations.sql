@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable bridge state for exact native source handles. Host paths and
 -- capabilities never enter Files storage.
 CREATE TABLE files_native_source_operations (

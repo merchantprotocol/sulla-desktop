@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type { MockInstance } from 'jest-mock/build';
 
 // `Symbol.dispose` exists as of NodeJS 20; if it's unset, set it (because we

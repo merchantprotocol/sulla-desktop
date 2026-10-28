@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { FILES_BOOTSTRAP_DESTINATION, filesChallengeProofInput, filesServerProofInput, filesSessionContext, filesUnlockProofInput, } from './bootstrapProtocol.js';
 const NONCE = /^[A-Za-z0-9_-]{32,128}$/;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { uniq } from '@pkg/utils/array';
 import { sortBy } from '@pkg/utils/sort';
 
