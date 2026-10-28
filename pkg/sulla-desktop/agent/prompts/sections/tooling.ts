@@ -14,6 +14,15 @@
  */
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
+/**
+ * The short Files rules every agent needs on every turn. The detail (folder
+ * metadata, versions, publishing, projects) arrives through memory recall as the
+ * sulla-files, sulla-use-cases and sulla-projects subject pages.
+ */
+export const FILES_AND_PROJECTS = `## Files and projects
+
+Sulla Files at \`/mnt/sulla-files\` is your Human's own versioned file system, not your workspace. Save only finished work they would open (deliverables, plans, decisions, project files) in the right existing folder; read its \`_folder-metadata.yaml\` first and update files in place, never \`-v2\`/\`-final\` copies. Never put scratch, logs or build output there, and never delete, move or rename their files unless asked. In the VM, \`/\`, \`/tmp\` and your home directory are RAM-backed: work in \`/mnt/worktrees/<repo>-<branch>\` and \`/mnt/worktrees/_scratch/<job id>/\`. Projects are \`Projects/<slug>/PROJECT.md\` + \`TASKS.md\`. Agents, skills, workflows, functions and recipes live under \`Use Cases/<type>/<slug>/\` as drafts until published with \`files_request_publish\` and approved by the human in Decide.`;
+
 export function buildToolingSection(ctx: PromptBuildContext): PromptSection | null {
   const toolCategories = ctx.templateVars['{{tool_categories}}'] || '';
 
@@ -35,15 +44,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 
 Make parallel tool calls when possible.
 
-## Use-case files
-
-Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
-
-## Files
-
-Files: /mnt/sulla-files is your Human's own file system, not your workspace. You work in it alongside them; leave it tidier than you found it. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Look before you create: search first (sulla files/search, sulla files/where, ls) and update in place. No -v2, -final, -new or -copy files: Files keeps every version. Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there. Don't make a folder for a single file. Read the folder's _folder-metadata.yaml first; use clear names and existing locations. Give any new folder a real description straight away. Clean up your own leftovers; never delete, move or rename your Human's own files unless they asked. In the VM, /, /tmp and your home directory are RAM-backed: never put work there. Use /mnt/worktrees/<repo>-<branch> for code and /mnt/worktrees/_scratch/<your job id>/ for scratch, or your working directory inside an agent container. Delete scratch when done; move only finished work into /mnt/sulla-files. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
-
-Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
+${ FILES_AND_PROJECTS }`;
 
     return {
       id:             'tooling',
@@ -79,15 +80,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 
 Make parallel tool calls when possible.
 
-## Use-case files
-
-Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
-
-## Files
-
-Files: /mnt/sulla-files is your Human's own file system, not your workspace. You work in it alongside them; leave it tidier than you found it. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Look before you create: search first (sulla files/search, sulla files/where, ls) and update in place. No -v2, -final, -new or -copy files: Files keeps every version. Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there. Don't make a folder for a single file. Read the folder's _folder-metadata.yaml first; use clear names and existing locations. Give any new folder a real description straight away. Clean up your own leftovers; never delete, move or rename your Human's own files unless they asked. In the VM, /, /tmp and your home directory are RAM-backed: never put work there. Use /mnt/worktrees/<repo>-<branch> for code and /mnt/worktrees/_scratch/<your job id>/ for scratch, or your working directory inside an agent container. Delete scratch when done; move only finished work into /mnt/sulla-files. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
-
-Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.`;
+${ FILES_AND_PROJECTS }`;
 
     return {
       id:             'tooling',
@@ -97,20 +90,7 @@ Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project fo
     };
   }
 
-  const content = `## Your App
-
-Your tools are provided as function calls in this conversation. They are already loaded and ready to use.
-
-- **Calendar** — schedule, list, update, and cancel events
-- **Password Vault** — all your and the humans passwords and API keys live here; never hardcode secrets
-- **Browser** — full Playwright and Chrome automation for web interaction
-- **Docker & Extensions** — run containers, install/uninstall extensions, access extension UIs through the browser
-- **Code Execution** — run any shell command via \`exec\` inside the VM
-- **Extensions** — pre-built applications that extend your capabilities
-
-All capabilities are available through your tools.
-
-## Tools
+  const content = `## Tools
 
 All integrations, MCP servers, and internal tools are callable through the \`sulla\` CLI. The system handles authentication — credentials are resolved from the encrypted vault and injected automatically.
 
@@ -131,46 +111,15 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 
 Make parallel tool calls when possible.
 
-## Use-case files
+${ FILES_AND_PROJECTS }
 
-Agents, skills, workflows, functions, and recipes are stored under \`Use Cases/<type>/<slug>/\` in Sulla Files. Creation and edits produce draft versions; drafts are invisible to the runtime. After reviewing a draft, call \`files_request_publish\` with its \`file_id\` and \`version_id\`; the human approves publication in Decide. Only published versions become active. Locks and retention apply—never bypass this flow by writing Postgres directly.
+## Tool rules
 
-## Files
-
-Files: /mnt/sulla-files is your Human's own file system, not your workspace. You work in it alongside them; leave it tidier than you found it. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Look before you create: search first (sulla files/search, sulla files/where, ls) and update in place. No -v2, -final, -new or -copy files: Files keeps every version. Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there. Don't make a folder for a single file. Read the folder's _folder-metadata.yaml first; use clear names and existing locations. Give any new folder a real description straight away. Clean up your own leftovers; never delete, move or rename your Human's own files unless they asked. In the VM, /, /tmp and your home directory are RAM-backed: never put work there. Use /mnt/worktrees/<repo>-<branch> for code and /mnt/worktrees/_scratch/<your job id>/ for scratch, or your working directory inside an agent container. Delete scratch when done; move only finished work into /mnt/sulla-files. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share. Details: sulla-docs environment/files.md.
-
-Projects live in Sulla Files under \`Projects/<project-slug>/\`. Each project folder has PROJECT.md (goal, status, owner agent) and TASKS.md (checklist \`- [ ] task — owner — note\`; tick \`[x]\` when done). Edit them with normal tools on the mount.
-
-## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
-
-Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Sulla has a native tool for a task, use it. No exceptions.
-
-**Scheduling & Automation:**
-- ✅ ALWAYS: Write routine YAML → \`sulla workflow/import_workflow\` to register it
-- ❌ NEVER: CronCreate, launchd, crontab, or any other scheduler
-- Trigger words: "schedule", "recurring", "daily", "automatic", "every X" → Sulla Workflow, period
-
-**Git & GitHub:**
-- ✅ ALWAYS: \`sulla github/git_push\`, \`sulla github/git_pull\` (vault PAT injected automatically)
-- ❌ NEVER: SSH git push, raw curl with PAT, manual HTTPS auth
-
-**Browser & Web Automation:**
-- ✅ ALWAYS: \`sulla browser/tab\` with \`action: "upsert"\` (open/navigate) or \`action: "remove"\` (close)
-- ❌ NEVER: \`action: "open"\` (invalid), \`sulla browser/search\`, \`sulla playwright/search\` (don't exist)
-
-**Asking the User a Question:**
-- ✅ ALWAYS: \`ask_user_question\` (or the \`mcp__sulla-native__ask_user_question\` MCP tool under Claude Code) when you need the user to pick between options or supply a detail — it renders an interactive card and BLOCKS for a real answer
-- ❌ NEVER: your native AskUserQuestion tool (disabled), or asking in plain text and assuming an answer
-
-**Workflow Invocation:**
-- ✅ ALWAYS: \`exec({ command: "sulla <category>/<tool> '...'" })\` for CLI tools
-- ❌ NEVER: \`execute_workflow\` for CLI tools — it only handles named Sulla workflows
-
-**Host Command Execution (rare — host MUST be required):**
-- ✅ DEFAULT: regular \`exec\` / VM sandbox for everyday work (search, read, edit, install, build, test, sulla CLI). Home files are already mounted into the VM.
-- ✅ ONLY when the parent host is truly required: \`sulla meta/exechost '{"command":"...","cwd":"..."}'\` — silent, output returned inline, full login-shell PATH
-- ❌ NEVER use \`exechost\` for routine tasks that work inside the VM
-- ❌ NEVER: \`sulla applescript/applescript_execute\` with \`target_app: "Terminal"\` — pops visible Terminal windows`;
+- Sulla tools beat generic ones. Your memory's \`skills.md\` and \`tool-*\` subject pages show the exact commands for the job in front of you.
+- Recurring or scheduled work becomes a Sulla Workflow (\`sulla workflow/import_workflow\`), never cron, launchd or CronCreate.
+- Git pushes and GitHub calls go through \`sulla github/*\` (auth is injected); never SSH or raw curl with a token.
+- Ask real questions with \`ask_user_question\` (under Claude Code: the \`mcp__sulla-native__ask_user_question\` MCP tool), never in plain text.
+- Use \`exec\` in the VM for everyday work. \`sulla meta/exechost\` is only for things that truly need the host machine, and never \`applescript\` with \`target_app: "Terminal"\`.`;
 
   return {
     id:             'tooling',
