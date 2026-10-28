@@ -12,9 +12,10 @@ scope: [tool-marketplace]
 **Do:**
 1. Search the catalog first: `sulla marketplace/search '{"query":"<terms>","kinds":["workflow","skill","function"],"limit":25}'`; inspect one listing with `sulla marketplace/info '{"kind":"<kind>","slug":"<slug>"}'`.
 2. List local artifacts with `sulla marketplace/list_local '{}'`; list your submissions with `sulla marketplace/list_published '{}'`.
-3. Compare an installed artifact: `sulla marketplace/diff '{"kind":"<kind>","slug":"<slug>"}'`.
-4. Update only after reviewing the replacement: `sulla marketplace/update '{"kind":"<kind>","slug":"<slug>"}'`.
-5. Unpublish only after checking the result and supplying `confirm:true`; this removes a listing but does not delete the local copy.
+3. Create an installable memory pack with `sulla marketplace/scaffold '{"kind":"skill","slug":"<slug>","memory_pack":true}'`. Edit its `SKILL.md` and `memory/` files, increment the memory manifest version, then validate it with `sulla marketplace/validate '{"kind":"skill","slug":"<slug>"}'`.
+4. Compare an installed artifact: `sulla marketplace/diff '{"kind":"<kind>","slug":"<slug>"}'`.
+5. Update only after reviewing the replacement: `sulla marketplace/update '{"kind":"<kind>","slug":"<slug>"}'`.
+6. Unpublish removes a public listing: show the exact listing and ask once with `ask_user_question`; only after **Approve**, call it with `confirm:true`. It does not delete the local copy.
 
 **Tools:**
 <!-- tools:generated:start -->

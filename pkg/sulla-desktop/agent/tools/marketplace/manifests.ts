@@ -55,6 +55,7 @@ export const marketplaceToolManifests: ToolManifest[] = [
       name:        { type: 'string', optional: true, description: 'Display name. Defaults to the slug.' },
       description: { type: 'string', optional: true, description: 'One-line description for the manifest.' },
       runtime:     { type: 'string', optional: true, description: 'Function-only: python | node | shell. Default python.' },
+      memory_pack: { type: 'boolean', optional: true, description: 'Skill-only: scaffold SKILL.md plus a minimal valid memory/ pack.' },
     },
     operationTypes: ['create'],
     loader:         () => import('./scaffold'),
