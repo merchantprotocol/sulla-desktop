@@ -1,0 +1,30 @@
+id: broadsheet-weekly
+name: Broadsheet weekly content batch
+description: Extends the existing content calendar and prepares owner-reviewable drafts.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekly content batch
+      config: {triggerType: schedule, frequency: weekly, dayOfWeek: 1, hour: 9, minute: 0, timezone: ""}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Draft the next batch
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Read the existing content calendar and approved source material in Files. Extend the calendar horizon, draft channel-native posts in the owner's voice, and save drafts. Do not post, schedule, send, or edit source files.
+        successCriteria: Existing calendar extended with source-linked drafts and no external writes.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}
