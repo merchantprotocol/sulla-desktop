@@ -1,20 +1,22 @@
 ---
 slug: sulla-tool-vault
 label: Use the Sulla Vault tools
-trigger_when: When you need to inspect vault metadata and autofill credentials without exposing secret values.
+trigger_when: When you need to inspect, connect, test, select, or safely use a vaulted integration credential without exposing its secret.
 trigger_actions: [vault, vault tool]
-trigger_phrases: [vault, vault tools, use vault, manage vault, check vault]
+trigger_phrases: [vault, vault tools, use vault, manage vault, check vault, connect GitHub, test my API key, OAuth, saved password]
 scope: [tool-vault]
 ---
 
 **When:** When you need to inspect vault metadata and autofill credentials without exposing secret values.
 
 **Do:**
-1. List safe credential metadata: `sulla vault/list '{}'` or API-key metadata with `sulla vault/list_api_keys '{}'`.
-2. Check an integration: `sulla vault/is_enabled '{"account_type":"<account-type>"}'`; list accounts with `sulla vault/list_accounts '{"account_type":"<account-type>"}'`.
-3. Autofill an approved browser login: `sulla vault/autofill '{"origin":"https://example.com"}'`.
-4. Call an integration's API through the vault, which injects its auth: `sulla vault/request '{"account_type":"<account-type>","method":"GET","path":"/"}'`. Only call integrations the human has enabled.
-5. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
+1. If the human is connecting or repairing an integration, open the setup screen: `sulla ui/open_tab '{"mode":"integrations"}'`. OAuth and token entry happen there; never ask for a secret in chat.
+2. List safe credential metadata: `sulla vault/list '{}'` or API-key metadata with `sulla vault/list_api_keys '{}'`.
+3. Check an integration: `sulla vault/is_enabled '{"account_type":"<account-type>"}'`; list accounts with `sulla vault/list_accounts '{"account_type":"<account-type>"}'`.
+4. Autofill an approved browser login: `sulla vault/autofill '{"origin":"https://example.com"}'`.
+5. Call a generic saved API key through the vault broker: first run `sulla vault/list_api_keys '{}'`, then use the returned id with `sulla vault/request '{"item":"<item-id>","method":"GET","url":"https://api.example.com/v1/resource"}'`. Only call integrations the human has enabled.
+6. For a native integration or MCP server, use `sulla meta/browse_tools '{"query":"<service> API"}'` and copy the returned `sulla <account_id>/<slug>` or `sulla <account_id>/mcp/<tool>` command.
+7. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
 
 **Tools:**
 <!-- tools:generated:start -->
@@ -29,6 +31,8 @@ scope: [tool-vault]
 - `sulla vault/set_active_account '{"account_type":"<account_type>","account_id":"<account_id>"}'`: Set which account is active for an integration. After setting the active account, all subsequent tool calls for that integration will automatically use its credentials. Use vault/list_accounts first to see available accounts. Required: account_type, account_id. Optional: none.
 - `sulla vault/set_credential '{"account_type":"<account_type>","property":"<property>","value":"<value>"}'`: Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials. Cannot change llm_access (user-only); overwriting an existing secret requires confirm:true. Required: account_type, property, value. Optional: account_id, confirm.
 <!-- tools:generated:end -->
+
+**Check:** `vault/is_enabled` reports connected, `vault/list_accounts` identifies the intended active account, and a read-only broker/proxy call returns data without a secret value.
 
 **Don't:**
 - Don't invent tool names or parameters; check the live catalog when a command is unclear.
