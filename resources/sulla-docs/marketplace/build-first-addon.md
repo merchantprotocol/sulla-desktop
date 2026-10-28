@@ -88,3 +88,13 @@ Skills, workflows, and recipes may declare a hook only by referencing an install
 - **Recipe fails validation:** `installation.yaml` is the recipe manifest and must include `slug`, `version`, and a compose file that exists in the bundle.
 - **Integration auth filename rejected:** use exactly `<slug>.v<N>-auth.yaml`; endpoint files use `<name>.v<N>.yaml`.
 - **Publish unavailable:** sign in to Sulla Cloud; local scaffold and validation still work without a marketplace submission.
+
+## How review works
+
+Every new submission and every version update starts in **Pending**. The marketplace backend validates the kind-specific manifest, enforces package size limits, scans for likely credentials and private keys, and records declared hooks, permissions, network hosts, and shell-use risk flags. A failed automated review cannot be approved.
+
+A Sulla Cloud administrator reviews that report and the submitted file inventory, then chooses **Approve**, **Request changes**, or **Reject**. Review notes appear in `sulla marketplace/list_published '{}'` so the author knows what to fix. Requesting changes or rejecting never makes the submitted version available to users.
+
+Approval signs the exact approved manifest and package bytes with the marketplace Ed25519 key. The private key exists only in the Worker secret `MARKETPLACE_SIGNING_KEY`; it is never stored in a repository or Desktop build. Desktop verifies the integrity hash and signature before installing marketplace skills, functions, workflows, recipes, agents, integrations, and packages. Unsigned or changed marketplace downloads are refused. Local unpublished artifacts are not affected.
+
+An update is a new reviewable version. Existing users continue to receive the last approved version until the update is approved.
