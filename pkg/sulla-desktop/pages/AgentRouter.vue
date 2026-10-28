@@ -25,8 +25,12 @@
         :bookmarks-open="bookmarksOpen"
         :chat-files-open="chatFilesOpen"
         :rail-apps="railApps"
+        :extensions="railExtensions"
         @set-mode="onModeRailSelect"
         @open-rail-app="openRailApp"
+        @open-extension="openExtension"
+        @extension-permissions="openExtensionPermissions"
+        @remove-extension="removeExtensionFromRail"
         @toggle-bookmarks="toggleBookmarks()"
         @toggle-chat-files="toggleChatFiles()"
       />
@@ -226,6 +230,21 @@ interface RecipeRailApp {
   slug: string; label: string; icon: string; url: string;
   level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;
 }
+interface ExtensionRailItem { extensionId:string; id:string; label:string; icon?:string; component:string; tooltip?:string }
+const railExtensions = ref<ExtensionRailItem[]>([]);
+async function refreshRailExtensions(){
+  const [items, permissions] = await Promise.all([ipcRenderer.invoke('extensions-ui:list','sidebar_entry'), ipcRenderer.invoke('extension-permissions:list')]);
+  const hidden = new Set(permissions.filter(item=>item.hiddenFromRail).map(item=>item.extensionId));
+  const extensionNames = Object.fromEntries(permissions.map(item=>[item.extensionId,item.name]));
+  railExtensions.value = items.filter(item=>!hidden.has(item.extensionId)).map(item=>({...item,tooltip:`${item.label} · ${extensionNames[item.extensionId]||item.extensionId}`}));
+}
+function openExtension(item:ExtensionRailItem){ window.dispatchEvent(new CustomEvent('sulla:open-extension-ui',{detail:item})); }
+function openExtensionPermissions(){ openSingleTab('preferences','extensions'); }
+async function removeExtensionFromRail(item:ExtensionRailItem){
+  await ipcRenderer.invoke('extension-permissions:set-rail-hidden',{extensionId:item.extensionId,hidden:true});
+  railExtensions.value=railExtensions.value.filter(candidate=>candidate.extensionId!==item.extensionId);
+}
+
 const railApps = ref<RecipeRailApp[]>([]);
 
 function setRailApps(_event: unknown, next: RecipeRailApp[]) {
@@ -630,6 +649,7 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  void refreshRailExtensions();
   ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
   ipcRenderer.on('startup-progress' as any, onBootSnapshot);

@@ -11,7 +11,7 @@ export const EXTENSION_HOOKS = {
 } as const;
 export type ExtensionHookName = keyof typeof EXTENSION_HOOKS;
 export interface HookDecision<T> { value: T; denied?: boolean; reason?: string }
-export interface HookAuditEvent { extensionId: string; hook: ExtensionHookName; outcome: 'ok'|'denied'|'error'|'timeout'|'permission_denied'; durationMs: number; detail?: string }
+export interface HookAuditEvent { extensionId: string; hook: ExtensionHookName; outcome: 'ok'|'denied'|'error'|'timeout'|'permission_denied'; durationMs: number; timestamp: number; detail?: string }
 export interface HookRegistration<T = unknown> { extensionId: string; hook: ExtensionHookName; priority?: number; timeoutMs?: number; handler: (value: Readonly<T>) => unknown | Promise<unknown> }
 export interface HookRegistryOptions { granted?: (extensionId: string, hook: ExtensionHookName) => boolean | Promise<boolean>; audit?: (event: HookAuditEvent) => void; defaultTimeoutMs?: number }
 
@@ -96,7 +96,7 @@ export class HookRegistry {
     } finally { if (timer) clearTimeout(timer) }
   }
   private audit(entry: HookRegistration, outcome: HookAuditEvent['outcome'], started: number, detail?: string): void {
-    const event = { extensionId: entry.extensionId, hook: entry.hook, outcome, durationMs: Date.now() - started, detail };
+    const event = { extensionId: entry.extensionId, hook: entry.hook, outcome, durationMs: Date.now() - started, timestamp: Date.now(), detail };
     try { this.options.audit?.(event) } catch { /* audit sinks never affect core */ }
     try { console.info('[ExtensionHookAudit]', JSON.stringify(event)) } catch { /* best-effort */ }
   }
@@ -107,7 +107,21 @@ async function persistedGrant(extensionId: string, hook: ExtensionHookName): Pro
   const grants = await SullaSettingsModel.get('extensionHookGrants', {});
   return grants?.[extensionId]?.[hook] === true;
 }
-export const extensionHooks = new HookRegistry({ granted: persistedGrant });
+const AUDIT_LIMIT = 500;
+let auditWrite = Promise.resolve();
+async function persistAuditEvent(event: HookAuditEvent): Promise<void> {
+  const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+  const current = await SullaSettingsModel.get('extensionHookAuditEvents', []);
+  await SullaSettingsModel.set('extensionHookAuditEvents', [...(current || []), event].slice(-AUDIT_LIMIT), 'json');
+}
+function queueAuditEvent(event: HookAuditEvent): void {
+  auditWrite = auditWrite.then(() => persistAuditEvent(event)).catch(error => console.warn('[ExtensionHookAudit] Could not persist event', error));
+}
+export async function listExtensionHookAuditEvents(): Promise<HookAuditEvent[]> {
+  const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+  return await SullaSettingsModel.get('extensionHookAuditEvents', []);
+}
+export const extensionHooks = new HookRegistry({ granted: persistedGrant, audit: queueAuditEvent });
 
 /** Persist the user's install/first-use decision for one extension hook. */
 export async function setExtensionHookGrant(extensionId: string, hook: ExtensionHookName, granted: boolean): Promise<void> {
