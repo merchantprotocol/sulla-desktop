@@ -71,6 +71,12 @@ sulla marketplace/download '{"kind":"integration","slug":"acme"}'
 
 Validation must succeed before publication. Installation is transactional: download to staging, verify archive signature and hash, validate the manifest and declared entry, then activate the version. Verification failure leaves the prior version active.
 
+### Marketplace review signing
+
+After review approves the exact package bytes, the Marketplace service computes the canonical `integrity` value, signs that UTF-8 value with its offline Ed25519 private key, and writes the key id and base64 signature into the manifest. Desktop ships only the matching public keys in `resources/trusted-integration-publishers.json`; private keys must never enter this repository or a Desktop build.
+
+**Jonathon key-custody step:** create the production Ed25519 signing key in the Marketplace release environment/HSM, retain and back up the private key there, and publish only its PEM public key plus key id in the trusted-publisher file. Until that public key is added, third-party packages correctly fail closed as untrusted.
+
 ## Example entry
 
 ```js

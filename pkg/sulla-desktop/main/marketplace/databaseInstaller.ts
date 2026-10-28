@@ -16,6 +16,8 @@ import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactM
 import type { MarketplaceTemplateDetail } from '@pkg/main/marketplace/client';
 
 import type { PoolClient } from 'pg';
+import { IntegrationPackageLoader, integrationGrantStore, trustedPublisherVerifier } from '@pkg/agent/integrations/packageLoader';
+import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agent/integrations/packageLoader';
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
@@ -172,7 +174,9 @@ export function bundleToArtifact(kind: InstallableKind, files: Record<string, St
   case 'integration': {
     const manifestName = integrationManifestName(files);
     if (!manifestName) throw new Error(`${ slug } is missing integration.yaml or a versioned integration manifest`);
-    return { manifest: parseYamlFile(files, [manifestName], slug), files };
+    const packageFiles = { ...files };
+    delete packageFiles[manifestName];
+    return { manifest: parseYamlFile(files, [manifestName], slug), files: packageFiles };
   }
   case 'recipe': return { manifest: parseYamlFile(files, ['installation.yaml', 'manifest.yaml'], slug), files };
   case 'agent': {
@@ -181,6 +185,43 @@ export function bundleToArtifact(kind: InstallableKind, files: Record<string, St
     return { manifest: JSON.parse(raw), files };
   }
   }
+}
+
+function publisherKeysPath(): string {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (resourcesPath) return path.join(resourcesPath, 'resources', 'trusted-integration-publishers.json');
+  return path.resolve(process.cwd(), 'resources', 'trusted-integration-publishers.json');
+}
+
+function packageFileBuffers(files: Record<string, StoredFile>): Record<string, string | Buffer> {
+  return Object.fromEntries(Object.entries(files).map(([name, value]) => [name,
+    typeof value === 'string' ? value : value.encoding === 'base64' ? Buffer.from(value.content, 'base64') : value.content,
+  ]));
+}
+
+/** Verify signed integration code, then persist the immutable package rather than an editable catalog definition. */
+export async function installIntegrationPackage(
+  detail: MarketplaceTemplateDetail,
+  artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
+  verifier: IntegrationSignatureVerifier = trustedPublisherVerifier(publisherKeysPath()),
+  database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
+): Promise<{ installed: boolean; reason?: string }> {
+  const manifest = artifact.manifest as IntegrationPackage['manifest'];
+  const pkg: IntegrationPackage = {
+    manifest,
+    files: packageFileBuffers(artifact.files),
+    integration: { id: manifest.id } as IntegrationPackage['integration'],
+  };
+  const loader = new IntegrationPackageLoader(integrationGrantStore, { request: async() => { throw new Error('Integration proxy is unavailable during install') } }, verifier);
+  await loader.verifyPackage(pkg);
+  if (manifest.id !== detail.slug) throw new Error(`Integration package id "${ manifest.id }" does not match marketplace slug "${ detail.slug }"`);
+  return database.transaction(async(client) => {
+    const existing = await client.query('SELECT 1 FROM integration_packages WHERE id=$1 AND version=$2', [manifest.id, manifest.version]);
+    if (existing.rowCount) return { installed: false, reason: 'already installed' };
+    await client.query(`INSERT INTO integration_packages (id,version,template_id,manifest,files)
+      VALUES ($1,$2,$3,$4::jsonb,$5::jsonb)`, [manifest.id, manifest.version, detail.id, JSON.stringify(manifest), JSON.stringify(artifact.files)]);
+    return { installed: true };
+  });
 }
 
 async function artifactExists(client: PoolClient, kind: InstallableKind, slug: string): Promise<{ exists: boolean; userEdited: boolean }> {
@@ -294,6 +335,7 @@ export async function installStandaloneArtifact(
   overwrite = false,
 ): Promise<{ installed: boolean; reason?: string }> {
   if (detail.kind === 'package') throw new Error('Packages must be installed with installPackageManifest');
+  if (detail.kind === 'integration') return installIntegrationPackage(detail, artifact);
   const result = await postgresClient.transaction(client => installArtifact(client, {
     kind:       detail.kind as InstallableKind,
     slug:       detail.slug,

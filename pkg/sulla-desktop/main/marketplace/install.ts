@@ -176,7 +176,7 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
     return {
       kind:             detail.kind,
       slug:             detail.slug,
-      path:             `database:${ detail.kind === 'routine' ? 'workflows' : `${ detail.kind }_definitions` }/${ detail.slug }`,
+      path:             detail.kind === 'integration' ? `database:integration_packages/${ detail.slug }` : `database:${ detail.kind === 'routine' ? 'workflows' : `${ detail.kind }_definitions` }/${ detail.slug }`,
       name:             detail.name ?? detail.slug,
       version:          detail.version,
       alreadyInstalled: !outcome.installed,

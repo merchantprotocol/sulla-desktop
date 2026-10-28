@@ -226,6 +226,8 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'integration-grants:grant': (input: { id: string; version: string; permissions: string[] }) => void;
+  'integration-grants:revoke': (input: { id: string; version: string }) => void;
   'agent-tab:ready': (payload: { contractId: string; threadId: string }) => {
     messages: {
       id?:        string;
