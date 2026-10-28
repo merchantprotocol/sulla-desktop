@@ -84,7 +84,7 @@ jest.unstable_mockModule('../sullaFilesSourceGateway', () => ({
 }));
 jest.unstable_mockModule('../sullaFilesTls', () => ({ desktopFilesFetch, FILES_HTTPS_ORIGIN: 'https://127.0.0.1:30124' }));
 jest.unstable_mockModule('@pkg/agent/utils/sullaPaths', () => ({
-  resolveSullaDocsDir:          () => dirs.docs,
+  resolveMemorySeedDir:          () => dirs.docs,
   resolveSullaFunctionsDir:     () => dirs.functions,
   resolveSullaUserAgentsDir:    () => dirs.agents,
   resolveSullaUserSkillsDir:    () => dirs.skills,

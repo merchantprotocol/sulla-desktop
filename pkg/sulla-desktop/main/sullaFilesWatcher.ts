@@ -24,7 +24,6 @@ import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 
-import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -192,10 +191,8 @@ class SullaFilesWatcher {
 
   /** Native handles stay in Electron; guests only see Files identities and encrypted snapshots. */
   private readonly systemIngest = new SullaFilesSystemIngestJob({
-    // Read-only input: the bundled Sulla docs.
-    sources: () => [
-      { area: 'sulla', lane: 'sulla', root: resolveSullaDocsDir(), prefix: 'Docs/', filter: () => true, ignore: rel => ignored(rel, DEFAULT_IGNORES) },
-    ],
+    // No bundled documentation is mirrored into Files.
+    sources: () => [],
     fetchAreas: async() => {
       const response = await this.rawLocalRequest('/v1/local/system-areas');
       if (!response.ok) throw new Error(`System collections unavailable (${ response.status })`);
@@ -393,14 +390,6 @@ class SullaFilesWatcher {
     }
     // Enrollment talks to Files and must not race the locked boot state.
     // unlockService() enrolls every stored root after secure bootstrap succeeds.
-    try {
-      const docsRoot = resolveSullaDocsDir();
-      this.docsWatcher = fs.watch(docsRoot, { recursive: process.platform !== 'linux', persistent: false }, () => {
-        this.systemIngest.nudge('sulla');
-      });
-    } catch (error) {
-      console.warn('[SullaFiles] bundled docs watcher unavailable; periodic native scans remain active:', error);
-    }
     this.safetyTimer = setInterval(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] periodic rescan failed:', error)), 5 * 60_000); this.safetyTimer.unref();
     this.badgeTimer = setInterval(() => this.refreshFinderBadges().catch(error => console.debug('[SullaFiles] Finder badge refresh failed:', error)), FINDER_BADGE_MIN_INTERVAL_MS + 5_000); this.badgeTimer.unref();
     setTimeout(() => this.notifyRescan().catch(error => console.debug('[SullaFiles] startup rescan failed:', error)), 2_000).unref();

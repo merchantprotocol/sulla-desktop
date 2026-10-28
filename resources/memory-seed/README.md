@@ -1,7 +1,7 @@
 # Sulla memory seed
 
 This folder is what a fresh Sulla Desktop install knows about itself. It replaces
-`resources/sulla-docs`. A versioned seeder (`agent/database/seeders/MemorySeedSeeder.ts`)
+the retired `Docs/` reference pack. A versioned seeder (`agent/database/seeders/MemorySeedSeeder.ts`)
 loads it into the v7 subject memory (`subject_memory` schema). Recall then hands
 agents the parts that matter for the current turn, instead of putting a large
 environment block in every system prompt.

@@ -213,4 +213,4 @@ These do not block the architecture spike, but they must be decided before produ
 - `services/sulla-workflows/`, `pkg/sulla-desktop/agent/services/WorkflowManagerClient.ts` and workflow tools — manager, runners, schedules and execution state.
 - `pkg/sulla-desktop/agent/tools/function/` and `pkg/sulla-desktop/backend/onDemandServices.ts` — function materialization and runtime containers.
 - `pkg/sulla-desktop/agent/services/AgentContainerLauncher.ts` and agent spawn tools — delegated container agents and isolation assumptions.
-- `resources/sulla-docs/{extensions.md,marketplace/overview.md,tools/marketplace.md,environment/files-harness.md,environment/files.md}` — extension compatibility, install paths and Files security/lifecycle contracts.
+- `docs/extension-contract-v1.md and the memory seed pack` — extension compatibility, install paths and Files security/lifecycle contracts.
