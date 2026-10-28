@@ -1,0 +1,64 @@
+id: web-lead-capture-crm
+name: Web lead capture to CRM
+description: Reviews new web-form leads, normalizes them, and prepares CRM records for approval.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1700000000000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: manual
+      category: trigger
+      label: New lead review
+      config:
+        triggerType: manual
+        triggerDescription: Run after a form provider reports new submissions.
+  - id: node-1700000001000
+    type: workflow
+    position: { x: 400, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Normalize and deduplicate
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Read the supplied web-form submission using the connected form or inbox integration.
+          Normalize name, email, company, phone, source, and message; flag missing or suspicious
+          values and check the connected CRM for an existing matching email. Do not create or update
+          any CRM record yet. Return a proposed record and the deduplication result.
+        successCriteria: A complete proposed CRM record with duplicate status and validation notes.
+        orchestratorInstructions: Follow the prompt exactly and return the requested evidence.
+        completionContract: default
+  - id: node-1700000002000
+    type: workflow
+    position: { x: 700, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare CRM handoff
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Present the proposed lead record and duplicate result for owner review. If approved in the
+          current run, use only the connected CRM's least-privilege create/update operation and report
+          the returned record id. If not approved, leave the CRM unchanged and return the exact
+          payload ready for a human to approve later.
+        successCriteria: Either a human-approved CRM record id or an explicit no-write proposal.
+        orchestratorInstructions: Follow the prompt exactly and return the requested evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1700000000000
+    target: node-1700000001000
+    sourceHandle: out
+    targetHandle: in
+  - id: e2
+    source: node-1700000001000
+    target: node-1700000002000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }
