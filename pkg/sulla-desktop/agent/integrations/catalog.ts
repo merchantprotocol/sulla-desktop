@@ -15,12 +15,17 @@
 
 import { loadCatalogWithDatabase } from './loader';
 import { nativeIntegrations } from './native';
+import { firstPartyPackage, loadFirstPartyPackage } from './packageLoader';
 
 import type { Integration } from './types';
 
 export type { Integration } from './types';
 
-const builtinIntegrations: Record<string, Integration> = { ...nativeIntegrations };
+const builtinIntegrations: Record<string, Integration> = {};
+for (const native of Object.values(nativeIntegrations)) {
+  const loaded = loadFirstPartyPackage(firstPartyPackage(native));
+  builtinIntegrations[loaded.id] = loaded;
+}
 
 export const integrations: Record<string, Integration> = { ...builtinIntegrations };
 

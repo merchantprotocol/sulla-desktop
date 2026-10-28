@@ -391,8 +391,23 @@ export class AgentNode extends BaseNode {
       // Now execute tool calls — tool cards appear after text in the UI
       await this.processPendingToolCalls(state, reply);
 
+      // return_result owns delegated completion. End this graph turn immediately
+      // instead of asking the provider for a redundant final message after the
+      // contract is already durable and delivered.
+      if ((state.metadata as any).delegatedContractReturned) {
+        return '<AGENT_DONE>\nContract returned to the parent.\n</AGENT_DONE>';
+      }
+
       return reply.content || null;
     } catch (error) {
+      // A valid returned contract wins over any later provider/container loss.
+      // The result is already durable; publishing a failure banner here would
+      // turn a successful child into a false failed request in the parent chat.
+      if ((state.metadata as any).delegatedContractReturned) {
+        console.warn('[AgentNode] Ignoring post-return execution error:', error instanceof Error ? error.message : String(error));
+        return '<AGENT_DONE>\nContract returned to the parent.\n</AGENT_DONE>';
+      }
+
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
 

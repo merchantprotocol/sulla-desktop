@@ -1,0 +1,32 @@
+id: hello-workflow
+name: Hello workflow
+description: Runs one greeting step.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger-1
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: manual
+      category: trigger
+      label: Manual trigger
+      config: {}
+  - id: agent-1
+    type: workflow
+    position: { x: 400, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Say hello
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Say hello in one sentence.
+edges:
+  - id: e1
+    source: trigger-1
+    target: agent-1
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

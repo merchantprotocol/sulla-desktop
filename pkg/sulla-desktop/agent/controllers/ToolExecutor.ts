@@ -20,6 +20,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { extensionHooks } from '../extensions/HookRegistry';
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -173,7 +174,16 @@ export class ToolExecutor {
 
       const toolRunId = call.id || `${ call.name }_${ Date.now() }_${ Math.random().toString(36).substr(2, 9) }`;
       const toolName = call.name;
-      const args = call.args;
+      const beforeHook = await extensionHooks.runFilter('before_tool_call', { toolName, args: call.args, toolRunId });
+      const args = (beforeHook.value as any).args;
+      if (beforeHook.denied) {
+        const error = `Extension denied tool call: ${ beforeHook.reason || toolName }`;
+        await this.emitToolCallEvent(state, toolRunId, toolName, args);
+        await this.emitToolResultEvent(state, toolRunId, false, error);
+        await this.appendToolResultMessage(state, toolName, { toolName, success: false, error, toolCallId: toolRunId });
+        results.push({ toolName, success: false, error });
+        continue;
+      }
 
       // --- Consecutive loop detection ---
       // Block only after the same exact call has been made LOOP_THRESHOLD times
@@ -289,6 +299,7 @@ export class ToolExecutor {
           });
           results.push({ toolName, success: toolSuccess, result, error: toolError });
           this.pushToTranscript(toolName, toolSuccess, toolError, result);
+          await extensionHooks.runAction('after_tool_call', { toolName, args, toolRunId, success: toolSuccess, result, error: toolError });
 
           this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
@@ -371,9 +382,14 @@ export class ToolExecutor {
     for (const call of toolCalls) {
       const toolRunId = call.id || `${ call.name }_${ Date.now() }_${ Math.random().toString(36).substr(2, 9) }`;
       const toolName = call.name;
-      const args = call.args;
+      const beforeHook = await extensionHooks.runFilter('before_tool_call', { toolName, args: call.args, toolRunId });
+      const args = (beforeHook.value as any).args;
 
       await this.emitToolCallEvent(state, toolRunId, toolName, args);
+      if (beforeHook.denied) {
+        launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: `Extension denied tool call: ${ beforeHook.reason || toolName }` }), started: Date.now() });
+        continue;
+      }
 
       // Loop detection — same rule as the sequential path.
       const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
@@ -470,6 +486,7 @@ export class ToolExecutor {
         });
         results.push({ toolName, success: toolSuccess, result, error: toolError });
         this.pushToTranscript(toolName, toolSuccess, toolError, result);
+        await extensionHooks.runAction('after_tool_call', { toolName, args, toolRunId, success: toolSuccess, result, error: toolError });
         this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
         const convId = (state.metadata as any).conversationId;

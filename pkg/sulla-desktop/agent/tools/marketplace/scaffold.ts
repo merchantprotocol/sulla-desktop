@@ -24,6 +24,9 @@ export class MarketplaceScaffoldWorker extends BaseTool {
     const name = typeof input.name === 'string' ? input.name.trim() : slug;
     const description = typeof input.description === 'string' ? input.description.trim() : '';
     const runtime = typeof input.runtime === 'string' ? input.runtime.trim().toLowerCase() : 'python'; // function-only
+    if (kind === 'function' && !['python', 'node', 'shell'].includes(runtime)) {
+      return { successBoolean: false, responseString: `Invalid function runtime "${ runtime }". Choose python or node (shell is also supported).` };
+    }
 
     if (!isArtifactKind(kind)) {
       return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
@@ -80,13 +83,15 @@ function generateSkeleton(
   switch (kind) {
   case 'skill':
     return {
-      [KIND_LAYOUTS.skill.manifest]: `# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
+      [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\n---\n# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
     };
 
   case 'function': {
     const ext = ctx.runtime === 'node' ? 'js' : ctx.runtime === 'shell' ? 'sh' : 'py';
     const handlerLine = ctx.runtime === 'shell' ? 'main.sh' : `main.${ ext }::handler`;
     const yaml = `apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
 kind: Function
 id: function-${ ctx.slug }
 slug: ${ ctx.slug }
@@ -123,7 +128,9 @@ spec:
 
   case 'workflow':
     return {
-      [KIND_LAYOUTS.workflow.manifest]: `id: ${ ctx.slug }
+      [KIND_LAYOUTS.workflow.manifest]: `sullaApi: ^1.0.0
+hooks: []
+id: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this workflow does.' }
 version: "1"
@@ -181,17 +188,41 @@ tools:
 
   case 'recipe':
     return {
-      [KIND_LAYOUTS.recipe.manifest]: `slug: ${ ctx.slug }
+      [KIND_LAYOUTS.recipe.manifest]: `sullaApi: ^1.0.0
+hooks: []
+slug: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this recipe does.' }
 version: "1.0.0"
 publisher: ""
 categories: []
 icon: icon.png
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f \${COMPOSE_FILE} up -d
+  stop: docker compose -f \${COMPOSE_FILE} down
+  status: docker compose -f \${COMPOSE_FILE} ps
 extra_urls: []
 `,
-      'docker-compose.yml': `version: "3.9"\nservices:\n  ${ ctx.slug }:\n    image: ghcr.io/your-org/${ ctx.slug }:latest\n    ports:\n      - "PORT:PORT"\n    restart: unless-stopped\n`,
-      'installation.yaml':  `pre_install: []\npost_install: []\n`,
+      'docker-compose.yml': `services:
+  ${ ctx.slug }:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+`,
+      'installation.yaml':  `slug: ${ ctx.slug }
+name: ${ ctx.name }
+description: ${ ctx.description || 'TODO: describe what this recipe does.' }
+version: "1.0.0"
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f \${COMPOSE_FILE} up -d
+  stop: docker compose -f \${COMPOSE_FILE} down
+  status: docker compose -f \${COMPOSE_FILE} ps
+`,
     };
 
   case 'integration': {

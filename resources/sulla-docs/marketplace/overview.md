@@ -2,7 +2,13 @@
 
 **Use Cases** is the user-facing name for the marketplace. The Use Cases tab lists ready-made jobs (skills, workflows, agents, functions, recipes) you can install. A **recipe** is one kind of Use Case: a Docker Compose configuration that runs a service in Sulla VM. Say "Use Cases" to users, and use "recipe" only when you mean the Docker Compose kind.
 
-**Use Cases are installed into Postgres.** The marketplace installer stores agents, skills, workflows, functions, integrations, and recipes in their database definition tables; the Use Cases view and `marketplace/list_local` read those records. Files may hold authoring drafts, but marketplace installation does not read or write `Use Cases/<type>/<slug>/` as its runtime source. The legacy `~/sulla` folders are not used by marketplace installs.
+Service integrations are signed code packages, not database catalog rows or loose configuration files. See [Integration packages](integration-packages.md) for the manifest, Marketplace install flow, user grants and vault boundary.
+
+**Two ways a Use Case reaches the runtime:**
+- **Marketplace installs go into Postgres.** The marketplace installer (`marketplace/download`, the Use Cases tab) writes agents, skills, workflows, functions, integrations and recipes straight into their database definition tables. The Use Cases view and `marketplace/list_local` read those records.
+- **Agent-authored Use Cases go through Files.** When an agent creates or edits one, it writes under `Use Cases/<type>/<slug>/` in Sulla Files as a draft. The human approves publication in Decide, and only published versions become active. See [files-harness.md](../environment/files-harness.md) for drafts, publish requests and rollback.
+
+Neither path reads the legacy `~/sulla` folders.
 
 ## What a recipe is
 

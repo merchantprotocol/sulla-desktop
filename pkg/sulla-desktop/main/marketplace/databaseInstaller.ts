@@ -317,6 +317,10 @@ async function refreshRuntimeCatalogs(kinds: InstallableKind[]): Promise<void> {
       const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
       await refreshIntegrationCatalog();
     }
+    if (kinds.includes('function') || kinds.includes('skill') || kinds.includes('routine') || kinds.includes('recipe')) {
+      const { reloadExtensionHooks } = await import('@pkg/agent/extensions/ExtensionLoader');
+      await reloadExtensionHooks();
+    }
   } catch (error) {
     // The database transaction is already committed. A process that has not
     // started its registries yet must not turn a successful install into an

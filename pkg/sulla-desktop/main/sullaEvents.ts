@@ -46,6 +46,7 @@ import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 import { initUsageEvents } from './usageEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 import { initRecipeRailApps } from './marketplace/recipeRailApps';
+import { initExtensionUiIpc } from './extensionUiIpc';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -84,6 +85,7 @@ function assertInsideUserHome(targetPath: string): string {
  */
 export function initSullaEvents(): void {
   initMessageBusIpc();
+  initExtensionUiIpc();
   initAgentTabContractIpc();
   initTabsIpc();
   initAgentsIpc();
