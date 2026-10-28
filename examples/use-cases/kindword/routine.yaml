@@ -1,0 +1,29 @@
+id: kindword-daily
+name: Kindword daily review drafts
+description: Daily read-only review scan and response drafts.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: schedule
+      category: trigger
+      label: Daily review scan
+      config: {triggerType: schedule, frequency: daily, time: "09:00", timezone: ""}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Draft review replies
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Use Kindword to read configured public reviews, save a theme report and draft-only replies in Files, and never post or edit reviews.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}

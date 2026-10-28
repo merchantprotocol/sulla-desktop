@@ -1,0 +1,20 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-proposal-render
+slug: proposal-render
+name: Proposal renderer
+description: Renders approved proposal sections into deterministic Markdown without sending it.
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    title: {type: string, description: Proposal title., required: true}
+    sections: {type: array, description: Sections with heading and body., required: true}
+    currency: {type: string, description: Currency label., default: USD, required: false}
+  outputs:
+    markdown: {type: string, description: Rendered proposal Markdown.}
+  timeout: 60s
+  permissions: {network: []}
