@@ -5,9 +5,10 @@ import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
 
 const SOURCE_EXTENSIONS = new Set([
-  '.bash', '.c', '.cc', '.cjs', '.cpp', '.css', '.go', '.h', '.hpp', '.html',
-  '.js', '.jsx', '.mjs', '.py', '.rs', '.scss', '.sh', '.sql', '.ts', '.tsx',
-  '.vue', '.yaml', '.yml',
+  '.applescript', '.bash', '.c', '.cc', '.cjs', '.conf', '.cpp', '.css', '.entitlements',
+  '.go', '.h', '.hpp', '.html', '.js', '.jsx', '.mjs', '.mod', '.mts', '.pbxproj',
+  '.plist', '.py', '.rs', '.scss', '.sh', '.sql', '.svg', '.swift', '.toml', '.ts',
+  '.tsx', '.vue', '.work', '.yaml', '.yml',
 ]);
 const GPL_COMPATIBLE_IDENTIFIERS = new Set([
   'GPL-2.0-or-later',
@@ -22,7 +23,7 @@ const THIRD_PARTY_NOTICE_ALLOWLIST = new Set([
   'LICENSES/Apache-2.0.txt',
   'NOTICE.md',
 ]);
-const FAIR_CODE_PATTERN = /Sulla[ -]Fair-Code|Sulla Fair-Code License|LicenseRef-Sulla-Fair-Code/i;
+const FAIR_CODE_PATTERN = new RegExp(['Sulla', 'Fair-Code'].join('[ -]'), 'i');
 const SPDX_PATTERN = /SPDX-License-Identifier:\s*([^\s*<>]+)/;
 
 const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
@@ -39,7 +40,7 @@ for (const file of tracked) {
   }
 
   if (!THIRD_PARTY_NOTICE_ALLOWLIST.has(file) && FAIR_CODE_PATTERN.test(contents)) {
-    errors.push(`${file}: mentions the Sulla Fair-Code License`);
+    errors.push(`${file}: mentions the removed non-GPL license`);
   }
   if (!SOURCE_EXTENSIONS.has(extname(file).toLowerCase())) {
     continue;

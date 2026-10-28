@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // !$*UTF8*$!
 {
  archiveVersion = 1; classes = {}; objectVersion = 56;

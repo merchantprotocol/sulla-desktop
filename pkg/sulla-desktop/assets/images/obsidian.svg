@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <svg fill="none" height="100%" width="100%" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
 	<radialGradient id="logo-bottom-left" cx="0" cy="0" gradientTransform="matrix(-59 -225 150 -39 161.4 470)" gradientUnits="userSpaceOnUse" r="1">
 		<stop offset="0" stop-color="#fff" stop-opacity=".4"/>

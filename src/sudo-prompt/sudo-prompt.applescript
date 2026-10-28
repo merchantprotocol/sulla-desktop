@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 set appletPath to POSIX path of (path to me)
 if appletPath ends with ".app/" then
 	set appletPath to appletPath & "Contents/Resources/Scripts"
