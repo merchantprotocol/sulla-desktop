@@ -923,7 +923,7 @@ function turnRecallTerms(state: BaseThreadState): string[] {
  */
 async function recallMode(): Promise<'ranked' | 'sql' | 'agent' | 'v7'> {
   try {
-    const mode = await SullaSettingsModel.get('subconsciousRecallMode', 'ranked');
+    const mode = await SullaSettingsModel.get('subconsciousRecallMode', 'v7');
 
     return mode === 'agent' || mode === 'sql' || mode === 'v7' ? mode : 'ranked';
   } catch {
