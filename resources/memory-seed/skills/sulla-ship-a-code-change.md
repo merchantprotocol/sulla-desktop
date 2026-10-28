@@ -27,4 +27,4 @@ scope: [tool-github]
 - Don't claim a failure is fixed from a code diff alone. Reproduce it or use the matching CI check as evidence.
 - Don't commit secrets, `.env` files, dependency folders, generated bundles, or unrelated edits.
 - Don't remove a worktree until its status is clean and its exact HEAD is on the remote.
-- Don't merge, delete a remote ref, or publish a release without the human's explicit go-ahead. Prepare the action and ask once with `ask_user_question`.
+- Don't delete a remote ref or publish a release without the human's explicit go-ahead. A requested merge is reversible through Git and does not need an invented approval gate; still verify the exact head first.
