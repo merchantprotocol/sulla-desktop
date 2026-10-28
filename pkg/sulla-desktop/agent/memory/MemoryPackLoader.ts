@@ -63,11 +63,12 @@ function parentFirst(subjects:MemorySubject[]):MemorySubject[] {
   return output;
 }
 function parseFiles(files:MemoryPackFile[], owner:string):ParsedPack {
-  validateFileEnvelope(files);
+  if(owner!==MEMORY_SEED_WORKER)validateFileEnvelope(files);
   const map=new Map(files.map(f=>[normalize(f.name),f.content]));
   const manifestName=map.has('manifest.json')?'manifest.json':'memory/manifest.json';
   let version=0; try { version=Number(JSON.parse(map.get(manifestName)||'{}').version)||0 } catch(error) { throw new Error(`${manifestName}:1: ${error instanceof Error?error.message:String(error)}`) }
-  if(!Number.isInteger(version)||version<1||version>=1_000_000) throw new Error(`${manifestName}:1: version must be an integer between 1 and 999999`);
+  if(!Number.isInteger(version)||version<1) throw new Error(`${manifestName}:1: version must be a positive integer`);
+  if(owner!==MEMORY_SEED_WORKER&&version>=1_000_000) throw new Error(`${manifestName}:1: pack version must be at most 999999`);
   const prefix=manifestName.startsWith('memory/')?'memory/':'';
   const subjects=[...map].filter(([name])=>name.startsWith(`${prefix}subjects/`)&&name.endsWith('.md')).sort().map(([name,source])=>{ const d=doc(source,name), slug=String(d.front.slug||'').trim(); if(!slug) throw new Error(`${name}:2: subject has no slug`); return {...d,slug,overview:section(d.body,'Overview'),items:[...bullets(section(d.body,'Facts')),...bullets(section(d.body,'Rules'))].map(x=>itemFor(owner,slug,x))}; });
   const skills=[...map].filter(([name])=>name.startsWith(`${prefix}skills/`)&&name.endsWith('.md')).sort().map(([name,source])=>{ const d=doc(source,name); if(!String(d.front.slug||'').trim()) throw new Error(`${name}:2: skill has no slug`); if(!d.front.label||!d.front.trigger_when) throw new Error(`${name}:2: skill requires label and trigger_when`); return d; });
@@ -87,13 +88,7 @@ export function validateMemoryPackFiles(files:MemoryPackFile[], owner='memory-pa
     return [{file:m?.[1]||'memory',line:Number(m?.[2]||1),message:m?.[3]||String(error),severity:'error'}];
   }
 }
-export function readMemoryPackDirectory(dir:string):MemoryPackFile[] {
-  const out:MemoryPackFile[]=[];
-  let total=0;
-  const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile()){const bytes=fs.statSync(p).size;if(bytes>MEMORY_PACK_MAX_FILE_BYTES)throw new Error(`${r}:1: file is ${bytes} bytes; maximum is ${MEMORY_PACK_MAX_FILE_BYTES} bytes`);total+=bytes;if(total>MEMORY_PACK_MAX_BYTES)throw new Error(`${r}:1: pack exceeds the ${MEMORY_PACK_MAX_BYTES} byte total limit`);out.push({name:r,content:fs.readFileSync(p,'utf8')});if(out.length>MEMORY_PACK_MAX_FILES)throw new Error(`memory:1: pack has more than ${MEMORY_PACK_MAX_FILES} files`);}}};
-  walk(dir);
-  return out;
-}
+export function readMemoryPackDirectory(dir:string):MemoryPackFile[] { const out:MemoryPackFile[]=[]; const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile())out.push({name:r,content:fs.readFileSync(p,'utf8')})}}; walk(dir); return out; }
 
 async function apply(client:PoolClient, slug:string, pack:ParsedPack, source:string):Promise<MemoryPackResult> {
   const owner=`memory-pack:${slug}`, now=Date.now(), ids=pack.subjects.flatMap(s=>s.items.map(i=>i.id));
