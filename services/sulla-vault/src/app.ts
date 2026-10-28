@@ -18,7 +18,7 @@ import {
   makeLoginVerifier,
   verifyLoginHash,
 } from './auth.js';
-import { AccountsIdentityError, resolveAccountsContext } from './accountsIdentity.js';
+import { AccountsIdentityError } from './accountsIdentity.js';
 import {
   AccountsOnboardingError,
   accountsOnboardingStatus,
@@ -232,6 +232,7 @@ async function authorizeItemFolder(
 }
 
 export function createApp(db: Database, config: VaultConfig, options: { localAuthority?: LocalVaultAuthority } = {}) {
+  if (config.mode === 'server' && !config.adapter) throw new Error('Server mode requires the Sulla Server Vault adapter image');
   const app = express();
   const localAuthority = config.mode === 'desktop' ? options.localAuthority ?? new LocalVaultAuthority(db, config) : null;
   const filesKeyBundleAuthority = localAuthority ? new VaultFilesKeyBundleAuthority(db, localAuthority) : null;
@@ -932,7 +933,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     }
     const bearerToken = request.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1];
     if (!bearerToken) throw new AccountsIdentityError(401, 'Accounts authentication is required');
-    const context = await resolveAccountsContext(config, { bearerToken });
+    const context = await config.adapter!.resolveIdentity(config, { bearerToken });
     requiredUuid(context.organizationId, 'Accounts organization id');
     return context;
   };
@@ -1251,7 +1252,7 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     if (!authorization || !authorityId) {
       throw new HttpError(400, 'Accounts authorization and authority id are required');
     }
-    const context = await resolveAccountsContext(config, { bearerToken: authorization });
+    const context = await config.adapter!.resolveIdentity(config, { bearerToken: authorization });
     if (context.authorityId !== requiredUuid(authorityId, 'X-Sulla-Accounts-Authority-Id') || context.organizationId !== orgId) {
       throw new AccessDenied('Accounts identity does not match this organization');
     }
@@ -1844,5 +1845,6 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     response.status(500).json({ error: 'internal_error' });
   });
 
+  if (config.mode === 'server') config.adapter!.register(app, { db, config });
   return app;
 }

@@ -8,10 +8,13 @@ import { resolve } from 'node:path';
 
 import { deriveCapabilitySigningKey } from './auth.js';
 
+import type { FilesAdapter } from './adapter.js';
+
 import type { FilesKeyring } from './keyring.js';
 import type { LegacyPreflightStatus } from './legacyPreflight.js';
 
 export interface Config {
+  adapter?:              FilesAdapter;
   keyring?: FilesKeyring;
   legacyPreflight?: LegacyPreflightStatus;
   port:                 number;

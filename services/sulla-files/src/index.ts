@@ -15,6 +15,7 @@ import { installAuditContext } from './auditContext.js';
 import { ensureSystemAreas } from './systemAreas.js';
 import { migrateSullaCollection, trashStrayDocs } from './sullaCollectionMigration.js';
 import { createApp } from './app.js';
+import { assertFilesAdapter, type FilesAdapter } from './adapter.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
 import { loadConfig } from './config.js';
@@ -45,6 +46,12 @@ import { CloudRootKeyStore } from './cloudSync/keyStore.js';
 import { CloudSyncService } from './cloudSync/service.js';
 
 const config = loadConfig(); const command = process.argv[2];
+if (config.mode === 'server') {
+  const modulePath = process.env.SULLA_FILES_ADAPTER_MODULE;
+  if (!modulePath) throw new Error('Server mode requires the Sulla Server Files adapter image');
+  const loaded = await import(modulePath) as { default?: FilesAdapter; adapter?: FilesAdapter };
+  config.adapter = assertFilesAdapter(loaded.default ?? loaded.adapter!);
+}
 if (command === 'backup') { if (process.argv.includes('--watch')) await nightlyBackups(config); else await backup(config); process.exit(0) }
 if (command === 'restore') { await restore(config, process.argv[3]); process.exit(0) }
 const tlsEnabled = Boolean(config.tlsCertificatePath && config.tlsPrivateKeyPath);

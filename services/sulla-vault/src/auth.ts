@@ -7,7 +7,6 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 import jwt from 'jsonwebtoken';
 
-import { AccountsIdentityError, resolveAccountsContext } from './accountsIdentity.js';
 
 import type { VaultConfig } from './config.js';
 import type { Queryable } from './db.js';
@@ -44,25 +43,12 @@ export function authenticate(config: VaultConfig, db: Queryable) {
       response.status(401).json({ error: 'authentication_required' });
       return;
     }
-    if (config.mode === 'server' && config.accounts) {
-      resolveAccountsContext(config, { bearerToken: token }).then(async(context) => {
-        const mapped = await db.query<{ user_id: string }>(
-          `SELECT ai.user_id FROM accounts_identities ai
-            JOIN org_members om ON om.user_id=ai.user_id AND om.org_id=$3 AND om.status='confirmed'
-            JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
-           WHERE ai.issuer=$1 AND ai.subject=$2`,
-          [context.issuer, context.subject, context.organizationId],
-        );
-        if (!mapped.rows[0]?.user_id) {
-          throw new AccountsIdentityError(403, 'Accounts identity is not linked to this Vault organization');
-        }
-        request.auth = { userId: mapped.rows[0].user_id, source: 'accounts', issuer: context.issuer,
-          subject: context.subject, authorityId: context.authorityId, organizationId: context.organizationId };
-        next();
-      }).catch((error: unknown) => {
-        const status = error instanceof AccountsIdentityError ? error.status : 403;
-        response.status(status).json({ error: status === 401 ? 'invalid_accounts_token' : 'accounts_access_denied' });
-      });
+    if (config.mode === 'server') {
+      if (!config.adapter) {
+        response.status(503).json({ error: 'vault_server_adapter_required' });
+        return;
+      }
+      config.adapter.authenticate(config, db)(request, response, next);
       return;
     }
     try {

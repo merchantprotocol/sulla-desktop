@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createApp } from './app.js';
+import { assertVaultAdapter, type VaultAdapter } from './adapter.js';
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
@@ -12,6 +13,12 @@ import { loadConfig } from './config.js';
 import { connectDatabase, migrate, untilDatabaseReady } from './db.js';
 
 const config = loadConfig();
+if (config.mode === 'server') {
+  const modulePath = process.env.SULLA_VAULT_ADAPTER_MODULE;
+  if (!modulePath) throw new Error('Server mode requires the Sulla Server Vault adapter image');
+  const loaded = await import(modulePath) as { default?: VaultAdapter; adapter?: VaultAdapter };
+  config.adapter = assertVaultAdapter(loaded.default ?? loaded.adapter!);
+}
 const db = await connectDatabase(config);
 await untilDatabaseReady('migrations', () => migrate(db));
 await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config));

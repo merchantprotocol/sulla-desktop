@@ -6,9 +6,12 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 
+import type { VaultAdapter } from './adapter.js';
+
 export type VaultMode = 'desktop' | 'server';
 
 export interface VaultConfig {
+  adapter?:                     VaultAdapter;
   mode:                        VaultMode;
   port:                        number;
   databaseUrl:                 string;

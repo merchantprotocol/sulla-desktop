@@ -16,7 +16,6 @@ import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, 
 import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { assertSystemAreaWritable } from './systemAreas.js';
 
-import { resolveFilesUiSession } from './accountsAuth.js';
 import { ROLE_LEVEL, requireOrganizationScope, resolveCollectionAccess } from './acl.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
@@ -189,16 +188,8 @@ export function createApp(
     if (request.path.startsWith('/v1/local/')) { if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken) return response.status(401).json({ error: 'unauthorized local request' }); return next() }
     const token = bearer(request);
     try { request.filesIdentity = verifyFilesIdentity(token, config.capabilitySigningKey, config.accounts ? undefined : config.serverJwtSecret) } catch {
-      if (config.mode !== 'server' || !config.accounts || !identityDb) { response.status(401).json({ error: 'unauthorized' }); return }
-      resolveFilesUiSession(config, token).then(async context => {
-        const mapped = await identityDb.query(`SELECT ai.user_id FROM accounts_identities ai
-          JOIN org_members om ON om.user_id=ai.user_id AND om.org_id=$3 AND om.status='confirmed'
-          JOIN users u ON u.id=ai.user_id AND u.disabled_at IS NULL
-          WHERE ai.issuer=$1 AND ai.subject=$2`, [context.issuer, context.subject, context.organizationId]);
-        if (!mapped.rows[0]?.user_id) return response.status(403).json({ error:'organization access denied' });
-        request.filesIdentity = { userId:mapped.rows[0].user_id, deviceId:'', kind:'server-session', orgId:context.organizationId, orgRoles:context.roles, groupIds:context.groups };
-        next();
-      }).catch((error:unknown) => response.status(Number((error as { status?:number }).status) || 401).json({ error:'unauthorized' }));
+      if (config.mode !== 'server' || !config.adapter) { response.status(401).json({ error: 'unauthorized' }); return }
+      config.adapter.authenticate({ config, db, identityDb })(request, response, next);
       return;
     }
     if (config.mode !== 'server') return next();
@@ -1277,10 +1268,7 @@ export function createApp(
       const actor = identity(request); const orgId = typeof request.body.orgId === 'string' ? request.body.orgId : '';
       if (!orgId) throw new HttpError(400, 'orgId is required');
       requireOrganizationScope(actor, orgId);
-      const membership = await identityDb.query(`SELECT om.role FROM org_members om
-        JOIN users u ON u.id=om.user_id
-        WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='confirmed' AND u.disabled_at IS NULL`, [orgId, actor.userId]);
-      if (!membership.rowCount) throw new HttpError(403, 'organization access denied');
+      await config.adapter!.authorizeProvisioning({ userId: actor.userId, organizationId: orgId, identityDb });
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${ orgId }:organization-files`]);
       let collection = (await client.query("SELECT * FROM collections WHERE org_id=$1 AND workspace_scope='organization' AND is_default=TRUE AND published=TRUE AND legacy_source=FALSE", [orgId])).rows[0];
@@ -2075,5 +2063,6 @@ export function createApp(
     const status = error.status ?? (error.code === '23505' ? 409 : 500);
     response.status(status).json({ error: status < 500 ? error.message : 'Database operation failed', code: error.code ?? 'operation-failed' });
   });
+  if (config.mode === 'server') config.adapter!.register(app, { db, config, identityDb });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : error.code === '55000' ? 423 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...((error.status === 423 || error.code === '55000') ? {code:'FILE_LOCKED'} : error.code === 'EROFS' ? {code:'EROFS'} : error.code === 'FILE_OFFLINE' ? {code:'FILE_OFFLINE'} : {}), ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) })); return app;
 }
