@@ -9,6 +9,8 @@ scope: [tool-github]
 
 **When:** Use `exec` to dispatch an exact `sulla github/<tool>` command. Discover current tools with `sulla meta/browse_tools '{"category":"github"}'` before an unfamiliar call.
 
+For complete jobs, use `sulla-ship-a-code-change` to implement and open a PR, or `sulla-review-and-merge-prs` to review, resolve conflicts, order merges and prepare a release.
+
 **Tools:**
 
 <!-- tools:generated:start -->

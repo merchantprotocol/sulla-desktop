@@ -9,8 +9,10 @@ scope: [tool-docker]
 
 **When:** When you need to inspect and operate Docker containers or images.
 
+For an end-to-end local build, test-data seed, browser check and clean stop, use `sulla-run-an-app-locally`.
+
 **Do:**
-1. Inspect containers: `sulla docker/ps '{"all":true\}'`; inspect images with `sulla docker/images '{"all":true\}'`.
+1. Inspect containers: `sulla docker/ps '{"all":true}'`; inspect images with `sulla docker/images '{"all":true}'`.
 2. Read recent output: `sulla docker/logs '{"container":"<container>","tail":100}'`.
 3. Execute a diagnostic: `sulla docker/exec '{"container":"<container>","command":"<command>"}'`.
 4. Stop only the named container: `sulla docker/stop '{"container":"<container>"}'`; remove only with the tool's required confirmation.
