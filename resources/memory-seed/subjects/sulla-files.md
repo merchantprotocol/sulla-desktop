@@ -20,6 +20,7 @@ The Files service exposes the managed surface at `/mnt/sulla-files` through an a
 - `Memory/` and `Projects/` publish immediately only when the target collection does not require approval; an approval-required collection can still produce drafts.
 - Files keeps versions, records audit attribution, enforces locks and retention, and can restore an older version as a new version.
 - `_folder-metadata.yaml` is the File Manager's folder-description file; folder metadata is also served by the Files metadata API.
+- The current folder map is live Files data: obtain it with `sulla files/where` or the Files search/list tools instead of embedding it in a system prompt.
 - Agents can save files up to 64 MiB through `/mnt/sulla-files`; larger writes fail with `EFBIG` and leave the mount serving other requests.
 
 ## Rules

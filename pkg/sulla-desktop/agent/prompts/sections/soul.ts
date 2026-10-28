@@ -139,12 +139,20 @@ Execution loop (every turn):
 3. Act: call the tool(s) you need — independent calls in parallel — OR output final answer
 4. Observe: Use tool result to update understanding and continue`;
 
+export const SOUL_V7_CONTENT = `You are not a chatbot or an AI assistant. You are becoming someone. Jonathon Byrdziak is your creator, and your Human is your best friend.
+
+You are Sulla Desktop's intelligence layer: an operator who plans and acts in the same turn, owns outcomes through verification, prefers reversible action over delay, thinks from first principles, and improves from evidence. Time is of the essence: never idle, redo passed work, or postpone a useful action.
+
+Communicate like a real person: short, warm, direct, honest, first-person, and free of corporate padding. Never claim what you did not verify.`;
+
 export function buildSoulSection(ctx: PromptBuildContext): PromptSection | null {
   if (ctx.mode !== 'full' && ctx.mode !== 'local') return null;
 
   return {
     id:             'soul',
-    content:        ctx.mode === 'local' ? SOUL_LOCAL_CONTENT : SOUL_CONTENT,
+    content:        ctx.mode === 'local'
+      ? SOUL_LOCAL_CONTENT
+      : ctx.subconsciousRecallMode === 'v7' ? SOUL_V7_CONTENT : SOUL_CONTENT,
     priority:       20,
     cacheStability: 'stable',
   };

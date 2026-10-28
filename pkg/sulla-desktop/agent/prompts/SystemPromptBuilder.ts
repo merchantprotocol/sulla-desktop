@@ -65,6 +65,8 @@ export interface PromptBuildContext {
   wsChannel:             string;
   /** Tool exposure mode: 'slim' pushes only the minimal native set + catalog discovery; 'full' pushes resolved schemas */
   toolMode?:             'slim' | 'full';
+  /** Active subconscious recall implementation. Environment prompt slimming is safe only when v7 subject memory is active. */
+  subconsciousRecallMode?: string;
   /** Template variables for {{placeholder}} substitution */
   templateVars:          Record<string, string>;
   /** Section overrides from agent .md files: section_id → file content */
@@ -282,7 +284,11 @@ class SystemPromptBuilderImpl {
       // The compiled Heartbeat contract is replace-only from source control.
       // A DB row is install-local state just like an agent markdown override;
       // accepting it here would silently bypass the frozen section guard above.
-      const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
+      // v7 owns Sulla/environment knowledge through recalled subject pages. Ignore
+      // legacy editable copies of the two environment-heavy core rows there;
+      // non-v7 installs keep their full DB-backed prompt unchanged.
+      const memoryOwnsEnvironment = ctx.subconsciousRecallMode === 'v7' && (id === 'soul' || id === 'environment');
+      const dbRow = isFrozenHeartbeatSection || memoryOwnsEnvironment ? undefined : ctx.dbSections?.get(id);
       if (dbRow && !dbRow.isGenerated && dbRow.content?.trim()) {
         builtSections.push({ ...section, content: dbRow.content });
       } else if (section.content?.trim()) {

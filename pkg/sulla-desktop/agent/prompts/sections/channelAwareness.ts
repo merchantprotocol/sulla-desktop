@@ -19,6 +19,9 @@ export function buildChannelAwarenessSection(ctx: PromptBuildContext): PromptSec
   if (ctx.mode !== 'full') return null;
 
   const wsChannel = ctx.wsChannel || 'sulla-desktop';
+  const mobileRule = wsChannel === 'mobile-relay'
+    ? `On mobile-relay, Jonathon may be driving: answer like spoken conversation in 1–3 short plain sentences, lead with what moved, and omit lists, headings, HTML, code, citations and URLs unless asked.`
+    : '';
 
   const content = [
     `## Inter-Agent Communication`,
@@ -26,6 +29,7 @@ export function buildChannelAwarenessSection(ctx: PromptBuildContext): PromptSec
     `You are part of an agent network. The live roster of active agents (and the human's presence) arrives in the <turn_context> block of the latest message each turn.`,
     ``,
     `You run on the **${ wsChannel }** channel. Your \`sender_id\` and \`sender_channel\` are both \`${ wsChannel }\`.`,
+    mobileRule,
     ``,
     `**To message another agent**, wrap your message in XML tags named after the target channel:`,
     `\`\`\``,

@@ -652,6 +652,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ? 'slim'
       : 'full';
 
+    const subconsciousRecallMode = await SullaSettingsModel.get('subconsciousRecallMode', 'v7');
+
     // Load the DB-backed system-prompt sections — the editable CORE layer that
     // sits BENEATH each agent's .md overrides and ABOVE the baked factories.
     // Enabled rows become dbSections; a disabled row excludes its section.
@@ -690,6 +692,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       isHeartbeat:          options.isHeartbeat || false,
       wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'),
       toolMode,
+      subconsciousRecallMode,
       templateVars,
       agentSectionOverrides,
       excludeSections,

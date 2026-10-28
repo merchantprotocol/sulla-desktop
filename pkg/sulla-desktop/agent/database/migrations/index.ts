@@ -129,6 +129,7 @@ import { up as up_0133, down as down_0133 } from './0133_create_v7_subject_memor
 import { up as up_0134, down as down_0134 } from './0134_create_integration_packages';
 import { up as up_0135, down as down_0135 } from './0135_seeded_subject_memory';
 import { up as up_0136, down as down_0136 } from './0136_create_memory_packs';
+import { up as up_0138, down as down_0138 } from './0138_trim_builtin_agent_environment_boilerplate';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -254,4 +255,5 @@ export const migrationsRegistry = [
   { name: '0135_seeded_subject_memory', up: up_0135, down: down_0135 },
   { name: '0136_create_memory_packs', up: up_0136, down: down_0136 },
   { name: '0137_agent_model_slots', up: up_0137, down: down_0137 },
+  { name: '0138_trim_builtin_agent_environment_boilerplate', up: up_0138, down: down_0138 },
 ] as const;

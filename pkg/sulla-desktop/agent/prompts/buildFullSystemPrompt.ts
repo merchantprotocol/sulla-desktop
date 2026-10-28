@@ -97,6 +97,8 @@ export async function buildFullSystemPrompt(
     ? 'slim'
     : 'full';
 
+  const subconsciousRecallMode = await SullaSettingsModel.get('subconsciousRecallMode', 'v7');
+
   const buildCtx: PromptBuildContext = {
     mode,
     agentId,
@@ -108,6 +110,7 @@ export async function buildFullSystemPrompt(
     isHeartbeat:           false,
     wsChannel:             'sulla-desktop',
     toolMode,
+    subconsciousRecallMode,
     templateVars,
     agentSectionOverrides,
     excludeSections,
