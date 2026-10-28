@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { deriveCapabilitySigningKey } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import { deriveCapabilitySigningKey } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 
 const configuredKey = process.env.SULLA_CAPABILITY_SIGNING_KEY ?? '';
 const installationSecret = process.env.SULLA_API_TOKEN ?? '';

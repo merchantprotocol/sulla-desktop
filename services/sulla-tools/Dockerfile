@@ -4,6 +4,7 @@ COPY services/sulla-tools/package.json ./package.json
 RUN npm install --ignore-scripts --omit=dev
 COPY services/sulla-tools/src ./services/sulla-tools/src
 COPY pkg/sulla-desktop/agent ./pkg/sulla-desktop/agent
+COPY packages/runtime-protocol/src ./packages/runtime-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY tsconfig.json ./tsconfig.json

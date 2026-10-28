@@ -13,7 +13,7 @@ import { Pool } from 'pg';
 import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToolExecutionContext } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
-import { CapabilityTokenError, verifyCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { HttpDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/desktopExecutor.js';
 import { RelayDesktopExecutor } from '../../../pkg/sulla-desktop/runtime/relayDesktopExecutor.js';
 

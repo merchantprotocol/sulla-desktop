@@ -28,14 +28,14 @@ import { emitEvent } from './events.js';
 import { createWorkflowLauncher } from './launcher.js';
 import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
 import { scheduleGrantIssueRequest } from './scheduleGrantRequest.js';
-import { createPlaybookState, resolveDecision } from '../../../pkg/sulla-desktop/agent/workflow/WorkflowPlaybook.js';
-import { workflowConcurrencyLimit } from '../../../pkg/sulla-desktop/agent/workflow/workflowConcurrency.js';
+import { createPlaybookState, resolveDecision } from '../../../packages/workflow-engine/src/WorkflowPlaybook.js';
+import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/workflowConcurrency.js';
 import { agentOccurrence } from './agentInvocation.js';
 
-import { issueCapabilityToken } from '../../../pkg/sulla-desktop/runtime/capabilityToken.js';
+import { issueCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { metaToolManifests } from '../../../pkg/sulla-desktop/agent/tools/meta/manifests.js';
 
-import type { WorkflowPlaybookState } from '../../../pkg/sulla-desktop/agent/workflow/types.js';
+import type { WorkflowPlaybookState } from '../../../packages/workflow-engine/src/types.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
