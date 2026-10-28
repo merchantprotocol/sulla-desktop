@@ -7,6 +7,7 @@
 
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 
 import type { Integration } from './types';
 
@@ -47,6 +48,13 @@ export interface IntegrationGrantStore {
 
 export interface TrustedPublisherKeys { keys: Array<{ keyId: string; publicKey: string; enabled?: boolean }> }
 
+export function resolveTrustedPublisherKeysPath(): string {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  return resourcesPath
+    ? path.join(resourcesPath, 'resources', 'trusted-integration-publishers.json')
+    : path.resolve(process.cwd(), 'resources', 'trusted-integration-publishers.json');
+}
+
 export class Ed25519SignatureVerifier implements IntegrationSignatureVerifier {
   constructor(private readonly trusted: TrustedPublisherKeys) {}
   verify(input: { integrity: string; signature: IntegrationPackageManifest['signature'] }): boolean {
@@ -60,8 +68,15 @@ export class Ed25519SignatureVerifier implements IntegrationSignatureVerifier {
 }
 
 export function trustedPublisherVerifier(filePath: string): Ed25519SignatureVerifier {
-  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as TrustedPublisherKeys;
-  if (!parsed || !Array.isArray(parsed.keys)) throw new Error('Trusted integration publisher keys file is invalid');
+  let parsed: TrustedPublisherKeys;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as TrustedPublisherKeys;
+  } catch {
+    throw new Error("no trusted publisher keys; third-party integrations can't be installed yet");
+  }
+  if (!parsed || !Array.isArray(parsed.keys) || parsed.keys.filter(key => key.enabled !== false).length === 0) {
+    throw new Error("no trusted publisher keys; third-party integrations can't be installed yet");
+  }
   return new Ed25519SignatureVerifier(parsed);
 }
 

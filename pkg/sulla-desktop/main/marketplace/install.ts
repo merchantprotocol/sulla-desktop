@@ -170,13 +170,15 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
 
   const extracted = await fetchAndExtract(templateId);
   try {
-    const { bundleToArtifact, installStandaloneArtifact, readBundleFiles } = await import('./databaseInstaller');
+    const { bundleToArtifact, installStandaloneArtifact, isSignedIntegrationPackageManifest, readBundleFiles } = await import('./databaseInstaller');
     const artifact = bundleToArtifact(detail.kind, readBundleFiles(extracted.rootPath), detail.slug);
     const outcome = await installStandaloneArtifact(detail, artifact, opts.overwrite === true);
     return {
       kind:             detail.kind,
       slug:             detail.slug,
-      path:             detail.kind === 'integration' ? `database:integration_packages/${ detail.slug }` : `database:${ detail.kind === 'routine' ? 'workflows' : `${ detail.kind }_definitions` }/${ detail.slug }`,
+      path:             detail.kind === 'integration' && isSignedIntegrationPackageManifest(artifact.manifest)
+        ? `database:integration_packages/${ detail.slug }`
+        : `database:${ detail.kind === 'routine' ? 'workflows' : `${ detail.kind }_definitions` }/${ detail.slug }`,
       name:             detail.name ?? detail.slug,
       version:          detail.version,
       alreadyInstalled: !outcome.installed,

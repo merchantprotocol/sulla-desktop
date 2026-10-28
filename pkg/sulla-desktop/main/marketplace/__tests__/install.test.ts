@@ -40,9 +40,10 @@ const postgresClient = {
 };
 
 let installPackageManifest: typeof import('../databaseInstaller').installPackageManifest;
+let installStandaloneArtifact: typeof import('../databaseInstaller').installStandaloneArtifact;
 
 beforeAll(async() => {
-  ({ installPackageManifest } = await import('../databaseInstaller'));
+  ({ installPackageManifest, installStandaloneArtifact } = await import('../databaseInstaller'));
 });
 
 describe('atomic package install', () => {
@@ -78,5 +79,34 @@ describe('atomic package install', () => {
 
     expect(committed).toEqual(new Set());
     expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('legacy marketplace integration install', () => {
+  it('keeps YAML catalog integrations on integration_definitions with their manifest file intact', async() => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const database = {
+      transaction: jest.fn(async(callback: (client: any) => Promise<any>) => callback({
+        query: jest.fn(async(sql: string, params: unknown[]) => {
+          queries.push({ sql, params });
+          if (/^SELECT/.test(sql.trim())) return { rowCount: 0, rows: [] };
+          return { rowCount: 1, rows: [] };
+        }),
+      })),
+    };
+    const manifest = {
+      apiVersion: 'sulla/v1', kind: 'Integration', id: 'legacy-acme', name: 'Legacy Acme',
+      description: 'Existing YAML catalog entry', category: 'Developer Tools', version: '1.0.0',
+    };
+    const files = { 'integration.yaml': 'apiVersion: sulla/v1\nkind: Integration\nid: legacy-acme\n' };
+
+    await installStandaloneArtifact({
+      id: 'tpl-legacy', kind: 'integration', slug: 'legacy-acme', version: '1.0.0', name: 'Legacy Acme',
+    } as any, { manifest, files }, false, database as any);
+
+    const insert = queries.find(query => query.sql.includes('INSERT INTO integration_definitions'));
+    expect(insert).toBeDefined();
+    expect(insert?.params[4]).toBe(JSON.stringify(files));
+    expect(queries.some(query => query.sql.includes('integration_packages'))).toBe(false);
   });
 });

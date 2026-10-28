@@ -76,8 +76,9 @@ async function listRecipes() {
 
 async function listIntegrations() {
   const { IntegrationDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
+  const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
 
-  return (await IntegrationDefinitionModel.list()).map(row => ({
+  const definitions = (await IntegrationDefinitionModel.list()).map(row => ({
     slug:             row.slug,
     name:             row.name,
     description:      row.description,
@@ -89,6 +90,15 @@ async function listIntegrations() {
     bundledSkills:    Array.isArray(row.manifest.bundled?.skills) ? row.manifest.bundled.skills.length : 0,
     updatedAt:        updatedAt(row.updated_at),
   }));
+  const packages = await postgresClient.query(`SELECT DISTINCT ON (id) id,version,manifest,installed_at
+    FROM integration_packages ORDER BY id,installed_at DESC`);
+  return [...definitions, ...packages.map((row: any) => ({
+    slug: row.id, name: row.manifest?.name ?? row.manifest?.title ?? row.id,
+    description: row.manifest?.description ?? '', version: row.version,
+    category: row.manifest?.category ?? '', authType: row.manifest?.auth?.type,
+    source: 'user' as const, bundledFunctions: 0, bundledSkills: 0,
+    updatedAt: updatedAt(row.installed_at),
+  }))];
 }
 
 export async function buildLocalManifest(kind: KindSingular, slug: string): Promise<Record<string, any> | null> {
@@ -153,7 +163,10 @@ export function initSullaLibraryEvents(): void {
     const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
     const rows = await postgresClient.query(`DELETE FROM integration_definitions
       WHERE slug=$1 AND source_kind='marketplace' AND user_edited=false RETURNING slug`, [slug]);
-    if (rows.length === 0) return { uninstalled: false, error: 'Only unedited marketplace integrations can be uninstalled.' };
+    if (rows.length === 0) {
+      const { uninstallPackage } = await import('@pkg/main/marketplace/databaseInstaller');
+      try { await uninstallPackage(slug) } catch { return { uninstalled: false, error: 'Only unedited marketplace integrations can be uninstalled.' } }
+    }
     const { refreshIntegrationCatalog } = await import('@pkg/agent/integrations/catalog');
     await refreshIntegrationCatalog();
 
