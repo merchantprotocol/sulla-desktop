@@ -15,7 +15,7 @@ scope: [sulla-chat]
 3. Before any shared write, read content and version: `sulla chat/artifact_read '{"idOrName":"Vendor review"}'`.
 4. Replace complete content, rename, change status, or optionally focus with `artifact_update`: `sulla chat/artifact_update '{"idOrName":"Vendor review","expectedVersion":1,"status":"done","content":"<main>...complete document...</main>","focus":true}'`.
 5. For narrow changes, use atomic exact replacements: `sulla chat/artifact_edit '{"idOrName":"Vendor review","expectedVersion":1,"edits":[{"find":"MOVING","replace":"DONE"}]}'`. Every `find` must occur exactly once or nothing changes.
-6. For a notes or log tail, append verbatim: `sulla chat/artifact_append '{"idOrName":"Vendor review","expectedVersion":2,"text":"\n2026-01-01 09:00 UTC — Review finished."}'`.
+6. For a notes or log tail, append verbatim: `sulla chat/artifact_append '{"idOrName":"Vendor review","expectedVersion":2,"text":"\n&lt;time copied from `date` output&gt; — Review finished."}'`.
 7. Open a managed Files document by id with `sulla chat/artifact_open '{"file_id":"<file-id>","focus":true}'`. Edits save back to the same versioned file with conflict protection.
 8. Bring attention without writing: `sulla chat/artifact_focus '{"idOrName":"Vendor review"}'`.
 9. Inspect revisions newest first with `sulla chat/artifact_history '{"idOrName":"Vendor review"}'`. Restore an old version as a new revision: `sulla chat/artifact_revert '{"idOrName":"Vendor review","version":1,"expectedVersion":3}'`.
