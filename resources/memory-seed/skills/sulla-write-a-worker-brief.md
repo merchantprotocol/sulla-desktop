@@ -48,7 +48,8 @@ Return
 ```
 
 **Contract example:**
-`{"name":"result","description":"Verified delivery result","schema":{"type":"object","required":["status","summary","output"],"properties":{"status":{"type":"string","enum":["completed","blocked","failed"]},"summary":{"type":"string"},"output":{"type":"object","required":["artifacts","verification","cleanup"],"properties":{"artifacts":{"type":"array"},"verification":{"type":"array"},"cleanup":{"type":"array"}}}}}}`
+`{"name":"delivery","description":"Verified delivery result","schema":{"type":"object","required":["artifacts","verification","cleanup"],"properties":{"artifacts":{"type":"array"},"verification":{"type":"array"},"cleanup":{"type":"array"}}}}`
+The child returns this custom contract with `sulla agents/return_result '{"result":{"artifacts":[],"verification":[],"cleanup":[]},"summary":"<optional note>"}'`. Use the default contract instead when `blocked` and `failed` must remain task statuses.
 
 **Check it worked:**
 - The worker can begin without asking for basic facts.

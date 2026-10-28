@@ -19,7 +19,7 @@ scope: [sulla-agents]
    Use its `slug` as `agentId`. A supplied `agentId` must match an enabled agent definition. Omit it only when the default agent is intentional.
 4. Write a self-contained brief. Include the goal and why, all paths and identifiers, links, prior attempts, boundaries, exact acceptance checks, cleanup, and the required return shape. Use the `sulla-write-a-worker-brief` skill. If the worker must ask for basic context, the brief was too thin.
 5. Launch hidden background work by default:
-   `sulla meta/spawn_agent '{"tasks":[{"agentId":"<agent-slug>","label":"<short human label>","visibility":"hidden","prompt":"<complete brief>","contract":{"name":"result","description":"The verified task result","schema":{"type":"object","required":["status","summary","output"],"properties":{"status":{"type":"string","enum":["completed","blocked","failed"]},"summary":{"type":"string"},"output":{}}}}}],"parallel":true,"async":true}'`
+   `sulla meta/spawn_agent '{"tasks":[{"agentId":"<agent-slug>","label":"<short human label>","visibility":"hidden","prompt":"<complete brief>","contract":{"name":"result","description":"The verified task result"}}],"parallel":true,"async":true}'`
    `tasks` must be a non-empty array and accepts at most 10 tasks. `parallel` and `async` both default to `true`. The async response contains `mode`, `jobId`, `taskCount`, `parallel`, and a message. Save the `jobId`.
 6. Use `visibility:"tab"` only for a visible lead that will run its own team or a Playbook the human may join. A tab launch requires an active chat thread and an enabled routable agent. `label` becomes its tab title; `focus` defaults to `false`:
    `sulla meta/spawn_agent '{"tasks":[{"agentId":"<lead-slug>","label":"Delivery lead","visibility":"tab","focus":false,"prompt":"<complete brief>","contract":{"name":"result"}}]}'`
@@ -42,7 +42,7 @@ scope: [sulla-agents]
 - `agentId` selects a database-backed enabled agent; `agentName` is an alias.
 - `label` names the job or tab.
 - `visibility` is `hidden` by default or `tab`.
-- `contract` names and optionally defines the JSON Schema the child must return. Without it, the default result is `{status, summary, output}`.
+- `contract` names and optionally defines the JSON Schema the child must return. Without a schema, the child calls `sulla agents/return_result '{"status":"completed","summary":"<summary>","output":{}}'`. With a custom schema, it calls `return_result` with `result` matching that schema exactly. A valid custom-schema return completes the task; use the default contract when the child must report `blocked` or `failed` as task status.
 - `runLocation` may override one run with `vm` or `container`; it does not change the agent definition.
 - `model` and `provider` are per-run overrides and fail rather than silently falling back when they cannot be resolved.
 - `workspacePath` lets a container job seed its isolated workspace from an existing worktree under `/mnt/worktrees`; shared Git metadata is not mounted.
