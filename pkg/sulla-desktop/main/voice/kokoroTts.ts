@@ -274,6 +274,7 @@ export function encodeWav(samples: Float32Array, sampleRate: number): Buffer {
 interface Pending {
   resolve: (r: { samples: Float32Array; sampleRate: number }) => void;
   reject:  (e: Error) => void;
+  proc:    Electron.UtilityProcess;
 }
 
 let child: Electron.UtilityProcess | null = null;
@@ -304,9 +305,12 @@ function getSidecarPath(): string {
   return p;
 }
 
-function failAll(err: Error): void {
-  for (const p of pending.values()) p.reject(err);
-  pending.clear();
+function failAll(err: Error, proc?: Electron.UtilityProcess): void {
+  for (const [id, p] of pending) {
+    if (proc && p.proc !== proc) continue;
+    pending.delete(id);
+    p.reject(err);
+  }
 }
 
 function getChild(): Electron.UtilityProcess {
@@ -350,7 +354,9 @@ function getChild(): Electron.UtilityProcess {
   proc.on('exit', (code) => {
     console.warn(`[Kokoro] sidecar exited (code ${ code })`);
     if (child === proc) child = null;
-    failAll(new Error('kokoro sidecar exited'));
+    // An idle sidecar can exit after its replacement has accepted a request.
+    // Only reject work that was actually posted to this process.
+    failAll(new Error('kokoro sidecar exited'), proc);
   });
   child = proc;
 
@@ -391,8 +397,10 @@ function request(msg: Record<string, unknown>): Promise<{ samples: Float32Array;
   clearIdleTimer();
 
   const result = new Promise<{ samples: Float32Array; sampleRate: number }>((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    getChild().postMessage({ ...msg, id });
+    const proc = getChild();
+
+    pending.set(id, { resolve, reject, proc });
+    proc.postMessage({ ...msg, id });
   });
 
   // Re-arm once this request settles; the timer only fires with nothing pending.
