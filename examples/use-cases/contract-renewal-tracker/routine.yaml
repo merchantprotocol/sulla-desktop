@@ -1,0 +1,44 @@
+id: contract-renewal-tracker
+name: Contract renewal tracker
+description: Finds upcoming contract renewals and prepares reminder drafts without changing Files or Calendar.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1710000010000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Daily renewal scan
+      config:
+        triggerType: schedule
+        triggerDescription: Scan contracts and upcoming calendar events each morning.
+        frequency: daily
+        timezone: ""
+  - id: node-1710000011000
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Build renewal watchlist
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Use only granted read tools: sulla files/search for contract documents and sulla calendar/list or
+          calendar/list_upcoming for calendar context. Find renewal or notice dates in the requested horizon,
+          cross-check matching events, and return contract reference, date, counterparty if explicitly present,
+          notice lead time, confidence, and a reminder draft. Do not create/update/cancel events, edit Files,
+          contact anyone, or invent dates. Label every reminder DRAFT — approve before creating.
+        successCriteria: A source-linked renewal watchlist with uncertainty and reminder drafts only.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1710000010000
+    target: node-1710000011000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

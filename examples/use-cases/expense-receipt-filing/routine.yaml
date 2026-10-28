@@ -1,0 +1,44 @@
+id: expense-receipt-filing
+name: Expense receipt filing
+description: Reviews receipt files in Files and prepares a human-approved filing plan without moving or changing them.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1710000000000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekly receipt review
+      config:
+        triggerType: schedule
+        triggerDescription: Review newly added receipt files once a week.
+        frequency: weekly
+        timezone: ""
+  - id: node-1710000001000
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare filing plan
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Use only the granted Files tools (start with sulla files/search) to find receipts added since
+          the previous review. Read permitted file metadata/content, extract vendor, date, total, currency,
+          and category, and propose a destination folder. Return source references, confidence, duplicates or
+          missing fields, and a proposed move table. Do not create folders, move, rename, overwrite, upload,
+          trash, delete, or otherwise modify any file. Label the result DRAFT — approve each filing manually.
+        successCriteria: A source-linked filing proposal with uncertainty and no Files mutation.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1710000000000
+    target: node-1710000001000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

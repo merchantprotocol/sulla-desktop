@@ -1,0 +1,41 @@
+id: customer-churn-check-in-drafts
+name: Customer churn check-in drafts
+description: Turns permitted customer risk notes into empathetic check-in drafts with no outbound action.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1710000020000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: manual
+      category: trigger
+      label: Review customer risks
+      config:
+        triggerType: manual
+        triggerDescription: Run after the owner supplies a permitted customer-risk source.
+  - id: node-1710000021000
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Draft check-ins
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Read only the supplied risk notes or permitted Files source. For each customer with an explicit
+          churn signal, draft a short check-in that references the known issue, asks an open question, and
+          offers a human follow-up. Do not infer sensitive attributes, promise discounts, update a CRM, send
+          email/SMS, post, or contact anyone. Minimize copied customer data and label each result DRAFT.
+        successCriteria: A concise source-linked draft per eligible customer and an explicit exclusion reason for ambiguous records.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1710000020000
+    target: node-1710000021000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }
