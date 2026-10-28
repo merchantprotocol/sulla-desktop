@@ -12,7 +12,7 @@ import PrefToggle from '../PrefToggle.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type HookName = 'before_tool_call'|'after_tool_call'|'before_model_call'|'after_model_response'|'on_user_message'|'on_memory_write'|'on_workflow_node_start'|'on_workflow_node_finish'|'on_agent_job_start'|'on_agent_job_finish';
-interface ExtensionInfo { extensionId:string; name:string; description:string; publisher:string; version:string|null; hooks:HookName[]; grants:Partial<Record<HookName,boolean>>; ui:Array<{slot:string;label:string}> }
+interface ExtensionInfo { extensionId:string; name:string; description:string; publisher:string; version:string|null; hooks:HookName[]; grants:Partial<Record<HookName,boolean>>; ui:Array<{slot:string;label:string}>; integration?:{id:string;version:string;permissions:string[];granted:boolean} }
 interface AuditEvent { extensionId:string; hook:HookName; outcome:'ok'|'denied'|'error'|'timeout'|'permission_denied'; durationMs:number; timestamp:number; detail?:string }
 const copy:Record<HookName,{title:string;kind:string}> = {
   on_user_message:{title:'Read your messages',kind:'Sees only'}, after_model_response:{title:'Read Sulla’s replies',kind:'Sees only'},
@@ -26,7 +26,8 @@ const activity=computed(()=>audit.value.filter(e=>!problems.value||e.outcome!=='
 const names=computed(()=>Object.fromEntries(extensions.value.map(e=>[e.extensionId,e.name])));
 async function load(){ try { [extensions.value,audit.value]=await Promise.all([ipcRenderer.invoke('extension-permissions:list'),ipcRenderer.invoke('extension-permissions:audit')]); } catch(e){error.value=String(e)} }
 async function setHook(ext:ExtensionInfo,hook:HookName,granted:boolean){busy.value=true;try{await ipcRenderer.invoke('extension-permissions:set-hook',{extensionId:ext.extensionId,hook,granted});ext.grants[hook]=granted}catch(e){error.value=String(e)}finally{busy.value=false}}
-async function revoke(extensionId?:string){busy.value=true;try{await ipcRenderer.invoke('extension-permissions:revoke-all',extensionId);for(const ext of extensions.value)if(!extensionId||ext.extensionId===extensionId)ext.grants={}}catch(e){error.value=String(e)}finally{busy.value=false}}
+async function setIntegration(ext:ExtensionInfo,granted:boolean){if(!ext.integration)return;busy.value=true;try{if(granted)await ipcRenderer.invoke('integration-grants:grant',{id:ext.integration.id,version:ext.integration.version,permissions:ext.integration.permissions});else await ipcRenderer.invoke('integration-grants:revoke',{id:ext.integration.id,version:ext.integration.version});ext.integration.granted=granted}catch(e){error.value=String(e)}finally{busy.value=false}}
+async function revoke(extensionId?:string){busy.value=true;try{await ipcRenderer.invoke('extension-permissions:revoke-all',extensionId);for(const ext of extensions.value)if(!extensionId||ext.extensionId===extensionId){ext.grants={};if(ext.integration?.granted)await setIntegration(ext,false)}}catch(e){error.value=String(e)}finally{busy.value=false}}
 function result(e:AuditEvent){return e.outcome==='ok'?'Allowed':e.outcome==='permission_denied'||e.outcome==='denied'?'Denied':e.outcome==='timeout'?'Timed out':'Failed'}
 function time(ts:number){return new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(ts)}
 onMounted(load);
@@ -36,8 +37,9 @@ onMounted(load);
   <p v-if="error" class="note badc">{{error}}</p>
   <PrefCard v-if="!extensions.length" title="Installed extensions" subtitle="Extensions with hooks or interface permissions appear here."><p class="note">No extension permissions to show.</p></PrefCard>
   <PrefCard v-for="ext in extensions" :key="ext.extensionId" :title="ext.name" :subtitle="`${ext.publisher}${ext.version ? ` · ${ext.version}` : ''}`">
-    <template #actions><button v-if="ext.hooks.some(h=>ext.grants[h])" class="btn danger" type="button" :disabled="busy" @click="revoke(ext.extensionId)">Revoke all</button><span v-else class="note">Everything off</span></template>
+    <template #actions><button v-if="ext.hooks.some(h=>ext.grants[h]) || ext.integration?.granted" class="btn danger" type="button" :disabled="busy" @click="revoke(ext.extensionId)">Revoke all</button><span v-else class="note">Everything off</span></template>
     <PrefRow v-for="hook in ext.hooks" :key="hook" :title="copy[hook].title" :subtitle="`${copy[hook].kind} · ${hook}`" :off="!ext.grants[hook]"><PrefToggle :model-value="!!ext.grants[hook]" :disabled="busy" :label="copy[hook].title" @update:model-value="setHook(ext,hook,$event)"/></PrefRow>
+    <PrefRow v-if="ext.integration" :title="`${ext.name} connection`" :subtitle="ext.integration.permissions.join(', ')" :off="!ext.integration.granted"><PrefToggle :model-value="ext.integration.granted" :disabled="busy" :label="`${ext.name} connection`" @update:model-value="setIntegration(ext,$event)"/></PrefRow>
     <PrefRow v-for="item in ext.ui" :key="item.slot" :title="item.label" :subtitle="item.slot"><span class="note">Added by the extension</span></PrefRow>
     <PrefRow title="Never gets passwords, API keys or tokens." />
   </PrefCard>

@@ -4,18 +4,20 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BrowserWindow, ipcMain } from 'electron';
-import { FunctionDefinitionModel } from '../agent/database/models/MarketplaceArtifactModel';
+import { FunctionDefinitionModel, IntegrationDefinitionModel } from '../agent/database/models/MarketplaceArtifactModel';
 import { EXTENSION_HOOKS, ExtensionHookName, listExtensionHookAuditEvents, setExtensionHookGrant } from '../agent/extensions/HookRegistry';
 import { extensionUI, ExtensionUISlot } from '../agent/extensions/ExtensionUIRegistry';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
 
 async function listPermissions() {
-  const [functions, grants, hiddenRailItems] = await Promise.all([
+  const [functions, integrations, grants, integrationGrants, hiddenRailItems] = await Promise.all([
     FunctionDefinitionModel.list(),
+    IntegrationDefinitionModel.list(),
     SullaSettingsModel.get('extensionHookGrants', {}),
+    SullaSettingsModel.get('integrationPackageGrants', {}),
     SullaSettingsModel.get('extensionHiddenRailItems', []),
   ]);
-  return functions.map(fn => {
+  const hookExtensions = functions.map(fn => {
     const hooks = Array.isArray(fn.manifest?.hooks) ? fn.manifest.hooks.map((item: any) => typeof item === 'string' ? item : item?.name)
       .filter((name: string) => name in EXTENSION_HOOKS) : [];
     const extensionId = `function:${ fn.slug }`;
@@ -27,6 +29,13 @@ async function listPermissions() {
       hiddenFromRail: hiddenRailItems.includes(extensionId),
     };
   }).filter(item => item.hooks.length || item.ui.length);
+  const integrationExtensions = integrations.map(item => {
+    const version = item.version || item.manifest?.version || '0.0.0';
+    const permissions = Array.isArray(item.manifest?.permissions) ? item.manifest.permissions : [];
+    const key = `${ item.manifest?.id || item.slug }@${ version }`;
+    return { extensionId: `integration:${ item.slug }`, slug:item.slug, name:item.name, description:item.description, publisher:item.marketplace_author || (item.source_kind === 'user' ? 'You' : 'Unknown publisher'), version, hooks:[], grants:{}, ui:[], hiddenFromRail:false, integration:{ id:item.manifest?.id || item.slug, version, permissions, granted:integrationGrants?.[key]?.granted === true } };
+  }).filter(item => item.integration.permissions.length);
+  return [...hookExtensions, ...integrationExtensions];
 }
 
 export function initExtensionUiIpc(): void {

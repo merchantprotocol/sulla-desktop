@@ -523,6 +523,7 @@ function requestInstall(){if(needsConsent.value)showConsent.value=true;else emit
 async function allowInstall(){
   const extensionId=`function:${props.row.slug}`;
   await Promise.all(declaredHooks.value.map((hook:string)=>ipcRenderer.invoke('extension-permissions:set-hook',{extensionId,hook,granted:true})));
+  const manifest=props.manifest as any;if(integrationPermissions.value.length&&manifest?.id&&manifest?.version)await ipcRenderer.invoke('integration-grants:grant',{id:manifest.id,version:manifest.version,permissions:integrationPermissions.value});
   showConsent.value=false;emit('install');
 }
 provide('routines-mode', ref<'edit' | 'run'>('run'));
