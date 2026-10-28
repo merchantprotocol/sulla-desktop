@@ -48,7 +48,7 @@ export class MarketplaceListLocalWorker extends BaseTool {
         total += skills.length;
         blocks.push(skills.length === 0
           ? '### skill (0)\n  Database — empty'
-          : `### skill (${ skills.length })\n  Database\n${ skills.map(skill => `  - ${ skill.slug } (${ skill.source_kind }${ skill.enabled ? '' : ', disabled' })`).join('\n') }`);
+          : `### skill (${ skills.length })\n  Database\n${ skills.map(skill => `  - ${ skill.slug }${ skill.frontmatter.memory_pack === true ? ' [memory pack]' : '' } (${ skill.source_kind }${ skill.enabled ? '' : ', disabled' })`).join('\n') }`);
         continue;
       }
       const databaseSlugs = new Set<string>();

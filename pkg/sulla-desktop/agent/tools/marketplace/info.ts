@@ -27,6 +27,7 @@ export class MarketplaceInfoWorker extends BaseTool {
       const metadata = (manifest.metadata ?? {}) as Record<string, unknown>;
       const summaryKey = Object.keys(manifest).find(k => k.endsWith('Summary'));
       const kindLabel = l.kind === 'workflow' ? 'Workflow' : l.kind;
+      const memoryPack = l.memoryPack || (manifest.skillSummary as any)?.memoryPack === true;
       const installed = l.installed
         ? `Installed: v${ l.installed.version } at ${ l.installed.path }${ l.installed.templateId === l.id && l.installed.version === l.version ? '' : ' — update available (marketplace/update)' }\n`
         : 'Installed: no\n';
@@ -37,6 +38,7 @@ export class MarketplaceInfoWorker extends BaseTool {
           (l.tagline ? `${ l.tagline }\n\n` : '') +
           (l.description ? `${ l.description }\n\n` : '') +
           `Template id: ${ l.id }\n` +
+          (memoryPack ? 'Memory pack: yes\n' : '') +
           (l.author ? `Author: ${ l.author }\n` : '') +
           (l.category ? `Category: ${ l.category }\n` : '') +
           (l.tags.length > 0 ? `Tags: ${ l.tags.join(', ') }\n` : '') +

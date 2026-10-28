@@ -90,7 +90,16 @@ async function validateByKind(
     const body = manifestRaw.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, '');
     const frontmatterMatch = /^\s*---\r?\n([\s\S]*?)\r?\n---/.exec(manifestRaw);
     if (frontmatterMatch) {
-      try { issues.push(...validateExtensionContract((await import('yaml')).parse(frontmatterMatch[1]), 'SKILL.md frontmatter', 'skill')) } catch { /* existing parser reports content guidance */ }
+      try {
+        const frontmatter = (await import('yaml')).parse(frontmatterMatch[1]);
+        issues.push(...validateExtensionContract(frontmatter, 'SKILL.md frontmatter', 'skill'));
+        if (frontmatter?.memory_pack === true) {
+          const { validateMemoryPackFormat } = await import('../../memory/MemoryPackFormat');
+          issues.push(...validateMemoryPackFormat(dir, slug));
+        }
+      } catch (err) {
+        issues.push(`SKILL.md frontmatter parse error: ${ (err as Error).message }`);
+      }
     } else issues.push(...validateExtensionContract({}, 'SKILL.md frontmatter'));
     if (!body.trim().startsWith('#')) issues.push('SKILL.md should start with a level-1 heading (the skill name).');
     if (manifestRaw.trim().length < 50) issues.push('SKILL.md is suspiciously short — needs trigger conditions + instructions.');

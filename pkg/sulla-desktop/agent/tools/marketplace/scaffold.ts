@@ -21,6 +21,7 @@ export class MarketplaceScaffoldWorker extends BaseTool {
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
     const name = typeof input.name === 'string' ? input.name.trim() : slug;
     const description = typeof input.description === 'string' ? input.description.trim() : '';
+    const memoryPack = input.memory_pack === true;
     const runtime = typeof input.runtime === 'string' ? input.runtime.trim().toLowerCase() : 'python'; // function-only
     if (kind === 'function' && !['python', 'node', 'shell'].includes(runtime)) {
       return { successBoolean: false, responseString: `Invalid function runtime "${ runtime }". Choose python or node (shell is also supported).` };
@@ -47,7 +48,10 @@ export class MarketplaceScaffoldWorker extends BaseTool {
       };
     }
 
-    const files = generateSkeleton(kind, { slug, name, description, runtime });
+    if (memoryPack && kind !== 'skill') {
+      return { successBoolean: false, responseString: '"memory_pack" is only valid when kind is "skill".' };
+    }
+    const files = generateSkeleton(kind, { slug, name, description, runtime, memoryPack });
     if (kind === 'workflow') {
       const definition = yaml.parse(files['routine.yaml']);
       const { WorkflowModel } = await import('../../database/models/WorkflowModel');
@@ -74,12 +78,18 @@ export class MarketplaceScaffoldWorker extends BaseTool {
 
 function generateSkeleton(
   kind: ArtifactKind,
-  ctx: { slug: string; name: string; description: string; runtime: string },
+  ctx: { slug: string; name: string; description: string; runtime: string; memoryPack: boolean },
 ): Record<string, string> {
   const now = new Date().toISOString();
 
   switch (kind) {
   case 'skill':
+    if (ctx.memoryPack) return {
+      [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\nslug: ${ ctx.slug }\nname: ${ ctx.name }\ndescription: ${ ctx.description || 'Installable subject memory and operating guidance.' }\nversion: 1.0.0\nmemory_pack: true\ntags: [memory-pack]\n---\n# ${ ctx.name }\n\n${ ctx.description || 'An installable memory pack.' }\n\n## Customize\n\nEdit the files under \`memory/\`, then increment \`memory/manifest.json\` version before syncing or publishing.\n`,
+      'memory/manifest.json': JSON.stringify({ version: 1 }, null, 2) + '\n',
+      [`memory/subjects/${ ctx.slug }.md`]: `---\nslug: ${ ctx.slug }\nkind: system\nname: ${ ctx.name }\nparent: global\naliases: []\n---\n\n## Overview\n\n${ ctx.description || `${ ctx.name } knowledge supplied by an installed memory pack.` }\n`,
+      [`memory/skills/${ ctx.slug }.md`]: `---\nslug: ${ ctx.slug }\nlabel: Use ${ ctx.name }\ntrigger_when: When the current task needs the knowledge and instructions in ${ ctx.name }.\ntrigger_actions: []\ntrigger_phrases: [${ ctx.slug }]\nscope: [${ ctx.slug }]\n---\n\n**When:** The task needs this memory pack.\n\n**Do:**\n1. Follow the pack's subject facts, rules, and current instructions.\n`,
+    };
     return {
       [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\n---\n# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
     };
