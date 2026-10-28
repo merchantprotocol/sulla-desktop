@@ -15,6 +15,7 @@ import AccountSection from '@pkg/components/settings/sections/AccountSection.vue
 import AdvancedSection from '@pkg/components/settings/sections/AdvancedSection.vue';
 import AppearanceSection from '@pkg/components/settings/sections/AppearanceSection.vue';
 import DockerSection from '@pkg/components/settings/sections/DockerSection.vue';
+import ExtensionsSection from '@pkg/components/settings/sections/ExtensionsSection.vue';
 import FilesSection from '@pkg/components/settings/sections/FilesSection.vue';
 import GeneralSection from '@pkg/components/settings/sections/GeneralSection.vue';
 import HeartbeatSection from '@pkg/components/settings/sections/HeartbeatSection.vue';
@@ -48,6 +49,7 @@ const SECTIONS: Record<PreferencesSectionId, unknown> = {
   heartbeat:   HeartbeatSection,
   voice:       VoiceSection,
   workflows:   WorkflowsSection,
+  extensions:  ExtensionsSection,
   account:     AccountSection,
   files:       FilesSection,
   privacy:     PrivacySection,
@@ -64,6 +66,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   heartbeat:   'heartbeat interval autonomous',
   voice:       'microphone mic transcription whisper speech voice tts kokoro speaker loopback secretary gateway',
   workflows:   'workers concurrency external events wait',
+  extensions:  'permissions hooks integrations use cases activity grants',
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
   privacy:     'host access admin administrator telemetry usage',

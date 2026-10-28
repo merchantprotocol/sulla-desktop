@@ -226,6 +226,12 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
+  'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
+  'extension-permissions:audit': () => import('@pkg/agent/extensions/HookRegistry').HookAuditEvent[];
+  'extension-permissions:set-hook': (input:{extensionId:string;hook:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName;granted:boolean}) => void;
+  'extension-permissions:revoke-all': (extensionId?:string) => void;
+  'extension-permissions:set-rail-hidden': (input:{extensionId:string;hidden:boolean}) => void;
   'integration-grants:grant': (input: { id: string; version: string; permissions: string[] }) => void;
   'integration-grants:revoke': (input: { id: string; version: string }) => void;
   'agent-tab:ready': (payload: { contractId: string; threadId: string }) => {
@@ -1196,6 +1202,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
 
   'recipe-rail-apps-changed': (apps: {
