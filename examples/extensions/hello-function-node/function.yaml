@@ -1,0 +1,23 @@
+apiVersion: sulla/v1
+kind: Function
+id: function-hello-function-node
+slug: hello-function-node
+name: Hello function (Node)
+description: Returns a friendly greeting.
+schemaversion: 1
+spec:
+  runtime: node
+  entrypoint: main.js::handler
+  inputs:
+    name:
+      type: string
+      description: Name to greet.
+      default: world
+      required: false
+  outputs:
+    result:
+      type: string
+      description: Greeting text.
+  timeout: 60s
+  permissions:
+    network: []

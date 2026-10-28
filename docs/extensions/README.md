@@ -161,6 +161,10 @@ The fastest way to build an extension:
 
 See [Submitting Your Extension](./submitting.md) for the full walkthrough.
 
+## Build your first add-on
+
+Start with the [Build your first Sulla add-on](./build-first-addon.md) guide. It covers the six add-on kinds, scaffolding, validation, local testing, and review.
+
 ## Documentation
 
 - **[installation.yaml Reference](./installation-yaml.md)** — Every field explained
