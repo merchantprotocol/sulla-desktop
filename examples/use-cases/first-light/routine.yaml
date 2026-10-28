@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: first-light
 name: First Light
 description: Produces a Monday brief that merges cash, sales, pipeline, commitments, and the week's single most important action.

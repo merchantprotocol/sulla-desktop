@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: broadsheet-weekly
 name: Broadsheet weekly content batch
 description: Extends the existing content calendar and prepares owner-reviewable drafts.

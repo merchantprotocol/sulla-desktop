@@ -7,7 +7,7 @@ aliases: [sulla-desktop repo, merchantprotocol/sulla-desktop, source code, repos
 ---
 
 ## Overview
-The Sulla Desktop repository is the source for the Electron desktop app, its agent harness, VM runtime integration, bundled services, and packaging. The main application code is under `pkg/sulla-desktop`; container services are under `services`; documentation and the memory seed are under `resources`. Use `yarn`, not npm, for repository commands. Sulla Desktop is licensed GPL-2.0-or-later; the Sulla Server parts (services/sulla-accounts, services/sulla-console, resources/sulla-console, deploy/server, deploy/accounts, packaging/npx/server) stay under the Sulla Fair-Code License 1.0 (LICENSES/), and Rancher-derived files keep their Apache 2.0 notices.
+The Sulla Desktop repository is the source for the Electron desktop app, its agent harness, VM runtime integration, bundled services, and packaging. The main application code is under `pkg/sulla-desktop`; container services are under `services`; documentation and the memory seed are under `resources`. Use `yarn`, not npm, for repository commands. Sulla Desktop is licensed GPL-2.0-or-later across the whole repository; third-party files keep their own notices. Sulla Server (team seats, the admin console and server accounts) lives in the separate private repository merchantprotocol/sulla-server under its own license.
 
 ## Building plugins against this repo
 The canonical plugin contract is `docs/extension-contract-v1.md`; the practical guides are under `docs/extensions/`. Copy a matching starter from `examples/extensions/hello-*` or a complete pattern from `examples/use-cases/`, then verify every field against the current loader and tool manifests. Marketplace authoring tools live in `pkg/sulla-desktop/agent/tools/marketplace/`; recipe lifecycle tools live in `pkg/sulla-desktop/agent/tools/extensions/`; hooks and UI registries live in `pkg/sulla-desktop/agent/extensions/`; signed integration loading lives in `pkg/sulla-desktop/agent/integrations/`. To improve Sulla itself, create a branch, make the smallest scoped change, validate it, push it, and open a pull request to `merchantprotocol/sulla-desktop` without pushing directly to the target branch.
@@ -31,5 +31,5 @@ The canonical plugin contract is `docs/extension-contract-v1.md`; the practical 
 ## Rules
 - DO: Read `AGENTS.md` and `CLAUDE.md` before changing source. Why: repository license and agent constraints are authoritative.
 - DO: Update the relevant manifest, migration index, seeder, or registry when adding a repository extension. Why: unregistered code is not loaded.
-- DON'T: Use npm commands or remove license headers. Why: this repository uses Yarn and fair-code notices are required.
+- DON'T: Use npm commands or remove license headers. Why: this repository uses Yarn, and every source file must keep its SPDX license header.
 - DON'T: treat README marketing or legacy docs as proof of a current feature. Why: verify behavior in current source.

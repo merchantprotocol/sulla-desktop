@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: ledgerline-month-end
 name: Ledgerline month-end close
 description: Monthly read-only close checklist and exception packet from configured ledger exports.

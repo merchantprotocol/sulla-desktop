@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: fireline
 name: Fireline incident follow-up
 description: Reviews an owner-selected incident record and prepares factual updates or a postmortem without broadcasting.

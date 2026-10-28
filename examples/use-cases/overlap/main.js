@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 function parts(date, timezone) {
   const f = new Intl.DateTimeFormat('en-CA', {timeZone: timezone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23'});
   const out = Object.fromEntries(f.formatToParts(date).filter(x => x.type !== 'literal').map(x => [x.type, x.value]));

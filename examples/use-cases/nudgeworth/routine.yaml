@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 id: nudgeworth-weekly
 name: Nudgeworth weekly aging
 description: Weekly receivables aging and draft follow-ups from a ledger export.
