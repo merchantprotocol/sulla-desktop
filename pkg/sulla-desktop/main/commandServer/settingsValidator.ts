@@ -86,7 +86,8 @@ export default class SettingsValidator {
     this.allowedSettings ||= {
       version:     this.checkUnchanged,
       application: {
-        adminAccess: this.checkMac(this.checkBoolean),
+        adminAccess:   this.checkMac(this.checkBoolean),
+        runtimeProfile: this.checkEnum('lite', 'full'),
         hostAccess:  this.checkBoolean,
         debug:       this.checkBoolean,
         extensions:  {

@@ -35,6 +35,7 @@ import { getStartupProgressHub as getStartupProgressHubInstance } from '@pkg/mai
 import * as threatProxy from '@pkg/main/threat-proxy';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
+import { registerRuntimeCapabilitiesIpc } from '@pkg/main/runtimeCapabilitiesIpc';
 import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
@@ -765,6 +766,9 @@ async function initUI() {
   if (!cfg.application.hideNotificationIcon) {
     Tray.getInstance(cfg).show();
   }
+
+  // Capability state is available even when optional media subsystems fail to initialize.
+  registerRuntimeCapabilitiesIpc();
 
   // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
   // Registers IPC handlers in the main process — no window reference needed.

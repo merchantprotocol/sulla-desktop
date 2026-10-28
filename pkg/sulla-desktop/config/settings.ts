@@ -75,6 +75,8 @@ export const defaultSettings = {
     // Whether Sulla Desktop may ask for administrator access when it needs it.
     // Users can turn it off in settings if they don't want sudo prompts.
     adminAccess: true,
+    /** Persisted runtime selection. Lite is developer-only until onboarding ships. */
+    runtimeProfile: 'full' as 'lite' | 'full',
     // Gates the agent's access to the host machine's shell (the
     // AppleScript→Terminal bridge and any host-exec path). Default OFF —
     // running arbitrary host commands is powerful, so it's opt-in. When

@@ -65,6 +65,11 @@ export interface ToolResult {
   result?:     unknown;
   error?:      string;
   toolCallId?: string;
+  code?:       'FULL_REQUIRED';
+  capability?: import('@pkg/runtime/runtimeCapabilities').RuntimeCapability;
+  blockers?:   import('@pkg/runtime/runtimeCapabilities').RuntimeCapability[];
+  state?:      'needsFull';
+  message?:    string;
 }
 
 export interface PendingToolResult {
