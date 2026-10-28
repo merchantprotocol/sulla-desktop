@@ -15,8 +15,8 @@ const { Pool } = pg;
 export type Database = pg.Pool;
 export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
 
-export async function connectDatabase(databaseUrl: string): Promise<Database> {
-  const db = new Pool({ connectionString: databaseUrl, max: 10 });
+export async function connectDatabase(databaseUrl: string, mode: 'desktop' | 'server' = 'desktop'): Promise<Database> {
+  const db = new Pool({ connectionString: databaseUrl, max: 10, options: `-c sulla.accounts_mode=${mode}` });
   await db.query('SELECT 1');
   return db;
 }

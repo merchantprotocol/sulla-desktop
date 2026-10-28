@@ -13,7 +13,7 @@ import { connectDatabase, migrate } from './db.js';
 import { ensureHostedAuthority } from './oidc.js';
 
 const config = await loadConfig();
-const db = await connectDatabase(config.databaseUrl);
+const db = await connectDatabase(config.databaseUrl, config.mode);
 await migrate(db);
 await ensureHostedAuthority(db, config);
 

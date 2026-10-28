@@ -54,3 +54,9 @@ endpoints under `/v1/web/`. The primary console signs in through the confidentia
 OIDC client, keeps its session in an HttpOnly cookie, and exchanges that session for short-lived,
 audience-scoped service tokens. Resource containers resolve those opaque tokens through the
 private Accounts endpoint; no Keycloak admin credential or OIDC token is exposed to browser code.
+
+## Server entitlement upgrade
+
+Phase 2 makes Accounts the license authority. Existing users and memberships are preserved during upgrade and can continue signing in; Accounts never deletes or disables them. New users, invitations, re-enables, and membership restorations fail closed until a signed entitlement is installed.
+
+For an existing Server, keep its preserved `SULLA_SERVER_ID`, identify the single existing owner organization ID from Accounts, and obtain a Sulla Cloud entitlement signed for that exact server/organization pair. Set the release-provided Ed25519 public key and submit the **token** to `PUT /v1/admin/entitlement` using the existing internal Accounts admin credential. Never submit or configure a numeric seat limit. The checked-in release must replace the public-key placeholder before production packaging.

@@ -58,9 +58,10 @@ import {
   webLogoutUrl,
 } from './webAuth.js';
 import { seatLimitReached } from './seatLimit.js';
+import { EntitlementError, allocationAllowed, loadVerifiedEntitlement, verifyEntitlement } from './entitlement.js';
 
 import type { AccountsConfig } from './config.js';
-import type { Database } from './db.js';
+import type { Database, Queryable } from './db.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const USER_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -136,11 +137,21 @@ async function occupiedSeats(db: Database, config: AccountsConfig): Promise<numb
   return memberships.rows.filter((row) => enabled.has(String(row.subject))).length + Number(invitations.rows[0].count);
 }
 
-async function assertSeatAvailable(db: Database, config: AccountsConfig, replacingPending = false): Promise<void> {
-  const limit = await db.query('SELECT seat_limit FROM accounts.server_limits WHERE singleton=true');
-  const used = await occupiedSeats(db, config);
-  if (seatLimitReached(used, Number(limit.rows[0]?.seat_limit ?? 25), replacingPending))
-    throw new HttpError(409, 'seat_limit_reached');
+async function licensedOrganizationId(db: Queryable): Promise<string> {
+  const found = await db.query("SELECT id FROM accounts.organizations ORDER BY created_at,id LIMIT 2");
+  if (found.rowCount !== 1) throw new HttpError(409, 'entitlement_organization_ambiguous');
+  return String(found.rows[0].id);
+}
+
+async function assertSeatAvailable(db: Queryable, config: AccountsConfig, replacingPending = false): Promise<void> {
+  const organizationId = await licensedOrganizationId(db);
+  let entitlement;
+  try { entitlement = await loadVerifiedEntitlement(db, config.entitlementPublicKey ?? '', config.serverId, organizationId); }
+  catch (error) { throw new HttpError(403, error instanceof EntitlementError ? error.code : 'entitlement_invalid'); }
+  if (!allocationAllowed(entitlement.claims, Date.now(), entitlement.lastCheckIn))
+    throw new HttpError(403, 'entitlement_offline_grace_exhausted');
+  const used = await occupiedSeats(db as Database, config);
+  if (seatLimitReached(used, entitlement.claims.seatLimit, replacingPending)) throw new HttpError(409, 'seat_limit_reached');
 }
 
 function publicAuthority(authority: Record<string, unknown>): Record<string, unknown> {
@@ -424,6 +435,7 @@ export function publicAuthorityRoutes(db: Database, config: AccountsConfig): Rou
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         if (replacementId) {
           const replaced = await client.query(
             `UPDATE accounts.delegated_schedule_grants SET revoked_at=now(),updated_at=now()
@@ -508,6 +520,7 @@ export function ownerRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query(
           'UPDATE accounts.broker_sessions SET revoked_at=now() WHERE jti_digest=$1 AND revoked_at IS NULL',
           [digest(request.owner!.jti)],
@@ -1080,6 +1093,7 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         const revoked = await client.query(
           `UPDATE accounts.web_sessions SET revoked_at=COALESCE(revoked_at,now()),updated_at=now()
           WHERE id=$1 AND issuer=$2 AND subject=$3 AND revoked_at IS NULL RETURNING id`,
@@ -1126,6 +1140,7 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         const created = await client.query(
           'INSERT INTO accounts.organizations(id,name,slug) VALUES ($1,$2,$3) RETURNING *',
           [id, name, slug],
@@ -1203,8 +1218,9 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
-        await assertSeatAvailable(db, config);
+        await assertSeatAvailable(client, config);
         user = await createHostedUser(config, {
           username: string(input.username, 'username', 254),
           email: input.email === undefined ? undefined : string(input.email, 'email', 254),
@@ -1254,6 +1270,7 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
           `sulla-accounts-org-admin:${organizationId}`,
         ]);
@@ -1384,8 +1401,9 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
-        await assertSeatAvailable(db, config);
+        await assertSeatAvailable(client, config);
         user = await createHostedUser(config, { username: email, email });
         const token = base64url(32);
         const expiresAt = new Date(Date.now() + 7 * 86400_000);
@@ -1452,8 +1470,9 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
-        await assertSeatAvailable(db, config, true);
+        await assertSeatAvailable(client, config, true);
         const found = await client.query(
           'SELECT * FROM accounts.invitations WHERE token_digest=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',
           [digest(token)],
@@ -1503,8 +1522,9 @@ export function webRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
-        await assertSeatAvailable(db, config, true);
+        await assertSeatAvailable(client, config, true);
         const invite = await client.query(
           'SELECT * FROM accounts.invitations WHERE id=$1 AND lower(email)=lower($2) AND keycloak_user_id=$3 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE',
           [uuid(request.params.id, 'invitation id'), user.email, identity.subject],
@@ -1557,6 +1577,7 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         const administrativeMemberships = await client.query(
           `SELECT organization_id FROM accounts.memberships
           WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL AND roles && ARRAY['owner','admin']::text[]
@@ -1576,6 +1597,11 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
             if (count.rows[0].count <= 1)
               throw new HttpError(409, 'the final organization administrator cannot be disabled');
           }
+        }
+        if (input.enabled === true) {
+          await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-allocation'))");
+          const seated = await client.query('SELECT 1 FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL LIMIT 1', [config.keycloakIssuer, userId]);
+          if (seated.rowCount) await assertSeatAvailable(client, config);
         }
         if (typeof input.enabled === 'boolean') await updateHostedUser(config, userId, input.enabled);
         if (password !== undefined) await resetHostedPassword(config, userId, password);
@@ -1626,6 +1652,7 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
       let user: Awaited<ReturnType<typeof createHostedUser>> | undefined;
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-first-owner'))");
         const existing = await client.query('SELECT 1 FROM accounts.organizations LIMIT 1');
         if (existing.rowCount) {
@@ -1691,13 +1718,14 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         if (issuer === config.keycloakIssuer) {
           await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-accounts-seat-limit'))");
           const alreadySeated = await client.query(
             'SELECT 1 FROM accounts.memberships WHERE issuer=$1 AND subject=$2 AND revoked_at IS NULL LIMIT 1',
             [issuer, subject],
           );
-          if (!alreadySeated.rowCount) await assertSeatAvailable(db, config);
+          if (!alreadySeated.rowCount) await assertSeatAvailable(client, config);
         }
         const current = await client.query(
           'SELECT issuer,organization_id,roles FROM accounts.memberships WHERE id=$1 FOR UPDATE',
@@ -1751,6 +1779,7 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
+        await client.query("SELECT set_config('sulla.seat_allocation_authorized','1',true)");
         const current = await client.query(
           'SELECT issuer,organization_id,roles FROM accounts.memberships WHERE id=$1 AND revoked_at IS NULL FOR UPDATE',
           [id],
@@ -1799,31 +1828,55 @@ export function adminRoutes(db: Database, config: AccountsConfig): Router {
   router.get(
     '/limits',
     route(async (_request, response) => {
-      const limit = await db.query('SELECT seat_limit,updated_at FROM accounts.server_limits WHERE singleton=true');
-      response.json({
-        seatLimit: Number(limit.rows[0].seat_limit),
-        seatsUsed: await occupiedSeats(db, config),
-        updatedAt: limit.rows[0].updated_at,
-      });
+      const organizationId = await licensedOrganizationId(db);
+      try {
+        const entitlement = await loadVerifiedEntitlement(db, config.entitlementPublicKey ?? '', config.serverId, organizationId);
+        response.json({
+          seatLimit: entitlement.claims.seatLimit,
+          seatsUsed: await occupiedSeats(db, config),
+          edition: entitlement.claims.edition,
+          features: entitlement.claims.features,
+          expiresAt: new Date(entitlement.claims.exp * 1000).toISOString(),
+          serverId: entitlement.claims.serverId,
+          organizationId: entitlement.claims.orgId,
+          state: allocationAllowed(entitlement.claims, Date.now(), entitlement.lastCheckIn) ? 'active' : 'grace_exhausted',
+        });
+      } catch (error) {
+        response.json({ seatLimit: null, seatsUsed: await occupiedSeats(db, config), state: error instanceof EntitlementError ? error.code : 'entitlement_invalid' });
+      }
     }),
   );
   router.put(
-    '/limits',
+    '/entitlement',
     route(async (request, response) => {
-      const value = requestBody(request).seatLimit;
-      if (typeof value !== 'number' || !Number.isInteger(value) || value < 1)
-        throw new HttpError(400, 'seatLimit is invalid');
+      const token = string(requestBody(request).token, 'token', 16_384).trim();
+      const organizationId = await licensedOrganizationId(db);
+      const claims = verifyEntitlement(token, config.entitlementPublicKey ?? '', { serverId: config.serverId, orgId: organizationId });
       const used = await occupiedSeats(db, config);
-      if (value < used) throw new HttpError(409, 'seat_limit_below_usage');
-      const saved = await db.query(
-        'UPDATE accounts.server_limits SET seat_limit=$1,updated_at=now() WHERE singleton=true RETURNING seat_limit,updated_at',
-        [value],
-      );
-      response.json({
-        seatLimit: Number(saved.rows[0].seat_limit),
-        seatsUsed: used,
-        updatedAt: saved.rows[0].updated_at,
-      });
+      if (used > claims.seatLimit) throw new HttpError(409, 'seat_limit_below_usage');
+      await db.query('UPDATE accounts.server_entitlement SET token=$1,activated_at=now(),updated_at=now() WHERE singleton=true', [token]);
+      response.json({ state: 'active', seatLimit: claims.seatLimit, seatsUsed: used, edition: claims.edition, features: claims.features, expiresAt: new Date(claims.exp * 1000).toISOString() });
+    }),
+  );
+  router.post(
+    '/entitlement/check-in',
+    route(async (_request, response) => {
+      if (!config.entitlementCloudUrl) throw new HttpError(503, 'entitlement_cloud_unconfigured');
+      const organizationId = await licensedOrganizationId(db);
+      const current = await loadVerifiedEntitlement(db, config.entitlementPublicKey ?? '', config.serverId, organizationId);
+      const seatsUsed = await occupiedSeats(db, config);
+      let cloud: globalThis.Response;
+      try {
+        cloud = await fetch(config.entitlementCloudUrl, {
+          method: 'POST', headers: { authorization: `Bearer ${current.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ serverId: config.serverId, organizationId, seatsUsed }),
+        });
+      } catch { throw new HttpError(503, 'entitlement_cloud_unavailable'); }
+      const body = await cloud.json().catch(() => ({})) as Record<string, unknown>;
+      if (!cloud.ok || typeof body.entitlement !== 'string') throw new HttpError(403, 'entitlement_cloud_rejected');
+      const claims = verifyEntitlement(body.entitlement, config.entitlementPublicKey ?? '', { serverId: config.serverId, orgId: organizationId });
+      await db.query('UPDATE accounts.server_entitlement SET token=$1,last_signed_check_in_at=now(),updated_at=now() WHERE singleton=true', [body.entitlement]);
+      response.json({ state: 'active', seatLimit: claims.seatLimit, seatsUsed, expiresAt: new Date(claims.exp * 1000).toISOString() });
     }),
   );
   router.get(
