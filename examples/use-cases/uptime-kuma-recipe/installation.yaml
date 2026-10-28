@@ -1,0 +1,15 @@
+slug: uptime-kuma-recipe
+name: Uptime Kuma self-hosted monitor
+description: Runs a pinned Uptime Kuma instance locally for user-configured uptime monitoring.
+version: "1.0.0"
+publisher: Sulla Example Builder
+categories: [monitoring, self-hosted]
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f ${COMPOSE_FILE} up -d
+  stop: docker compose -f ${COMPOSE_FILE} down
+  status: docker compose -f ${COMPOSE_FILE} ps
+extra_urls:
+  - http://localhost:3001

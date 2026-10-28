@@ -1,0 +1,43 @@
+id: daily-kpi-digest
+name: Daily KPI digest
+description: Summarizes permitted KPI sources into a daily digest without changing source files or sending it.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1710000030000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Morning KPI digest
+      config:
+        triggerType: schedule
+        triggerDescription: Prepare the KPI digest every weekday morning.
+        frequency: weekdays
+        timezone: ""
+  - id: node-1710000031000
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Summarize KPIs
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Use only granted read tools, beginning with sulla files/search, to find the requested KPI source
+          files for the prior day. Extract verified values, compare with the prior available period, cite each
+          source, and flag missing or incomparable data. Never estimate a value, modify Files, send the digest,
+          or post it. Return a concise DRAFT — review before sharing.
+        successCriteria: A source-linked KPI digest with comparisons and explicit missing-data notes.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1710000030000
+    target: node-1710000031000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }
