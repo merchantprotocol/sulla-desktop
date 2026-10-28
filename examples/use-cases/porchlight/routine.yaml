@@ -1,16 +1,10 @@
-sullaApi: ^1.0.0
-hooks: []
 id: porchlight
 name: Porchlight
-title: Answer every inbound lead before it goes cold
-line: Prepare a decision-ready morning queue of new lead replies without sending them.
 description: Reviews overnight inquiries, checks calendar availability, drafts replies, and notifies the owner of urgent leads.
 version: "1"
-category: sales
-tags: [leads, email, calendar, daily]
 enabled: true
 nodes:
-  - id: porchlight-schedule
+  - id: node-1761623100000
     type: workflow
     position: { x: 100, y: 100 }
     data:
@@ -24,7 +18,7 @@ nodes:
         hour: 7
         minute: 0
         timezone: ""
-  - id: porchlight-agent
+  - id: node-1761623101000
     type: workflow
     position: { x: 450, y: 100 }
     data:
@@ -47,8 +41,8 @@ nodes:
         completionContract: default
 edges:
   - id: porchlight-edge
-    source: porchlight-schedule
-    target: porchlight-agent
+    source: node-1761623100000
+    target: node-1761623101000
     sourceHandle: out
     targetHandle: in
 viewport: { x: 0, y: 0, zoom: 1 }

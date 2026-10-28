@@ -1,16 +1,10 @@
-sullaApi: ^1.0.0
-hooks: []
 id: first-light
 name: First Light
-title: Start Monday with cash, pipeline and calendar in one brief
-line: Open the week with one two-minute brief built from whatever reliable sources are available.
 description: Produces a Monday brief that merges cash, sales, pipeline, commitments, and the week's single most important action.
 version: "1"
-category: business
-tags: [monday, brief, cash, pipeline, calendar]
 enabled: true
 nodes:
-  - id: first-light-schedule
+  - id: node-1761623200000
     type: workflow
     position: { x: 100, y: 100 }
     data:
@@ -25,7 +19,7 @@ nodes:
         hour: 7
         minute: 0
         timezone: ""
-  - id: first-light-agent
+  - id: node-1761623201000
     type: workflow
     position: { x: 450, y: 100 }
     data:
@@ -52,8 +46,8 @@ nodes:
         completionContract: default
 edges:
   - id: first-light-edge
-    source: first-light-schedule
-    target: first-light-agent
+    source: node-1761623200000
+    target: node-1761623201000
     sourceHandle: out
     targetHandle: in
 viewport: { x: 0, y: 0, zoom: 1 }
