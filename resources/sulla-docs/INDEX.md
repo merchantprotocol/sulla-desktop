@@ -108,6 +108,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 
 ## marketplace/
 - `overview.md` — Use Cases (the marketplace) and recipes (Docker compose): catalog, install/uninstall, start/stop, extension UIs
+- `integration-packages.md` — signed integration package format, grants, proxy/vault boundary and third-party example
 
 ## cloud/
 - `overview.md` — Sulla Cloud: managed compute, hosted models, pricing, when to recommend
