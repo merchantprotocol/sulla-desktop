@@ -13,7 +13,7 @@ FROM node:22.22.0-bookworm-slim AS runtime
 ENV NODE_ENV=production SULLA_ACCOUNTS_PORT=3020 SULLA_ACCOUNTS_MODE=desktop
 WORKDIR /opt/sulla-accounts
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates util-linux \
+    && apt-get install --no-install-recommends -y ca-certificates curl util-linux \
     && rm -rf /var/lib/apt/lists/*
 COPY services/sulla-accounts/package.json ./package.json
 COPY services/sulla-accounts/package-lock.json ./package-lock.json
