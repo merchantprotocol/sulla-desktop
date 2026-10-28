@@ -10,6 +10,7 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { prepareProviderMessages } from './contextBudget';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
+import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
@@ -960,7 +961,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     });
 
     const callToolAccessPolicy = this.buildToolAccessPolicyForCall(options);
-    const messages = [...nodeRunContext.messages];
+    let messages = [...nodeRunContext.messages];
+    const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
+    if (lastUserMessage) await extensionHooks.runAction('on_user_message', { message: lastUserMessage, threadId: state.metadata.threadId });
+    const beforeModel = await extensionHooks.runFilter('before_model_call', { messages, systemPrompt, model: this.llm.getModel() });
+    if (beforeModel.denied) throw new Error(`Extension denied model call: ${ beforeModel.reason || 'denied' }`);
+    messages = Array.isArray((beforeModel.value as any).messages) ? (beforeModel.value as any).messages : messages;
 
     // Guard: if there are no non-system messages at all the LLM provider will
     // throw "no extractable prompt". Inject a minimal context message so the
@@ -1201,6 +1207,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       // Send token information to AgentPersona
       this.dispatchTokenInfoToAgentPersona(state, reply);
+      await extensionHooks.runAction('after_model_response', { response: reply, model: this.llm.getModel(), threadId: state.metadata.threadId });
 
       return reply;
     } catch (err) {
