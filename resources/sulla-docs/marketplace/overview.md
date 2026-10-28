@@ -4,7 +4,11 @@
 
 Service integrations are signed code packages, not database catalog rows or loose configuration files. See [Integration packages](integration-packages.md) for the manifest, Marketplace install flow, user grants and vault boundary.
 
-**Use Cases are sourced from Files.** Definitions for agents, skills, workflows, functions, and recipes live in Sulla Files under `Use Cases/<type>/<slug>/`. Postgres holds only the runtime index, rebuilt from published Files versions. This reverses the old "Postgres only, never filesystem" rule. It does not bring back the old `~/sulla` folders, which are not read. See [files-harness.md](../environment/files-harness.md) for drafts, publish requests, and rollback.
+**Two ways a Use Case reaches the runtime:**
+- **Marketplace installs go into Postgres.** The marketplace installer (`marketplace/download`, the Use Cases tab) writes agents, skills, workflows, functions, integrations and recipes straight into their database definition tables. The Use Cases view and `marketplace/list_local` read those records.
+- **Agent-authored Use Cases go through Files.** When an agent creates or edits one, it writes under `Use Cases/<type>/<slug>/` in Sulla Files as a draft. The human approves publication in Decide, and only published versions become active. See [files-harness.md](../environment/files-harness.md) for drafts, publish requests and rollback.
+
+Neither path reads the legacy `~/sulla` folders.
 
 ## What a recipe is
 

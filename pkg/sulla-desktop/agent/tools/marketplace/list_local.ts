@@ -40,8 +40,8 @@ export class MarketplaceListLocalWorker extends BaseTool {
         const agents = (await agentDefinitionService.list()).filter(agent => agent.status !== 'archive');
         total += agents.length;
         blocks.push(agents.length === 0
-          ? '### agent (0)\n  Database — empty'
-          : `### agent (${ agents.length })\n  Database\n${ agents.map(agent => `  - ${ agent.slug } (${ agent.source_kind })`).join('\n') }`);
+          ? '### Agents (0)\n  Database — empty'
+          : `### Agents (${ agents.length })\n  Database\n${ agents.map(agent => `  - ${ agent.slug } (${ agent.source_kind })`).join('\n') }`);
         continue;
       }
       if (kind === 'skill') {

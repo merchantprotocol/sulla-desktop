@@ -7,7 +7,7 @@
 
 import type { ToolManifest } from '../registry';
 
-const KINDS_DESC = 'Artifact kind. One of: package (a use case — one bundled download containing everything needed for a job), workflow (alias: routine), agent, skill, function, integration, recipe.';
+const KINDS_DESC = 'Artifact kind. One of: package (a use case — one bundled download containing everything needed for a job), workflow, agent, skill, function, integration, recipe.';
 
 export const marketplaceToolManifests: ToolManifest[] = [
   {

@@ -85,6 +85,10 @@ export async function publishLocalArtifact(args: {
       materialized.cleanup();
       throw new Error(`agent.json contains a possible ${ check.secret } secret. Remove credentials from the agent before publishing.`);
     }
+    if (check.sensitiveField) {
+      materialized.cleanup();
+      throw new Error(`agent.json contains a ${ check.sensitiveField }. Remove private data from the agent before publishing.`);
+    }
     warnings.push(...check.warnings);
 
     fs.writeFileSync(path.join(effectiveSourceDir, 'agent.json'), serialized, 'utf8');

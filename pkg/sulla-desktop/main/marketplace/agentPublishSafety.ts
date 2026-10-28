@@ -30,12 +30,31 @@ function agentTextFields(manifest: AgentMarketplaceManifest): string[] {
   return [spec.prompt, spec.soul, spec.goals, ...Object.values(spec.promptFiles ?? {})].filter((v): v is string => typeof v === 'string');
 }
 
-export function checkAgentManifestForPublish(manifest: AgentMarketplaceManifest): { secret: string | null; warnings: string[] } {
+// Match whole key names, so ordinary config such as maxTokens or memoryEnabled still publishes.
+const SENSITIVE_FIELD_PATTERNS: { label: string; pattern: RegExp }[] = [
+  { label: 'vault credential', pattern: /^(?:vault.?(?:credential|secret|item)?.?(?:id|ids)?|credentials?.?(?:id|ids)?|passwords?|secrets?|(?:api|access|refresh|auth|bearer).?(?:key|token)s?|tokens?|private.?key)$/i },
+  { label: 'account identifier', pattern: /^(?:account|customer|tenant|user|org|organization).?(?:id|ids|uuid)$/i },
+  { label: 'personal memory', pattern: /^(?:(?:personal|private|user).?)?(?:memory|memories|observations)$/i },
+];
+
+function findSensitiveField(value: unknown, path = ''): string | null {
+  if (!value || typeof value !== 'object') return null;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const fieldPath = path ? `${ path }.${ key }` : key;
+    const candidate = SENSITIVE_FIELD_PATTERNS.find(item => item.pattern.test(key));
+    if (candidate) return `${ candidate.label } field (${ fieldPath })`;
+    const nested = findSensitiveField(child, fieldPath);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+export function checkAgentManifestForPublish(manifest: AgentMarketplaceManifest): { secret: string | null; sensitiveField: string | null; warnings: string[] } {
   const warnings: string[] = [];
 
   if (agentTextFields(manifest).some(hasAbsoluteHomePath)) {
     warnings.push('The agent contains absolute home-directory paths (e.g. /Users/<name>/). They may not work on other machines.');
   }
 
-  return { secret: findAgentSecret(JSON.stringify(manifest)), warnings };
+  return { secret: findAgentSecret(JSON.stringify(manifest)), sensitiveField: findSensitiveField(manifest), warnings };
 }

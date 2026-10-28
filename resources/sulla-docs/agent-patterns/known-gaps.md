@@ -61,7 +61,7 @@ Checked against the live tool registry on 2026-10-19. Items marked *(unverified)
 
 ## Marketplace / Extensions
 
-The `marketplace/*` tools (11, across skill / function / routine / recipe / integration; `agent` is local-only) talk to the live Sulla Cloud marketplace. `extensions/*` covers install, uninstall, start, stop, and status. Publish, unpublish, and list_published need a Sulla Cloud session. Reads work without one *(unverified)*.
+The `marketplace/*` tools talk to the live Sulla Cloud marketplace for skills, functions, workflows, agents, recipes, and integrations. `extensions/*` covers install, uninstall, start, stop, and status. Publish, unpublish, and list_published need a Sulla Cloud session. Reads work without one *(unverified)*.
 
 | Request | Severity | Status |
 |---------|----------|--------|

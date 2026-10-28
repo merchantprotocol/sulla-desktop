@@ -226,7 +226,7 @@ See: [`marketplace/overview.md`](../marketplace/overview.md)
 
 ## Marketplace artifacts (skill / function / routine / recipe / integration)
 
-The `marketplace/*` tools cover the five marketplace kinds. The `agent` kind is local only. See [`tools/marketplace.md`](../tools/marketplace.md).
+The `marketplace/*` tools cover skills, functions, workflows, agents, recipes, and integrations. Workflows use the internal `routine` API key. See [`tools/marketplace.md`](../tools/marketplace.md).
 
 ### "Search the marketplace"
 ```bash
