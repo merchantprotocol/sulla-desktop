@@ -4,7 +4,7 @@ label: Make images and short explainer videos with connected media tools
 trigger_when: When the human asks for an image for a post, a short explainer video, voiceover, or generated media saved as a deliverable.
 trigger_actions: [generate image, make post image, make explainer video, create voiceover]
 trigger_phrases: [make me an image for this post, make a short explainer video, generate an image, create a video, make a voiceover, social graphic]
-scope: [tool-vault, sulla-files]
+scope: [everyday-work, tool-vault, sulla-files]
 ---
 
 **When:** Produce a media asset through a connected provider. Sulla does not include a provider-independent image or video generator; use only operations exposed by the connected integration.

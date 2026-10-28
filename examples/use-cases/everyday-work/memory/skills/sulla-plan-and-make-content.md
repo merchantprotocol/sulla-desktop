@@ -4,7 +4,7 @@ label: Plan and create marketing content from real customer language
 trigger_when: When the human wants homepage copy, social posts, a newsletter, a video script, a content calendar, a signup marketing plan, or an SEO review.
 trigger_actions: [write homepage copy, draft social posts, write newsletter, write video script, plan content calendar, make marketing plan, audit SEO]
 trigger_phrases: [write the homepage copy, draft a week of social posts, write a video script with a strong hook, plan a content calendar, give me a marketing plan, write a newsletter, check this page for SEO mistakes, get more sign-ups]
-scope: [sulla-files, sulla-tools]
+scope: [everyday-work, sulla-files, sulla-tools]
 ---
 
 **When:** Turn verified product facts and customer language into finished drafts or a measurable content plan. Link with `sulla-write-for-a-human` for prose and `sulla-save-work-in-files` for the deliverable.

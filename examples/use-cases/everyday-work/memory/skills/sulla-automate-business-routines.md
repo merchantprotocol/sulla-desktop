@@ -4,7 +4,7 @@ label: Run and automate recurring business operations safely
 trigger_when: When the human wants to plan inventory orders, log receipts, track contract renewals, capture web leads in a CRM, draft review replies, or re-engage inactive customers.
 trigger_actions: [plan inventory order, log expense receipt, track renewals, capture CRM leads, draft review replies, draft customer check-ins]
 trigger_phrases: [what should I order this week, log this expense receipt, track which contracts renew soon, capture leads into the CRM, draft responses to our new reviews, customers haven't ordered lately, draft check-ins, automate this business routine, what to order, reorder, overdue invoice, follow up with customers]
-scope: [sulla-workflows, tool-vault, sulla-files]
+scope: [everyday-work, sulla-workflows, tool-vault, sulla-files]
 ---
 
 **When:** Complete a bounded run now, then build a workflow only when the job genuinely recurs. Link to `sulla-use-an-integration` when present; otherwise use the verified vault flow below. Link to `sulla-build-workflow` for graph details.

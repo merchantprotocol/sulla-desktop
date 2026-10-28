@@ -4,7 +4,7 @@ label: Analyze data and return a traceable report or dashboard
 trigger_when: When the human wants a spreadsheet analyzed, a KPI dashboard, a signup count, trends explained, or a recurring client report from real data.
 trigger_actions: [analyze a spreadsheet, calculate a KPI, build a dashboard, find trends, make a monthly report]
 trigger_phrases: [analyze this spreadsheet, tell me the trends, how many signups this week, build me a dashboard, monthly client report, compare these KPIs, chart the results]
-scope: [tool-pg, tool-gdrive, tool-models, sulla-agents, sulla-chat, sulla-files]
+scope: [everyday-work, tool-pg, tool-gdrive, tool-models, sulla-agents, sulla-chat, sulla-files]
 ---
 
 **When:** Use this when the answer requires calculation, validation, or visualization. For one cheap database count, use `sulla-tool-pg` directly. Use `analytics-worker` for multi-metric analysis or a polished dashboard; it is read-only.

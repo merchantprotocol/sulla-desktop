@@ -4,7 +4,7 @@ label: Deploy and verify a website or web app
 trigger_when: When someone asks you to deploy a site to staging or production, protect staging, automate deploys from GitHub, point a domain, or prove what is live.
 trigger_actions: [deploy a website, deploy to staging, verify production, protect staging, configure a domain]
 trigger_phrases: [deploy this website, get this out to staging, is this live in production yet, put this site behind a password, point my domain at the new site, set up a GitHub Action that deploys, deployed site throws an error]
-scope: [tool-github, tool-browser, tool-vault]
+scope: [everyday-work, tool-github, tool-browser, tool-vault]
 ---
 
 **When:** Use this for a hosting deployment through GitHub Actions or a connected provider such as Cloudflare, Vercel, Netlify, Render, or Fly.io. Provider APIs differ; discover the connected integration instead of inventing an endpoint.

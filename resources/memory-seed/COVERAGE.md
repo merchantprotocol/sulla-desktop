@@ -84,7 +84,7 @@ account ids with `sulla vault/list_accounts '{}'`.
 3. **`sulla-review-and-merge-prs`**: review a PR, check CI and reviews, resolve conflicts, merge in a safe order, and confirm the base branch is healthy.
    Relies on: `sulla github/list_prs`, `github/get_pr`, `github/get_pr_files`, `github/list_pr_reviews`, `github/add_pr_review`, `github/git_conflicts`, `github/check_runs`, `github/merge_pr`, `github/create_release`.
    Closes: "review this pull request", "merge all the PRs that are ready", "resolve the merge conflicts", "bring every PR that should ship into one release", "cut a release and write the notes".
-4. **`sulla-research-and-write-brief`**: research a question on the web, check the sources against each other, cache what you learned, and save a cited brief to Files.
+4. **the Everyday work memory pack's `sulla-research-and-write-brief` skill, if installed**: research a question on the web, check the sources against each other, cache what you learned, and save a cited brief to Files.
    Relies on: `sulla browser/background_browse`, `browser/text`, `sulla memory/recall_index_lookup`, `memory/recall_index_store`, `sulla files/where`, `files/search`; the `sulla-cite-sources` and `sulla-save-work-in-files` skills.
    Closes: competitor research, "how does this company get customers", "most popular tools and why", "find reliable research", "is this business idea worth it?".
 5. **`sulla-use-an-integration`**: connect a service, test that the key works, then call its API or MCP tools without exposing the secret. Includes OAuth failures and making a token with the right scopes.
@@ -93,25 +93,25 @@ account ids with `sulla vault/list_accounts '{}'`.
 6. **`sulla-show-mockups`**: make several static HTML design options in the human's own brand, serve them, open them for review, and record the pick before anyone builds.
    Relies on: the built-in `mockup-designer` agent via `sulla meta/spawn_agent`, `sulla files/where`, `sulla docker/run` (its `options` field carries port and volume flags), `sulla browser/tab`. Check the serving path from the VM to the browser before writing the steps.
    Closes: "show me three mockups", "ten hero variations", "restyle this to match our brand", "open the mockup in my browser", "build option two into the real app".
-7. **`sulla-deploy-a-site`**: deploy a website or app, protect a staging site, set up deploy-on-merge, and prove it is live.
+7. **the Everyday work memory pack's `sulla-deploy-a-site` skill, if installed**: deploy a website or app, protect a staging site, set up deploy-on-merge, and prove it is live.
    Relies on: `sulla github/trigger_workflow_run` (needs `workflow_dispatch`), `github/check_runs`, `github/ci_logs`, hosting integrations through the proxy (`cloudflare`, `vercel`, `netlify`, `render`, `fly_io` are in the catalog), `sulla browser/tab` and `browser/monitor_network` to verify.
    Closes: "deploy this website", "get this out to staging", "is this live yet?", "put this site behind a password", "set up a GitHub Action that deploys", "point my domain at it".
 8. **`sulla-test-a-web-app`**: test a web app in Sulla's browser against user stories, catch failed requests, take screenshots, and report issues in a fixed shape. Playbooks are being improved separately; this skill should cover only browser testing and link to that work.
    Relies on: `sulla browser/tab`, `browser/snapshot`, `browser/click`, `browser/fill`, `browser/screenshot`, `browser/monitor_network` (`watch_errors`), `sulla vault/autofill` for logins, the built-in `ui-test-manager` agent with the `ui-test-issues` return contract.
    Closes: "test the whole app in the browser and fix what's broken", "log in to staging and walk through signup".
-9. **`sulla-handle-email`**: triage an inbox, draft replies, and send in batches. Sending waits for the human's go-ahead.
+9. **the Everyday work memory pack's `sulla-handle-email` skill, if installed**: triage an inbox, draft replies, and send in batches. Sending waits for the human's go-ahead.
    Relies on: email integrations through the proxy (`gmail`, `microsoft_outlook`, `smtp`, `sendgrid_email`, `resend`, `postmark` are in the catalog), `sulla meta/ask_user_question` for the send gate, `sulla applescript/execute` as the Mac Mail fallback.
    Closes: "draft a reply to this customer email", "go through my inbox", "send these emails five at a time", "send that through Mail on my Mac".
 10. **`sulla-run-an-app-locally`**: build and run an app or dev stack in a container, seed it with test data, open it, and stop it cleanly.
     Relies on: `sulla docker/build`, `docker/run`, `docker/logs`, `docker/exec`, `docker/stop`, `sulla browser/tab`.
     Closes: "build and run this app in a container", "bring the local dev stack back up with test data", "serve these HTML files from a container".
-11. **`sulla-plan-and-make-content`**: write social posts, a content calendar, a marketing plan or an SEO check from real customer language. Save drafts to Files. Post only after the human approves.
+11. **the Everyday work memory pack's `sulla-plan-and-make-content` skill, if installed**: write social posts, a content calendar, a marketing plan or an SEO check from real customer language. Save drafts to Files. Post only after the human approves.
     Relies on: `sulla-write-for-a-human`, `sulla browser/background_browse` for research, `sulla files/where`, social integrations through the proxy (`buffer`, `linkedin`, `instagram`, `youtube` and others are in the catalog), `sulla meta/ask_user_question`.
     Closes: "draft a week of social posts", "plan a content calendar", "give me a marketing plan", "check this page for SEO mistakes", "write the homepage copy".
-12. **`sulla-collect-web-data`**: pull structured data from websites into a CSV or table, then make it repeatable.
+12. **the Everyday work memory pack's `sulla-collect-web-data` skill, if installed**: pull structured data from websites into a CSV or table, then make it repeatable.
     Relies on: `sulla browser/background_browse`, `browser/text`, `browser/eval_js`, `sulla function/run` for a reusable scraper, `sulla-build-workflow` to schedule it, `sulla files/where` or `sulla pg/execute` for the output.
     Closes: "pull all the listings into a spreadsheet", "build a lead list from public directories".
-13. **`sulla-analyze-data`**: load a spreadsheet, database table or connected source, compute the answer, and reply with a chart and provenance.
+13. **the Everyday work memory pack's `sulla-analyze-data` skill, if installed**: load a spreadsheet, database table or connected source, compute the answer, and reply with a chart and provenance.
     Relies on: `sulla files/search`, `sulla gdrive/download`, `sulla pg/queryall`, `sulla function/run` (Python runtime), `sulla-reply-with-rich-html`, the built-in `analytics-worker` agent.
     Closes: "analyze this spreadsheet", "monthly report of what we did for this client", "how many signups this week?", "build me a dashboard".
 14. **`sulla-remind-and-follow-up`**: choose the right timer for a reminder or follow-up and confirm it is armed.
@@ -126,7 +126,7 @@ account ids with `sulla vault/list_accounts '{}'`.
 17. **`sulla-choose-models-and-watch-costs`**: pick or change models for chat and agents, and explain where usage and cost come from.
     Relies on: `sulla models/providers`, `models/list`, `models/usage`, `sulla settings/get`, `settings/set`, `sulla ui/open_tab '{"mode":"models"}'`.
     Closes: "change the default model", "why are my AI costs climbing?", "run this agent with a different model".
-18. **`sulla-make-images-and-video`**: generate an image for a post, or plan and produce a short video, and save it to Files.
+18. **the Everyday work memory pack's `sulla-make-images-and-video` skill, if installed**: generate an image for a post, or plan and produce a short video, and save it to Files.
     Relies on: image and media integrations through the proxy (`stability_ai`, `replicate`, `openai`, `elevenlabs` are in the catalog), `sulla-record-with-capture-studio` for screen-recorded demos, `sulla files/where`.
     Closes: "make me an image for this post", "make a short explainer video".
 19. **`sulla-check-system-resources`**: find what is using memory or CPU in the VM, on containers or on the host, and fix it safely.
@@ -141,7 +141,7 @@ account ids with `sulla vault/list_accounts '{}'`.
 22. **`sulla-control-mac-apps`**: tested AppleScript recipes for Reminders, Calendar, Notes, Finder, Music and appearance, plus how to read the audit log.
     Relies on: `sulla applescript/execute`, `applescript/audit_log`, `sulla-host-vs-vm`.
     Closes: "add this to my Reminders app", "open this folder in Finder" (both partial today).
-23. **`sulla-build-a-browser-extension`**: build, load, test and package a browser extension, and prepare a store listing. Uploading waits for the human.
+23. **the Everyday work memory pack's `sulla-build-a-browser-extension` skill, if installed**: build, load, test and package a browser extension, and prepare a store listing. Uploading waits for the human.
     Relies on: `sulla-ship-a-code-change` (proposed above), `sulla meta/exec` to package, `sulla browser/tab` to test.
     Closes: "build a Chrome extension from this mockup", "package the extension and update the store listing".
 24. **`sulla-inventory-the-network`**: list devices on the local network and check one device, with the human's consent.
@@ -533,3 +533,5 @@ account ids with `sulla vault/list_accounts '{}'`.
 | help me get into this old server | gap | - |
 | can you control my smart TV? | gap | - |
 | watch my site and alert me when it goes down | partial | `sulla-install-from-marketplace` |
+
+The ten general everyday-work skills above are distributed in the optional **Everyday work memory pack** (`everyday-work`); the core seed remains focused on Sulla's own features, and these skills are available when the pack is installed.
