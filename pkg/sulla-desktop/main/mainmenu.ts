@@ -316,11 +316,6 @@ function getFileMenu(): MenuItem {
       },
       { type: 'separator' },
       {
-        label:   'Open Docker',
-        click:   () => openDocker(),
-      },
-      { type: 'separator' },
-      {
         label:   'Troubleshooting',
         click:   () => openPreferences('troubleshooting'),
       },
@@ -349,6 +344,22 @@ function getEditMenu(isMac: boolean): MenuItem {
       { role: 'delete', label: 'De&lete' },
       ...(!isMac ? [{ type: 'separator' } as MenuItemConstructorOptions] : []),
       { role: 'selectAll', label: 'Select &All' },
+    ],
+  });
+}
+
+function getInspectMenu(): MenuItem {
+  return new MenuItem({
+    label:   '&Inspect',
+    submenu: [
+      {
+        label: 'Live Agents',
+        click: () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'live' }),
+      },
+      {
+        label: 'Docker',
+        click: () => openDocker(),
+      },
     ],
   });
 }
@@ -649,6 +660,7 @@ function getMacApplicationMenu(): MenuItem[] {
     getFileMenu(),
     getEditMenu(true),
     getHistoryMenu(),
+    getInspectMenu(),
     new MenuItem({
       label:   '&Window',
       submenu: [
@@ -752,11 +764,6 @@ function getWindowsApplicationMenu(): MenuItem[] {
         },
         { type: 'separator' },
         {
-          label: 'Open Docker',
-          click: () => openDocker(),
-        },
-        { type: 'separator' },
-        {
           id:      'extensions-list',
           label:   'Installed Extensions',
           submenu: getExtensionsSubmenu(),
@@ -781,6 +788,7 @@ function getWindowsApplicationMenu(): MenuItem[] {
     }),
     getEditMenu(false),
     getHistoryMenu(),
+    getInspectMenu(),
     getHelpMenu(false),
   ];
 }

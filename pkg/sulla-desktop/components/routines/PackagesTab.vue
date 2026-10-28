@@ -22,7 +22,6 @@
       </nav>
       <hr class="rail-separator">
       <nav class="nav-list">
-        <button :class="{ selected: view === 'live' }" @click="showSection('live')"><UseCaseIcon name="pulse" /><span>Live Agents</span></button>
         <button :class="{ selected: view === 'usage' }" @click="showSection('usage')"><UseCaseIcon name="usage" /><span>Token Usage</span></button>
       </nav>
       <div class="rail-spacer" />

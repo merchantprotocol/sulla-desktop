@@ -19,8 +19,8 @@ export function isStudioSection(value: unknown): value is StudioSection {
   return typeof value === 'string' && (ALL_SECTIONS as readonly string[]).includes(value);
 }
 
-// The mode rail has icons for Workflows, Live Agents and Token Usage; every
-// other sidebar page belongs to the Use Cases icon.
-export function railSubTabFor(section: StudioSection): 'workflows' | 'live' | 'usage' | 'browse' {
-  return section === 'workflows' || section === 'live' || section === 'usage' ? section : 'browse';
+// The mode rail has icons for Workflows and Token Usage; every other Studio
+// page belongs to the Use Cases icon. Live Agents is opened from Inspect.
+export function railSubTabFor(section: StudioSection): 'workflows' | 'usage' | 'browse' {
+  return section === 'workflows' || section === 'usage' ? section : 'browse';
 }
