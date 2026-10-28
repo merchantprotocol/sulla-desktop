@@ -353,7 +353,9 @@ async function installMarketplaceMemoryPack(slug:string, files:Record<string,Sto
   if(!skillText)return false;
   const parsed=parseSkillMarkdown(skillText,slug,Object.fromEntries(Object.entries(files).filter(([name])=>name!=='SKILL.md')));
   if(!parsed)throw new Error(`skill ${slug} has an invalid SKILL.md`);
-  return Boolean(await installMemoryPackForSkill(slug,parsed.content.frontmatter,files,source));
+  const installed=await installMemoryPackForSkill(slug,parsed.content.frontmatter,files,source);
+  if(!installed)await uninstallPack(slug);
+  return Boolean(installed);
 }
 
 export async function installStandaloneArtifact(
