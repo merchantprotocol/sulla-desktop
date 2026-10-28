@@ -51,7 +51,7 @@ function parseFiles(files:MemoryPackFile[], owner:string):ParsedPack {
   const map=new Map(files.map(f=>[normalize(f.name),f.content]));
   const manifestName=map.has('manifest.json')?'manifest.json':'memory/manifest.json';
   let version=0; try { version=Number(JSON.parse(map.get(manifestName)||'{}').version)||0 } catch(error) { throw new Error(`${manifestName}:1: ${error instanceof Error?error.message:String(error)}`) }
-  if(!Number.isInteger(version)||version<1) throw new Error(`${manifestName}:1: version must be a positive integer`);
+  if(!Number.isInteger(version)||version<1||version>=1_000_000) throw new Error(`${manifestName}:1: version must be an integer between 1 and 999999`);
   const prefix=manifestName.startsWith('memory/')?'memory/':'';
   const subjects=[...map].filter(([name])=>name.startsWith(`${prefix}subjects/`)&&name.endsWith('.md')).sort().map(([name,source])=>{ const d=doc(source,name), slug=String(d.front.slug||'').trim(); if(!slug) throw new Error(`${name}:2: subject has no slug`); return {...d,slug,overview:section(d.body,'Overview'),items:[...bullets(section(d.body,'Facts')),...bullets(section(d.body,'Rules'))].map(x=>itemFor(owner,slug,x))}; });
   const skills=[...map].filter(([name])=>name.startsWith(`${prefix}skills/`)&&name.endsWith('.md')).sort().map(([name,source])=>{ const d=doc(source,name); if(!String(d.front.slug||'').trim()) throw new Error(`${name}:2: skill has no slug`); if(!d.front.label||!d.front.trigger_when) throw new Error(`${name}:2: skill requires label and trigger_when`); return d; });
@@ -74,16 +74,30 @@ export function validateMemoryPackFiles(files:MemoryPackFile[], owner='memory-pa
 export function readMemoryPackDirectory(dir:string):MemoryPackFile[] { const out:MemoryPackFile[]=[]; const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile())out.push({name:r,content:fs.readFileSync(p,'utf8')})}}; walk(dir); return out; }
 
 async function apply(client:PoolClient, slug:string, pack:ParsedPack, source:string):Promise<MemoryPackResult> {
-  const owner=`memory-pack:${slug}`, ts=PACK_VERSION_BASE+pack.version, now=Date.now(), ids=pack.subjects.flatMap(s=>s.items.map(i=>i.id));
+  const owner=`memory-pack:${slug}`, now=Date.now(), ids=pack.subjects.flatMap(s=>s.items.map(i=>i.id));
+  await client.query(`INSERT INTO subject_memory.packs(slug,version,source,installed_at,files_hash) VALUES($1,$2,$3,NOW(),$4) ON CONFLICT(slug) DO NOTHING`,[slug,pack.version,source,pack.hash]);
+  const prior=await client.query<{created_subjects:string[];install_seq:string}>('SELECT created_subjects,install_seq FROM subject_memory.packs WHERE slug=$1 FOR UPDATE',[slug]);
+  if(!prior.rowCount)throw new Error(`Could not reserve memory pack ${slug}`);
+  const created=new Set<string>(prior.rows[0].created_subjects||[]);
+  const seq=Number(prior.rows[0].install_seq);
+  const ts=PACK_VERSION_BASE+seq*1_000_000+pack.version;
   await client.query(`INSERT INTO subject_memory.subjects(slug,kind,name,parent,aliases,updated_ts) VALUES('global','global','Global',NULL,'{}',$1) ON CONFLICT DO NOTHING`,[now]);
-  const prior=await client.query<{created_subjects:string[]}>('SELECT created_subjects FROM subject_memory.packs WHERE slug=$1',[slug]);
-  const created=new Set<string>(prior.rows[0]?.created_subjects||[]);
-  for(const s of pack.subjects){const exists=await client.query('SELECT 1 FROM subject_memory.subjects WHERE slug=$1',[s.slug]);if(!exists.rowCount)created.add(s.slug);const aliases=Array.isArray(s.front.aliases)?s.front.aliases.map(String):[];await client.query(`INSERT INTO subject_memory.subjects(slug,kind,name,parent,aliases,updated_ts) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(slug) DO UPDATE SET aliases=(SELECT ARRAY(SELECT DISTINCT x FROM unnest(subject_memory.subjects.aliases||excluded.aliases)x)),updated_ts=excluded.updated_ts`,[s.slug,s.front.kind,s.front.name,s.front.parent||'global',aliases,now]);if(s.overview)await client.query(`INSERT INTO subject_memory.overviews(subject,ts,text,status,worker) VALUES($1,$2,$3,'active',$4) ON CONFLICT(subject,ts) DO UPDATE SET text=excluded.text,status='active',worker=excluded.worker`,[s.slug,ts,s.overview,owner]);for(const i of s.items)await client.query(`INSERT INTO subject_memory.items(id,kind,ptype,text,why,scope,origin,ts,always_on,worker) VALUES($1,$2,$3,$4,$5,$6,'seeded',$7,$8,$9) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,ptype=excluded.ptype,text=excluded.text,why=excluded.why,scope=excluded.scope,always_on=excluded.always_on,superseded_by=NULL,superseded_ts=NULL,worker=excluded.worker WHERE subject_memory.items.origin='seeded' AND subject_memory.items.worker=$9`,[i.id,i.kind,i.ptype,i.text,i.why,[i.subject],now,i.alwaysOn,owner]);}
+  for(const s of pack.subjects){
+    const exists=await client.query('SELECT 1 FROM subject_memory.subjects WHERE slug=$1',[s.slug]);
+    if(!exists.rowCount)created.add(s.slug);
+    const aliases=Array.isArray(s.front.aliases)?s.front.aliases.map(String):[];
+    await client.query(`INSERT INTO subject_memory.subjects(slug,kind,name,parent,aliases,updated_ts) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(slug) DO UPDATE SET aliases=(SELECT ARRAY(SELECT DISTINCT x FROM unnest(subject_memory.subjects.aliases||excluded.aliases)x)),updated_ts=excluded.updated_ts`,[s.slug,s.front.kind,s.front.name,s.front.parent||'global',aliases,now]);
+    if(s.overview)await client.query(`INSERT INTO subject_memory.overviews(subject,ts,text,status,worker) VALUES($1,$2,$3,'active',$4) ON CONFLICT(subject,ts) DO UPDATE SET text=excluded.text,status='active' WHERE subject_memory.overviews.worker=$4`,[s.slug,ts,s.overview,owner]);
+    for(const i of s.items)await client.query(`INSERT INTO subject_memory.items(id,kind,ptype,text,why,scope,origin,ts,always_on,worker) VALUES($1,$2,$3,$4,$5,$6,'seeded',$7,$8,$9) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,ptype=excluded.ptype,text=excluded.text,why=excluded.why,scope=excluded.scope,always_on=excluded.always_on,superseded_by=NULL,superseded_ts=NULL WHERE subject_memory.items.origin='seeded' AND subject_memory.items.worker=$9`,[i.id,i.kind,i.ptype,i.text,i.why,[i.subject],now,i.alwaysOn,owner]);
+  }
   await client.query(`UPDATE subject_memory.items SET superseded_ts=$1 WHERE worker=$2 AND origin='seeded' AND superseded_ts IS NULL AND NOT(id=ANY($3::text[]))`,[now,owner,ids]);
   await client.query(`DELETE FROM subject_memory.overviews WHERE worker=$1 AND ts<>$2`,[owner,ts]);
   await client.query(`DELETE FROM subject_memory.skills WHERE worker=$1`,[owner]);
-  for(const skill of pack.skills){const f=skill.front;await client.query(`INSERT INTO subject_memory.skills(slug,version_ts,label,trigger_when,trigger_actions,trigger_phrases,body,scope,strength,status,worker) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'active',$9)`,[String(f.slug),ts,f.label,f.trigger_when,f.trigger_actions||[],f.trigger_phrases||[],skill.body,f.scope||['global'],owner]);}
-  await client.query(`INSERT INTO subject_memory.packs(slug,version,source,installed_at,files_hash,created_subjects) VALUES($1,$2,$3,NOW(),$4,$5) ON CONFLICT(slug) DO UPDATE SET version=excluded.version,source=excluded.source,installed_at=excluded.installed_at,files_hash=excluded.files_hash,created_subjects=excluded.created_subjects`,[slug,pack.version,source,pack.hash,[...created]]);
+  for(const skill of pack.skills){
+    const f=skill.front;
+    await client.query(`INSERT INTO subject_memory.skills(slug,version_ts,label,trigger_when,trigger_actions,trigger_phrases,body,scope,strength,status,worker) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,'active',$9) ON CONFLICT(slug,version_ts) DO UPDATE SET label=excluded.label,trigger_when=excluded.trigger_when,trigger_actions=excluded.trigger_actions,trigger_phrases=excluded.trigger_phrases,body=excluded.body,scope=excluded.scope,strength=excluded.strength,status='active' WHERE subject_memory.skills.worker=$9`,[String(f.slug),ts,f.label,f.trigger_when,f.trigger_actions||[],f.trigger_phrases||[],skill.body,f.scope||['global'],owner]);
+  }
+  await client.query(`UPDATE subject_memory.packs SET version=$2,source=$3,installed_at=NOW(),files_hash=$4,created_subjects=$5 WHERE slug=$1`,[slug,pack.version,source,pack.hash,[...created]]);
   return {slug,version:pack.version,hash:pack.hash,subjects:pack.subjects.length,items:ids.length,skills:pack.skills.length};
 }
 export async function installPackFiles(slug:string, files:MemoryPackFile[], source=`files:Use Cases/skills/${slug}`):Promise<MemoryPackResult>{if(!/^[a-z0-9][a-z0-9._-]*$/i.test(slug))throw new Error('Invalid pack slug');const pack=parseFiles(files,`memory-pack:${slug}`);const result=await postgresClient.transaction(c=>apply(c,slug,pack,source));resetV7SubjectMemoryCache();return result;}
