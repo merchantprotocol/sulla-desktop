@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import { FunctionDefinitionModel } from '../agent/database/models/MarketplaceArtifactModel';
 import { EXTENSION_HOOKS, ExtensionHookName, listExtensionHookAuditEvents, setExtensionHookGrant } from '../agent/extensions/HookRegistry';
 import { extensionUI, ExtensionUISlot } from '../agent/extensions/ExtensionUIRegistry';
@@ -30,6 +30,10 @@ async function listPermissions() {
 }
 
 export function initExtensionUiIpc(): void {
+  // Permission prompts are informational and never park the hook or chat.
+  void import('../agent/extensions/HookRegistry').then(({ onExtensionHookAudit }) => onExtensionHookAudit(event => {
+    if (event.outcome === 'permission_denied') for (const win of BrowserWindow.getAllWindows()) win.webContents.send('extension-permission-needed', event);
+  }));
   ipcMain.handle('extensions-ui:list', (_event, slot?: ExtensionUISlot) => extensionUI.list(slot));
   ipcMain.handle('extension-permissions:list', listPermissions);
   ipcMain.handle('extension-permissions:audit', () => listExtensionHookAuditEvents());

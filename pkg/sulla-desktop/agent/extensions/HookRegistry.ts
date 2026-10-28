@@ -108,6 +108,8 @@ async function persistedGrant(extensionId: string, hook: ExtensionHookName): Pro
   return grants?.[extensionId]?.[hook] === true;
 }
 const AUDIT_LIMIT = 500;
+const auditListeners = new Set<(event: HookAuditEvent) => void>();
+export function onExtensionHookAudit(listener: (event: HookAuditEvent) => void): () => void { auditListeners.add(listener); return () => auditListeners.delete(listener); }
 let auditWrite = Promise.resolve();
 async function persistAuditEvent(event: HookAuditEvent): Promise<void> {
   const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
@@ -115,6 +117,7 @@ async function persistAuditEvent(event: HookAuditEvent): Promise<void> {
   await SullaSettingsModel.set('extensionHookAuditEvents', [...(current || []), event].slice(-AUDIT_LIMIT), 'json');
 }
 function queueAuditEvent(event: HookAuditEvent): void {
+  for (const listener of auditListeners) { try { listener(event) } catch { /* listeners never affect hooks */ } }
   auditWrite = auditWrite.then(() => persistAuditEvent(event)).catch(error => console.warn('[ExtensionHookAudit] Could not persist event', error));
 }
 export async function listExtensionHookAuditEvents(): Promise<HookAuditEvent[]> {

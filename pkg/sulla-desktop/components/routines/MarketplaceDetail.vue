@@ -47,7 +47,7 @@
             type="button"
             class="btn primary big"
             :disabled="installing || (!!installedInfo && !updateAvailable)"
-            @click="$emit('install')"
+            @click="requestInstall"
           >
             {{ installButtonLabel }}
           </button>
@@ -450,6 +450,19 @@
         </div>
       </div>
     </section>
+    <div v-if="showConsent" class="permission-scrim" role="presentation">
+      <section class="permission-modal" role="dialog" aria-modal="true" :aria-label="`${installedInfo ? 'Update' : 'Install'} ${row.name}?`">
+        <header><div><h2>{{installedInfo ? `Update ${row.name}?` : `Install ${row.name}?`}}</h2><p>{{installedInfo ? 'This update asks for new permission.' : 'Review what this extension can do before it is installed.'}}</p></div></header>
+        <div class="permission-body">
+          <template v-if="seenHooks.length"><h3>It can see</h3><p v-for="hook in seenHooks" :key="hook.name"><b>{{hook.text}}</b><small>{{hook.name}}</small></p></template>
+          <template v-if="changeHooks.length"><h3>It can change</h3><p v-for="hook in changeHooks" :key="hook.name"><b>{{hook.text}}</b><small>{{hook.name}}</small></p></template>
+          <template v-if="integrationPermissions.length"><h3>It connects to</h3><p><b>{{integrationPermissions.join(', ')}}</b></p></template>
+          <template v-if="uiSlots.length"><h3>It adds</h3><p v-for="slot in uiSlots" :key="slot"><b>{{slot==='sidebar_entry' ? 'An item in the left bar' : slot}}</b><small>{{slot}}</small></p></template>
+          <h3>Never shared</h3><p><b>Passwords, API keys and tokens.</b></p>
+        </div>
+        <footer><button type="button" class="btn" @click="showConsent=false">Don’t allow</button><button type="button" class="btn primary" @click="allowInstall">Allow</button></footer>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -459,6 +472,7 @@ import { marked } from 'marked';
 import { Background, BackgroundVariant } from '@vue-flow/background';
 import { VueFlow, type Edge, type Node } from '@vue-flow/core';
 import { computed, provide, reactive, ref } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 
@@ -489,7 +503,7 @@ const props = withDefaults(defineProps<{
   forkError:     null,
 });
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'install'): void;
   (e: 'install-all'): void;
@@ -497,6 +511,20 @@ defineEmits<{
   (e: 'fork'): void;
 }>();
 
+const showConsent=ref(false);
+const hookCopy:Record<string,{kind:'see'|'change';text:string}>={on_user_message:{kind:'see',text:'Messages you send to Sulla'},after_model_response:{kind:'see',text:'Sulla’s replies'},after_tool_call:{kind:'see',text:'Tool results after a tool runs'},on_memory_write:{kind:'see',text:'What Sulla saves to memory'},on_workflow_node_start:{kind:'see',text:'Workflow steps as they start'},on_workflow_node_finish:{kind:'see',text:'Workflow steps as they finish'},on_agent_job_start:{kind:'see',text:'When an agent starts a job'},on_agent_job_finish:{kind:'see',text:'When an agent finishes a job'},before_tool_call:{kind:'change',text:'Tool calls before they run. It can change the inputs or stop the call.'},before_model_call:{kind:'change',text:'What Sulla sends to the AI model. It can change it or stop it.'}};
+const declaredHooks=computed(()=>{const value=(props.manifest as any)?.hooks;return Array.isArray(value)?value.map((x:any)=>typeof x==='string'?x:x?.name).filter((x:string)=>hookCopy[x]):[]});
+const seenHooks=computed(()=>declaredHooks.value.filter((name:string)=>hookCopy[name].kind==='see').map((name:string)=>({name,text:hookCopy[name].text})));
+const changeHooks=computed(()=>declaredHooks.value.filter((name:string)=>hookCopy[name].kind==='change').map((name:string)=>({name,text:hookCopy[name].text})));
+const uiSlots=computed(()=>{const value=(props.manifest as any)?.ui;return Array.isArray(value)?value.map((x:any)=>x?.slot).filter(Boolean):[]});
+const integrationPermissions=computed(()=>{const value=(props.manifest as any)?.permissions;return Array.isArray(value)?value:[]});
+const needsConsent=computed(()=>declaredHooks.value.length||uiSlots.value.length||integrationPermissions.value.length);
+function requestInstall(){if(needsConsent.value)showConsent.value=true;else emit('install')}
+async function allowInstall(){
+  const extensionId=`function:${props.row.slug}`;
+  await Promise.all(declaredHooks.value.map((hook:string)=>ipcRenderer.invoke('extension-permissions:set-hook',{extensionId,hook,granted:true})));
+  showConsent.value=false;emit('install');
+}
 provide('routines-mode', ref<'edit' | 'run'>('run'));
 const kindInfo = computed(() => marketplaceKindInfo(props.row.kind));
 const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
@@ -1414,4 +1442,8 @@ h1 {
   .workflow-layout { grid-template-columns: 1fr; }
   .node-inspector { border-left: 0; border-top: 1px solid rgba(168, 192, 220, 0.16); }
 }
+</style>
+
+<style scoped>
+.permission-scrim{position:fixed;inset:0;z-index:10000;background:rgba(3,6,12,.72);display:grid;place-items:center}.permission-modal{width:min(560px,calc(100vw - 40px));max-height:calc(100vh - 60px);overflow:auto;background:var(--surface-1);border:1px solid var(--border);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.5)}.permission-modal header,.permission-modal footer{padding:18px 22px;border-bottom:1px solid var(--border)}.permission-modal footer{border:0;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:9px}.permission-body{padding:8px 22px 18px}.permission-body h3{margin:18px 0 7px;color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em}.permission-body p{margin:0;padding:8px 0;display:flex;flex-direction:column;gap:3px}.permission-body small{color:var(--text-dim);font-family:var(--font-mono)}
 </style>

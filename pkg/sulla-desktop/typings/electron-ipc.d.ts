@@ -1202,6 +1202,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
 
   'recipe-rail-apps-changed': (apps: {
