@@ -92,7 +92,7 @@ async function validateByKind(
     const body = manifestRaw.replace(/^\s*---\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/, '');
     const frontmatterMatch = /^\s*---\r?\n([\s\S]*?)\r?\n---/.exec(manifestRaw);
     if (frontmatterMatch) {
-      try { issues.push(...validateExtensionContract((await import('yaml')).parse(frontmatterMatch[1]), 'SKILL.md frontmatter')) } catch { /* existing parser reports content guidance */ }
+      try { issues.push(...validateExtensionContract((await import('yaml')).parse(frontmatterMatch[1]), 'SKILL.md frontmatter', 'skill')) } catch { /* existing parser reports content guidance */ }
     } else issues.push(...validateExtensionContract({}, 'SKILL.md frontmatter'));
     if (!body.trim().startsWith('#')) issues.push('SKILL.md should start with a level-1 heading (the skill name).');
     if (manifestRaw.trim().length < 50) issues.push('SKILL.md is suspiciously short — needs trigger conditions + instructions.');
@@ -104,7 +104,7 @@ async function validateByKind(
     try {
       const yaml = await import('yaml');
       const parsed: any = yaml.parse(manifestRaw);
-      issues.push(...validateExtensionContract(parsed, 'routine.yaml'));
+      issues.push(...validateExtensionContract(parsed, 'routine.yaml', 'workflow'));
       if (!parsed?.id) issues.push('routine.yaml: missing required key "id"');
       if (!parsed?.name) issues.push('routine.yaml: missing required key "name"');
       if (!Array.isArray(parsed?.nodes) || parsed.nodes.length === 0) issues.push('routine.yaml: "nodes" must be a non-empty array');
@@ -123,7 +123,7 @@ async function validateByKind(
     try {
       const yaml = await import('yaml');
       parsed = yaml.parse(manifestRaw);
-      issues.push(...validateExtensionContract(parsed, 'function.yaml'));
+      issues.push(...validateExtensionContract(parsed, 'function.yaml', 'function'));
     } catch (err) {
       issues.push(`function.yaml parse error: ${ (err as Error).message }`);
       return issues;
@@ -164,7 +164,7 @@ async function validateByKind(
     try {
       const yaml = await import('yaml');
       parsed = yaml.parse(manifestRaw);
-      issues.push(...validateExtensionContract(parsed, 'recipe manifest.yaml'));
+      issues.push(...validateExtensionContract(parsed, 'recipe manifest.yaml', 'recipe'));
     } catch (err) {
       issues.push(`manifest.yaml parse error: ${ (err as Error).message }`);
       return issues;

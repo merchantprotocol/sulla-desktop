@@ -196,6 +196,7 @@ export async function createJob(
   };
 
   jobs.set(jobId, job);
+  void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_start', { jobId, taskCount, parentAgentId: options.parentAgentId }));
   abortControllers.set(jobId, new AbortController());
 
   await dbWrite(
@@ -369,6 +370,8 @@ export async function completeJob(jobId: string, results: AgentJobResult[]): Pro
     if (!result) return task;
     return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? Date.now() };
   });
+
+  void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 
   await dbWrite(
     `UPDATE agent_jobs SET status = $2, finished_at = now(), error = $3, results = $4::jsonb, tasks = $5::jsonb, completion_delivered_at = NULL WHERE job_id = $1`,

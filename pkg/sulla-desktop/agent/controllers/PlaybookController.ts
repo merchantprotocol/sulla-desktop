@@ -2174,6 +2174,10 @@ export class PlaybookController<TState = any> {
   // ─── WebSocket Event Emission ───────────────────────────────────
 
   private emitPlaybookEvent(state: TState, type: string, data: Record<string, unknown> = {}): void {
+    if (type === 'node_started' || type === 'node_completed' || type === 'node_failed') {
+      const hook = type === 'node_started' ? 'on_workflow_node_start' : 'on_workflow_node_finish';
+      void import('../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction(hook, { ...data, event: type }));
+    }
     try {
       const ws = getWebSocketClientService();
       const channel = (state as any).metadata?.wsChannel || 'sulla-desktop';

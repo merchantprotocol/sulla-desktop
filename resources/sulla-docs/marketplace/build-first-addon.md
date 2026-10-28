@@ -67,9 +67,19 @@ A submission starts as **pending**. Review checks that the manifest matches the 
 
 Add-ons run within Sulla's existing VM, vault, Files, and tool-permission boundaries. An add-on never receives more access than the user granted to Sulla.
 
-## Hooks (coming in Extension Contract v1)
+## Hooks
 
-Hooks and filters are not part of the current add-on contract. The Extension Contract v1 work will define versioned `sullaApi` access and supported hook points; do not depend on internal event names or private modules. Once that contract lands, this section will link to its stable manifest and compatibility rules. Track the implementation on branch `feat/extension-contract-v1` / its pull request when available.
+See the [Extension Contract v1](../extensions.md) for the stable hook list, grants, redaction, and compatibility policy. Function add-ons are executable hook handlers:
+
+```yaml
+sullaApi: ^1.0.0
+hooks:
+  - name: on_memory_write
+    priority: 10
+    timeoutMs: 1000
+```
+
+Skills, workflows, and recipes may declare a hook only by referencing an installed function handler; validation rejects declarations without `function: <slug>`.
 
 ## Troubleshooting
 

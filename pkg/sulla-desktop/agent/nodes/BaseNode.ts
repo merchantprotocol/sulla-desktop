@@ -965,7 +965,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
     if (lastUserMessage) await extensionHooks.runAction('on_user_message', { message: lastUserMessage, threadId: state.metadata.threadId });
     const beforeModel = await extensionHooks.runFilter('before_model_call', { messages, systemPrompt, model: this.llm.getModel() });
-    if (beforeModel.denied) throw new Error(`Extension denied model call: ${ beforeModel.reason || 'denied' }`);
+    if (beforeModel.denied) {
+      const content = `I couldn't send this request to the model because an installed extension blocked it: ${ beforeModel.reason || 'no reason was provided' }`;
+      return { content, metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, rawProviderContent: content } };
+    }
     messages = Array.isArray((beforeModel.value as any).messages) ? (beforeModel.value as any).messages : messages;
 
     // Guard: if there are no non-system messages at all the LLM provider will

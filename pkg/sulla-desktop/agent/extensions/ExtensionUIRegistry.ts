@@ -14,6 +14,7 @@ export class ExtensionUIRegistry {
     this.contributions.set(key, Object.freeze({ ...item }));
     return () => this.contributions.delete(key);
   }
+  clear(): void { this.contributions.clear() }
   list(slot?: ExtensionUISlot): readonly ExtensionUIContribution[] {
     return [...this.contributions.values()].filter(item => !slot || item.slot === slot).sort((a, b) => (a.order ?? 10) - (b.order ?? 10));
   }

@@ -25,6 +25,7 @@ import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
+import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
 
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
@@ -127,6 +128,7 @@ export async function initiateWindowContext(): Promise<void> {
   try {
     const extensionService = getExtensionService();
     await extensionService.initialize();
+    await reloadExtensionHooks();
   } catch (error) {
     console.error('[ExtensionService] Failed to initialize:', error);
   }

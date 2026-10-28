@@ -58,3 +58,7 @@ UI is declarative. The renderer reads contributions from the UI registry; extens
 ## Auditing
 
 Each callback produces an audit event with extension id, hook, outcome (`ok`, `denied`, `error`, `timeout`, or `permission_denied`), and duration. Payloads and secret values are not logged. Audit failure itself never changes the core path.
+
+## Renderer contributions
+
+The main process exposes registered contributions through `ipcRenderer.invoke('extensions-ui:list', slot?)`. The registry supports `sidebar_entry`, `settings_tab`, and `chat_card`. Renderer wiring into the left rail is next; consumers must treat this API as read-only and render only known slots.
