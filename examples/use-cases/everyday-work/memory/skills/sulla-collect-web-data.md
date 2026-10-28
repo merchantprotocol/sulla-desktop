@@ -4,7 +4,7 @@ label: Collect public website data into a table or spreadsheet
 trigger_when: When the human wants listings, leads, prices, or other structured public website data collected and made repeatable.
 trigger_actions: [scrape listings, build a lead list, extract a website table, export web data, monitor a site]
 trigger_phrases: [pull all the listings, put this site into a spreadsheet, build a lead list, public directories, scrape this website, collect these prices, check this site every day]
-scope: [tool-browser, sulla-functions, sulla-workflows, sulla-files]
+scope: [everyday-work, tool-browser, sulla-functions, sulla-workflows, sulla-files]
 ---
 
 **When:** Use this for public pages the human is allowed to access. Use an official API or export when available; it is more stable than page scraping.

@@ -4,7 +4,7 @@ label: Triage email, draft replies, and send approved batches
 trigger_when: When the human asks to read an inbox, identify messages needing attention, draft an email reply, send an approved batch, text a customer, or use Mail on the Mac.
 trigger_actions: [triage inbox, draft email reply, send email batch, send text, use Mac Mail]
 trigger_phrases: [draft a reply to this customer email, go through my inbox, what needs me, send these emails five at a time, send a text message, send that through Mail on my Mac, triage my email, reply to this email]
-scope: [sulla-tools, tool-vault, tool-applescript]
+scope: [everyday-work, sulla-tools, tool-vault, tool-applescript]
 ---
 
 **When:** Handle email or customer messages through a connected integration. Drafting and triage are reversible. Sending any email or text waits for the human's explicit go-ahead.

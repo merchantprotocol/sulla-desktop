@@ -4,7 +4,7 @@ label: Build, test and package a browser extension
 trigger_when: When someone asks you to turn a mockup into a Chrome-compatible extension, test an extension, package it, or prepare a browser store update.
 trigger_actions: [build a browser extension, package an extension, test an extension, prepare a store listing]
 trigger_phrases: [build a Chrome extension from this mockup, package the extension, update the store listing, build a browser extension, test the extension, Chrome Web Store]
-scope: [tool-github, tool-browser]
+scope: [everyday-work, tool-github, tool-browser]
 ---
 
 **When:** Use this for a Chromium extension repository. Sulla's browser tools can test ordinary web pages, but there is no verified tool for loading an unpacked extension into the human's own Chrome profile or uploading a store package. Be explicit about that boundary.

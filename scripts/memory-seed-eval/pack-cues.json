@@ -1,0 +1,202 @@
+[
+ {
+  "cue": "research this competitor and save a cited brief",
+  "subjects": [
+   "sulla",
+   "tool-browser",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-research-and-write-brief"
+  ]
+ },
+ {
+  "cue": "compare the most popular tools in this market",
+  "subjects": [
+   "sulla",
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-research-and-write-brief"
+  ]
+ },
+ {
+  "cue": "collect public directory listings into a spreadsheet",
+  "subjects": [
+   "tool-browser",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-collect-web-data"
+  ]
+ },
+ {
+  "cue": "scrape these public prices and deduplicate them",
+  "subjects": [
+   "tool-browser",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-collect-web-data"
+  ]
+ },
+ {
+  "cue": "analyze this spreadsheet and explain the trends",
+  "subjects": [
+   "tool-gdrive",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-analyze-data"
+  ]
+ },
+ {
+  "cue": "build a KPI dashboard from this data",
+  "subjects": [
+   "sulla-agents",
+   "sulla-chat",
+   "tool-pg"
+  ],
+  "skills": [
+   "sulla-analyze-data"
+  ]
+ },
+ {
+  "cue": "triage my inbox and tell me what needs me",
+  "subjects": [
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-handle-email"
+  ]
+ },
+ {
+  "cue": "draft replies to these customer emails",
+  "subjects": [
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-handle-email"
+  ]
+ },
+ {
+  "cue": "send the approved email batch five at a time",
+  "subjects": [
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-handle-email"
+  ]
+ },
+ {
+  "cue": "write a week of social posts from customer language",
+  "subjects": [
+   "sulla-files",
+   "sulla-tools"
+  ],
+  "skills": [
+   "sulla-plan-and-make-content"
+  ]
+ },
+ {
+  "cue": "plan a content calendar for next month",
+  "subjects": [
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-plan-and-make-content"
+  ]
+ },
+ {
+  "cue": "make an image for this marketing post",
+  "subjects": [
+   "tool-vault",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-make-images-and-video"
+  ]
+ },
+ {
+  "cue": "produce a short explainer video",
+  "subjects": [
+   "tool-vault",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-make-images-and-video"
+  ]
+ },
+ {
+  "cue": "automate this weekly business routine",
+  "subjects": [
+   "sulla-workflows",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-automate-business-routines"
+  ]
+ },
+ {
+  "cue": "track contracts that renew soon",
+  "subjects": [
+   "sulla-workflows",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-automate-business-routines"
+  ]
+ },
+ {
+  "cue": "is this business idea worth it? run the numbers",
+  "subjects": [
+   "tool-browser",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-evaluate-business-idea"
+  ]
+ },
+ {
+  "cue": "deploy this website to staging",
+  "subjects": [
+   "tool-github",
+   "tool-browser",
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-deploy-a-site"
+  ]
+ },
+ {
+  "cue": "put the staging site behind a simple password",
+  "subjects": [
+   "tool-github",
+   "tool-browser",
+   "tool-vault"
+  ],
+  "skills": [
+   "sulla-deploy-a-site"
+  ]
+ },
+ {
+  "cue": "build a browser extension from this idea",
+  "subjects": [
+   "tool-github",
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-build-a-browser-extension"
+  ]
+ },
+ {
+  "cue": "package the extension and prepare its store listing",
+  "subjects": [
+   "tool-github",
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-build-a-browser-extension"
+  ]
+ }
+]

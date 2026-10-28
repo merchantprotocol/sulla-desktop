@@ -16,7 +16,7 @@ scope: [sulla-chat]
 4. Use semantic HTML and inline `<style>`. Chat strips `<script>` and `<svg>`, so use HTML/CSS only. Keep the response compact and readable on narrow screens.
 5. Use the chat variables: `--bg`, `--surface-1`, `--surface-2`, `--surface-3`, `--text`, `--text-muted`, `--text-dim`, `--accent`, `--accent-hover`, `--accent-dim`, `--accent-border`, `--border`, `--border-muted`, `--info`, `--success`, `--warning`, and `--danger`. Use `var(--font-display)` for a headline, `var(--font-body)` for prose, and `var(--font-mono)` for data or code.
 6. Use `--accent` for primary emphasis. Reserve green/`--success` for a genuinely successful status. Give tables headings, charts a text summary, and status meaning in words rather than color alone.
-7. Label estimates, sample data, incomplete periods, missing data, and units directly beside the affected value. For several real metrics, use `sulla-analyze-data` or the `analytics-worker` instead of inventing dashboard data.
+7. Label estimates, sample data, incomplete periods, missing data, and units directly beside the affected value. For several real metrics, use the Everyday work memory pack's `sulla-analyze-data` skill, if installed or the `analytics-worker` instead of inventing dashboard data.
 
 **Check:** Every displayed number matches the verified source; the takeaway is visible in five seconds; the response works without scripts or SVG; provenance and caveats are present; success is not communicated by color alone.
 

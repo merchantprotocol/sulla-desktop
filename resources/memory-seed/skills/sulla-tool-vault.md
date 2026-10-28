@@ -9,7 +9,7 @@ scope: [tool-vault]
 
 **When:** When you need to inspect vault metadata and autofill credentials without exposing secret values.
 
-For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use `sulla-deploy-a-site`; it checks connection state before calling the provider proxy.
+For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use the Everyday work memory pack's `sulla-deploy-a-site` skill, if installed; it checks connection state before calling the provider proxy.
 
 **Do:**
 1. If the human is connecting or repairing an integration, open the setup screen: `sulla ui/open_tab '{"mode":"integrations"}'`. OAuth and token entry happen there; never ask for a secret in chat.

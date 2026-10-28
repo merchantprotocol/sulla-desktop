@@ -4,7 +4,7 @@ label: Evaluate a business idea with evidence and a small test
 trigger_when: When the human asks whether a business idea is worth pursuing, wants market evidence, or needs a practical validation plan before investing heavily.
 trigger_actions: [evaluate business idea, research demand, compare competitors, design validation test]
 trigger_phrases: [is this business idea worth it, run the numbers, validate this idea, research demand, size this opportunity, compare competitors, should I build this business]
-scope: [sulla-files, tool-browser]
+scope: [everyday-work, sulla-files, tool-browser]
 ---
 
 **When:** Produce an evidence-based decision brief, not false certainty. Use `sulla-plan-and-make-content` later for go-to-market work.

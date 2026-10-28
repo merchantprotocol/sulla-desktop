@@ -119,7 +119,8 @@
   "skills": [
    "sulla-research-and-write-brief"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "look into this business's website and tell me what they do",
@@ -157,7 +158,8 @@
   "skills": [
    "sulla-research-and-write-brief"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "find reliable research on this question and give me the takeaways",
@@ -291,7 +293,8 @@
   "skills": [
    "sulla-plan-and-make-content"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "give me a marketing plan to get more sign-ups",
@@ -302,7 +305,8 @@
   "skills": [
    "sulla-plan-and-make-content"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "write a newsletter for our subscribers",
@@ -336,7 +340,8 @@
   "skills": [
    "sulla-plan-and-make-content"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "turn these meeting notes into a clean summary doc",
@@ -655,7 +660,8 @@
   "skills": [
    "sulla-build-a-browser-extension"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "deploy this website",
@@ -668,7 +674,8 @@
   "skills": [
    "sulla-deploy-a-site"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "put this site behind a simple password",
@@ -681,7 +688,8 @@
   "skills": [
    "sulla-deploy-a-site"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "get this out to staging",
@@ -694,7 +702,8 @@
   "skills": [
    "sulla-deploy-a-site"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "is this live in production yet?",
@@ -707,7 +716,8 @@
   "skills": [
    "sulla-deploy-a-site"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "the deployed site throws an error, find it and fix it",
@@ -735,7 +745,8 @@
   "skills": [
    "sulla-deploy-a-site"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "run the deploy workflow on GitHub",
@@ -1621,7 +1632,8 @@
   "skills": [
    "sulla-handle-email"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "send these emails five at a time until they're all out",
@@ -1632,7 +1644,8 @@
   "skills": [
    "sulla-handle-email"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "send a Slack message to the team channel",
@@ -1666,7 +1679,8 @@
   "skills": [
    "sulla-handle-email"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "send that through Mail on my Mac",
@@ -2287,7 +2301,8 @@
   "skills": [
    "sulla-automate-business-routines"
   ],
-  "coverage": "covered"
+  "coverage": "covered",
+  "pack": "everyday-work"
  },
  {
   "cue": "log this expense receipt",
