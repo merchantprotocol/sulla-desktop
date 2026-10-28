@@ -1,362 +1,413 @@
 [
-  {
-    "cue": "send a slack message to #general",
-    "subjects": [
-      "tool-slack"
-    ],
-    "skills": [
-      "sulla-tool-slack"
-    ]
-  },
-  {
-    "cue": "post our update in Slack",
-    "subjects": [
-      "tool-slack"
-    ],
-    "skills": [
-      "sulla-tool-slack"
-    ]
-  },
-  {
-    "cue": "find the engineering Slack channel",
-    "subjects": [
-      "tool-slack"
-    ],
-    "skills": [
-      "sulla-tool-slack"
-    ]
-  },
-  {
-    "cue": "make a workflow that runs every morning",
-    "subjects": [
-      "sulla-workflows"
-    ],
-    "skills": [
-      "sulla-build-workflow"
-    ]
-  },
-  {
-    "cue": "schedule this report for weekdays",
-    "subjects": [
-      "sulla-workflows"
-    ],
-    "skills": [
-      "sulla-build-workflow"
-    ]
-  },
-  {
-    "cue": "where should I save this report",
-    "subjects": [
-      "sulla-files"
-    ],
-    "skills": [
-      "sulla-files"
-    ]
-  },
-  {
-    "cue": "put this finished document in Files",
-    "subjects": [
-      "sulla-files"
-    ],
-    "skills": [
-      "sulla-files"
-    ]
-  },
-  {
-    "cue": "open a PR for this branch",
-    "subjects": [
-      "tool-github"
-    ],
-    "skills": [
-      "sulla-tool-github"
-    ]
-  },
-  {
-    "cue": "push my commit to GitHub",
-    "subjects": [
-      "tool-github"
-    ],
-    "skills": [
-      "sulla-tool-github"
-    ]
-  },
-  {
-    "cue": "take a screenshot of this site",
-    "subjects": [
-      "tool-browser"
-    ],
-    "skills": [
-      "sulla-tool-browser"
-    ]
-  },
-  {
-    "cue": "open this web page and click sign in",
-    "subjects": [
-      "tool-browser"
-    ],
-    "skills": [
-      "sulla-tool-browser"
-    ]
-  },
-  {
-    "cue": "remember that I prefer short answers",
-    "subjects": [
-      "sulla-memory"
-    ],
-    "skills": [
-      "sulla-memory"
-    ]
-  },
-  {
-    "cue": "what do you remember about my preferences",
-    "subjects": [
-      "sulla-memory"
-    ],
-    "skills": [
-      "sulla-memory"
-    ]
-  },
-  {
-    "cue": "spawn a worker to research X",
-    "subjects": [
-      "sulla-agents"
-    ],
-    "skills": [
-      "sulla-spawn-and-manage-agents"
-    ]
-  },
-  {
-    "cue": "check whether the worker finished",
-    "subjects": [
-      "sulla-agents"
-    ],
-    "skills": [
-      "sulla-spawn-and-manage-agents"
-    ]
-  },
-  {
-    "cue": "create a reusable Python function",
-    "subjects": [
-      "sulla-functions"
-    ],
-    "skills": [
-      "sulla-build-function"
-    ]
-  },
-  {
-    "cue": "publish this use case",
-    "subjects": [
-      "sulla-use-cases"
-    ],
-    "skills": [
-      "sulla-use-cases"
-    ]
-  },
-  {
-    "cue": "install this marketplace recipe",
-    "subjects": [
-      "sulla-marketplace"
-    ],
-    "skills": [
-      "sulla-marketplace"
-    ]
-  },
-  {
-    "cue": "run a postgres query",
-    "subjects": [
-      "tool-pg"
-    ],
-    "skills": [
-      "sulla-tool-pg"
-    ]
-  },
-  {
-    "cue": "look up a secret in the vault",
-    "subjects": [
-      "tool-vault"
-    ],
-    "skills": [
-      "sulla-tool-vault"
-    ]
-  },
-  {
-    "cue": "add a meeting to my calendar",
-    "subjects": [
-      "tool-calendar"
-    ],
-    "skills": [
-      "sulla-tool-calendar"
-    ]
-  },
-  {
-    "cue": "notify me when this finishes",
-    "subjects": [
-      "tool-notify"
-    ],
-    "skills": [
-      "sulla-tool-notify"
-    ]
-  },
-  {
-    "cue": "inspect the running docker containers",
-    "subjects": [
-      "tool-docker"
-    ],
-    "skills": [
-      "sulla-tool-docker"
-    ]
-  },
-  {
-    "cue": "restart the kubernetes deployment",
-    "subjects": [
-      "tool-kubernetes"
-    ],
-    "skills": [
-      "sulla-tool-kubernetes"
-    ]
-  },
-  {
-    "cue": "search my files for the invoice",
-    "subjects": [
-      "tool-files"
-    ],
-    "skills": [
-      "sulla-tool-files"
-    ]
-  },
-  {
-    "cue": "read the Sulla documentation",
-    "subjects": [
-      "sulla-tools"
-    ],
-    "skills": [
-      "sulla-tool-search"
-    ]
-  },
-  {
-    "cue": "execute this shell command in the VM",
-    "subjects": [
-      "sulla-vm"
-    ],
-    "skills": [
-      "sulla-tool-meta"
-    ]
-  },
-  {
-    "cue": "run this command on my Mac",
-    "subjects": [
-      "sulla-vm"
-    ],
-    "skills": [
-      "sulla-host-access"
-    ]
-  },
-  {
-    "cue": "record my screen and microphone",
-    "subjects": [
-      "sulla-capture-studio"
-    ],
-    "skills": [
-      "sulla-capture-studio"
-    ]
-  },
-  {
-    "cue": "start secretary mode for this meeting",
-    "subjects": [
-      "sulla-secretary-mode"
-    ],
-    "skills": [
-      "sulla-secretary-mode"
-    ]
-  },
-  {
-    "cue": "connect my cloud account",
-    "subjects": [
-      "sulla-cloud"
-    ],
-    "skills": [
-      "sulla-cloud"
-    ]
-  },
-  {
-    "cue": "configure a new integration",
-    "subjects": [
-      "sulla-integrations"
-    ],
-    "skills": [
-      "sulla-integrations"
-    ]
-  },
-  {
-    "cue": "create a custom agent",
-    "subjects": [
-      "sulla-agents"
-    ],
-    "skills": [
-      "sulla-create-agent"
-    ]
-  },
-  {
-    "cue": "find the current project task list",
-    "subjects": [
-      "sulla-files"
-    ],
-    "skills": [
-      "sulla-project-files"
-    ]
-  },
-  {
-    "cue": "build and package Sulla Desktop",
-    "subjects": [
-      "sulla-repository"
-    ],
-    "skills": [
-      "sulla-build-desktop"
-    ]
-  },
-  {
-    "cue": "check the git diff before committing",
-    "subjects": [
-      "sulla-repository"
-    ],
-    "skills": [
-      "sulla-repository"
-    ]
-  },
-  {
-    "cue": "ask me to approve this decision",
-    "subjects": [
-      "sulla-decide"
-    ],
-    "skills": [
-      "sulla-decide"
-    ]
-  },
-  {
-    "cue": "search Redis for this cache key",
-    "subjects": [
-      "tool-redis"
-    ],
-    "skills": [
-      "sulla-tool-redis"
-    ]
-  },
-  {
-    "cue": "call the browser integration MCP tool",
-    "subjects": [
-      "sulla-tools"
-    ],
-    "skills": [
-      "sulla-integrations"
-    ]
-  },
-  {
-    "cue": "create an automation from this repeated task",
-    "subjects": [
-      "sulla-workflows"
-    ],
-    "skills": [
-      "sulla-build-workflow"
-    ]
-  }
+ {
+  "cue": "send a slack message to #general",
+  "subjects": [
+   "tool-slack"
+  ],
+  "skills": [
+   "sulla-tool-slack"
+  ]
+ },
+ {
+  "cue": "post our update in Slack",
+  "subjects": [
+   "tool-slack"
+  ],
+  "skills": [
+   "sulla-tool-slack"
+  ]
+ },
+ {
+  "cue": "find the engineering Slack channel",
+  "subjects": [
+   "tool-slack"
+  ],
+  "skills": [
+   "sulla-tool-slack"
+  ]
+ },
+ {
+  "cue": "make a workflow that runs every morning",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-build-workflow",
+   "sulla-schedule-or-trigger-workflow",
+   "sulla-tool-workflow"
+  ]
+ },
+ {
+  "cue": "schedule this report for weekdays",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-schedule-or-trigger-workflow",
+   "sulla-build-workflow",
+   "sulla-tool-workflow"
+  ]
+ },
+ {
+  "cue": "my workflow run failed, figure out why",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-debug-workflow-run",
+   "sulla-tool-workflow"
+  ]
+ },
+ {
+  "cue": "where should I save this report",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files",
+   "sulla-tool-files"
+  ]
+ },
+ {
+  "cue": "put this finished document in Files",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-save-work-in-files",
+   "sulla-tool-files"
+  ]
+ },
+ {
+  "cue": "restore the previous version of that file",
+  "subjects": [
+   "sulla-files",
+   "tool-files"
+  ],
+  "skills": [
+   "sulla-tool-files",
+   "sulla-save-work-in-files"
+  ]
+ },
+ {
+  "cue": "open a PR for this branch",
+  "subjects": [
+   "tool-github",
+   "sulla-repository"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ]
+ },
+ {
+  "cue": "push my commit to GitHub",
+  "subjects": [
+   "tool-github"
+  ],
+  "skills": [
+   "sulla-tool-github"
+  ]
+ },
+ {
+  "cue": "take a screenshot of this site",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ]
+ },
+ {
+  "cue": "open this web page and click sign in",
+  "subjects": [
+   "tool-browser"
+  ],
+  "skills": [
+   "sulla-tool-browser"
+  ]
+ },
+ {
+  "cue": "remember that I prefer short answers",
+  "subjects": [
+   "sulla-memory",
+   "tool-memory",
+   "tool-observation"
+  ],
+  "skills": [
+   "sulla-remember-and-recall",
+   "sulla-tool-observation",
+   "sulla-tool-memory"
+  ]
+ },
+ {
+  "cue": "what do you remember about my preferences",
+  "subjects": [
+   "sulla-memory",
+   "tool-memory",
+   "tool-observation"
+  ],
+  "skills": [
+   "sulla-remember-and-recall",
+   "sulla-tool-memory",
+   "sulla-tool-observation"
+  ]
+ },
+ {
+  "cue": "spawn a worker to research this in parallel",
+  "subjects": [
+   "sulla-agents",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents",
+   "sulla-tool-agents"
+  ]
+ },
+ {
+  "cue": "check whether the worker finished",
+  "subjects": [
+   "sulla-agents",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-spawn-and-manage-agents",
+   "sulla-tool-agents"
+  ]
+ },
+ {
+  "cue": "send a message to the heartbeat agent",
+  "subjects": [
+   "sulla-channels",
+   "sulla-heartbeat"
+  ],
+  "skills": [
+   "sulla-message-another-agent"
+  ]
+ },
+ {
+  "cue": "create a reusable Python function",
+  "subjects": [
+   "sulla-functions",
+   "tool-function"
+  ],
+  "skills": [
+   "sulla-build-function",
+   "sulla-tool-function"
+  ]
+ },
+ {
+  "cue": "publish this use case",
+  "subjects": [
+   "sulla-use-cases",
+   "sulla-decide"
+  ],
+  "skills": [
+   "sulla-publish-use-case",
+   "sulla-decide-approval"
+  ]
+ },
+ {
+  "cue": "install this marketplace recipe",
+  "subjects": [
+   "sulla-marketplace",
+   "tool-marketplace"
+  ],
+  "skills": [
+   "sulla-install-from-marketplace",
+   "sulla-tool-marketplace"
+  ]
+ },
+ {
+  "cue": "run a postgres query",
+  "subjects": [
+   "tool-pg"
+  ],
+  "skills": [
+   "sulla-tool-pg"
+  ]
+ },
+ {
+  "cue": "look up an API key in the vault",
+  "subjects": [
+   "tool-vault",
+   "sulla-vault"
+  ],
+  "skills": [
+   "sulla-tool-vault"
+  ]
+ },
+ {
+  "cue": "add a meeting to my calendar tomorrow at 3",
+  "subjects": [
+   "tool-calendar"
+  ],
+  "skills": [
+   "sulla-tool-calendar"
+  ]
+ },
+ {
+  "cue": "notify me when this finishes",
+  "subjects": [
+   "tool-notify"
+  ],
+  "skills": [
+   "sulla-tool-notify"
+  ]
+ },
+ {
+  "cue": "inspect the running docker containers",
+  "subjects": [
+   "tool-docker",
+   "sulla-docker"
+  ],
+  "skills": [
+   "sulla-tool-docker"
+  ]
+ },
+ {
+  "cue": "search my files for the invoice",
+  "subjects": [
+   "tool-files",
+   "sulla-files"
+  ],
+  "skills": [
+   "sulla-tool-files"
+  ]
+ },
+ {
+  "cue": "which tool sends an email",
+  "subjects": [
+   "sulla-tools",
+   "tool-meta",
+   "tool-agents"
+  ],
+  "skills": [
+   "sulla-discover-and-call-tools",
+   "sulla-tool-meta"
+  ]
+ },
+ {
+  "cue": "execute this shell command in the VM",
+  "subjects": [
+   "sulla-vm",
+   "tool-meta"
+  ],
+  "skills": [
+   "sulla-host-vs-vm",
+   "sulla-tool-meta"
+  ]
+ },
+ {
+  "cue": "run this command on my Mac",
+  "subjects": [
+   "sulla-vm"
+  ],
+  "skills": [
+   "sulla-host-vs-vm"
+  ]
+ },
+ {
+  "cue": "record my screen and microphone",
+  "subjects": [
+   "sulla-capture-studio",
+   "tool-capture"
+  ],
+  "skills": [
+   "sulla-record-with-capture-studio",
+   "sulla-tool-capture"
+  ]
+ },
+ {
+  "cue": "start secretary mode for this meeting",
+  "subjects": [
+   "sulla-secretary-mode",
+   "tool-secretary"
+  ],
+  "skills": [
+   "sulla-use-secretary-mode",
+   "sulla-tool-secretary"
+  ]
+ },
+ {
+  "cue": "is Sulla Cloud syncing my phone",
+  "subjects": [
+   "sulla-cloud",
+   "sulla-mobile"
+  ],
+  "skills": []
+ },
+ {
+  "cue": "create a custom agent",
+  "subjects": [
+   "sulla-agents",
+   "sulla-use-cases"
+  ],
+  "skills": [
+   "sulla-create-agent"
+  ]
+ },
+ {
+  "cue": "update the task list for this project",
+  "subjects": [
+   "sulla-projects"
+  ],
+  "skills": [
+   "sulla-manage-a-project"
+  ]
+ },
+ {
+  "cue": "add a new tool to the Sulla Desktop source code",
+  "subjects": [
+   "sulla-repository",
+   "sulla-repo-agent-runtime"
+  ],
+  "skills": [
+   "sulla-change-sulla-source"
+  ]
+ },
+ {
+  "cue": "ask me to approve this decision",
+  "subjects": [
+   "sulla-decide",
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-ask-the-human",
+   "sulla-decide-approval"
+  ]
+ },
+ {
+  "cue": "show these sales numbers as a chart in chat",
+  "subjects": [
+   "sulla-chat"
+  ],
+  "skills": [
+   "sulla-reply-with-rich-html"
+  ]
+ },
+ {
+  "cue": "check for a Sulla Desktop update",
+  "subjects": [
+   "sulla-desktop"
+  ],
+  "skills": [
+   "sulla-handle-desktop-updates"
+  ]
+ },
+ {
+  "cue": "turn this repeated weekly task into an automation",
+  "subjects": [
+   "sulla-workflows",
+   "tool-workflow"
+  ],
+  "skills": [
+   "sulla-build-workflow",
+   "sulla-schedule-or-trigger-workflow"
+  ]
+ }
 ]

@@ -439,6 +439,13 @@ export async function recallV7SubjectMemory(
   );
 }
 
+/** Load the store and finish embedding it, so the next recall uses vectors rather than keywords. */
+export async function warmV7SubjectMemory(): Promise<void> {
+  const c = await load();
+  const e = embedder();
+  if (e) await embedMissingRows(c, e);
+}
+
 export function resetV7SubjectMemoryCache(): void {
   cache = null;
   refresh = null;

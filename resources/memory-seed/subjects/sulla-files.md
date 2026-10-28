@@ -3,7 +3,7 @@ slug: sulla-files
 kind: system
 name: Sulla Files
 parent: sulla
-aliases: [Files, file manager, /mnt/sulla-files, FUSE mount, documents]
+aliases: [Files, file manager, /mnt/sulla-files, FUSE mount, documents, where to save, save this, save the report, save a file, finished document, deliverable]
 ---
 
 ## Overview

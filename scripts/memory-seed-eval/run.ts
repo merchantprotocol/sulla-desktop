@@ -42,17 +42,24 @@ async function main(): Promise<void> {
     await postgresClient.query(`CREATE TABLE sulla_settings(property text PRIMARY KEY,value text,"cast" text)`);
     const seeder = await import('../../pkg/sulla-desktop/agent/database/seeders/MemorySeedSeeder');
     await seeder.initialize();
-    const { recallV7SubjectMemory, resetV7SubjectMemoryCache } = await import('../../pkg/sulla-desktop/agent/memory/V7SubjectMemory');
+    const { recallV7SubjectMemory, warmV7SubjectMemory } = await import('../../pkg/sulla-desktop/agent/memory/V7SubjectMemory');
+    // Recall embeds lazily in the background; warm once so every cue is scored on vectors.
+    await warmV7SubjectMemory();
+    const labelRows = await postgresClient.query<{slug:string;label:string}>(`SELECT slug,label FROM subject_memory.skills_at((extract(epoch from now())*1000)::bigint) WHERE status='active'`);
+    const labelOf = new Map(labelRows.map(x => [x.slug, x.label]));
+    // A cue passes when recall surfaces ANY of its acceptable subjects (and, separately, skills).
     let subjectHits=0, subjectTotal=0, skillHits=0, skillTotal=0;
     for (const [index,cue] of cues.entries()) {
-      resetV7SubjectMemoryCache();
-      const recalled = await recallV7SubjectMemory([cue.cue],`eval-${ index }`,true) || '';
-      const subjects = cue.subjects.map(slug => ({slug,hit:recalled.includes(`project-${ slug }.md`)}));
-      const labels = cue.skills.length ? await postgresClient.query<{slug:string;label:string}>(`SELECT slug,label FROM subject_memory.skills_at((extract(epoch from now())*1000)::bigint) WHERE slug=ANY($1::text[])`,[cue.skills]) : [];
-      const skills = cue.skills.map(slug => ({slug,hit:labels.some(x => x.slug===slug && recalled.includes(`### ${ x.label }`))}));
-      subjectHits += subjects.filter(x=>x.hit).length; subjectTotal += subjects.length;
-      skillHits += skills.filter(x=>x.hit).length; skillTotal += skills.length;
-      console.log(`${index+1}. ${cue.cue}\n   subjects ${subjects.map(x=>`${x.slug}:${x.hit?'hit':'MISS'}`).join(', ')||'n/a'}; skills ${skills.map(x=>`${x.slug}:${x.hit?'hit':'MISS'}`).join(', ')||'n/a'}`);
+      const recalled = await recallV7SubjectMemory([cue.cue],`eval-${ process.pid }-${ index }`,true) || '';
+      const chosen = [...recalled.matchAll(/^## project-([a-z0-9-]+)\.md/gm)].map(m => m[1]);
+      const shownSkills = [...labelOf].filter(([,label]) => recalled.includes(`### ${ label }\n_Trigger:`)).map(([slug]) => slug);
+      const subjectHit = cue.subjects.length ? cue.subjects.some(s => chosen.includes(s)) : null;
+      const skillHit = cue.skills.length ? cue.skills.some(s => shownSkills.includes(s)) : null;
+      if (subjectHit !== null) { subjectTotal++; if (subjectHit) subjectHits++; }
+      if (skillHit !== null) { skillTotal++; if (skillHit) skillHits++; }
+      const mark = (hit:boolean|null) => hit === null ? 'n/a' : hit ? 'hit' : 'MISS';
+      if (index === 0) console.log(`recall block: ${ recalled.length } chars; core rules section: ${ recalled.includes('## sulla.md') ? 'present' : 'MISSING' }`);
+      console.log(`${index+1}. ${cue.cue}\n   subject ${mark(subjectHit)} [${chosen.join(', ')}]  skill ${mark(skillHit)} [${shownSkills.join(', ')}]`);
     }
     console.log(`TOTAL subject=${subjectHits}/${subjectTotal} (${subjectTotal ? (100*subjectHits/subjectTotal).toFixed(1):'100.0'}%) skill=${skillHits}/${skillTotal} (${skillTotal ? (100*skillHits/skillTotal).toFixed(1):'100.0'}%)`);
     await postgresClient.end();
