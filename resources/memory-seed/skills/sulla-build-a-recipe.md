@@ -3,7 +3,7 @@ slug: sulla-build-a-recipe
 label: Build and test a Sulla Docker recipe
 trigger_when: When a plugin needs a long-running local service, Docker Compose stack, web UI, ports, volumes, health checks, or extension lifecycle controls.
 trigger_actions: [build recipe, package compose service, install recipe, test extension service]
-trigger_phrases: [Docker recipe, compose extension, container plugin, local service add-on, installation.yaml]
+trigger_phrases: [Docker recipe, compose extension, container plugin, local service add-on, installation.yaml, one-click recipe, package this app, docker compose app, self-hosted app]
 scope: [sulla-plugins, sulla-extensions]
 ---
 

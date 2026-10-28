@@ -11,3 +11,7 @@ Add `--fixtures` for the tiny smoke pack. Set `SULLA_SEED_EVAL_DATABASE_URL` to 
 It needs installed dependencies (ESM imports ignore `NODE_PATH`) and the real Potion weights: `potion-retrieval-32M` with `model.int8.bin`, as produced by `scripts/dependencies/potion.ts`. Without the weights recall returns nothing and every cue misses. The script warms the store once so every cue is scored on vectors, and a cue passes when recall surfaces any one of its acceptable subjects (and, separately, skills).
 
 Last run (seed v3, 2026-10-27): subjects 39/40, skills 39/39, first-turn recall block about 15k characters with the core `sulla.md` rules present.
+
+## Memory packs
+
+`node_modules/.bin/tsx scripts/memory-seed-eval/pack-test.ts` (same env as above; `--pack <dir>` and `--cues <file>` to test another pack) seeds the core on a scratch database, then validates, installs, re-installs, customizes and syncs, and uninstalls the Everyday work pack, checking recall at each step and that the user's own subjects survive uninstall. Last run (2026-10-27): all 13 checks passed; pack cues 0/20 before install, 20/20 after, 0/20 after uninstall.

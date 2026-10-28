@@ -1486,7 +1486,9 @@
    "sulla-marketplace"
   ],
   "skills": [
-   "sulla-build-extension"
+   "sulla-build-extension",
+   "sulla-build-a-recipe",
+   "sulla-build-a-plugin"
   ],
   "coverage": "partial"
  },
