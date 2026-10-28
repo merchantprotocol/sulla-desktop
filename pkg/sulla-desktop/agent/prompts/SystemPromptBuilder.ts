@@ -18,6 +18,7 @@
  */
 
 import { checkHeartbeatPromptInvariants, type HeartbeatInvariantResult } from './heartbeatInvariants';
+import { stripSoulKnowledgeSections } from './stripSoulKnowledgeSections';
 
 import type { ChatMode } from '../controllers/ChatController';
 
@@ -241,14 +242,18 @@ class SystemPromptBuilderImpl {
           if (defaultSection) {
             builtSections.push({
               ...defaultSection,
-              content: override,
+              content: id === 'soul' && ctx.subconsciousRecallMode === 'v7'
+                ? stripSoulKnowledgeSections(override)
+                : override,
             });
           } else {
             // Factory returned null (section would be skipped), but agent wants to override it.
             // Use sensible defaults.
             builtSections.push({
               id,
-              content:        override,
+              content:        id === 'soul' && ctx.subconsciousRecallMode === 'v7'
+                ? stripSoulKnowledgeSections(override)
+                : override,
               priority:       50,
               cacheStability: 'stable',
             });
@@ -284,15 +289,19 @@ class SystemPromptBuilderImpl {
       // The compiled Heartbeat contract is replace-only from source control.
       // A DB row is install-local state just like an agent markdown override;
       // accepting it here would silently bypass the frozen section guard above.
-      // v7 owns Sulla/environment knowledge through recalled subject pages. Ignore
-      // legacy editable copies of the two environment-heavy core rows there;
-      // non-v7 installs keep their full DB-backed prompt unchanged.
-      const memoryOwnsEnvironment = ctx.subconsciousRecallMode === 'v7' && (id === 'soul' || id === 'environment');
-      const dbRow = isFrozenHeartbeatSection || memoryOwnsEnvironment ? undefined : ctx.dbSections?.get(id);
-      if (dbRow && !dbRow.isGenerated && dbRow.content?.trim()) {
-        builtSections.push({ ...section, content: dbRow.content });
-      } else if (section.content?.trim()) {
-        builtSections.push(section);
+      // v7 owns environment knowledge through recalled subject pages, but the
+      // editable soul row remains human-owned identity. Strip only the named
+      // environment/process sections from whichever soul layer won resolution.
+      // The generated environment factory already omits its DB preamble in v7.
+      const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
+      const resolvedContent = dbRow && !dbRow.isGenerated && dbRow.content?.trim()
+        ? dbRow.content
+        : section.content;
+      const content = id === 'soul' && ctx.subconsciousRecallMode === 'v7'
+        ? stripSoulKnowledgeSections(resolvedContent)
+        : resolvedContent;
+      if (content?.trim()) {
+        builtSections.push({ ...section, content });
       }
     }
 

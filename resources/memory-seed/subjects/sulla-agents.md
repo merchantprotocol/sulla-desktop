@@ -20,6 +20,11 @@ Sulla launches bounded agent jobs with `meta/spawn_agent`. The live directory de
 - `agents/send_job_message` targets a running job and optional zero-based task index. Delivery is live when possible or queued for the next model-call boundary.
 - `agents/stop_agent_job` stops cooperatively. An in-flight model or tool call can finish before the task unwinds.
 - A delegated child records milestones with `agents/report_progress` and finishes with `agents/return_result`; a contract mismatch is refused.
+- Delegate: launch a bounded job with the goal, repository, worktree path, constraints, acceptance checks, return contract, and cleanup duties; run independent tasks in parallel within machine limits.
+- Monitor: use delivered progress check-ins and completion wake-ups rather than busy-polling; report meaningful progress to the human, and recover or finish work yourself if a job dies or stops early.
+- Review: inspect the worker's diff and evidence yourself, then run the required tests and build at the integration stage; the parent remains accountable for what ships.
+- Clean up: after confirming the pushed remote head equals the local head, remove the worktree, prune it, delete the local branch, and remove scratch, briefs, logs, and build artifacts; recreate from the remote branch if later changes are needed.
+- Worker selection follows the task: use `codex-sol-worker` or `codex-luna-worker` for code, `opus-worker` for video, creative, and visual work, and `haiku-worker` for light mechanical work. Confirm the live directory before launch because available definitions can change.
 - Container jobs use isolated guest workspaces. Cleanup removes safe workspaces and reports a recovery path when a workspace must be retained.
 - Completed jobs are kept for a limited history period; `check_agent_jobs` reports when a requested job has expired.
 
