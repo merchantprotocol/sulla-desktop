@@ -67,6 +67,14 @@ interface ElephantWrite {
   evidence: ElephantEvidence[];
 }
 
+export interface ElephantAppendResult {
+  accepted: boolean;
+  episodes: number;
+  items: number;
+  evidence: number;
+  reason?: string;
+}
+
 function tokens(text: string): Set<string> {
   return new Set(text.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? []);
 }
@@ -353,12 +361,13 @@ async function validateWrite(raw: unknown): Promise<ElephantWrite> {
 }
 
 /** Validate the model's data-only response and append it with parameterized SQL. */
-export async function appendV7ElephantOutput(response: string): Promise<void> {
+export async function appendV7ElephantOutput(response: string): Promise<ElephantAppendResult> {
   try {
     const write = await validateWrite(parseOutput(response));
-    await postgresClient.transaction(async (client) => {
+    return await postgresClient.transaction(async (client) => {
+      const inserted = { episodes: 0, items: 0, evidence: 0 };
       for (const row of write.episodes) {
-        await client.query(
+        const result = await client.query(
           `
           INSERT INTO subject_memory.episodes
             (id, ts, conversation_id, source, text, keys, sentiment, refs, worker)
@@ -375,9 +384,10 @@ export async function appendV7ElephantOutput(response: string): Promise<void> {
             row.refs,
           ]
         );
+        inserted.episodes += result.rowCount ?? 0;
       }
       for (const row of write.items) {
-        await client.query(
+        const result = await client.query(
           `
           INSERT INTO subject_memory.items
             (id, kind, ptype, text, why, scope, origin, ts, supersedes, always_on, worker)
@@ -394,21 +404,27 @@ export async function appendV7ElephantOutput(response: string): Promise<void> {
             row.always_on,
           ]
         );
+        inserted.items += result.rowCount ?? 0;
       }
       for (const row of write.evidence) {
-        await client.query(
+        const result = await client.query(
           `
           INSERT INTO subject_memory.evidence (item_id, episode_id, role)
           VALUES ($1, $2, $3)
           ON CONFLICT (item_id, episode_id) DO NOTHING`,
           [row.item_id, row.episode_id, row.role]
         );
+        inserted.evidence += result.rowCount ?? 0;
       }
+      return { accepted: true, ...inserted };
     });
   } catch (error) {
-    console.warn(
-      '[V7Elephant] Rejected model output:',
-      error instanceof Error ? error.message : error
-    );
+    return {
+      accepted: false,
+      episodes: 0,
+      items: 0,
+      evidence: 0,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }

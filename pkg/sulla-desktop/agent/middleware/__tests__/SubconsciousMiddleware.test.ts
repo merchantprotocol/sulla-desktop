@@ -57,6 +57,7 @@ const createIdentityObservationRecallMock: any = jest.fn();
 const createToolResultDigesterMock: any = jest.fn();
 const createConversationReaderMock: any = jest.fn();
 const createConversationWriterMock: any = jest.fn();
+const createV7ElephantMock: any = jest.fn();
 
 jest.unstable_mockModule('../../services/GraphRegistry', () => ({
   GraphRegistry: {
@@ -67,6 +68,7 @@ jest.unstable_mockModule('../../services/GraphRegistry', () => ({
     createToolResultDigester:        createToolResultDigesterMock,
     createConversationReader:        createConversationReaderMock,
     createConversationWriter:        createConversationWriterMock,
+    createV7Elephant:                createV7ElephantMock,
   },
 }));
 
@@ -418,9 +420,11 @@ describe('runSubconsciousMiddleware', () => {
 
 describe('runSubconsciousObservationWriters', () => {
   beforeEach(() => {
+    delete settings.subconsciousRecallMode;
     createObservationAgentMock.mockReset();
     createIdentityObserverMock.mockReset();
     createConversationWriterMock.mockReset();
+    createV7ElephantMock.mockReset();
     createObservationAgentMock.mockResolvedValue({
       graph:    { execute: jest.fn(() => Promise.resolve()) },
       state:    { messages: [], metadata: { agent: { status: 'done' } } },
@@ -458,6 +462,33 @@ describe('runSubconsciousObservationWriters', () => {
 
     expect(createConversationWriterMock).toHaveBeenCalledTimes(1);
     expect(createConversationWriterMock).toHaveBeenCalledWith(state);
+  });
+
+  it('runs only the elephant when v7 mode is enabled', async() => {
+    settings.subconsciousRecallMode = 'v7';
+    createV7ElephantMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: { messages: [], metadata: { iterations: 1 } },
+      threadId: 'v7-elephant-test-thread',
+    });
+    const { runSubconsciousObservationWriters } = await import('../SubconsciousMiddleware');
+    const state: any = {
+      messages: [
+        { role: 'user', content: 'Remember this completed turn.' },
+        { role: 'assistant', content: 'Done.' },
+      ],
+      metadata: { threadId: 'parent-thread' },
+    };
+
+    runSubconsciousObservationWriters(state, { includeObservations: true });
+    for (let i = 0; i < 200 && createV7ElephantMock.mock.calls.length === 0; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+
+    expect(createV7ElephantMock).toHaveBeenCalledTimes(1);
+    expect(createObservationAgentMock).not.toHaveBeenCalled();
+    expect(createIdentityObserverMock).not.toHaveBeenCalled();
+    expect(createConversationWriterMock).not.toHaveBeenCalled();
   });
 });
 

@@ -572,14 +572,7 @@ export function runSubconsciousObservationWriters(
   // v7 replaces the old observation writers with one subject-memory elephant.
   // It uses the same Settings-backed subconscious model slot and is fully
   // asynchronous through the process-wide writer gate.
-  SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE).then(mode => {
-    if (mode !== 'v7') return;
-    Promise.resolve().then(() => runThroughWriterGate(() => runV7Elephant(state))).catch(error => {
-      console.error('[SubconsciousMiddleware] Post-turn v7 elephant failed (fire-and-forget):', error instanceof Error ? error.message : error);
-    });
-  }).catch(() => {});
-
-  // Every writer still runs to completion with a model in the loop — the
+  // Every legacy writer still runs to completion with a model in the loop — the
   // gate only bounds how many run concurrently PROCESS-WIDE (not just within
   // this turn), so a burst of conversations completing close together
   // (PM automation, Heartbeat, multiple chat/mobile sessions) can't fire
@@ -591,26 +584,82 @@ export function runSubconsciousObservationWriters(
     });
   };
 
-  launch('observation-writer', () => runObservationAgent(state));
-  launch('identity-observer-human', () => runIdentityObserver(state, 'human'));
-  launch('self-observer-agent', () => runIdentityObserver(state, 'agent'));
-  launch('business-observer', () => runIdentityObserver(state, 'business'));
-  launch('world-observer', () => runIdentityObserver(state, 'world'));
-  launch('environment-observer', () => runIdentityObserver(state, 'environment'));
-  launch('projects-observer', () => runIdentityObserver(state, 'projects'));
-  launch('skills-observer', () => runIdentityObserver(state, 'skills'));
-  launch('conversation-writer', () => runConversationWriter(state));
+  SullaSettingsModel.get('subconsciousRecallMode', DEFAULT_SUBCONSCIOUS_RECALL_MODE).then(mode => {
+    if (mode === 'v7') {
+      console.log('[V7Elephant] ' + JSON.stringify({
+        event: 'triggered',
+        threadId: String(meta.threadId || meta.conversationId || ''),
+        messages: state.messages.length,
+      }));
+      Promise.resolve().then(() => runThroughWriterGate(() => runV7Elephant(state))).catch(error => {
+        console.error('[V7Elephant] ' + JSON.stringify({
+          event: 'failed',
+          reason: error instanceof Error ? error.message : String(error),
+        }));
+      });
+      return;
+    }
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
+    launch('observation-writer', () => runObservationAgent(state));
+    launch('identity-observer-human', () => runIdentityObserver(state, 'human'));
+    launch('self-observer-agent', () => runIdentityObserver(state, 'agent'));
+    launch('business-observer', () => runIdentityObserver(state, 'business'));
+    launch('world-observer', () => runIdentityObserver(state, 'world'));
+    launch('environment-observer', () => runIdentityObserver(state, 'environment'));
+    launch('projects-observer', () => runIdentityObserver(state, 'projects'));
+    launch('skills-observer', () => runIdentityObserver(state, 'skills'));
+    launch('conversation-writer', () => runConversationWriter(state));
+
+    console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
+  }).catch(error => {
+    console.error('[SubconsciousMiddleware] Failed to resolve post-turn writer mode:', error instanceof Error ? error.message : error);
+  });
 }
 
 async function runV7Elephant(state: BaseThreadState): Promise<void> {
-  const { graph, state: subState } = await GraphRegistry.createV7Elephant(state);
-  await graph.execute(subState, 'subconscious', { maxIterations: 12 });
-  const response = (subState.metadata as any).v7ElephantOutput;
-  if (typeof response === 'string') {
-    const { appendV7ElephantOutput } = await import('../memory/V7SubjectMemoryWriter');
-    await appendV7ElephantOutput(response);
+  let subState: BaseThreadState | undefined;
+  try {
+    const created = await GraphRegistry.createV7Elephant(state);
+    subState = created.state;
+    await created.graph.execute(subState, 'subconscious', { maxIterations: 12 });
+    const response = (subState.metadata as any).v7ElephantOutput;
+    if (typeof response === 'string') {
+      const { appendV7ElephantOutput } = await import('../memory/V7SubjectMemoryWriter');
+      const result = await appendV7ElephantOutput(response);
+      console.log('[V7Elephant] ' + JSON.stringify({
+        event: result.accepted ? 'accepted' : 'rejected',
+        model: (subState.metadata as any).resolvedModel || (subState.metadata as any).llmModel || '',
+        provider: (subState.metadata as any).resolvedProvider || '',
+        iterations: (subState.metadata as any).iterations || 0,
+        episodes: result.episodes,
+        items: result.items,
+        evidence: result.evidence,
+        ...(result.reason ? { reason: result.reason } : {}),
+      }));
+      return;
+    }
+    console.warn('[V7Elephant] ' + JSON.stringify({
+      event: 'rejected',
+      model: (subState.metadata as any).resolvedModel || (subState.metadata as any).llmModel || '',
+      provider: (subState.metadata as any).resolvedProvider || '',
+      iterations: (subState.metadata as any).iterations || 0,
+      episodes: 0,
+      items: 0,
+      evidence: 0,
+      reason: 'model produced no elephant output',
+    }));
+  } catch (error) {
+    const metadata = (subState?.metadata || {}) as any;
+    console.error('[V7Elephant] ' + JSON.stringify({
+      event: 'failed',
+      model: metadata.resolvedModel || metadata.llmModel || '',
+      provider: metadata.resolvedProvider || '',
+      iterations: metadata.iterations || 0,
+      episodes: 0,
+      items: 0,
+      evidence: 0,
+      reason: error instanceof Error ? error.message : String(error),
+    }));
   }
 }
 
