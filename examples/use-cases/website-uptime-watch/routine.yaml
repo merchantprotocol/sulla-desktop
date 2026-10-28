@@ -1,0 +1,45 @@
+id: website-uptime-watch
+name: Website uptime watch
+description: Checks a website on a schedule and reports actionable outages without changing the site.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1700000000000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Every 15 minutes
+      config:
+        triggerType: schedule
+        triggerDescription: Check the public site every 15 minutes.
+        frequency: interval
+        intervalMinutes: 15
+        timezone: ""
+  - id: node-1700000001000
+    type: workflow
+    position: { x: 400, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Check public site
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Use the browser tools to open the configured public website URL and check that it loads,
+          has an HTTP-success response, and contains the expected brand text. Record URL, timestamp,
+          status, and the observed failure. Do not log in, submit forms, change content, or attempt
+          remediation. If the site is unavailable, write a concise incident report for the owner;
+          otherwise report healthy.
+        successCriteria: A timestamped healthy or incident result with evidence.
+        orchestratorInstructions: Follow the prompt exactly and return the requested evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: node-1700000000000
+    target: node-1700000001000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

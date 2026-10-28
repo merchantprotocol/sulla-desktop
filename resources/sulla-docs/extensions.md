@@ -32,7 +32,7 @@ Sulla announces a deprecated contract, tool, field, hook, or behavior in release
 
 ## Runtime behavior
 
-Actions observe an event and cannot change the core value. Filters receive an immutable, secret-redacted snapshot and may return a replacement value or `{ denied: true, reason }`. Each callback has a bounded timeout. A throw, rejection, or timeout is audited and isolated; core continues with the last valid value. A permission denial skips the callback and is audited. Hook payloads recursively redact vault and credential-shaped fields before entering extension code. Hooks do not bypass tool, Files, integration, network, or vault permissions.
+Actions observe an event and cannot change the core value. Filters receive an immutable, secret-redacted snapshot and may return a replacement value or `{ denied: true, reason }`. Function add-ons answer through their outputs: return `{ "value": ... }` to replace the value, `{ "denied": true, "reason": "..." }` to block, or anything else (for example `{}`) to pass through unchanged. See `examples/use-cases/outbound-send-guard/`. Each callback has a bounded timeout. A throw, rejection, or timeout is audited and isolated; core continues with the last valid value. A permission denial skips the callback and is audited. Hook payloads recursively redact vault and credential-shaped fields before entering extension code. Hooks do not bypass tool, Files, integration, network, or vault permissions.
 
 ## Hook reference
 

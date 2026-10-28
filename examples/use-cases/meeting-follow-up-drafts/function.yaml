@@ -1,0 +1,42 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-meeting-follow-up-drafts
+slug: meeting-follow-up-drafts
+name: Meeting follow-up drafts
+description: Formats decisions and action items into a clear follow-up email draft.
+schemaversion: 1
+spec:
+  runtime: node
+  entrypoint: main.js::handler
+  inputs:
+    meeting_title:
+      type: string
+      description: Meeting title.
+      required: true
+    attendees:
+      type: array
+      description: Recipient email addresses.
+      required: true
+    decisions:
+      type: array
+      description: Decisions made in the meeting.
+      required: false
+    action_items:
+      type: array
+      description: Action objects with owner, task, and due_date.
+      required: false
+  outputs:
+    subject:
+      type: string
+      description: Draft email subject.
+    body:
+      type: string
+      description: Draft email body.
+    recipients:
+      type: array
+      description: Recipients copied from input.
+  timeout: 60s
+  permissions:
+    network: []

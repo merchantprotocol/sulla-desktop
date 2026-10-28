@@ -1,0 +1,36 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-invoice-due-reminders
+slug: invoice-due-reminders
+name: Invoice due reminders
+description: Finds unpaid invoices due within a configurable window and creates reminder drafts without sending them.
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    invoices:
+      type: array
+      description: Invoice objects with id, customer, due_date, amount, currency, and status.
+      required: true
+    as_of:
+      type: string
+      description: ISO date used as today.
+      required: true
+    within_days:
+      type: integer
+      description: Include invoices due this many days from as_of.
+      default: 7
+      required: false
+  outputs:
+    reminders:
+      type: array
+      description: Reminder drafts for unpaid invoices due in the window.
+    count:
+      type: integer
+      description: Number of reminder drafts.
+  timeout: 60s
+  permissions:
+    network: []

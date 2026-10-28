@@ -33,7 +33,12 @@ export async function reloadExtensionHooks(): Promise<void> {
         handler: async(payload) => {
           const result = await runFunctionStructured({ slug: fn.slug, inputs: { hook, payload: payload as unknown } });
           if (!result.successBoolean) throw new Error(result.responseString);
-          return result.outputs?.result ?? result.outputs;
+          // Function outputs are always an object. Only an explicit `value` replaces the core value;
+          // anything else is a deny decision or a pass-through, so `{}` can never wipe a payload.
+          const outputs = (result.outputs?.result ?? result.outputs) as Record<string, unknown> | undefined;
+          if (!outputs || typeof outputs !== 'object') return undefined;
+          if (outputs.denied === true || outputs.allow === false) return { denied: true, reason: outputs.reason };
+          return 'value' in outputs ? { value: outputs.value } : undefined;
         },
       });
     }
