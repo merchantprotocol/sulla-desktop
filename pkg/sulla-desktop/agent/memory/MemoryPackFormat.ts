@@ -27,6 +27,24 @@ function markdownDocs(dir: string): string[] {
   return fs.readdirSync(dir).filter(name => name.endsWith('.md')).sort().map(name => path.join(dir, name));
 }
 
+function textFiles(dir: string): string[] {
+  const files: string[] = [];
+  const walk = (current: string) => {
+    if (!fs.existsSync(current)) return;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) {
+        const data = fs.readFileSync(absolute);
+        if (!data.includes(0) && !data.toString('utf8').includes('�')) files.push(absolute);
+      }
+    }
+  };
+  walk(dir);
+  return files;
+}
+
 function readDoc(file: string, issues: string[]): MemoryDoc | null {
   const source = fs.readFileSync(file, 'utf8');
   const match = source.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
@@ -104,7 +122,7 @@ export function validateMemoryPackFormat(packDir: string, packSlug: string): str
     else for (const subject of scope.map(String)) if (!knownSubjects.has(subject)) issues.push(`memory/skills/${ filename }.md: scope "${ subject }" does not exist`);
   }
 
-  const allFiles = [path.join(packDir, 'SKILL.md'), manifestPath, ...subjectFiles, ...skillFiles].filter(fs.existsSync);
+  const allFiles = textFiles(packDir);
   for (const file of allFiles) {
     const source = fs.readFileSync(file, 'utf8');
     const relative = path.relative(packDir, file).split(path.sep).join('/');
