@@ -16,6 +16,8 @@ import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactM
 import type { MarketplaceTemplateDetail } from '@pkg/main/marketplace/client';
 
 import type { PoolClient } from 'pg';
+import { IntegrationPackageLoader, integrationGrantStore, resolveTrustedPublisherKeysPath, setIntegrationGrant, trustedPublisherVerifier } from '@pkg/agent/integrations/packageLoader';
+import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agent/integrations/packageLoader';
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
@@ -183,6 +185,64 @@ export function bundleToArtifact(kind: InstallableKind, files: Record<string, St
   }
 }
 
+export function publisherKeysPath(): string {
+  return resolveTrustedPublisherKeysPath();
+}
+
+export function isSignedIntegrationPackageManifest(manifest: Record<string, any>): boolean {
+  return manifest.apiVersion === 'sulla/v1' && manifest.kind === 'integration' &&
+    Object.hasOwn(manifest, 'integrity') && Object.hasOwn(manifest, 'signature');
+}
+
+function signedPackageFiles(artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> }): Record<string, StoredFile> {
+  const manifestName = integrationManifestName(artifact.files);
+  if (!manifestName) return artifact.files;
+  const files = { ...artifact.files };
+  delete files[manifestName];
+  return files;
+}
+
+function packageFileBuffers(files: Record<string, StoredFile>): Record<string, string | Buffer> {
+  return Object.fromEntries(Object.entries(files).map(([name, value]) => [name,
+    typeof value === 'string' ? value : value.encoding === 'base64' ? Buffer.from(value.content, 'base64') : value.content,
+  ]));
+}
+
+/** Verify signed integration code, then persist the immutable package rather than an editable catalog definition. */
+export async function installIntegrationPackage(
+  detail: MarketplaceTemplateDetail,
+  artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
+  verifier: IntegrationSignatureVerifier = trustedPublisherVerifier(publisherKeysPath()),
+  database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
+  overwrite = false,
+): Promise<{ installed: boolean; reason?: string }> {
+  const manifest = artifact.manifest as IntegrationPackage['manifest'];
+  const pkg: IntegrationPackage = {
+    manifest,
+    files: packageFileBuffers(signedPackageFiles(artifact)),
+    integration: { id: manifest.id } as IntegrationPackage['integration'],
+  };
+  const loader = new IntegrationPackageLoader(integrationGrantStore, { request: async() => { throw new Error('Integration proxy is unavailable during install') } }, verifier);
+  await loader.verifyPackage(pkg);
+  if (manifest.id !== detail.slug) throw new Error(`Integration package id "${ manifest.id }" does not match marketplace slug "${ detail.slug }"`);
+  const previousVersions: string[] = [];
+  const result = await database.transaction(async(client) => {
+    const existing = await client.query('SELECT 1 FROM integration_packages WHERE id=$1 AND version=$2', [manifest.id, manifest.version]);
+    if (existing.rowCount && !overwrite) return { installed: false, reason: 'already installed' };
+    if (overwrite) {
+      const previous = await client.query('SELECT version FROM integration_packages WHERE id=$1 AND version<>$2', [manifest.id, manifest.version]);
+      previousVersions.push(...previous.rows.map(row => String(row.version)));
+    }
+    await client.query(`INSERT INTO integration_packages (id,version,template_id,manifest,files)
+      VALUES ($1,$2,$3,$4::jsonb,$5::jsonb)
+      ON CONFLICT (id,version) DO UPDATE SET template_id=EXCLUDED.template_id,manifest=EXCLUDED.manifest,files=EXCLUDED.files,installed_at=now()`, [manifest.id, manifest.version, detail.id, JSON.stringify(manifest), JSON.stringify(signedPackageFiles(artifact))]);
+    if (overwrite) await client.query('DELETE FROM integration_packages WHERE id=$1 AND version<>$2', [manifest.id, manifest.version]);
+    return { installed: true };
+  });
+  for (const version of previousVersions) await setIntegrationGrant(manifest.id, version, [], false);
+  return result;
+}
+
 async function artifactExists(client: PoolClient, kind: InstallableKind, slug: string): Promise<{ exists: boolean; userEdited: boolean }> {
   const table = kind === 'routine' ? 'workflows' : kind === 'skill' ? 'skill_definitions' : kind === 'agent' ? 'agent_definitions' : `${ kind }_definitions`;
   const edited = kind === 'skill'
@@ -292,9 +352,13 @@ export async function installStandaloneArtifact(
   detail: MarketplaceTemplateDetail,
   artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> },
   overwrite = false,
+  database: Pick<typeof postgresClient, 'transaction'> = postgresClient,
 ): Promise<{ installed: boolean; reason?: string }> {
   if (detail.kind === 'package') throw new Error('Packages must be installed with installPackageManifest');
-  const result = await postgresClient.transaction(client => installArtifact(client, {
+  if (detail.kind === 'integration' && isSignedIntegrationPackageManifest(artifact.manifest)) {
+    return installIntegrationPackage(detail, artifact, trustedPublisherVerifier(publisherKeysPath()), database, overwrite);
+  }
+  const result = await database.transaction(client => installArtifact(client, {
     kind:       detail.kind as InstallableKind,
     slug:       detail.slug,
     version:    detail.version,
@@ -447,7 +511,11 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
 
   const result = await postgresClient.transaction(async(client) => {
     const pkg = await client.query('SELECT template_id FROM installed_packages WHERE slug=$1 FOR UPDATE', [slug]);
-    if (!pkg.rowCount) throw new Error(`Package "${ slug }" is not installed`);
+    if (!pkg.rowCount) {
+      const integrationPackages = await client.query('DELETE FROM integration_packages WHERE id=$1 RETURNING version', [slug]);
+      if (!integrationPackages.rowCount) throw new Error(`Package "${ slug }" is not installed`);
+      return { ok: true as const, removed: [{ kind: 'integration' as const, slug }], revokedVersions: integrationPackages.rows.map(row => String(row.version)) };
+    }
     const templateId = String(pkg.rows[0].template_id);
     const items = await client.query('SELECT kind,item_slug FROM installed_package_items WHERE package_slug=$1 ORDER BY installed_at DESC', [slug]);
     const removed: { kind: InstallableKind; slug: string }[] = [];
@@ -455,10 +523,11 @@ export async function uninstallPackage(slug: string, removeData = false): Promis
       if (await removePackageItem(client, item.kind as InstallableKind, item.item_slug, templateId)) removed.push({ kind: item.kind, slug: item.item_slug });
     }
     await client.query('DELETE FROM installed_packages WHERE slug=$1', [slug]);
-    return { ok: true as const, removed };
+    return { ok: true as const, removed, revokedVersions: [] as string[] };
   });
+  for (const version of result.revokedVersions) await setIntegrationGrant(slug, version, [], false);
   await refreshRuntimeCatalogs(result.removed.map(item => item.kind));
-  return result;
+  return { ok: result.ok, removed: result.removed };
 }
 
 export async function setPackageActive(slug: string, active: boolean): Promise<{ ok: true; active: boolean; recipes: string[] }> {
@@ -502,12 +571,16 @@ export async function setPackageActive(slug: string, active: boolean): Promise<{
 
 export async function listInstalledArtifacts(): Promise<InstalledArtifactRow[]> {
   const rows = await postgresClient.query(`
-    SELECT marketplace_template_id AS template_id, 'function' AS kind, slug, name, COALESCE(version,'1.0.0') AS version, updated_at FROM function_definitions WHERE source_kind='marketplace'
-    UNION ALL SELECT marketplace_template_id, 'integration', slug, name, COALESCE(version,'1.0.0'), updated_at FROM integration_definitions WHERE source_kind='marketplace'
-    UNION ALL SELECT marketplace_template_id, 'recipe', slug, name, COALESCE(version,'1.0.0'), updated_at FROM recipe_definitions WHERE source_kind='marketplace'
-    UNION ALL SELECT marketplace_template_id, 'routine', id, name, COALESCE(version,'1.0.0'), updated_at FROM workflows WHERE source_kind='marketplace'
-    UNION ALL SELECT marketplace_template_id, 'skill', slug, title, COALESCE(marketplace_version,version,'1.0.0'), updated_at FROM skill_definitions WHERE source_kind='marketplace' AND deleted_at IS NULL
-    UNION ALL SELECT marketplace_template_id, 'agent', slug, name, COALESCE(marketplace_version,version,'1.0.0'), updated_at FROM agent_definitions WHERE source_kind='marketplace' AND status <> 'archive'
+    SELECT marketplace_template_id AS template_id, 'function' AS kind, slug, name, COALESCE(version,'1.0.0') AS version, updated_at, 'function_definitions' AS storage FROM function_definitions WHERE source_kind='marketplace'
+    UNION ALL SELECT marketplace_template_id, 'integration', slug, name, COALESCE(version,'1.0.0'), updated_at, 'integration_definitions' FROM integration_definitions WHERE source_kind='marketplace'
+    UNION ALL SELECT template_id, 'integration', id, name, version, installed_at AS updated_at, 'integration_packages' FROM (
+      SELECT DISTINCT ON (id) template_id,id,COALESCE(manifest->>'name',manifest->>'title',id) AS name,version,installed_at
+      FROM integration_packages ORDER BY id,installed_at DESC
+    ) packages
+    UNION ALL SELECT marketplace_template_id, 'recipe', slug, name, COALESCE(version,'1.0.0'), updated_at, 'recipe_definitions' FROM recipe_definitions WHERE source_kind='marketplace'
+    UNION ALL SELECT marketplace_template_id, 'routine', id, name, COALESCE(version,'1.0.0'), updated_at, 'workflows' FROM workflows WHERE source_kind='marketplace'
+    UNION ALL SELECT marketplace_template_id, 'skill', slug, title, COALESCE(marketplace_version,version,'1.0.0'), updated_at, 'skill_definitions' FROM skill_definitions WHERE source_kind='marketplace' AND deleted_at IS NULL
+    UNION ALL SELECT marketplace_template_id, 'agent', slug, name, COALESCE(marketplace_version,version,'1.0.0'), updated_at, 'agent_definitions' FROM agent_definitions WHERE source_kind='marketplace' AND status <> 'archive'
   `);
   return rows.filter((row: any) => row.template_id).map((row: any) => ({
     templateId:  row.template_id,
@@ -516,6 +589,6 @@ export async function listInstalledArtifacts(): Promise<InstalledArtifactRow[]> 
     name:        row.name,
     version:     row.version,
     installedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
-    path:        `database:${ row.kind }_definitions/${ row.slug }`,
+    path:        `database:${ row.storage }/${ row.slug }`,
   }));
 }

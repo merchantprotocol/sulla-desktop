@@ -16,6 +16,8 @@ export interface Integration {
   beta:               boolean;
   comingSoon:         boolean;
   connected:          boolean;
+  /** Installed signed package is visible but cannot run until its exact grant is approved. */
+  needsApproval?:      boolean;
   version:            string;
   lastUpdated:        string;
   developer:          string;

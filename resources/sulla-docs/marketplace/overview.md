@@ -5,7 +5,7 @@
 Service integrations are signed code packages, not database catalog rows or loose configuration files. See [Integration packages](integration-packages.md) for the manifest, Marketplace install flow, user grants and vault boundary.
 
 **Two ways a Use Case reaches the runtime:**
-- **Marketplace installs go into Postgres.** The marketplace installer (`marketplace/download`, the Use Cases tab) writes agents, skills, workflows, functions, integrations and recipes straight into their database definition tables. The Use Cases view and `marketplace/list_local` read those records.
+- **Marketplace installs go into Postgres.** The marketplace installer (`marketplace/download`, the Use Cases tab) writes agents, skills, workflows, functions and recipes into their database definition tables. Signed integration code is stored separately as an immutable package in `integration_packages`, never as a hand-editable catalog definition. The Use Cases view and `marketplace/list_local` read those records.
 - **Agent-authored Use Cases go through Files.** When an agent creates or edits one, it writes under `Use Cases/<type>/<slug>/` in Sulla Files as a draft. The human approves publication in Decide, and only published versions become active. See [files-harness.md](../environment/files-harness.md) for drafts, publish requests and rollback.
 
 Neither path reads the legacy `~/sulla` folders.
