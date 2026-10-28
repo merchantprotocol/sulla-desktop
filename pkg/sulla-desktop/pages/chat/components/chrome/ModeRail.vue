@@ -57,6 +57,24 @@
         </button>
       </template>
 
+      <template v-if="safeExtensions.length">
+        <div class="rail-divider" aria-hidden="true" />
+        <button
+          v-for="item in safeExtensions"
+          :key="`extension:${item.extensionId}:${item.id}`"
+          type="button"
+          class="mode-btn extension-btn"
+          :data-tooltip="item.tooltip"
+          :data-noir-tooltip="item.tooltip"
+          :aria-label="item.tooltip"
+          @click="$emit('open-extension', item)"
+          @contextmenu.prevent="openExtensionMenu($event, item)"
+        >
+          <span class="icon" v-html="item.icon" />
+          <span class="item-label">{{ item.label }}</span>
+        </button>
+      </template>
+
       <template v-if="safeRailApps.length">
         <div
           class="rail-divider"
@@ -79,6 +97,13 @@
           <span class="item-label">{{ app.label }}</span>
         </button>
       </template>
+    </div>
+
+    <div v-if="extensionMenu" class="extension-menu" :style="{ left: `${extensionMenu.x}px`, top: `${extensionMenu.y}px` }" role="menu">
+      <small>{{ extensionMenu.item.label }}</small>
+      <button type="button" @click="chooseExtensionMenu('open')">Open</button>
+      <button type="button" @click="chooseExtensionMenu('permissions')">Permissions…</button>
+      <button type="button" class="remove" @click="chooseExtensionMenu('remove')">Remove from left bar</button>
     </div>
 
     <div class="rail-spacer" />
@@ -169,14 +194,20 @@ const props = defineProps<{
   bookmarksOpen?: boolean;
   chatFilesOpen?: boolean;
   railApps?:      RecipeRailApp[];
+  extensions?:    ExtensionRailItem[];
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'set-mode', mode: string, subTab?: string): void;
   (e: 'toggle-bookmarks'): void;
   (e: 'toggle-chat-files'): void;
   (e: 'open-rail-app', slug: string): void;
+  (e: 'open-extension', item: ExtensionRailItem): void;
+  (e: 'extension-permissions', item: ExtensionRailItem): void;
+  (e: 'remove-extension', item: ExtensionRailItem): void;
 }>();
+
+interface ExtensionRailItem { extensionId:string; id:string; label:string; icon?:string; component:string; tooltip?:string }
 
 interface RecipeRailApp {
   slug:    string;
@@ -209,6 +240,12 @@ const indicatorStyle = computed<CSSProperties>(() => ({
   height:    `${ indicatorHeight.value }px`,
   transform: `translateY(${ indicatorTop.value }px)`,
 }));
+
+const FALLBACK_EXTENSION_ICON = '<svg viewBox="0 0 24 24"><path d="M8 3v4M16 3v4M5 8h14v5a7 7 0 0 1-14 0z"/><path d="M12 20v2"/></svg>';
+const extensionMenu = ref<{x:number;y:number;item:ExtensionRailItem}>();
+const safeExtensions = computed(() => (props.extensions ?? []).map(item => ({ ...item, tooltip: item.tooltip || item.label, icon: DOMPurify.sanitize(item.icon || FALLBACK_EXTENSION_ICON, { USE_PROFILES:{svg:true,svgFilters:false}, FORBID_TAGS:['script','style','foreignObject'], FORBID_ATTR:['style','href','xlink:href','src'] }) })));
+function openExtensionMenu(event:MouseEvent,item:ExtensionRailItem){ extensionMenu.value={x:event.clientX,y:event.clientY,item}; }
+function chooseExtensionMenu(action:'open'|'permissions'|'remove'){ const item=extensionMenu.value?.item;if(!item)return; extensionMenu.value=undefined; if(action==='open') (emit as any)('open-extension',item); else if(action==='permissions') (emit as any)('extension-permissions',item); else (emit as any)('remove-extension',item); }
 
 const safeRailApps = computed(() => (props.railApps ?? []).map(app => ({
   ...app,
@@ -731,4 +768,8 @@ const items: readonly ModeItem[] = Object.freeze([
     animation: none;
   }
 }
+</style>
+
+<style scoped>
+.extension-menu{position:fixed;z-index:10000;min-width:190px;padding:6px;background:var(--surface-2,#121923);border:1px solid var(--border,rgba(168,192,220,.18));border-radius:9px;box-shadow:0 14px 38px rgba(0,0,0,.42)}.extension-menu small{display:block;padding:5px 9px;color:var(--text-muted,#8d9aab)}.extension-menu button{display:block;width:100%;border:0;background:transparent;color:var(--text,#eef3f8);text-align:left;padding:7px 9px;border-radius:6px}.extension-menu button:hover{background:var(--surface-3,rgba(255,255,255,.08))}.extension-menu .remove{color:var(--danger,#e27979)}
 </style>

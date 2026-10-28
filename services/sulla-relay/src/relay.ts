@@ -13,7 +13,7 @@ import { bearerToken, tokenMatches, verifyDeviceToken } from './auth.js';
 import type { RelayConfig } from './config.js';
 import type {
   RelayEnvelope, RelayError, RelayToolCallEnvelope, RelayToolExecutionContext, RelayToolResultEnvelope,
-} from '../../../pkg/sulla-desktop/runtime/relayProtocol.js';
+} from '../../../packages/relay-protocol/src/relayProtocol.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 interface DeviceConnection {

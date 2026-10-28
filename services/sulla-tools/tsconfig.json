@@ -9,14 +9,21 @@
     "rootDir": "../..",
     "outDir": "dist",
     "baseUrl": "../..",
-    "paths": { "@pkg/*": ["pkg/sulla-desktop/*"] },
-    "types": ["node"]
+    "paths": {
+      "@pkg/*": [
+        "pkg/sulla-desktop/*"
+      ]
+    },
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts",
-    "../../pkg/sulla-desktop/runtime/capabilityToken.ts",
     "../../pkg/sulla-desktop/runtime/desktopExecutor.ts",
     "../../pkg/sulla-desktop/agent/tools/executionContext.ts",
-    "../../pkg/sulla-desktop/agent/tools/executionTargets.ts"
+    "../../pkg/sulla-desktop/agent/tools/executionTargets.ts",
+    "../../packages/runtime-protocol/src/**/*.ts",
+    "../../packages/relay-protocol/src/**/*.ts"
   ]
 }

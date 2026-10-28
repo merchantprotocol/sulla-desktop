@@ -25,8 +25,12 @@
         :bookmarks-open="bookmarksOpen"
         :chat-files-open="chatFilesOpen"
         :rail-apps="railApps"
+        :extensions="railExtensions"
         @set-mode="onModeRailSelect"
         @open-rail-app="openRailApp"
+        @open-extension="openExtension"
+        @extension-permissions="openExtensionPermissions"
+        @remove-extension="removeExtensionFromRail"
         @toggle-bookmarks="toggleBookmarks()"
         @toggle-chat-files="toggleChatFiles()"
       />
@@ -77,6 +81,14 @@
         />
       </div>
     </div>
+
+    <aside v-if="permissionPrompt" class="extension-permission-prompt" aria-live="polite">
+      <div class="prompt-kicker">Extension permission</div>
+      <b>{{permissionPrompt.name}} wants to {{permissionPrompt.label.toLowerCase()}}</b>
+      <p>Sulla carried on without it. The hook stays skipped until you choose.</p>
+      <code>{{permissionPrompt.event.hook}}</code>
+      <div><button type="button" @click="answerPermission(false)">Don’t allow</button><button type="button" class="allow" @click="answerPermission(true)">Allow</button></div>
+    </aside>
 
     <!-- Startup progress overlay -->
     <StartupOverlay :force-visible="!vaultStatusResolved" />
@@ -160,6 +172,12 @@ import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore'
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
+const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
+const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
+async function onPermissionNeeded(_event:unknown,event:{extensionId:string;hook:any}){if(permissionPrompt.value)return;const extensions=await ipcRenderer.invoke('extension-permissions:list');const ext=extensions.find(item=>item.extensionId===event.extensionId);if(ext&&typeof ext.grants?.[event.hook]==='boolean')return;// already decided: never re-ask
+  permissionPrompt.value={event,name:ext?.name||event.extensionId,label:hookPromptLabels[event.hook]||event.hook}}
+async function answerPermission(granted:boolean){const prompt=permissionPrompt.value;if(!prompt)return;await ipcRenderer.invoke('extension-permissions:set-hook',{extensionId:prompt.event.extensionId,hook:prompt.event.hook,granted});permissionPrompt.value=undefined}
+
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
@@ -226,6 +244,21 @@ interface RecipeRailApp {
   slug: string; label: string; icon: string; url: string;
   level: 'ok' | 'warn' | 'bad' | 'unknown'; summary: string;
 }
+interface ExtensionRailItem { extensionId:string; id:string; label:string; icon?:string; component:string; tooltip?:string }
+const railExtensions = ref<ExtensionRailItem[]>([]);
+async function refreshRailExtensions(){
+  const [items, permissions] = await Promise.all([ipcRenderer.invoke('extensions-ui:list','sidebar_entry'), ipcRenderer.invoke('extension-permissions:list')]);
+  const hidden = new Set(permissions.filter(item=>item.hiddenFromRail).map(item=>item.extensionId));
+  const extensionNames = Object.fromEntries(permissions.map(item=>[item.extensionId,item.name]));
+  railExtensions.value = items.filter(item=>!hidden.has(item.extensionId)).map(item=>({...item,tooltip:`${item.label} · ${extensionNames[item.extensionId]||item.extensionId}`}));
+}
+function openExtension(item:ExtensionRailItem){ window.dispatchEvent(new CustomEvent('sulla:open-extension-ui',{detail:item})); }
+function openExtensionPermissions(){ openSingleTab('preferences','extensions'); }
+async function removeExtensionFromRail(item:ExtensionRailItem){
+  await ipcRenderer.invoke('extension-permissions:set-rail-hidden',{extensionId:item.extensionId,hidden:true});
+  railExtensions.value=railExtensions.value.filter(candidate=>candidate.extensionId!==item.extensionId);
+}
+
 const railApps = ref<RecipeRailApp[]>([]);
 
 function setRailApps(_event: unknown, next: RecipeRailApp[]) {
@@ -630,6 +663,8 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
+  void refreshRailExtensions();
   ipcRenderer.on('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.invoke('recipe-rail-apps' as any).then(next => setRailApps(undefined, next as RecipeRailApp[])).catch(() => undefined);
   ipcRenderer.on('startup-progress' as any, onBootSnapshot);
@@ -685,6 +720,7 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
   ipcRenderer.removeListener('startup-progress' as any, onBootSnapshot);
   presenceTracker.stop();
@@ -868,4 +904,8 @@ onUnmounted(() => {
   50%  { margin-left: 60%; }
   100% { margin-left: 0; }
 }
+</style>
+
+<style scoped>
+.extension-permission-prompt{position:fixed;z-index:9500;right:24px;bottom:44px;width:390px;padding:17px 19px;background:var(--surface-1);border:1px solid var(--accent-border);border-radius:12px;box-shadow:0 18px 55px rgba(0,0,0,.45)}.extension-permission-prompt .prompt-kicker{text-transform:uppercase;letter-spacing:.13em;font-size:10px;color:var(--accent);margin-bottom:8px}.extension-permission-prompt p{color:var(--text-muted);font-size:13px;line-height:1.45}.extension-permission-prompt code{display:block;color:var(--text-dim);margin:8px 0 14px}.extension-permission-prompt>div:last-child{display:flex;justify-content:flex-end;gap:8px}.extension-permission-prompt button{border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--text);padding:7px 12px}.extension-permission-prompt button.allow{background:var(--accent);color:white;border-color:var(--accent)}
 </style>

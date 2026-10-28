@@ -10,6 +10,10 @@ aliases: [marketplace, catalog, add-ons, package catalog, Use Cases marketplace]
 The Sulla Marketplace is a catalog for workflows, agents, skills, functions, integrations, recipes, and packages (bundles of database-backed artifacts). Search and detail are available without signing in; publishing and submission history need a Sulla Cloud session. A non-package download is validated and installed into the Desktop database, while the agent-facing download path writes a draft into Sulla Files and requires human publication before activation. Package installs are atomic. Listings are not live until marketplace review approves them.
 
 ## Facts
+- `marketplace/publish` submits a version for review; it never goes live directly. Automated review checks the per-kind manifest, package size, likely secrets and private keys, declared hooks and permissions, referenced network hosts and shell use. An administrator then approves, requests changes or rejects, and the notes appear in `marketplace/list_published`.
+- Approval signs the exact approved manifest and package with the marketplace Ed25519 key. Installs verify the signature and integrity before writing anything; a tampered or untrusted signature is refused.
+- Unsigned listings still install, with a logged warning, until `resources/trusted-integration-publishers.json` sets `"requireSignatures": true`. Local artifacts and unpublished development copies install through their local paths.
+- Every update is a new reviewable version; users keep the last approved version until the update is approved.
 - `marketplace/search` accepts `query`, one `kind`, multiple `kinds`, `category`, and `limit`; kinds include `workflow`/`routine`, `agent`, `skill`, `function`, `integration`, `recipe`, and `package`.
 - `marketplace/info` accepts `kind` and `slug` and reports listing metadata plus local install status.
 - `marketplace/download` accepts `kind`, `slug`, and optional `overwrite`; package installs all contents transactionally, while standalone downloads are returned as Files drafts to the agent.

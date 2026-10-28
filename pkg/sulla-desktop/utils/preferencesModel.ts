@@ -11,7 +11,7 @@
 
 export type PreferencesSectionId =
   'general' | 'appearance' |
-  'models' | 'personality' | 'heartbeat' | 'voice' | 'workflows' |
+  'models' | 'personality' | 'heartbeat' | 'voice' | 'workflows' | 'extensions' |
   'account' | 'files' | 'privacy' |
   'docker' |
   'advanced';
@@ -44,6 +44,7 @@ export const PREFERENCES_NAV: PreferencesNavGroup[] = [
       { id: 'heartbeat', icon: 'heart', label: 'Heartbeat' },
       { id: 'voice', icon: 'mic', label: 'Voice & audio' },
       { id: 'workflows', icon: 'flow', label: 'Workflows' },
+      { id: 'extensions', icon: 'plug', label: 'Extensions' },
     ],
   },
   {

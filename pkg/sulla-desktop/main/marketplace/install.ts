@@ -11,6 +11,7 @@ import path from 'node:path';
 import * as yauzl from 'yauzl';
 
 import { fetchPublicTemplate, publicFetch, type MarketplaceKind } from './client';
+import { isSignedMarketplaceManifest, marketplaceSignaturesRequired, verifyMarketplaceArtifact, verifySelfContainedMarketplaceArtifact } from './signature';
 
 import { MARKETPLACE_KINDS as MARKETPLACE_KIND_DEFINITIONS } from '@pkg/composables/marketplaceKinds';
 
@@ -90,7 +91,7 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
   });
 }
 
-async function downloadBundleToTmp(id: string): Promise<{ zipPath: string; tmpdir: string }> {
+async function downloadBundleToTmp(id: string): Promise<{ zipPath: string; tmpdir: string; bytes: Buffer }> {
   const response = await publicFetch(`/marketplace/templates/${ encodeURIComponent(id) }/download`);
   if (!response.ok) throw new Error(`download failed: ${ response.status } ${ response.statusText }`);
   if (!(response.headers.get('content-type') ?? '').toLowerCase().includes('zip') || !response.body) throw new Error('marketplace download is not a zip bundle');
@@ -109,7 +110,7 @@ async function downloadBundleToTmp(id: string): Promise<{ zipPath: string; tmpdi
       if (!out.write(Buffer.from(value))) await new Promise<void>(resolve => out.once('drain', resolve));
     }
     await new Promise<void>(resolve => out.end(resolve));
-    return { zipPath, tmpdir };
+    return { zipPath, tmpdir, bytes: fs.readFileSync(zipPath) };
   } catch (error) {
     out.destroy();
     rmrfSync(tmpdir);
@@ -117,8 +118,10 @@ async function downloadBundleToTmp(id: string): Promise<{ zipPath: string; tmpdi
   }
 }
 
-export async function fetchAndExtract(templateId: string): Promise<{ tmpdir: string; rootPath: string; dirName: string }> {
+export async function fetchAndExtract(templateId: string, manifest?: Record<string, unknown>): Promise<{ tmpdir: string; rootPath: string; dirName: string }> {
   const downloaded = await downloadBundleToTmp(templateId);
+  try { verifyMarketplaceArtifact(manifest ?? (await fetchPublicTemplate(templateId)).manifest, downloaded.bytes); }
+  catch (error) { rmrfSync(downloaded.tmpdir); throw error }
   try {
     const stageDir = path.join(downloaded.tmpdir, 'staged');
     fs.mkdirSync(stageDir, { recursive: true });
@@ -139,6 +142,7 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
   if (!MARKETPLACE_KINDS.includes(detail.kind)) throw new Error(`Unknown marketplace kind "${ detail.kind }"`);
 
   if (detail.kind === 'package') {
+    verifySelfContainedMarketplaceArtifact(detail.manifest);
     const { installPackageManifest } = await import('./databaseInstaller');
     const result = await installPackageManifest(detail.id, detail.manifest, detail.author_display);
     return {
@@ -151,7 +155,9 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
     };
   }
 
-  if (detail.kind === 'agent') {
+  if (detail.kind === 'agent' && !isSignedMarketplaceManifest(detail.manifest as Record<string, unknown>)) {
+    // Unsigned agents keep the manifest-only install path until signatures are required.
+    if (marketplaceSignaturesRequired()) throw new Error('Marketplace download is unsigned; installation was refused.');
     const { installStandaloneArtifact } = await import('./databaseInstaller');
     const outcome = await installStandaloneArtifact(detail, { manifest: detail.manifest as Record<string, any>, files: {} }, opts.overwrite === true);
     return {
@@ -166,7 +172,26 @@ export async function installTemplate(templateId: string, opts: { overwrite?: bo
     };
   }
 
-  const extracted = await fetchAndExtract(templateId);
+  if (detail.kind === 'agent') {
+    const verified = await fetchAndExtract(templateId, detail.manifest);
+    try {
+      const { bundleToArtifact, installStandaloneArtifact, readBundleFiles } = await import('./databaseInstaller');
+      const artifact = bundleToArtifact(detail.kind, readBundleFiles(verified.rootPath), detail.slug);
+      const outcome = await installStandaloneArtifact(detail, artifact, opts.overwrite === true);
+    return {
+      kind:             detail.kind,
+      slug:             detail.slug,
+      path:             `database:agent_definitions/${ detail.slug }`,
+      name:             detail.name ?? detail.slug,
+      version:          detail.version,
+      alreadyInstalled: !outcome.installed,
+      updated:          opts.overwrite === true && outcome.installed,
+        ...(outcome.reason ? { warnings: [outcome.reason] } : {}),
+      };
+    } finally { rmrfSync(verified.tmpdir) }
+  }
+
+  const extracted = await fetchAndExtract(templateId, detail.manifest);
   try {
     const { bundleToArtifact, installStandaloneArtifact, isSignedIntegrationPackageManifest, readBundleFiles } = await import('./databaseInstaller');
     const artifact = bundleToArtifact(detail.kind, readBundleFiles(extracted.rootPath), detail.slug);
