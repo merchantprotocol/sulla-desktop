@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { parse as parseYaml } from 'yaml';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
+import { MEMORY_PACK_MAX_BYTES, MEMORY_PACK_MAX_FILE_BYTES, MEMORY_PACK_MAX_FILES } from './MemoryPackLoader';
 
 interface MemoryDoc {
   file:  string;
@@ -27,7 +28,7 @@ function markdownDocs(dir: string): string[] {
   return fs.readdirSync(dir).filter(name => name.endsWith('.md')).sort().map(name => path.join(dir, name));
 }
 
-function textFiles(dir: string): string[] {
+function packFiles(dir: string): string[] {
   const files: string[] = [];
   const walk = (current: string) => {
     if (!fs.existsSync(current)) return;
@@ -35,14 +36,18 @@ function textFiles(dir: string): string[] {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
       const absolute = path.join(current, entry.name);
       if (entry.isDirectory()) walk(absolute);
-      else if (entry.isFile()) {
-        const data = fs.readFileSync(absolute);
-        if (!data.includes(0) && !data.toString('utf8').includes('�')) files.push(absolute);
-      }
+      else if (entry.isFile()) files.push(absolute);
     }
   };
   walk(dir);
   return files;
+}
+
+function textFiles(files: string[]): string[] {
+  return files.filter(file => {
+    const data = fs.readFileSync(file);
+    return !data.includes(0) && !data.toString('utf8').includes('�');
+  });
 }
 
 function readDoc(file: string, issues: string[]): MemoryDoc | null {
@@ -85,11 +90,22 @@ export function validateMemoryPackFormat(packDir: string, packSlug: string): str
   else {
     try {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      if (!Number.isInteger(manifest?.version) || manifest.version < 1) issues.push('memory/manifest.json: version must be a positive integer');
+      if (!Number.isInteger(manifest?.version) || manifest.version < 1 || manifest.version >= 1_000_000) issues.push('memory/manifest.json: version must be an integer between 1 and 999999');
     } catch (error) {
       issues.push(`memory/manifest.json: invalid JSON (${ (error as Error).message })`);
     }
   }
+
+  const files = packFiles(packDir);
+  if (files.length > MEMORY_PACK_MAX_FILES) issues.push(`memory pack has ${ packFiles.length } files; maximum is ${ MEMORY_PACK_MAX_FILES }`);
+  let packBytes = 0;
+  for (const file of files) {
+    const bytes = fs.statSync(file).size;
+    const relative = path.relative(packDir, file).split(path.sep).join('/');
+    if (bytes > MEMORY_PACK_MAX_FILE_BYTES) issues.push(`${ relative }: file is ${ bytes } bytes; maximum is ${ MEMORY_PACK_MAX_FILE_BYTES } bytes`);
+    packBytes += bytes;
+  }
+  if (packBytes > MEMORY_PACK_MAX_BYTES) issues.push(`memory pack is ${ packBytes } bytes; maximum is ${ MEMORY_PACK_MAX_BYTES } bytes`);
 
   const subjectFiles = markdownDocs(path.join(root, 'subjects'));
   const skillFiles = markdownDocs(path.join(root, 'skills'));
@@ -122,8 +138,7 @@ export function validateMemoryPackFormat(packDir: string, packSlug: string): str
     else for (const subject of scope.map(String)) if (!knownSubjects.has(subject)) issues.push(`memory/skills/${ filename }.md: scope "${ subject }" does not exist`);
   }
 
-  const allFiles = textFiles(packDir);
-  for (const file of allFiles) {
+  for (const file of textFiles(files)) {
     const source = fs.readFileSync(file, 'utf8');
     const relative = path.relative(packDir, file).split(path.sep).join('/');
     if (/(?:^|[\s"'`])(?:\/(?:Users|home)\/[A-Za-z0-9._-]+\/|[A-Za-z]:\\Users\\[^\\\s]+\\)/m.test(source)) issues.push(`${ relative }: contains a personal absolute home path`);

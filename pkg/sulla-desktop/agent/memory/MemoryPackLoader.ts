@@ -15,6 +15,9 @@ import { resetV7SubjectMemoryCache } from './V7SubjectMemory';
 
 export const MEMORY_SEED_WORKER = 'memory-seed';
 export const PACK_VERSION_BASE = 1_000_000_000_000;
+export const MEMORY_PACK_MAX_FILE_BYTES = 256 * 1024;
+export const MEMORY_PACK_MAX_BYTES = 2 * 1024 * 1024;
+export const MEMORY_PACK_MAX_FILES = 500;
 
 export interface MemoryPackFile { name:string; content:string; }
 export interface MemoryPackValidationError { file:string; line:number; message:string; severity?:'error'|'warning'; }
@@ -25,6 +28,18 @@ interface ParsedPack { version:number; subjects:MemorySubject[]; skills:MemoryPa
 export interface MemoryPackResult { slug:string; version:number; hash:string; subjects:number; items:number; skills:number; }
 
 const normalize = (name:string) => name.replace(/\\/g,'/').replace(/^\.\//,'');
+function validateFileEnvelope(files:MemoryPackFile[]):void {
+  if(files.length>MEMORY_PACK_MAX_FILES)throw new Error(`memory:1: pack has ${files.length} files; maximum is ${MEMORY_PACK_MAX_FILES}`);
+  let total=0;
+  for(const file of files){
+    const name=normalize(file.name),segments=name.split('/');
+    if(name.startsWith('/')||/^[A-Za-z]:\//.test(name)||segments.includes('..'))throw new Error(`${file.name}:1: file name must be relative and cannot contain a .. segment`);
+    const bytes=Buffer.byteLength(file.content,'utf8');
+    if(bytes>MEMORY_PACK_MAX_FILE_BYTES)throw new Error(`${file.name}:1: file is ${bytes} bytes; maximum is ${MEMORY_PACK_MAX_FILE_BYTES} bytes`);
+    total+=bytes;
+    if(total>MEMORY_PACK_MAX_BYTES)throw new Error(`${file.name}:1: pack exceeds the ${MEMORY_PACK_MAX_BYTES} byte total limit`);
+  }
+}
 function doc(source:string, file:string):MemoryPackDocument {
   const match=source.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
   if (!match) throw new Error(`${file}:1: missing YAML frontmatter`);
@@ -48,6 +63,7 @@ function parentFirst(subjects:MemorySubject[]):MemorySubject[] {
   return output;
 }
 function parseFiles(files:MemoryPackFile[], owner:string):ParsedPack {
+  validateFileEnvelope(files);
   const map=new Map(files.map(f=>[normalize(f.name),f.content]));
   const manifestName=map.has('manifest.json')?'manifest.json':'memory/manifest.json';
   let version=0; try { version=Number(JSON.parse(map.get(manifestName)||'{}').version)||0 } catch(error) { throw new Error(`${manifestName}:1: ${error instanceof Error?error.message:String(error)}`) }
@@ -71,7 +87,13 @@ export function validateMemoryPackFiles(files:MemoryPackFile[], owner='memory-pa
     return [{file:m?.[1]||'memory',line:Number(m?.[2]||1),message:m?.[3]||String(error),severity:'error'}];
   }
 }
-export function readMemoryPackDirectory(dir:string):MemoryPackFile[] { const out:MemoryPackFile[]=[]; const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile())out.push({name:r,content:fs.readFileSync(p,'utf8')})}}; walk(dir); return out; }
+export function readMemoryPackDirectory(dir:string):MemoryPackFile[] {
+  const out:MemoryPackFile[]=[];
+  let total=0;
+  const walk=(root:string,rel='')=>{for(const ent of fs.readdirSync(root,{withFileTypes:true})){const r=normalize(path.join(rel,ent.name)),p=path.join(root,ent.name);if(ent.isDirectory())walk(p,r);else if(ent.isFile()){const bytes=fs.statSync(p).size;if(bytes>MEMORY_PACK_MAX_FILE_BYTES)throw new Error(`${r}:1: file is ${bytes} bytes; maximum is ${MEMORY_PACK_MAX_FILE_BYTES} bytes`);total+=bytes;if(total>MEMORY_PACK_MAX_BYTES)throw new Error(`${r}:1: pack exceeds the ${MEMORY_PACK_MAX_BYTES} byte total limit`);out.push({name:r,content:fs.readFileSync(p,'utf8')});if(out.length>MEMORY_PACK_MAX_FILES)throw new Error(`memory:1: pack has more than ${MEMORY_PACK_MAX_FILES} files`);}}};
+  walk(dir);
+  return out;
+}
 
 async function apply(client:PoolClient, slug:string, pack:ParsedPack, source:string):Promise<MemoryPackResult> {
   const owner=`memory-pack:${slug}`, now=Date.now(), ids=pack.subjects.flatMap(s=>s.items.map(i=>i.id));
