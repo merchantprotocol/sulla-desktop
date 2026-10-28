@@ -240,7 +240,7 @@ export function agentContainerRelayUrl(value: string): string {
  * that resolves and reaches host.sulla.internal runs in the Sulla VM, keeping
  * host IP addresses and host networking out of every container invocation.
  */
-async function ensureHostRelay(image: string): Promise<void> {
+async function startHostRelay(image: string): Promise<void> {
   // The Sulla runtime guest has no Python for the VM-side relay. There the
   // container dials the Mac's loopback directly at the SLIRP host gateway,
   // which the runtime forwards to 127.0.0.1 on the Mac.
@@ -370,16 +370,51 @@ exit 1`;
   // Same versioning as the VM relay: a container left by an older build keeps
   // running its old script, so replace it when the script changes.
   const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
-  const runningVersion = await guestExec(['docker', 'inspect', '--format', `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}}`, HOST_RELAY_NAME])
-    .then(({ stdout }) => stdout.trim())
+  const inspectRelay = () => guestExec(['docker', 'inspect', '--format',
+    `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}} {{.State.Running}}`, HOST_RELAY_NAME])
+    .then(({ stdout }) => {
+      const [version = '', running = ''] = stdout.trim().split(' ');
+
+      return { version, running: running === 'true' };
+    })
     .catch(() => null);
-  if (runningVersion !== bridgeVersion) {
-    if (runningVersion !== null) await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]);
+  const current = await inspectRelay();
+
+  if (current?.version === bridgeVersion) {
+    if (!current.running) await guestExec(['docker', 'start', HOST_RELAY_NAME]);
+
+    return;
+  }
+  // Remove unconditionally: a failed inspect does not prove the name is free,
+  // and `docker run --name` would then fail with a name conflict.
+  await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
+  try {
     await guestExec(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
       '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
       '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
+  } catch (error) {
+    // Another Desktop process (or a stale one) may have created the relay
+    // between our rm and run. Accept it if it is the current version.
+    const raced = await inspectRelay();
+
+    if (raced?.version !== bridgeVersion) throw error;
+    if (!raced.running) await guestExec(['docker', 'start', HOST_RELAY_NAME]);
   }
+}
+
+let hostRelayReady: Promise<void> | null = null;
+
+/**
+ * Single-flight wrapper: parallel agent launches share one relay check, so
+ * they never race each other to `docker run --name sulla-host-relay`.
+ */
+function ensureHostRelay(image: string): Promise<void> {
+  if (!hostRelayReady) {
+    hostRelayReady = startHostRelay(image).finally(() => { hostRelayReady = null });
+  }
+
+  return hostRelayReady;
 }
 
 /** How long a launch waits for the threat proxy to publish its CA after a cold boot. */
