@@ -536,7 +536,8 @@ function onAgentCommand(_event: any, args: any) {
     const filesNavigation = mode === 'files' && (args.fileId || args.path || args.section)
       ? { fileId: args.fileId, path: args.path, section: args.section, collectionId: args.collectionId }
       : undefined;
-    const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation });
+    const studioSection = isStudioSection(args.studioSection) ? args.studioSection : undefined;
+    const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation, studioSection });
 
     router.push(`/Browser/${ tab.id }`);
     break;
