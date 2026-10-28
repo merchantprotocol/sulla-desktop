@@ -1,0 +1,26 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-overlap
+slug: overlap
+name: Overlap
+title: Find a meeting time that works in every time zone
+line: Calculate deterministic shared availability across time zones.
+description: Offline timezone conversion and working-window intersection; no network or calendar writes.
+category: productivity
+tags: [calendar, time-zones, meetings]
+schemaversion: 1
+spec:
+  runtime: node
+  entrypoint: main.js::handler
+  inputs:
+    participants: {type: array, description: Participants with IANA timezone and local windows., required: true}
+    duration_minutes: {type: number, description: Meeting duration in minutes., required: true}
+    from: {type: string, description: Inclusive ISO date., required: true}
+    to: {type: string, description: Inclusive ISO date., required: true}
+  outputs:
+    slots: {type: array, description: Shared slots with local and UTC times.}
+    warnings: {type: array, description: Validation and DST warnings.}
+  timeout: 60s
+  permissions: {network: []}
