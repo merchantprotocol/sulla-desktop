@@ -291,7 +291,7 @@ class LLMRegistryImpl {
 
     if (model === 'primary') return this.getPrimaryService();
     if (model === 'secondary') return this.getSecondaryService();
-    if (model === 'subconscious') return this.getSubconsciousService();
+    if (model === 'subconscious') return this.getSubconsciousLLM();
 
     if (!model && !provider) return null;
 

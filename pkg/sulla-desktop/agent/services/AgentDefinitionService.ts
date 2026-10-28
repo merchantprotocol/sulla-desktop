@@ -151,6 +151,8 @@ export class AgentDefinitionService {
         ...(agent.marketplace_template_id ? { marketplaceTemplateId: agent.marketplace_template_id } : {}),
       },
       spec: {
+        ...(agent.provider ? { provider: agent.provider } : {}),
+        ...(agent.model ? { model: agent.model } : {}),
         ...(agent.model_slot ? { modelSlot: agent.model_slot } : {}),
         prompt:      agent.prompt_content,
         soul:        agent.soul_content,

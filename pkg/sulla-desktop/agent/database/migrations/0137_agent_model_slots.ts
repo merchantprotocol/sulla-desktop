@@ -13,7 +13,8 @@ export const up = `
     WHEN lower(COALESCE(model, '')) ~ '(haiku|mini|flash|nano|lite|luna|fast)' THEN 'subconscious'
     WHEN lower(COALESCE(model, '')) ~ '(sonnet|sol|turbo|medium)' THEN 'secondary'
     ELSE 'primary'
-  END WHERE model_slot IS NULL AND model IS NOT NULL;
+  END WHERE model_slot IS NULL AND model IS NOT NULL
+    AND slug NOT IN ('opus-worker', 'sonnet-worker', 'haiku-worker', 'codex-sol-worker', 'codex-luna-worker');
 `;
 
 export const down = `ALTER TABLE agent_definitions DROP COLUMN IF EXISTS model_slot;`;
