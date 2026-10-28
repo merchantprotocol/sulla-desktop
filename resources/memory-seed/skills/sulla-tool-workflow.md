@@ -22,11 +22,13 @@ scope: [tool-workflow]
 - `sulla workflow/set_workflow_status '{}'`: Enable/disable a workflow or change its status (draft | production | archive) by id or exact name, then re-arm the scheduler so the change takes effect immediately without an app restart. Reports the workflow's armed cron state after the change. Required: none. Optional: id, name, status, enabled.
 <!-- tools:generated:end -->
 **Do:**
-1. Validate YAML with `sulla meta/validate_sulla_workflow {"filePath":"<workflow yaml>"}`.
-2. Dry-run routing with `sulla meta/dry_run_workflow {"filePath":"<workflow yaml>"}`.
-3. Import it with `sulla workflow/import_workflow {"slug":"<slug>","yaml":"<yaml>"}` and publish it through the Files workflow.
-4. Check health with `sulla workflow/routines_digest {}`; drill down with `sulla workflow/routine_report {"slug":"<slug>"}` only when flagged.
-5. After a restart, inspect missed fires with `sulla workflow/catch_up_schedules {"dryRun":true}` before dispatching them.
+1. Validate a file with `sulla meta/validate_sulla_workflow '{"filePath":"/mnt/worktrees/<job>/routine.yaml"}'`.
+2. Dry-run routing with `sulla meta/dry_run_workflow '{"filePath":"/mnt/worktrees/<job>/routine.yaml"}'`.
+3. Import reviewed YAML as a draft with `sulla workflow/import_workflow '{"slug":"<slug>","yaml":"<complete-yaml>","status":"draft"}'`, then request publication using the returned Files ids.
+4. Run only an exact registered id: `sulla meta/execute_workflow '{"workflowId":"<slug>","message":"<input>"}'`.
+5. Check health with `sulla workflow/routines_digest '{}'`; use `sulla workflow/routine_report '{"slug":"<slug>","last_k":1}'` only for a flagged routine.
+6. After downtime, inspect missed fires with `sulla workflow/catch_up_schedules '{"dryRun":true,"lookbackDays":7}'` before dispatching them.
+7. For recovery, list runs and checkpoints with `sulla meta/restart_from_checkpoint`, then restart with exact `executionId` and `nodeId`.
 
 **Don't:**
 - Don't execute a workflow when validation or dry-run is the goal.
