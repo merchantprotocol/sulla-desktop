@@ -28,7 +28,7 @@ export class MarketplaceInfoWorker extends BaseTool {
       const { listing: l, manifest } = await getMarketplaceClient().info(kind, slug);
       const metadata = (manifest.metadata ?? {}) as Record<string, unknown>;
       const summaryKey = Object.keys(manifest).find(k => k.endsWith('Summary'));
-      const kindLabel = l.kind === 'workflow' ? 'routine' : l.kind;
+      const kindLabel = l.kind === 'workflow' ? 'Workflow' : l.kind;
       const installed = l.installed
         ? `Installed: v${ l.installed.version } at ${ l.installed.path }${ l.installed.templateId === l.id && l.installed.version === l.version ? '' : ' — update available (marketplace/update)' }\n`
         : 'Installed: no\n';

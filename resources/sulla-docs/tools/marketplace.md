@@ -2,7 +2,7 @@
 
 Browse, install, update, and publish artifacts on the **Sulla Marketplace**. The agent tools use the same installer as the Use Cases tab in the app.
 
-Artifact kinds: `skill`, `function`, `workflow` (shown as **routine**), `recipe`, `integration`, and `agent`. `agent` is local-only: `scaffold`, `validate` and `list_local` accept it, but agents are not published through the marketplace.
+Artifact kinds: `skill`, `function`, `workflow`, `recipe`, `integration`, and `agent`. The internal API key for workflows is `routine`; user-facing text calls them **Workflows**. Agents can be scaffolded, validated, published, downloaded, and updated like other marketplace artifacts.
 
 ## How it talks to the cloud
 

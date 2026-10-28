@@ -9,7 +9,7 @@
 export const MARKETPLACE_KINDS = [
   { kind: 'package', aliases: [], label: 'Use Cases', singular: 'Use Case', icon: '📦', color: '#5096b3', desktopOnly: false, cloudInstallable: true },
   { kind: 'routine', aliases: ['workflow'], label: 'Workflows', singular: 'Workflow', icon: '⛓', color: '#5096b3', desktopOnly: false, cloudInstallable: true },
-  { kind: 'agent', aliases: [], label: 'Agents', singular: 'Agent', icon: '🤖', color: '#8b7cf6', desktopOnly: true, cloudInstallable: false },
+  { kind: 'agent', aliases: [], label: 'Agents', singular: 'Agent', icon: '🤖', color: '#8b7cf6', desktopOnly: true, cloudInstallable: true },
   { kind: 'skill', aliases: [], label: 'Skills', singular: 'Skill', icon: '✦', color: '#e0a84a', desktopOnly: false, cloudInstallable: true },
   { kind: 'function', aliases: [], label: 'Functions', singular: 'Function', icon: 'ƒ', color: '#4fb39a', desktopOnly: true, cloudInstallable: false },
   { kind: 'integration', aliases: [], label: 'Integrations', singular: 'Integration', icon: '🔌', color: '#d0708a', desktopOnly: true, cloudInstallable: false },
