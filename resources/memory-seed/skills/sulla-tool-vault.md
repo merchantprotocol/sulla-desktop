@@ -1,9 +1,9 @@
 ---
 slug: sulla-tool-vault
 label: Use the Sulla Vault tools
-trigger_when: When you need to inspect vault metadata and autofill credentials without exposing secret values.
+trigger_when: When you need to inspect, connect, test, select, or safely use a vaulted integration credential without exposing its secret.
 trigger_actions: [vault, vault tool]
-trigger_phrases: [vault, vault tools, use vault, manage vault, check vault]
+trigger_phrases: [vault, vault tools, use vault, manage vault, check vault, connect GitHub, test my API key, OAuth, saved password]
 scope: [tool-vault]
 ---
 
@@ -12,11 +12,13 @@ scope: [tool-vault]
 For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use `sulla-deploy-a-site`; it checks connection state before calling the provider proxy.
 
 **Do:**
-1. List safe credential metadata: `sulla vault/list '{}'` or API-key metadata with `sulla vault/list_api_keys '{}'`.
-2. Check an integration: `sulla vault/is_enabled '{"account_type":"<account-type>"}'`; list accounts with `sulla vault/list_accounts '{"account_type":"<account-type>"}'`.
-3. Autofill an approved browser login: `sulla vault/autofill '{"origin":"https://example.com"}'`.
-4. For a native integration, list its accounts, discover its installed proxy tools, then call `sulla <account-id>/<slug> '{"method":"GET","path":"<verified-path>"}'`. For an owner-configured generic API item, resolve its id with `sulla vault/list_api_keys '{}'`, then call `sulla vault/request '{"item":"<item-id>","method":"GET","url":"https://<allowed-host>/<verified-path>"}'`. Only call enabled integrations and allowed hosts.
-5. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
+1. If the human is connecting or repairing an integration, open the setup screen: `sulla ui/open_tab '{"mode":"integrations"}'`. OAuth and token entry happen there; never ask for a secret in chat.
+2. List safe credential metadata: `sulla vault/list '{}'` or API-key metadata with `sulla vault/list_api_keys '{}'`.
+3. Check an integration: `sulla vault/is_enabled '{"account_type":"<account-type>"}'`; list accounts with `sulla vault/list_accounts '{"account_type":"<account-type>"}'`.
+4. Autofill an approved browser login: `sulla vault/autofill '{"origin":"https://example.com"}'`.
+5. For a native integration or MCP server, find its installed commands with `sulla meta/browse_tools '{"query":"<service> API"}'`, then call the returned `sulla <account-id>/<slug> '{"method":"GET","path":"<verified-path>"}'` or `sulla <account-id>/mcp/<tool>` command.
+6. For an owner-configured generic API key, resolve its id with `sulla vault/list_api_keys '{}'`, then call `sulla vault/request '{"item":"<item-id>","method":"GET","url":"https://<allowed-host>/<verified-path>"}'`. Only call enabled integrations and the hosts that item allows.
+7. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
 
 **Tools:**
 <!-- tools:generated:start -->
@@ -31,6 +33,8 @@ For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use 
 - `sulla vault/set_active_account '{"account_type":"<account_type>","account_id":"<account_id>"}'`: Set which account is active for an integration. After setting the active account, all subsequent tool calls for that integration will automatically use its credentials. Use vault/list_accounts first to see available accounts. Required: account_type, account_id. Optional: none.
 - `sulla vault/set_credential '{"account_type":"<account_type>","property":"<property>","value":"<value>"}'`: Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials. Cannot change llm_access (user-only); overwriting an existing secret requires confirm:true. Required: account_type, property, value. Optional: account_id, confirm.
 <!-- tools:generated:end -->
+
+**Check:** `vault/is_enabled` reports connected, `vault/list_accounts` identifies the intended active account, and a read-only broker/proxy call returns data without a secret value.
 
 **Don't:**
 - Don't invent tool names or parameters; check the live catalog when a command is unclear.
