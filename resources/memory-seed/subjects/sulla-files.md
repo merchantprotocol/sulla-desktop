@@ -7,21 +7,36 @@ aliases: [Files, file manager, /mnt/sulla-files, FUSE mount, documents, where to
 ---
 
 ## Overview
-Sulla Files is the human's managed, versioned file system. The File Manager namespace is mounted at `/mnt/sulla-files` in the VM, workflow runners, and agent containers. Normal file reads and writes on the mount go through the authenticated Files service. Every agent write creates a draft version; agents can read drafts, but the human sees the published version plus a Draft pending marker. Files enforces locks, retention, protected paths, audit attribution, and publication rules.
+Sulla Files is the human's area: the human's own managed file system and File Manager. An agent working there is responsible for keeping it to the human's standards. It is not a place to dump thoughts, notes, logs, scratch work, or garbage. Put only work the human would open—finished deliverables, plans, decisions, reference material, and project files—in the right existing folder.
+
+The Files service exposes the managed surface at `/mnt/sulla-files` through an authenticated FUSE mount in the VM, workflow runners, and agent containers. Normal reads and writes on that mount are versioned and audited; the current publication state depends on the file's policy. Agent writes to approval-controlled files are drafts until the human approves publication in Decide. Memory and standard Projects paths publish immediately when their collection does not require approval. The File Manager and agent access share the same service-backed files, not a private copy.
 
 ## Facts
-- The mount supports reads, writes, append, exclusive create, folders, rename and move, unlink, and empty-directory removal.
+- The mount supports list, stat, read, create, truncate, positional write, flush, fsync, rename, mkdir, unlink, rmdir, and close; hard links, symlinks, xattrs, locks, mmap, cross-collection moves, and executable workloads fail closed.
+- Collections appear as stable top-level directories under `/mnt/sulla-files`; host paths and source capabilities do not enter the VM or agent containers.
 - Canonical paths are relative POSIX paths; `..`, backslashes, symlink traversal, raw host paths, and protected wallet or vault names are rejected.
-- `Memory/` is the exception to draft publication: durable memory files publish immediately.
-- Agent writes carry actor identity and are versioned and audited automatically.
-- A lock or retention policy rejects mutations with HTTP 423 `FILE_LOCKED`; FUSE reports `EROFS`.
-- File Manager edits and agent edits share one Automerge document; connected editors receive merged changes.
-- `.sulla` is plain UTF-8 Markdown with optional flat YAML-style front matter; `.sulla.md` remains supported.
+- Agent tool paths passed to `files/history`, `files/restore`, and `files/link` must be absolute `/mnt/sulla-files/...` paths when using a path.
+- A draft is visible to agents with access, while the human sees the published version plus a draft-pending state; only a published Use Case version is runtime-active.
+- `Memory/` and `Projects/` publish immediately only when the target collection does not require approval; an approval-required collection can still produce drafts.
+- Files keeps versions, records audit attribution, enforces locks and retention, and can restore an older version as a new version.
+- `_folder-metadata.yaml` is the File Manager's folder-description file; folder metadata is also served by the Files metadata API.
 
 ## Rules
-- DO: Search with `sulla files/search`, `sulla files/where`, and `ls` before creating a file.
-- DO: Read `_folder-metadata.yaml` before saving and add a real description when creating a folder.
-- PREFER: Update an existing file in place instead of making `-v2`, `-new`, `-copy`, or `-final` duplicates.
-- DON'T: Delete, move, or rename the human's files without the human's tap.
-- DON'T: Work around a lock, retention policy, or protected path. Report the exact constraint.
-- DON'T: Write Files records directly in Postgres. Why: That bypasses versioning, locks, retention, and audit.
+- DO: Treat Files as the human's shared desk. Why: every file left there is part of the human's workspace and standards.
+- DO: Save only a deliverable, plan, decision, reference item, or project file the human would open.
+- DO: Search with `sulla files/search '{"query":"<topic>"}'` and locate a destination with `sulla files/where '{"what":"<deliverable>"}'` before creating anything.
+- DO: Read the destination folder's `_folder-metadata.yaml` before saving. Why: its description and naming hint tell you what belongs there.
+- DO: Update an existing file in place. Why: Files already keeps versions, so duplicates hide the canonical document.
+- DO: Describe a new folder immediately with `sulla files/create_folder` and a real purpose; do not make a folder for one file.
+- DO: Keep project state in `Projects/<slug>/PROJECT.md` and `TASKS.md`; keep plans, specs, decisions, and progress in that project folder.
+- DO: Keep Use Case artifacts under `Use Cases/<type>/<slug>/` as drafts, then request publication through `sulla files/request_publish` so the human can approve in Decide.
+- DO: Delete your own scratch, logs, briefs, test data, and build output from `/mnt/worktrees/_scratch/<job>/` or the agent workspace when finished.
+- DO: Use `sulla files/history` and `sulla files/versions` to inspect history before restoring; use `sulla files/restore` to make an older version current as a new version.
+- DO: Prepare share links with `sulla files/link`; revoke them with `sulla files/revoke_link` when the human authorizes it.
+- DON'T: Put scratch, drafts of drafts, worker briefs, logs, build output, test data, or notes to yourself in Files. Why: Files is the human's workspace, not agent storage.
+- DON'T: Make `-v2`, `-new`, `-copy`, or `-final` names. Why: version history is already built in.
+- DON'T: Delete, move, or rename the human's Files without the human's tap. Why: those changes alter the human's workspace and may be irreversible.
+- DON'T: Work around locks, retention, protected paths, or the publication gate. Why: the Files service is the authority for custody and lifecycle.
+- DON'T: Write Files records directly in Postgres. Why: that bypasses versioning, locks, retention, and audit.
+- LESSON: If a folder has no description, stop and add one through the supported Files path before placing a deliverable there. Why: undocumented folders become dumping grounds.
+- LESSON: If you find duplicate files you created, identify the canonical one and prepare a cleanup; do not silently delete a Files entry without the human's tap.
