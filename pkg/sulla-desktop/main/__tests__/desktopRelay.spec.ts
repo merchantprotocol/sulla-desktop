@@ -485,6 +485,15 @@ describe('DesktopRelayClient mobile bridge: multi-segment turns', () => {
     expect(frames.filter(f => f.type === 'message')).toEqual([]);
     expect(frames.find(f => f.type === 'done')).toMatchObject({ content: 'Just this.', id: 'assistant:Just this.' });
   });
+
+  it('sends only an empty completion frame for a silent overheard turn', async() => {
+    const { frames, say, complete } = bridge();
+
+    await say('progress', '<overheard>Jonathon is talking with Tim about pricing.</overheard><AGENT_DONE></AGENT_DONE>');
+    await complete();
+
+    expect(frames).toEqual([{ type: 'done', content: '' }]);
+  });
 });
 
 describe('mobile bridge concurrent conversations', () => {

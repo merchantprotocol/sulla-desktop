@@ -8,7 +8,7 @@ import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '..
 import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
-import { isOverheardProtocolTurn, stripProtocolTags } from '../utils/stripProtocolTags';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { requeuePendingSteers } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
 
@@ -306,7 +306,7 @@ export class AgentNode extends BaseNode {
     // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
     // their turns routinely take that path — gating on the wrapper alone
     // silently skipped every post-turn writer, the Reflex Trainer included.
-    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls) && !isOverheardProtocolTurn(agentResultText)) {
+    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
         runSubconsciousObservationWriters(state, { includeObservations });
