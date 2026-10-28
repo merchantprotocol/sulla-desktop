@@ -103,6 +103,7 @@ interface IncomingMessage {
   providerId?:     string;
   modelId?:        string;
   agentId?:        string;
+  voiceMode?:      boolean;
   /**
    * When the mobile picks a specific desktop to route to (AI Assistant →
    * Which Desktop), the chat payload carries that device's id. The relay
@@ -885,6 +886,9 @@ export class DesktopRelayClient {
 
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
     const selection = await validateChatSelection(msg);
+    const voiceSelection = msg.voiceMode
+      ? { ...selection, agentId: 'conversationalist' }
+      : selection;
 
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
@@ -904,9 +908,9 @@ export class DesktopRelayClient {
         threadId: conversationId,
         metadata: {
           source:         'mobile-relay',
-          inputSource:    'keyboard',
+          inputSource:    msg.voiceMode ? 'voice' : 'keyboard',
           conversationId,
-          ...selection,
+          ...voiceSelection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },
@@ -991,6 +995,13 @@ export class DesktopRelayClient {
     };
 
     const handleMessage = async(msg: WebSocketMessage) => {
+      if (msg.type === 'speak_dispatch') {
+        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+        const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        const text = typeof data.text === 'string' ? data.text.trim() : '';
+        if (threadId && text) await commitAssistantText(threadId, text);
+        return;
+      }
       if (msg.type === 'progress') {
         const data = (msg.data || {}) as any;
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
