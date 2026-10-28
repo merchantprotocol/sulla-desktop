@@ -30,10 +30,11 @@ function agentTextFields(manifest: AgentMarketplaceManifest): string[] {
   return [spec.prompt, spec.soul, spec.goals, ...Object.values(spec.promptFiles ?? {})].filter((v): v is string => typeof v === 'string');
 }
 
+// Match whole key names, so ordinary config such as maxTokens or memoryEnabled still publishes.
 const SENSITIVE_FIELD_PATTERNS: { label: string; pattern: RegExp }[] = [
-  { label: 'vault credential', pattern: /(?:vault|credential|password|secret|token|api.?key)/i },
-  { label: 'account identifier', pattern: /(?:account|customer|tenant|user).?(?:id|uuid)/i },
-  { label: 'personal memory', pattern: /(?:personal.?memory|private.?memory|memory)/i },
+  { label: 'vault credential', pattern: /^(?:vault.?(?:credential|secret|item)?.?(?:id|ids)?|credentials?.?(?:id|ids)?|passwords?|secrets?|(?:api|access|refresh|auth|bearer).?(?:key|token)s?|tokens?|private.?key)$/i },
+  { label: 'account identifier', pattern: /^(?:account|customer|tenant|user|org|organization).?(?:id|ids|uuid)$/i },
+  { label: 'personal memory', pattern: /^(?:(?:personal|private|user).?)?(?:memory|memories|observations)$/i },
 ];
 
 function findSensitiveField(value: unknown, path = ''): string | null {
