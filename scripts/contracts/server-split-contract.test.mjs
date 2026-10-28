@@ -44,3 +44,12 @@ test('services consume extracted contract packages rather than legacy paths', ()
   assert.ok(!text.includes('pkg/sulla-desktop/agent/tools/executionContext'));
   assert.ok(!text.includes('pkg/sulla-desktop/agent/tools/executionTargets'));
 });
+
+test('workflows meta tool categories match the Desktop meta manifests', () => {
+  const text = path => fs.readFileSync(new URL(path, root), 'utf8');
+  const manifests = text('pkg/sulla-desktop/agent/tools/meta/manifests.ts');
+  const expected = Object.fromEntries([...manifests.matchAll(/name:\s*'([^']+)'[\s\S]*?category:\s*'([^']+)'/g)].map(m => [m[1], m[2]]));
+  const mapped = text('services/sulla-workflows/src/metaToolCategories.ts');
+  const actual = Object.fromEntries([...mapped.matchAll(/^\s*'?([A-Za-z_$][\w$/.-]*)'?:\s*'([^']+)',/gm)].map(m => [m[1], m[2]]));
+  assert.deepEqual(actual, expected);
+});
