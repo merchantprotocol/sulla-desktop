@@ -131,3 +131,5 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 
 
 Projects are plain files. See [Projects in Files](environment/projects-in-files.md).
+
+- [`environment/v7-subject-memory.md`](environment/v7-subject-memory.md) — opt-in v7 recall, transfer and rollback
