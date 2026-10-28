@@ -13,7 +13,7 @@
  * two plain sentences, an `art` key from ShowcaseArt (or add a new icon in
  * StartupShowcase.vue), and `sources` naming the doc or code that backs every
  * claim. Rules: only say what the app really does today, no pricing, no made-up
- * numbers, no hype words (see resources/sulla-docs/agent-patterns/writing-voice.md).
+ * numbers, no hype words (see resources/memory-seed/subjects/sulla.md).
  * Counts come from code at runtime (see `body` as a function), never typed in.
  * Tests in __tests__/startupShowcaseSlides.test.ts check the shape.
  */
@@ -50,7 +50,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Agents work in their own Linux VM, and your home folder isn\'t mounted inside it. They see the files you share through Files. Reaching the Mac is a setting you turn on.',
     art:     'sandbox',
     points:  ['Agents work in their own Linux VM', 'Your home folder isn\'t mounted inside it', 'Reaching the Mac itself is a setting you turn on'],
-    sources: ['resources/sulla-docs/environment/architecture.md (Sulla VM)', 'pkg/sulla-desktop/sulla.ts (host-access-sync)'],
+    sources: ['resources/memory-seed/subjects/sulla-vm.md (Sulla VM)', 'pkg/sulla-desktop/sulla.ts (host-access-sync)'],
   },
   {
     id:      'agents',
@@ -59,7 +59,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Sulla\'s agents work with real tools: a browser, GitHub, your calendar, Slack and a shell. They do the job and tell you what changed.',
     art:     'agents',
     points:  ['Browser, GitHub, calendar, Slack and a shell', 'Agents do the job themselves', 'You get told what changed'],
-    sources: ['resources/sulla-docs/tools/inventory.md', 'resources/sulla-docs/tools/browser.md', 'resources/sulla-docs/tools/github.md'],
+    sources: ['resources/memory-seed/subjects/sulla-tools.md', 'resources/memory-seed/skills/tool-browser.md', 'resources/memory-seed/skills/tool-github.md'],
   },
   {
     id:      'routines',
@@ -68,7 +68,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Turn a task you repeat into a routine and give it a schedule. Sulla runs it in the background, no reminder needed.',
     art:     'routines',
     points:  ['Turn a repeated task into a routine', 'Give it a schedule', 'Runs in the background, no reminder needed'],
-    sources: ['resources/sulla-docs/workflows/authoring.md', 'pkg/sulla-desktop/sulla.ts (workflow-scheduler)'],
+    sources: ['resources/memory-seed/subjects/sulla-workflows.md', 'pkg/sulla-desktop/sulla.ts (workflow-scheduler)'],
   },
   {
     id:      'vault',
@@ -77,7 +77,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'The vault fills a login into the browser for an agent, and the password never comes back to it. You pick how much each login allows.',
     art:     'vault',
     points:  ['Fills logins into the browser for agents', 'The password never goes back to the agent', 'You pick how much each login allows'],
-    sources: ['resources/sulla-docs/tools/vault.md'],
+    sources: ['resources/memory-seed/subjects/sulla-tools.md'],
   },
   {
     id:      'files',
@@ -86,7 +86,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'You and your agents share Files. Each change is a new version, so an older copy is one restore away.',
     art:     'files',
     points:  ['Shared between you and your agents', 'Every change is a new version', 'An older copy is one restore away'],
-    sources: ['resources/sulla-docs/tools/inventory.md (files/history, files/restore)'],
+    sources: ['resources/memory-seed/subjects/sulla-tools.md (files/history, files/restore)'],
   },
   {
     id:      'models',
@@ -107,7 +107,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'CRMs, ad platforms, databases, Slack, GitHub. Connect an account once and agents call it through the vault, so the key stays out of the chat.',
     art:     'integrations',
     points:  ['CRMs, ad platforms and databases', 'Slack and GitHub', 'Called through the vault, so keys stay out of the chat'],
-    sources: ['pkg/sulla-desktop/agent/integrations/native/index.ts', 'resources/sulla-docs/tools/vault.md (proxy pattern)'],
+    sources: ['pkg/sulla-desktop/agent/integrations/native/index.ts', 'resources/memory-seed/subjects/sulla-tools.md (proxy pattern)'],
   },
   {
     id:      'heartbeat',
@@ -116,7 +116,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Turn on the Heartbeat and an agent checks in on your goals on a schedule, every 15 minutes by default, and acts without waiting to be asked.',
     art:     'heartbeat',
     points:  ['An agent checks in on your goals on a schedule', 'Every 15 minutes by default', 'Acts without waiting to be asked'],
-    sources: ['resources/sulla-docs/environment/heartbeat.md'],
+    sources: ['resources/memory-seed/subjects/sulla-agents.md'],
   },
   {
     id:      'secretary',
@@ -125,7 +125,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Press Cmd+Shift+S. Sulla transcribes both sides of the call and pulls out action items and decisions. Notes save when you hit End.',
     art:     'secretary',
     points:  ['Press Cmd+Shift+S', 'Transcribes both sides of the call', 'Pulls out action items and decisions'],
-    sources: ['resources/sulla-docs/desktop/secretary-mode.md'],
+    sources: ['resources/memory-seed/subjects/secretary-mode.md'],
   },
   {
     id:      'capture',
@@ -134,7 +134,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Capture Studio records each source to its own file, so editing later is easy. A teleprompter follows along as you talk.',
     art:     'capture',
     points:  ['Screen, camera and mic each get their own file', 'Editing later is easier', 'A teleprompter follows along as you talk'],
-    sources: ['resources/sulla-docs/desktop/capture-studio.md'],
+    sources: ['resources/memory-seed/subjects/capture-studio.md'],
   },
   {
     id:      'phone',
@@ -143,7 +143,7 @@ export const SHOWCASE_SLIDES: ShowcaseSlide[] = [
     body:    'Pair Sulla Mobile, hold the Sulla button and speak. Your desktop does the work and streams the answer back.',
     art:     'phone',
     points:  ['Pair Sulla Mobile', 'Hold the Sulla button and speak', 'Your desktop does the work and streams the answer back'],
-    sources: ['resources/sulla-docs/mobile/overview.md'],
+    sources: ['resources/memory-seed/subjects/mobile.md'],
   },
 ];
 

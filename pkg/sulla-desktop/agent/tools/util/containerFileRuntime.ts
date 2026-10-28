@@ -21,8 +21,8 @@ const fs=require('fs'),path=require('path'),os=require('os');
 let input='';process.stdin.on('data',c=>input+=c).on('end',()=>{try{
  const a=JSON.parse(input),raw=String(a.path||'');
  const p=path.resolve(raw==='~'?os.homedir():raw.startsWith('~/')?path.join(os.homedir(),raw.slice(2)):raw);
- const roots=[path.resolve(os.homedir()),path.resolve(process.cwd()),'/opt/sulla-docs'].filter(r=>r!==path.parse(r).root);
- if(!roots.some(r=>p===r||p.startsWith(r+path.sep)))throw new Error('Read operations are restricted to the guest home, workspace, or bundled docs');
+ const roots=[path.resolve(os.homedir()),path.resolve(process.cwd()),'/opt/sulla-memory-seed'].filter(r=>r!==path.parse(r).root);
+ if(!roots.some(r=>p===r||p.startsWith(r+path.sep)))throw new Error('Read operations are restricted to the guest home, workspace, or bundled memory seed');
  const s=fs.statSync(p);
  if(s.isDirectory())return process.stdout.write(JSON.stringify({path:p,kind:'directory',entries:fs.readdirSync(p)}));
  const content=fs.readFileSync(p,'utf8');process.stdout.write(JSON.stringify({path:p,kind:'file',content,totalLines:content.split('\n').length}));
@@ -45,13 +45,13 @@ let input='';process.stdin.on('data',c=>input+=c).on('end',()=>{try{
  const expand=p=>path.resolve(p==='~'?os.homedir():p.startsWith('~/')?path.join(os.homedir(),p.slice(2)):p);
  const primary=expand(a.dirPath||os.homedir()),allowed=[path.resolve(os.homedir()),path.resolve(process.cwd())].filter(r=>r!==path.parse(r).root);
  if(!allowed.some(r=>primary===r||primary.startsWith(r+path.sep)))throw new Error('Search is restricted to the guest home or workspace');
- const roots=[{root:primary,docs:false}];
- if(a.includeSullaDocs!==false&&fs.existsSync('/opt/sulla-docs')&&roots[0].root!=='/opt/sulla-docs')roots.push({root:'/opt/sulla-docs',docs:true});
- const out=[];for(const source of roots){const stack=[source.root];while(stack.length&&out.filter(x=>x.docs===source.docs).length<limit){const p=stack.pop();let s;try{s=fs.statSync(p)}catch{continue}
+ const roots=[{root:primary,knowledge:false}];
+ if(a.includeSullaKnowledge!==false&&fs.existsSync('/opt/sulla-memory-seed')&&roots[0].root!=='/opt/sulla-memory-seed')roots.push({root:'/opt/sulla-memory-seed',knowledge:true});
+ const out=[];for(const source of roots){const stack=[source.root];while(stack.length&&out.filter(x=>x.knowledge===source.knowledge).length<limit){const p=stack.pop();let s;try{s=fs.statSync(p)}catch{continue}
   if(s.isDirectory()){if(path.basename(p)==='.git'||path.basename(p)==='node_modules')continue;let es=[];try{es=fs.readdirSync(p)}catch{}for(let i=es.length-1;i>=0;i--)stack.push(path.join(p,es[i]));continue}
   if(s.size>2e6)continue;let value='';try{value=fs.readFileSync(p,'utf8')}catch{continue}if(value.includes('\0'))continue;
   const lines=value.split('\n');let line=lines.findIndex(v=>v.toLowerCase().includes(query));if(line<0&&!p.toLowerCase().includes(query))continue;
-  out.push({path:p,line:line>=0?line+1:undefined,preview:line>=0?lines[line].trim().slice(0,300):undefined,docs:source.docs});
+  out.push({path:p,line:line>=0?line+1:undefined,preview:line>=0?lines[line].trim().slice(0,300):undefined,knowledge:source.knowledge});
  }}process.stdout.write(JSON.stringify({roots:roots.map(x=>x.root),results:out}));
 }catch(e){process.stderr.write(e.message);process.exitCode=1}});`;
 
@@ -68,9 +68,9 @@ export const readContainerPath = (filePath: string): Promise<ContainerPathInfo> 
 export const writeContainerPath = (filePath: string, content: string): Promise<{ path: string; lines: number }> => nodeOperation(WRITE_SCRIPT, { path: filePath, content });
 export const readGuestPath = (filePath: string): Promise<ContainerPathInfo> => nodeOperation(READ_SCRIPT, { path: filePath }, true);
 export const writeGuestPath = (filePath: string, content: string): Promise<{ path: string; lines: number }> => nodeOperation(WRITE_SCRIPT, { path: filePath, content }, true);
-export const searchContainerPaths = (input: { query: string; dirPath?: string; limit?: number; includeSullaDocs?: boolean }): Promise<{
-  roots: string[]; results: { path: string; line?: number; preview?: string; docs: boolean }[];
+export const searchContainerPaths = (input: { query: string; dirPath?: string; limit?: number; includeSullaKnowledge?: boolean }): Promise<{
+  roots: string[]; results: { path: string; line?: number; preview?: string; knowledge: boolean }[];
 }> => nodeOperation(SEARCH_SCRIPT, input);
-export const searchGuestPaths = (input: { query: string; dirPath?: string; limit?: number; includeSullaDocs?: boolean }): Promise<{
-  roots: string[]; results: { path: string; line?: number; preview?: string; docs: boolean }[];
+export const searchGuestPaths = (input: { query: string; dirPath?: string; limit?: number; includeSullaKnowledge?: boolean }): Promise<{
+  roots: string[]; results: { path: string; line?: number; preview?: string; knowledge: boolean }[];
 }> => nodeOperation(SEARCH_SCRIPT, input, true);

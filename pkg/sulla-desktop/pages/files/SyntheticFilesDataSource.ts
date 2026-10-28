@@ -196,7 +196,7 @@ export class SyntheticFilesDataSource implements FilesDataSource {
       ],
     };
 
-    const sulla:SyntheticCollection = { id: 'synthetic-sulla', name: 'Sulla', home: 'sulla', systemArea: 'sulla', files: [this.file('synthetic-sulla-readme', 'Docs/README.md', 'text/markdown', 1200, 'version-sulla-readme', '38')], folders: [{ folderId: 'synthetic-sulla-docs', path: 'Docs', revision: '39' }] };
+    const sulla:SyntheticCollection = { id: 'synthetic-sulla', name: 'Sulla', home: 'sulla', systemArea: 'sulla', files: [], folders: [] };
 
     return {
       revision: 37, sequence: 0, selectedCollectionId: primary.id, collections: [primary, stored, sulla], operations: {}, idempotency: {},

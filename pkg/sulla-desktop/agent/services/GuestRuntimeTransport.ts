@@ -16,7 +16,6 @@ import paths from '@pkg/utils/paths';
 export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
 export const GUEST_AGENT_WORKSPACES_ROOT = `${ GUEST_RUNTIME_ROOT }/agents`;
 export const GUEST_PROVIDER_FILES_ROOT = `${ GUEST_RUNTIME_ROOT }/provider-transport`;
-export const GUEST_AGENT_DOCS_ROOT = `${ GUEST_RUNTIME_ROOT }/docs`;
 export const GUEST_CONVERSATIONS_ROOT = `${ GUEST_RUNTIME_ROOT }/conversations`;
 
 const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];

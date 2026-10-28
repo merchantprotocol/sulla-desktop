@@ -27,7 +27,6 @@ const SULLA_ROUTINES_DIR_ENV = 'SULLA_ROUTINES_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
 const SULLA_FUNCTIONS_DIR_ENV = 'SULLA_FUNCTIONS_DIR';
 const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
-const SULLA_DOCS_DIR_ENV = 'SULLA_DOCS_DIR';
 const SULLA_MEMORY_SEED_DIR_ENV = 'SULLA_MEMORY_SEED_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
@@ -49,50 +48,24 @@ export function resolveSullaResourcesDir(): string {
   return path.join(resolveSullaHomeDir(), 'resources');
 }
 
-/**
- * Resolve the path to the bundled `sulla-docs/` directory.
- *
- * Resolution order:
- * 1. `SULLA_DOCS_DIR` env override (no existence check — caller's responsibility).
- * 2. Packaged app: `<resourcesPath>/resources/sulla-docs` (shipped via
- *    electron-builder's `extraResources: - resources/`).
- * 3. Dev: walk up from __dirname to find `sulla-desktop/resources/sulla-docs`.
- *
- * No fallback. If none of the above resolve, throws — sulla-docs is required
- * for the agent's environment prompt and silent fallbacks mask packaging bugs.
- *
- * Runs in the Electron main process (where the Tools API handlers live), so
- * `fs.readFileSync` against the returned path works regardless of whether the
- * agent is executing inside the Sulla VM — the file reads happen on the host.
- */
-export function resolveSullaDocsDir(): string {
-  const envPath = String(process.env[SULLA_DOCS_DIR_ENV] || '').trim();
-  if (envPath) {
-    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
-  }
-
-  // Packaged app: process.resourcesPath points at the .app bundle's Resources dir.
+/** Resolve the shipped memory seed pack in packaged and development runs. */
+export function resolveMemorySeedDir(): string {
+  const envPath = String(process.env[SULLA_MEMORY_SEED_DIR_ENV] || '').trim();
+  if (envPath) return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
-    const bundled = path.join(resourcesPath, 'resources', 'sulla-docs');
+    const bundled = path.join(resourcesPath, 'resources', 'memory-seed');
     if (fs.existsSync(bundled)) return bundled;
   }
-
-  // Dev: locate the sulla-desktop checkout by walking upward from this module's dir.
   let cursor = MODULE_DIR;
   for (let depth = 0; depth < 8; depth += 1) {
-    const candidate = path.join(cursor, 'resources', 'sulla-docs');
+    const candidate = path.join(cursor, 'resources', 'memory-seed');
     if (fs.existsSync(candidate)) return candidate;
     const parent = path.dirname(cursor);
     if (parent === cursor) break;
     cursor = parent;
   }
-
-  throw new Error(
-    'resolveSullaDocsDir: sulla-docs not found. Checked SULLA_DOCS_DIR env, ' +
-    `process.resourcesPath (${ resourcesPath ?? 'unset' }), and dev walk-up from ${ MODULE_DIR }. ` +
-    'Ensure resources/sulla-docs/ exists in the dev checkout or that electron-builder packaged it.',
-  );
+  throw new Error(`resolveMemorySeedDir: memory-seed not found (resourcesPath=${ resourcesPath ?? 'unset' }, moduleDir=${ MODULE_DIR })`);
 }
 
 /** Resolve the shipped memory seed pack in packaged and development runs. */
@@ -551,7 +524,7 @@ const SULLA_MODELS_DIR_ENV = 'SULLA_MODELS_DIR';
 /**
  * Resolve a bundled on-device model directory, e.g. `potion-retrieval-32M`.
  *
- * Resolution order mirrors {@link resolveSullaDocsDir}:
+ * Resolution order mirrors {@link resolveMemorySeedDir}:
  * 1. `SULLA_MODELS_DIR` env override (`<dir>/<name>`).
  * 2. Packaged app: `<resourcesPath>/resources/models/<name>` (fetched at build
  *    time by scripts/dependencies/potion.ts, shipped via extraResources).
