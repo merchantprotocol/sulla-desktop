@@ -1,0 +1,53 @@
+id: first-light
+name: First Light
+description: Produces a Monday brief that merges cash, sales, pipeline, commitments, and the week's single most important action.
+version: "1"
+enabled: true
+nodes:
+  - id: node-1761623200000
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Mondays at 7:00 AM
+      config:
+        triggerType: schedule
+        triggerDescription: Build the weekly owner brief every Monday morning.
+        frequency: weekly
+        dayOfWeek: 1
+        hour: 7
+        minute: 0
+        timezone: ""
+  - id: node-1761623201000
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Build the Monday brief
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Build one Monday brief from whatever read-only sources are connected. Discover exact integration
+          operations with browse_tools; do not guess them. In parallel where possible, read the coming week's
+          calendar, owner-selected ledger or payments data, owner-selected pipeline data, and open commitments
+          from a connected mailbox. CSV or pasted figures are valid fallbacks. A missing source is not a failure:
+          omit its section and name unavailable sources once at the bottom. Lead with verified numbers and their
+          comparison period. Merge related findings instead of stapling reports together. Include the week's
+          shape, open commitments, risks, and exactly one “one thing” with a concrete reason. Save the finished
+          brief in the canonical Files location found through files_search/files_where, then send one internal
+          notification that it is ready. Do not send email, post to Slack, create calendar events, pay, delete,
+          or alter any source. Any requested post or send must be prepared and then wait for the human's explicit
+          Approve for the exact destination and content.
+        successCriteria: One source-labelled brief readable in under two minutes, with comparisons, gaps named once, and one priority.
+        orchestratorInstructions: Use read-only access, degrade gracefully, and preserve all approval gates.
+        completionContract: default
+edges:
+  - id: first-light-edge
+    source: node-1761623200000
+    target: node-1761623201000
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }
