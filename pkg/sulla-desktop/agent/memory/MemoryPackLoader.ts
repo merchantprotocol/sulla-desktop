@@ -137,6 +137,18 @@ async function apply(client:PoolClient, slug:string, pack:ParsedPack, source:str
   await client.query(`UPDATE subject_memory.packs SET version=$2,source=$3,installed_at=NOW(),files_hash=$4,created_subjects=$5,contributed_aliases=$6::jsonb WHERE slug=$1`,[slug,pack.version,source,pack.hash,[...created],JSON.stringify(contributed)]);
   return {slug,version:pack.version,hash:pack.hash,subjects:pack.subjects.length,items:ids.length,skills:pack.skills.length};
 }
+export function memoryPackFilesFromRecord(files:Record<string,unknown>):MemoryPackFile[] {
+  return Object.entries(files).filter(([name])=>normalize(name).startsWith('memory/')).map(([name,value])=>{
+    if(typeof value==='string')return {name,content:value};
+    const stored=value as {encoding?:string;content?:unknown};
+    if(stored?.encoding!=='base64'||typeof stored.content!=='string')throw new Error(`${name}:1: memory pack file must be UTF-8 text or base64 content`);
+    return {name,content:Buffer.from(stored.content,'base64').toString('utf8')};
+  });
+}
+export async function installMemoryPackForSkill(slug:string, frontmatter:Record<string,unknown>|null|undefined, files:Record<string,unknown>, source?:string):Promise<MemoryPackResult|null>{
+  if(frontmatter?.memory_pack!==true)return null;
+  return installPackFiles(slug,memoryPackFilesFromRecord(files),source);
+}
 export async function installPackFiles(slug:string, files:MemoryPackFile[], source=`files:Use Cases/skills/${slug}`):Promise<MemoryPackResult>{if(!/^[a-z0-9][a-z0-9._-]*$/i.test(slug))throw new Error('Invalid pack slug');const pack=parseFiles(files,`memory-pack:${slug}`);const result=await postgresClient.transaction(c=>apply(c,slug,pack,source));resetV7SubjectMemoryCache();return result;}
 export async function installPack(dir:string, slug=path.basename(path.resolve(dir))):Promise<MemoryPackResult>{return installPackFiles(slug,readMemoryPackDirectory(dir),`path:${path.resolve(dir)}`)}
 export async function syncPack(slug:string, files?:MemoryPackFile[]):Promise<MemoryPackResult>{if(files)return installPackFiles(slug,files);const row=await postgresClient.queryOne<{source:string}>('SELECT source FROM subject_memory.packs WHERE slug=$1',[slug]);if(!row?.source.startsWith('path:'))throw new Error(`Pack ${slug} must be synced from its published Files skill`);return installPack(row.source.slice(5),slug)}
