@@ -77,8 +77,15 @@ export async function loadCatalogWithDatabase(): Promise<LoadResult> {
     loaded.integrations[row.slug] = manifestToIntegration(result.data);
   }
   const { postgresClient } = await import('../database/PostgresClient');
-  const packageRows = await postgresClient.query(`SELECT DISTINCT ON (id) id,version,manifest,files
-    FROM integration_packages ORDER BY id,installed_at DESC`);
+  let packageRows: any[];
+  try {
+    packageRows = await postgresClient.query(`SELECT DISTINCT ON (id) id,version,manifest,files
+      FROM integration_packages ORDER BY id,installed_at DESC`);
+  } catch (error) {
+    // Signed packages are optional; a missing table must never take down the built-in and database catalog.
+    loaded.errors.push({ slug: 'integration_packages', source: 'package', errors: [error instanceof Error ? error.message : String(error)] });
+    return loaded;
+  }
   const { resolveTrustedPublisherKeysPath } = await import('./packageLoader');
   let verifier: ReturnType<typeof trustedPublisherVerifier>;
   try {
