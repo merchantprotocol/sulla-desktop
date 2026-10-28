@@ -80,8 +80,8 @@ export class HookRegistry {
   }
   private audit(entry: HookRegistration, outcome: HookAuditEvent['outcome'], started: number, detail?: string): void {
     const event = { extensionId: entry.extensionId, hook: entry.hook, outcome, durationMs: Date.now() - started, detail };
-    this.options.audit?.(event);
-    console.info('[ExtensionHookAudit]', JSON.stringify(event));
+    try { this.options.audit?.(event) } catch { /* audit sinks never affect core */ }
+    try { console.info('[ExtensionHookAudit]', JSON.stringify(event)) } catch { /* best-effort */ }
   }
 }
 export const extensionHooks = new HookRegistry();
