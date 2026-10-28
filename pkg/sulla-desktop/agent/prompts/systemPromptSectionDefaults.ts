@@ -26,7 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
+import { resolveMemorySeedDir } from '@pkg/agent/utils/sullaPaths';
 
 import { heartbeatPrompt } from './heartbeat';
 import { ENVIRONMENT_STATIC_PREAMBLE } from './sections/environment';
@@ -58,12 +58,12 @@ export interface SystemPromptSectionDefault {
 }
 
 /**
- * Read a bundled sulla-docs markdown file. Best-effort: returns '' if the file
+ * Read a file from the bundled memory seed pack. Best-effort: returns '' if the file
  * cannot be resolved so a packaging hiccup never blocks DB seeding.
  */
 function readBundledDoc(...segments: string[]): string {
   try {
-    const file = path.join(resolveSullaDocsDir(), ...segments);
+    const file = path.join(resolveMemorySeedDir(), ...segments);
     return fs.readFileSync(file, 'utf8');
   } catch (err) {
     console.warn('[SystemPromptSectionDefaults] could not read bundled doc', segments.join('/'), err);
@@ -125,7 +125,7 @@ export const SYSTEM_PROMPT_SECTION_DEFAULTS: SystemPromptSectionDefault[] = [
     cacheStability:   'stable',
     isGenerated:      false,
     enabledByDefault: false, // reference doc — opt-in so it doesn't bloat every prompt
-    resolveContent:   () => readBundledDoc('tools', 'agents.md'),
+    resolveContent:   () => readBundledDoc('skills', 'sulla-spawn-and-manage-agents.md'),
   },
   {
     id:               'heartbeat',
