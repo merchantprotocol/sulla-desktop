@@ -130,6 +130,11 @@ function run(command, args, options = {}) {
 }
 
 function runServer(argv, command = 'npx sulla-desktop') {
+  const existingDir = process.env.SULLA_DIR || '/opt/sulla/server';
+  if (fs.statSync(path.join(existingDir, 'server.env'), { throwIfNoEntry: false })?.isFile()) {
+    console.log(`Existing Sulla Server install detected at ${ existingDir }.\nUpgrade it with: npx sulla-server upgrade`);
+    return;
+  }
   let elevated = false;
   let dryRun = false;
 
