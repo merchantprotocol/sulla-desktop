@@ -91,6 +91,11 @@ if (process.platform === 'linux') {
   Electron.app.commandLine.appendSwitch('gtk-version', '3');
 }
 
+// Voice replies are synthesized asynchronously, after the originating mic gesture has
+// expired. Allow the renderer-owned Kokoro player to start that audio without Chrome
+// treating it as unsolicited web autoplay. This does not enable a system-voice fallback.
+Electron.app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 // Browser tabs use WebContentsView (first-party context) — no iframe
 // workarounds needed.  No Chromium feature flags to disable.
 

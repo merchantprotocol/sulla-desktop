@@ -442,8 +442,11 @@ export class VoiceSessionAdapter {
 
   /** Commit one finished turn (from utterance_end or finish). `text` may be empty. */
   private commitTurn(text: string): void {
-    // A PTT press that never activated (a tap) sends nothing.
-    if (!this.active) return;
+    // A PTT press that never activated (a tap), or a VAD boundary whose transcription
+    // is empty/whitespace, is not a user turn. Keep the existing interim bubble alive
+    // instead of removing and immediately recreating a blank user-looking message.
+    const transcript = text.trim();
+    if (!this.active || !transcript) return;
 
     // Remove the interim bubble; controller.send() will append the real user message.
     if (this.interimId) {
@@ -455,7 +458,7 @@ export class VoiceSessionAdapter {
     this.controller.stopVoice(true);
 
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (text) this.controller.send(text, [], { inputSource: 'voice' });
+    this.controller.send(transcript, [], { inputSource: 'voice' });
 
     // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
     if (this.capturing && this.mode === 'handsfree') {
