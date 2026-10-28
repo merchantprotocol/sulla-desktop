@@ -1,0 +1,6 @@
+# Attribution
+
+Adapted from `copywriting + copy-editing` in marketingskills by Corey Haines. MIT License, Copyright (c) 2025 Corey Haines. Modified for Sulla Desktop.
+
+Source: https://github.com/coreyhaines31/marketingskills/tree/main/skills/copywriting
+Source commit: 0cd9b3a0ef4c411a1d690419ce843f2a1da32cce

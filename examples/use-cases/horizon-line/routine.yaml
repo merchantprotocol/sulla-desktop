@@ -1,0 +1,29 @@
+id: horizon-line-weekly
+name: Horizon Line weekly renewal radar
+description: Weekly read-only renewal scan for the next 90 days.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekly renewal scan
+      config: {triggerType: schedule, frequency: weekly, dayOfWeek: 1, time: "08:30", timezone: ""}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare renewal radar
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Use Horizon Line on the configured contract register, save a 90-day renewal radar and action list in Files, and do not edit records, create reminders, or send messages.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}
