@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Structure only. The copy of existing JSON embeddings, the HNSW build and the JSON
 -- cleanup run as a throttled background job (src/vectorBackfill.ts) so a large corpus
 -- never holds up service startup. Optional on purpose: on the stock postgres image

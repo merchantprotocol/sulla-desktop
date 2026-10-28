@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * This module fetches system CAs on Linux.  The command lines are based on the
  * `linux-ca` package on NPM, but none of the code is copied.

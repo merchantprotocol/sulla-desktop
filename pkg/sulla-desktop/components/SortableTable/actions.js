@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import debounce from 'lodash/debounce';
 
 // Use a visible display type to reduce flickering

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 INSERT INTO function_definitions (slug, name, manifest, runtime, files, version) VALUES (
   'verify-node-function',
   'Verify node function',

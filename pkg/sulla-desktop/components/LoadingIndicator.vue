@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
   <section class="loading-indicator">
     <slot name="icon">

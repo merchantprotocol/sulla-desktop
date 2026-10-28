@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable index for native sources. Files stores only the opaque Electron
 -- handle and verification metadata; host paths and capabilities stay outside
 -- the service and its database.

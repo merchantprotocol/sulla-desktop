@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { addObject, addObjects, isArray, removeAt } from '@pkg/utils/array';
 import { get } from '@pkg/utils/object';
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { generateX25519RecipientKeyPair, openFilesKeyBundle, sealFilesKeyBundle, } from '@sulla/vault-crypto';
 function rowBundle(row) {
     return {

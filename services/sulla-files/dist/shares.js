@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { basename, posix } from 'node:path';
 import { decryptChunk } from './crypto.js';

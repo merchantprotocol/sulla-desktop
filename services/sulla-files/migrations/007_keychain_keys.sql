@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Separate envelopes keep remote-supplied collection metadata from replacing local keys.
 CREATE TABLE files_key_state (id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK(id), verifier JSONB NOT NULL);
 CREATE TABLE files_collection_keys (

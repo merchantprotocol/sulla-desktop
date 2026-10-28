@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export const state = () => ({ imageManagerState: false });
 
 export const mutations = {

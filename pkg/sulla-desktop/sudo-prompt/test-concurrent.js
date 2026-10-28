@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { exec } from 'child_process';
 
 import { exec as sudo } from './';

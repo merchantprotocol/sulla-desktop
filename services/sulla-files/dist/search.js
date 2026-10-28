@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { basename } from 'node:path';
 import { cosine, PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
 function filteredWhere(input, scopes, args) {

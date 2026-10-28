@@ -10,16 +10,6 @@ Sulla Desktop is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-Exception: Sulla Server. The Sulla Server components in these directories are
-NOT covered by the GPL. They remain under the Sulla Fair-Code License 1.0
-(LICENSES/Sulla-Fair-Code-1.0.txt), and each file's header says so:
-
-  services/sulla-console/
-  resources/sulla-console/
-  deploy/server/
-  deploy/accounts/
-  packaging/npx/server/
-
 Trademarks: the GPL covers the code, not the name. "Sulla", "Sulla Desktop"
 and the Sulla logo are trademarks; see TRADEMARK.md. A modified version you
 distribute must not use them in a way that suggests it is the official Sulla.

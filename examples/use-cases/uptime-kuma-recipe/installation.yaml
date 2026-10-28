@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 slug: uptime-kuma-recipe
 name: Uptime Kuma self-hosted monitor
 description: Runs a pinned Uptime Kuma instance locally for user-configured uptime monitoring.

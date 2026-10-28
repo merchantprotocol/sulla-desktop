@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Cloud app: theme boot.
 // Loaded synchronously in <head> (the dashboard CSP forbids inline scripts),
 // so the saved theme is on <html> before the first paint. Exposes

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // =========================================================================================
 // Debug helper
 // Adds a bunch of watches to help diagnose computed properties bring re-evaluated

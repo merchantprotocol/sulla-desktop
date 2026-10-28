@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 id: customer-churn-check-in-drafts
 name: Customer churn check-in drafts
 description: Turns permitted customer risk notes into empathetic check-in drafts with no outbound action.

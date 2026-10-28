@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <!--
   Sulla Desktop · https://sulladesktop.com
   Portions Copyright SUSE LLC and the Rancher Desktop contributors, licensed under

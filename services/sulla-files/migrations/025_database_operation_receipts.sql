@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Incremented by every file update, including legacy upload/restore/watcher
 -- writers. Undo uses this monotonic value to detect changes and ABA sequences.
 ALTER TABLE files ADD COLUMN operation_revision BIGINT NOT NULL DEFAULT 0;

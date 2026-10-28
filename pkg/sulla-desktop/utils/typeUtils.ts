@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Partial<T> (https://www.typescriptlang.org/docs/handbook/utility-types.html#partialtype)
 // only allows missing properties on the top level; if anything is given, then all
 // properties of that top-level property must exist.  RecursivePartial<T> instead

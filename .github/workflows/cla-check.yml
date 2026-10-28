@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: CLA check (disabled draft)
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  cla-check:
+    # Disabled until Merchant Protocol LLC approves CLA.md and the signature process.
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: CLA check is awaiting approval
+        run: |
+          echo 'CLA enforcement is disabled pending approval of CLA.md.'
+          exit 1

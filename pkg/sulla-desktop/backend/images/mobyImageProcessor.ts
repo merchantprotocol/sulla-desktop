@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import path from 'path';
 
 import { State, VMBackend } from '@pkg/backend/backend';

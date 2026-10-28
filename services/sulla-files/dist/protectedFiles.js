@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export function isProtectedPath(path) {
     return path.replaceAll('\\', '/').split('/').some(part => {
         const value = part.toLowerCase();

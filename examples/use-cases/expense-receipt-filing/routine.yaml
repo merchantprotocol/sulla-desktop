@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 id: expense-receipt-filing
 name: Expense receipt filing
 description: Reviews receipt files in Files and prepares a human-approved filing plan without moving or changing them.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { deriveCapabilitySigningKey } from './auth.js';

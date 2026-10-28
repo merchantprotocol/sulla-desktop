@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable delivery queue. Events survive service crashes and log-append failures.
 CREATE TABLE IF NOT EXISTS files_audit_spool (
   id BIGSERIAL PRIMARY KEY,

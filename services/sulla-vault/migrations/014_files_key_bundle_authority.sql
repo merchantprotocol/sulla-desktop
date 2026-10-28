@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS files_key_bundle_envelopes (
   principal_id text NOT NULL,
   collection_id text NOT NULL,

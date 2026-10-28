@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Yarn Install
 description: >-
   This is a composite action that does everything needed to do `yarn install`.

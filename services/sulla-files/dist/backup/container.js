@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';

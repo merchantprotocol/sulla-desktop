@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE workflows (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

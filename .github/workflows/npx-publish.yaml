@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Publish npx launcher
 
 # Publishes packaging/npx to npm as `sulla-desktop` (so `npx sulla-desktop`
@@ -63,11 +64,7 @@ jobs:
       if: steps.token.outputs.present == 'true'
       run: |
         node --check bin.js
-        node --check server.js
-        diff -qr ../../deploy/server server
         node bin.js --help
-        node bin.js server --help
-        node bin.js server --dry-run
         npm pack --dry-run
     - name: Publish
       if: steps.token.outputs.present == 'true'

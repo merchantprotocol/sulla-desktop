@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Classify records written by the retired in-process runtime before the
 -- container keyring is allowed to initialize. Those records used random keys
 -- wrapped by an external master.key and must never receive derived replacements.

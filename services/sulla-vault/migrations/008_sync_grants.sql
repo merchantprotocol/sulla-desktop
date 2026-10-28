@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS user_item_changes (
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   item_id uuid NOT NULL REFERENCES items(id) ON DELETE CASCADE,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import http from 'http';
 
 import Logging from '@pkg/utils/logging';

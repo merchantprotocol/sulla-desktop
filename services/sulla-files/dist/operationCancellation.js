@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // A cancellation request may arrive while the item holds its transaction's
 // batch-row lock. This cooperative signal stops publication between leaves;
 // the durable cancelled flag is written once rollback releases that lock.

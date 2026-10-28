@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS file_roots (
   id TEXT PRIMARY KEY CHECK(id ~ '^[a-z0-9][a-z0-9-]{0,63}$'),
   collection_id UUID NOT NULL UNIQUE REFERENCES collections(id),

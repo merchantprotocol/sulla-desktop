@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE IF NOT EXISTS local_vault_migration_batches (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   source_fingerprint text NOT NULL UNIQUE,

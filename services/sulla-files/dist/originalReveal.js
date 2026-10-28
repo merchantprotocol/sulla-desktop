@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 const actorKey = (actor) => JSON.stringify([actor.userId, actor.deviceId, actor.kind, actor.agentId, actor.jobId, actor.threadId]);
 const invalid = () => Object.assign(new Error('Original reveal attestation expired, consumed or invalid'), { status: 409, code: 'original-attestation-invalid' });

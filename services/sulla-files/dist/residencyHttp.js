@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 import { issueCapabilityToken } from './auth.js';
 const MAX_JSON_BYTES = 1024 * 1024;

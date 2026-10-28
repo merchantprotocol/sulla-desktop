@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { VMBackend } from '@pkg/backend/backend';
 import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
 import MobyImageProcessor from '@pkg/backend/images/mobyImageProcessor';

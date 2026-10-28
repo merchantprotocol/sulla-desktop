@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 export const FILES_BOOTSTRAP_VERSION = 1;
 export const FILES_BOOTSTRAP_DESTINATION = 'sulla-files';

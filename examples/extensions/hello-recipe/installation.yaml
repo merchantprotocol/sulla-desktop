@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 slug: hello-recipe
 name: Hello recipe
 description: A tiny long-running container for testing recipe installation.

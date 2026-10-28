@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- The default Files collection is the mount root. Migration 029 only filled
 -- NULL paths, so databases bootstrapped by an older Desktop could retain the
 -- generated "Files--<id>" wrapper forever. Move any stale non-default owner of

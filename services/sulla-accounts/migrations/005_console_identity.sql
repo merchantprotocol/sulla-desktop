@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE TABLE accounts.organizations (
   id uuid PRIMARY KEY,
   name text NOT NULL CHECK (length(name) BETWEEN 1 AND 120),

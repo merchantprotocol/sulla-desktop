@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /**
  * Plain, read-only mirroring of Desktop's system areas (logs, training data,
  * Sulla docs and use cases) into their system collections.

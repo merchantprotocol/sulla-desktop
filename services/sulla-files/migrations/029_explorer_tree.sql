@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- One operator-controlled namespace shared by File Manager and the agent mount.
 -- Existing collection contents stay in place; explorer_path is only a reversible
 -- presentation mapping, so no file, version, share, or native-source row moves.

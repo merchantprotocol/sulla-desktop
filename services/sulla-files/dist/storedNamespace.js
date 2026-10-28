@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export class StoredNamespaceConflict extends Error {
     status = 409;
 }

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Durable, privacy-safe current-version indexing outcomes. Reasons are fixed
 -- operator-facing summaries; extractor stderr and file content are never stored.
 ALTER TABLE files ADD COLUMN IF NOT EXISTS extraction_reason_code TEXT;

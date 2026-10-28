@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <script>
 import $ from 'jquery';
 import { mapGetters } from 'vuex';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Same-origin encrypted Files backup API. It returns ciphertext only.
 export function createFilesBackupApi() {
   async function req(path) {

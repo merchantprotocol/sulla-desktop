@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE files
   ADD COLUMN IF NOT EXISTS draft_version_id UUID,
   ADD COLUMN IF NOT EXISTS published_version_id UUID,

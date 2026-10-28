@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 const STALE_UPLOAD_AGE = '1 hour';
 export async function beginUploadIntent(db, id, collectionId) {
     await db.query('INSERT INTO file_upload_intents(id,collection_id) VALUES($1,$2)', [id, collectionId]);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { get } from '@pkg/utils/object';
 
 export default {

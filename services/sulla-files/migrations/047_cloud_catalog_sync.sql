@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Separate, explicit opt-in for pushing a collection's file catalog
 -- (metadata only) to Sulla Cloud. Distinct from `home`, which governs
 -- device-local sync behavior, not what the Cloud web dashboard sees.

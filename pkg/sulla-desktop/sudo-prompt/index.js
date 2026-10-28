@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 const Node = {
   child:    require('child_process'),
   crypto:   require('crypto'),

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // I grabbed the source code of this plugin from https://github.com/rodrigopv/vue3-shortkey
 //
 // At the time of writing this the released plugin was emitting debug console messages and

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 CREATE SCHEMA IF NOT EXISTS accounts;
 
 CREATE TABLE IF NOT EXISTS accounts.accounts_schema_migrations (

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants, open, readdir } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';

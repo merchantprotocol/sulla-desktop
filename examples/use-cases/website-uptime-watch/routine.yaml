@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 id: website-uptime-watch
 name: Website uptime watch
 description: Checks a website on a schedule and reports actionable outages without changing the site.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type { UpperSnakeCase } from '@pkg/utils/typeUtils';
 
 import type { CommitOptions, Dispatch, GetterTree, MutationTree, Store } from 'vuex';

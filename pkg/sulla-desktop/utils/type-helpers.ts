@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export default {
   memberOfObject: <V = string>(obj: Record<string, any>, key: string): V => {
     return Object.entries(obj || {}).find(([k]) => k === key) as unknown as V;

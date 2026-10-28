@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 const childProcess = require('child_process');
 const fs = require('fs');
 const path = require('path');

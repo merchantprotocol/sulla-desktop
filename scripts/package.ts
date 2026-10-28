@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Desktop · https://sulladesktop.com
 // Portions Copyright SUSE LLC and the Rancher Desktop contributors, licensed under
 // the Apache License 2.0 (LICENSES/Apache-2.0.txt).
@@ -319,40 +320,6 @@ class Builder {
     log.info({ applicationIdentifier }, 'Embedding the Developer ID provisioning profile in the app');
   }
 
-  protected async prepareSullaConsoleRuntime(): Promise<string> {
-    const root = process.cwd();
-    const runtimeRoot = path.join(buildUtils.distDir, 'sulla-console-runtime');
-    const serviceRoot = path.join(root, 'services', 'sulla-console');
-    const npm = 'npm';
-
-    await fs.promises.rm(runtimeRoot, { recursive: true, force: true });
-    await fs.promises.mkdir(runtimeRoot, { recursive: true });
-    await fs.promises.copyFile(path.join(serviceRoot, 'package.json'), path.join(runtimeRoot, 'package.json'));
-    await fs.promises.copyFile(
-      path.join(serviceRoot, 'package-lock.json'),
-      path.join(runtimeRoot, 'package-lock.json'),
-    );
-    await fs.promises.cp(path.join(root, 'resources', 'sulla-console', 'public'), path.join(runtimeRoot, 'public'), {
-      recursive: true,
-    });
-    await spawnFile(process.execPath, [
-      path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
-      '-p',
-      path.join(serviceRoot, 'tsconfig.json'),
-      '--outDir',
-      path.join(runtimeRoot, 'dist'),
-    ], { stdio: 'inherit' });
-    await fs.promises.cp(
-      path.join(serviceRoot, 'src', 'migrations'),
-      path.join(runtimeRoot, 'dist', 'migrations'),
-      { recursive: true },
-    );
-    await spawnFile(npm, ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
-      cwd: runtimeRoot,
-      stdio: 'inherit',
-    });
-    return runtimeRoot;
-  }
 
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
@@ -373,10 +340,8 @@ class Builder {
       // (a no-op when resources/darwin/ is already up to date).
       await fetchBundledAssets(buildUtils.arch === 'x64' ? 'x86_64' : 'arm64');
     }
-    const consoleRuntime = await this.prepareSullaConsoleRuntime();
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const extraResources = config.extraResources ??= [];
-    extraResources.push({ from: consoleRuntime, to: 'sulla-console' });
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
     const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
     const finalBuildVersion: string = pkgJson.version;

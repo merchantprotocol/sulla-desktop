@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 import * as chunkCrypto from './crypto.js';
 import { publishUploadChunk } from './uploadCleanup.js';

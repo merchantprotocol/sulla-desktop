@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export const platform = ( typeof window === 'undefined' ? 'server' : window.navigator.platform.toLowerCase() );
 export const userAgent = ( typeof window === 'undefined' ? 'server' : window.navigator.userAgent );
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export interface SnapshotEvent {
   type?:         'restore' | 'delete' | 'create' | 'confirm' | 'backend-lock',
   result?:       'success' | 'cancel' | 'error',

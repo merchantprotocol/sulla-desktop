@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Sulla Server · Passwords (vault origin): CloudApi for the shared shell.
 //
 // The vault page runs on its own origin and never loads js/sulla-auth.js,

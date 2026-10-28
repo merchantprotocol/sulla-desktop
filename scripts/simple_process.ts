@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { CommonSpawnOptions } from 'child_process';
 
 import spawn from 'cross-spawn';

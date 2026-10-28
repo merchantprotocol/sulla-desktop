@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE file_share_chunk_uploads
   ADD COLUMN target_collection_id UUID,
   ADD COLUMN file_path TEXT,

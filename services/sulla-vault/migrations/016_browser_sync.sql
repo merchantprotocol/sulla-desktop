@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Server-mode vault origin (/cloud-vault-sync/*) and the server-providers system collection.
 -- Every row holds ciphertext, hashes, counters or ids. No plaintext item, key or password ever lands here.
 

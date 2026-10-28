@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export async function handler(inputs) {
   const title = String(inputs.meeting_title || 'Meeting');
   const decisions = (inputs.decisions || []).map(String);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';

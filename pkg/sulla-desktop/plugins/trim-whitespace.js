@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 function trimWhitespace(el, dir) {
   for (const node of el.childNodes) {
     if (node.nodeType === Node.TEXT_NODE ) {

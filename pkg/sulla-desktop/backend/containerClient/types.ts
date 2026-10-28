@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type { Log } from '@pkg/utils/logging';
 
 import type { ChildProcessByStdio, SpawnOptions } from 'child_process';

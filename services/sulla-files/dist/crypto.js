@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHmac, randomBytes } from 'node:crypto';
 import * as zlib from 'node:zlib';
 import sodium from 'libsodium-wrappers-sumo';

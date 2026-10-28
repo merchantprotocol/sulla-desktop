@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE collections ADD COLUMN IF NOT EXISTS thread_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_collections_owner_thread_run
   ON collections(owner_user_id, thread_id, agent_run_id);

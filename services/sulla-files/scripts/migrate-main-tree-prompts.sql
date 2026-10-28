@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Apply after a database backup when the Sulla collection migration has completed.
 -- Idempotently updates only rows whose stored prompt still names the retired Sulla/ prefix.
 UPDATE agent_definitions

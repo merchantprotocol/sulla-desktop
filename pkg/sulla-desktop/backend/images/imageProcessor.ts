@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { Buffer } from 'buffer';
 import { EventEmitter } from 'events';
 import timers from 'timers';

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS join_password_salt bytea;
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS join_password_verifier bytea;
 ALTER TABLE orgs ADD COLUMN IF NOT EXISTS recovery_enabled boolean NOT NULL DEFAULT false;

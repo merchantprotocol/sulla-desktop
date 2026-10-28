@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { readFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { debounce } from 'lodash';
 import { PropType, defineComponent } from 'vue';
 import { ComputedOptions, MethodOptions } from 'vue/types/v3-component-options';

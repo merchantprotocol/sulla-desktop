@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Exact random-key context attached to immutable remote versions. The server
 -- stores identifiers only; collection keys and recovery envelopes remain in
 -- the authoritative Vault service.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Realistic UI transcript messages — one of EVERY kind in pages/chat/models/Message.ts —
 // plus graph-format messages (PlaybookController sub-agent transcripts).
 

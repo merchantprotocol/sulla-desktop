@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Derived search data only: never delete files, versions, manifests or content.
 -- Cleanup of existing derived rows runs after startup in searchCleanup.ts.
 

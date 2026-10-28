@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 export function onClickOption(option, e) {
   if (!this.$attrs.multiple) {
     return;

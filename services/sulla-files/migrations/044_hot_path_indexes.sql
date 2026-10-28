@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Hot joins observed in residency/preview and folder operations.
 -- These are additive and safe for existing volumes; IF NOT EXISTS keeps
 -- upgrades idempotent across installs that already have equivalent indexes.

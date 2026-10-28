@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <!-- A progress bar, with support for indeterminate progress -->
 <script lang="ts">
 import { defineComponent } from 'vue';

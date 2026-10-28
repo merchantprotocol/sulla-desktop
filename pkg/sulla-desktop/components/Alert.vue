@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <script lang="ts">
 import { Banner } from '@rancher/components';
 import { defineComponent } from 'vue';

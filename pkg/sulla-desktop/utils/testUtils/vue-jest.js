@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // This is a transformer for Vue to compile single-file components in jest.
 // @vue/vue3-jest forces CommonJS which breaks with dependencies that are now
 // ESM-only.

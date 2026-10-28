@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { watchEffect, ref, h } from 'vue';
 import { useStore } from 'vuex';
 

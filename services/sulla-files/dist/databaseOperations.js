@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 /** In-process authority only: Symbol keys cannot arrive over JSON or persist in receipt JSONB. */
 export const folderGrantMigration = Symbol('folderGrantMigration');

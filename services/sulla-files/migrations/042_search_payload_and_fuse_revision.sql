@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Run by the transactional migration runner. Block old writers during cutover;
 -- fail quickly rather than waiting indefinitely behind a long transaction.
 SET LOCAL lock_timeout = '10s';

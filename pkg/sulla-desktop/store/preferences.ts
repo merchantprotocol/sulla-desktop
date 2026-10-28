@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import _ from 'lodash';
 
 import { ActionContext, ActionTree, MutationsType } from './ts-helpers';

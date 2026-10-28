@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { Octokit } from 'octokit';
 
 import * as tools from 'scripts/dependencies/tools';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import https from 'node:https';

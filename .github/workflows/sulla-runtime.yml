@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: Sulla runtime
 
 # Builds the native macOS runtime (host binary + guest kernel/initramfs/usr image) and

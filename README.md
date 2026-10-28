@@ -32,10 +32,6 @@
 > ```bash
 > npx sulla-desktop
 > ```
-> Installing Sulla Server on Linux? The same package launches its guided Docker/Kubernetes setup:
-> ```bash
-> npx sulla-desktop server
-> ```
 > Or grab an installer from the [latest release](https://github.com/merchantprotocol/sulla-desktop/releases/latest).
 
 <div align="center">
@@ -172,4 +168,4 @@ Sulla Desktop is **free and open source** under the [GNU General Public License 
 
 **The name is not part of the license.** "Sulla" and the Sulla logo are trademarks. A fork must use its own name and logo. See the [Trademark Policy](TRADEMARK.md).
 
-**Sulla Server** (team seats and the server console) is a separately distributed product under the Sulla Fair-Code License 1.0. Its hosted Accounts adapter lives in the private `merchantprotocol/sulla-server` repository; this repository contains only the GPL Accounts core. The temporary Server folders still covered by the carve-out are listed in [LICENSE](LICENSE).
+Sulla Server is a separately distributed product. This repository contains the GPL-licensed Desktop application and shared service cores only.
