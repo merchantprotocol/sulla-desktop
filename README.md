@@ -172,4 +172,4 @@ Sulla Desktop is **free and open source** under the [GNU General Public License 
 
 **The name is not part of the license.** "Sulla" and the Sulla logo are trademarks. A fork must use its own name and logo. See the [Trademark Policy](TRADEMARK.md).
 
-**Sulla Server** (team seats, the server console and the accounts service) is the exception. It stays under the [Sulla Fair-Code License 1.0](LICENSES/Sulla-Fair-Code-1.0.txt) and is free up to a set number of users. The folders it covers are listed in [LICENSE](LICENSE).
+**Sulla Server** (team seats and the server console) is a separately distributed product under the Sulla Fair-Code License 1.0. Its hosted Accounts adapter lives in the private `merchantprotocol/sulla-server` repository; this repository contains only the GPL Accounts core. The temporary Server folders still covered by the carve-out are listed in [LICENSE](LICENSE).
