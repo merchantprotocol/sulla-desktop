@@ -56,11 +56,10 @@ jest.unstable_mockModule('@pkg/main/sullaFilesMountManager', () => ({
 }));
 jest.unstable_mockModule('@pkg/agent/services/GuestRuntimeTransport', () => stubs(
   'inspectGuestWorkspaceForCleanup removeGuestPathAtomic seedGitWorktreeIntoGuest chownGuestPath chownGuestPaths', {
-    GUEST_AGENT_DOCS_ROOT:       '/mnt/data/sulla/agent-docs',
     GUEST_AGENT_WORKSPACES_ROOT: '/mnt/data/sulla/agent-workspaces',
     createGuestRuntimeDirectory: () => '/mnt/data/sulla/agent-workspaces/job-1',
-    seedDirectoryIntoGuest:      () => Promise.resolve('/mnt/data/sulla/agent-docs/job-1'),
-    seedContentAddressedDirectoryIntoGuest: () => Promise.resolve('/mnt/data/sulla/agent-docs/shared'),
+    seedDirectoryIntoGuest:      () => Promise.resolve('/mnt/data/sulla/memory-seed/job-1'),
+    seedContentAddressedDirectoryIntoGuest: () => Promise.resolve('/mnt/data/sulla/memory-seed/shared'),
     GUEST_CONVERSATIONS_ROOT:    '/mnt/data/sulla/conversations',
     ensureGuestRuntimeDirectory: (parent: string, name: string) => Promise.resolve(`${ parent }/${ name }`),
     ensureGuestRuntimeDirectories: (parent: string, names: string[]) => Promise.resolve(names.map(name => `${ parent }/${ name }`)),
@@ -89,7 +88,7 @@ jest.unstable_mockModule('@pkg/agent/database/RedisClient', () => stubs('redisCl
 jest.unstable_mockModule('@pkg/agent/languagemodels/ProviderExecutionTransport', () => stubs('withProviderExecutionTransport'));
 jest.unstable_mockModule('@pkg/agent/utils/steerChannel', () => stubs('onSteer steerText'));
 jest.unstable_mockModule('@pkg/agent/utils/stripProtocolTags', () => stubs('stripProtocolTagsStreaming'));
-jest.unstable_mockModule('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaDocsDir: () => '/docs' }));
+jest.unstable_mockModule('@pkg/agent/utils/sullaPaths', () => ({ resolveMemorySeedDir: () => '/docs' }));
 jest.unstable_mockModule('@pkg/backend/sullaServiceImages', () => ({
   resolveSullaServiceImage:       () => ({ image: 'sulla-agent:test' }),
   shouldRefreshSullaServiceImage: () => false,
@@ -138,7 +137,7 @@ describe('agent containers bind the Files guest mount only when its anchor is co
     expect(dockerCreates).toHaveLength(1);
     const binds = volumes(dockerCreates[0]);
 
-    expect(binds).toEqual(expect.arrayContaining(['/mnt/data/sulla/agent-docs/job-1:/opt/sulla-docs:ro']));
+    expect(binds).toEqual(expect.arrayContaining(['/mnt/data/sulla/agent-docs/job-1:/opt/sulla-memory-seed:ro']));
     // Threat proxy on: only the public CA directory is mounted, and the clients are pointed at it.
     expect(binds).toContain('/mnt/data/var/lib/sulla/threat-proxy/public:/run/sulla-threat-proxy-ca:ro');
     expect(binds.some(bind => bind.includes('/threat-proxy/mitm'))).toBe(false);

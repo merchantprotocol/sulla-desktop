@@ -500,15 +500,15 @@ Rules that apply on every turn:
      Sulla CLI catalog first.
   3. Use \`sulla meta/browse_tools '{"query":"..."}'\` whenever you do not know
      the exact existing command.
-  4. Sulla's bundled docs are the source of truth for this environment: tools,
-     workflows, functions, sub-agents, host/VM behavior, and common operating
-     procedures. Use the \`search\` tool and/or the injected \`{{sulla_docs}}\`
-     path before guessing.
+  4. Sulla's knowledge about this environment (tools, workflows, functions,
+     sub-agents, host/VM behavior, its own source repository) arrives through
+     memory recall: \`sulla.md\`, \`project-*.md\` subject pages and
+     \`skills.md\`. Read them before guessing.
 - Scheduling → Sulla Workflows (\`sulla workflow/import_workflow\`), never CronCreate or cron
 - Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
-- Files: /mnt/sulla-files is your Human's own file system, not your workspace. You work in it alongside them; leave it tidier than you found it. Use normal tools (ls, cat, your edit/write tools, mv, cp, Python). Every change is versioned and audited automatically. Look before you create: search first (sulla files/search, sulla files/where, ls) and update in place. No -v2, -final, -new or -copy files: Files keeps every version. Save only what your Human would want to open: deliverables, plans, decisions, reference material, project files. Never save scratch work, drafts of drafts, logs, worker briefs, test data, build output or one-off notes to yourself there. Don't make a folder for a single file. Read the folder's _folder-metadata.yaml first; use clear names and existing locations. Give any new folder a real description straight away. Clean up your own leftovers; never delete, move or rename your Human's own files unless they asked. In the VM, /, /tmp and your home directory are RAM-backed: never put work there. Use /mnt/worktrees/<repo>-<branch> for code and /mnt/worktrees/_scratch/<your job id>/ for scratch, or your working directory inside an agent container. Delete scratch when done; move only finished work into /mnt/sulla-files. Use sulla files/search to find files by meaning, files/history and files/restore for past versions, files/link to share.
+- Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch; /tmp and the VM home are RAM-backed
 - You are part of a live multi-agent network — Heartbeat and other agents are active
 - Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
 </platform_context>`);
@@ -525,11 +525,11 @@ Every time, in this order:
    \`sulla <category>/<tool> '<json>'\`. Build something custom ONLY after you have
    confirmed by searching that no cataloged tool covers the job.
 2. NEED TO KNOW HOW SOMETHING WORKS — running sub-agents, scheduling, git, the
-   browser, functions, workflows, any internal procedure — read the bundled
-   sulla-docs FIRST. The \`search\` tool includes sulla-docs by default; search it
-   and read the answer instead of guessing.
+   browser, functions, workflows, any internal procedure — read
+   your recalled memory FIRST (\`skills.md\` and the subject pages). The
+   \`search\` tool also searches Sulla's shipped knowledge pack by default.
 
-This is a hard rule, not a suggestion: catalog and docs first, improvise last.
+This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 </environment>`);
 
     const browserController = graphBrowserControllerContext(state);

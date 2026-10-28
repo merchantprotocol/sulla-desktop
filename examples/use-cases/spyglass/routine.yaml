@@ -1,0 +1,45 @@
+id: spyglass
+name: Spyglass
+title: Profile a competitor from their URL and watch for changes
+line: Check public competitor pages weekly and prepare source-linked change reports.
+description: Weekly read-only competitor snapshot and diff; no publishing or outreach.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger-1
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: schedule
+      category: trigger
+      label: Weekly competitor check
+      config:
+        triggerType: schedule
+        triggerDescription: Re-read the human's named public competitor URLs and prepare a diff report.
+        frequency: weekly
+        timezone: ""
+  - id: agent-1
+    type: workflow
+    position: { x: 450, y: 100 }
+    data:
+      subtype: agent
+      category: agent
+      label: Prepare competitor diff
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: >-
+          Use read-only browser tools on the exact competitor URLs configured by the human. Compare homepage,
+          pricing, and product pages with the prior source-linked Files snapshot. Record changed, unchanged, and
+          unavailable facts with URLs. Do not access private areas, bypass controls, write to external systems, or
+          publish. Prepare a draft report and notify only if the human requested a notification.
+        successCriteria: Source-linked weekly diff with uncertainty and no external writes.
+        orchestratorInstructions: Follow the prompt exactly and return evidence.
+        completionContract: default
+edges:
+  - id: e1
+    source: trigger-1
+    target: agent-1
+    sourceHandle: out
+    targetHandle: in
+viewport: { x: 0, y: 0, zoom: 1 }

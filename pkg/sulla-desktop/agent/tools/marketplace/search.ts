@@ -14,9 +14,10 @@ export function formatListingLine(r: MarketplaceListing): string {
     ? (r.installed.templateId === r.id && r.installed.version === r.version ? ' [installed]' : ` [installed v${ r.installed.version } — update available]`)
     : '';
   const by = r.author ? ` by ${ r.author }` : '';
+  const memoryPack = r.memoryPack ? ' [memory pack]' : '';
   const desc = r.description ? `\n     ${ r.description.slice(0, 200) }${ r.description.length > 200 ? '…' : '' }` : '';
 
-  return `- ${ kind } · ${ r.slug } v${ r.version } — ${ r.name }${ by } · ${ r.downloads } downloads${ installed }${ desc }`;
+  return `- ${ kind } · ${ r.slug } v${ r.version } — ${ r.name }${ memoryPack }${ by } · ${ r.downloads } downloads${ installed }${ desc }`;
 }
 
 export class MarketplaceSearchWorker extends BaseTool {

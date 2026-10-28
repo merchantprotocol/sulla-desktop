@@ -7,6 +7,9 @@ import { postgresClient } from '../database/PostgresClient';
 import { POTION_MODEL_NAME } from './MemoryRecallService';
 import { PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+
+export const DEFAULT_SUBCONSCIOUS_RECALL_MODE = 'v7' as const;
 
 interface Subject {
   slug: string;
@@ -32,6 +35,7 @@ interface Item {
   always_on: boolean;
   confirmed: boolean;
   supersedes: string | null;
+  origin: string;
 }
 interface Skill {
   slug: string;
@@ -54,6 +58,7 @@ interface Cache {
   epVectors: Map<string, Float32Array>;
   itemVectors: Map<string, Float32Array>;
   skillVectors: Map<string, Float32Array>;
+  subjectVectors: Map<string, Float32Array>;
 }
 
 let model: PotionEmbedder | null | undefined;
@@ -86,6 +91,12 @@ async function embedMissingRows(next: Cache, e: PotionEmbedder): Promise<void> {
       work.push(() => next.itemVectors.set(item.id, e.embed(`${ item.text } ${ item.why || '' }`)));
     }
   }
+  for (const subject of next.subjects.values()) {
+    if (!['global', 'major'].includes(subject.kind) && !next.subjectVectors.has(subject.slug)) {
+      const overview = (next.overviews.get(subject.slug) || []).at(-1)?.text || '';
+      work.push(() => next.subjectVectors.set(subject.slug, e.embed(`${ subject.name }. ${(subject.aliases || []).join('. ')}. ${ overview }`)));
+    }
+  }
   for (const skill of next.skills) {
     const key = `${ skill.slug }@${ skill.version_ts }`;
     if (!next.skillVectors.has(key)) {
@@ -112,7 +123,7 @@ function embedder(): PotionEmbedder | null {
 
 async function signature(): Promise<string> {
   const r = await postgresClient.query<{ sig: string }>(
-    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills)) sig`
+    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.overviews),(SELECT count(*)||':'||coalesce(max(updated_ts),0) FROM subject_memory.subjects)) sig`
   );
   return r[0]?.sig || '';
 }
@@ -156,6 +167,7 @@ async function load(): Promise<Cache> {
       epVectors: new Map(),
       itemVectors: new Map(),
       skillVectors: new Map(),
+      subjectVectors: new Map(),
     };
     for (const x of evidence)
       next.evidence.set(x.episode_id, [
@@ -172,6 +184,7 @@ async function load(): Promise<Cache> {
       next.epVectors = previous.epVectors;
       next.itemVectors = previous.itemVectors;
       next.skillVectors = previous.skillVectors;
+      next.subjectVectors = previous.subjectVectors;
     }
     if (e) {
       void embedMissingRows(next, e).catch(error => {
@@ -255,23 +268,30 @@ export async function recallV7SubjectMemory(
     }))
     .sort((a, b) => b.s - a.s)
     .slice(0, 40);
-  const subjectScore = new Map<string, number>();
+  const episodeSubjectScore = new Map<string, number>();
   for (const [rank, h] of hits.entries())
     for (const k of h.x.keys || [])
       if (!['global', 'major'].includes(c.subjects.get(k)?.kind || ''))
-        subjectScore.set(k, (subjectScore.get(k) || 0) + h.s / (1 + rank / 10));
-  for (const s of c.subjects.values())
-    if (
-      !['global', 'major'].includes(s.kind) &&
-      [s.name, ...(s.aliases || [])].some(
-        (n) => n.length > 3 && cue.toLowerCase().includes(n.toLowerCase())
-      )
-    )
-      subjectScore.set(s.slug, (subjectScore.get(s.slug) || 0) + 2);
-  const chosen = [...subjectScore]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map((x) => x[0]);
+        episodeSubjectScore.set(k, (episodeSubjectScore.get(k) || 0) + h.s / (1 + rank / 10));
+  const loweredCue = cue.toLowerCase();
+  const candidates = [...c.subjects.values()]
+    .filter(s => !['global', 'major'].includes(s.kind))
+    .map(s => {
+      const literal = [s.name, ...(s.aliases || [])].some(n => n.length > 3 && loweredCue.includes(n.toLowerCase()));
+      const episode = episodeSubjectScore.get(s.slug) || 0;
+      const vector = c.subjectVectors.get(s.slug) ? dot(c.subjectVectors.get(s.slug)!, q) : scoreText(`${s.name} ${(s.aliases || []).join(' ')}`) / 20;
+      return { slug:s.slug, literal, episode, vector, score:episode + (literal ? 2 : 0) + vector * 0.45 };
+    })
+    .sort((a,b) => b.score-a.score);
+  const chosen: string[] = [];
+  let vectorOnly = 0;
+  for (const candidate of candidates) {
+    const only = !candidate.literal && candidate.episode <= 0;
+    if (only && vectorOnly >= 2) continue;
+    if (only) vectorOnly++;
+    chosen.push(candidate.slug);
+    if (chosen.length === 5) break;
+  }
   const via = new Map<string, number>(),
     origin = new Map<string, Episode>();
   hits.forEach((h, rank) =>
@@ -294,10 +314,11 @@ export async function recallV7SubjectMemory(
       .filter((i) => !used.has(i.id) && f(i))
       .slice(0, n)
       .map((i) => (used.add(i.id), i));
-  const always = take((i) => i.always_on, 50),
-    global = take((i) => i.kind === 'policy' && i.scope.includes('global'), 60),
+  const sullaSeed = take((i) => i.origin === 'seeded' && i.scope.some(scope => scope === 'sulla' || scope === 'global'), 100),
+    always = take((i) => i.always_on && i.origin !== 'seeded', 50),
+    global = take((i) => i.origin !== 'seeded' && i.kind === 'policy' && i.scope.includes('global'), 60),
     facts = take(
-      (i) => i.kind === 'conclusion' && i.scope.includes('global'),
+      (i) => i.origin !== 'seeded' && i.kind === 'conclusion' && i.scope.includes('global'),
       25
     );
   const docs: string[] = [];
@@ -316,9 +337,9 @@ export async function recallV7SubjectMemory(
           : scoreText(
               `${s.trigger_when} ${(s.trigger_phrases || []).join(' ')}`
             ) / 20) +
-        0.06 *
+        0.15 *
           (s.trigger_phrases || []).filter((p) =>
-            cue.toLowerCase().includes(p.toLowerCase())
+            loweredCue.includes(p.toLowerCase().trim().replace(/\s+/g, ' '))
           ).length +
         0.01 * Math.min(s.strength, 10),
     }))
@@ -332,8 +353,14 @@ export async function recallV7SubjectMemory(
         .map((s) => `### ${s.label}\n_Trigger: ${s.trigger_when}_\n\n${s.body}`)
         .join('\n\n')}`
     );
+  if (sullaSeed.length)
+    docs.push(`## sulla.md — how Sulla works\n${ section('Shipped rules and facts', sullaSeed) }`);
+  let primaryUserName = 'your human';
+  try {
+    primaryUserName = String(await SullaSettingsModel.get('primaryUserName', '') || '').trim() || primaryUserName;
+  } catch { /* Settings may not be bootstrapped in an isolated evaluator. */ }
   docs.push(
-    `## human.md — how Jonathon wants Sulla to work everywhere\n${section(
+    `## human.md — how ${ primaryUserName } wants Sulla to work everywhere\n${section(
       'Always',
       always
     )}${section('Standing rules and preferences', global)}${section(
@@ -408,6 +435,13 @@ export async function recallV7SubjectMemory(
   return (
     docs.filter((d) => /^- /m.test(d) || /^### /m.test(d)).join('\n\n') || null
   );
+}
+
+/** Load the store and finish embedding it, so the next recall uses vectors rather than keywords. */
+export async function warmV7SubjectMemory(): Promise<void> {
+  const c = await load();
+  const e = embedder();
+  if (e) await embedMissingRows(c, e);
 }
 
 export function resetV7SubjectMemoryCache(): void {

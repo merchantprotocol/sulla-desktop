@@ -13,17 +13,19 @@ export class MetaSearchWorker extends BaseTool {
 
   protected async _validatedCall(input:any):Promise<ToolResponse> {
     const { query, limit } = input;
-    const includeSullaDocs = input.includeSullaDocs !== false;
+    const includeSullaKnowledge = input.includeSullaKnowledge !== undefined
+      ? input.includeSullaKnowledge !== false
+      : input.includeSullaDocs !== false;
     const dirPath = input.dirPath || '~';
 
     if (!query) return { successBoolean: false, responseString: 'Missing required field: query' };
 
     try {
       const operation = hasContainerFileRuntime() ? searchContainerPaths : searchGuestPaths;
-      const { roots, results } = await operation({ query, dirPath, limit, includeSullaDocs });
+      const { roots, results } = await operation({ query, dirPath, limit, includeSullaKnowledge });
       if (!results.length) return { successBoolean: true, responseString: `No results found for "${ query }" in ${ roots.join(' and ') }` };
-      const primary = results.filter(result => !result.docs);
-      const docs = results.filter(result => result.docs);
+      const primary = results.filter(result => !result.knowledge);
+      const knowledge = results.filter(result => result.knowledge);
       const render = (items:typeof results) => items.map((result, index) => [
         `${ index + 1 }. ${ result.path }`,
         result.line ? `   Line ${ result.line }` : '',
@@ -31,7 +33,7 @@ export class MetaSearchWorker extends BaseTool {
       ].filter(Boolean).join('\n')).join('\n\n');
       const sections = [`Found ${ results.length } result(s) for "${ query }":`];
       if (primary.length) sections.push(`\n## Results in ${ roots[0] } (${ primary.length })\n${ render(primary) }`);
-      if (docs.length) sections.push(`\n## Results in sulla-docs — /opt/sulla-docs (${ docs.length })\n${ render(docs) }`);
+      if (knowledge.length) sections.push(`\n## Results in bundled memory seed — /opt/sulla-memory-seed (${ knowledge.length })\n${ render(knowledge) }`);
 
       return { successBoolean: true, responseString: sections.join('\n') };
     } catch (error) {

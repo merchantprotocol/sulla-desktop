@@ -227,14 +227,15 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'file_search',
-    description: 'Fast full-text keyword search (BM25-ranked) across any directory PLUS the bundled sulla-docs (agent + tool reference) by default. Faster than find or grep for multi-word queries — use this as your default search tool. Matches file contents and filenames. Small directories are live-scanned (always fresh); large ones use an incremental on-disk index built automatically, with coverage reported when partial. Pass includeSullaDocs:false to skip the sulla-docs second pass.',
+    description: 'Fast full-text keyword search (BM25-ranked) across any directory PLUS the bundled memory seed (agent + tool reference) by default. Faster than find or grep for multi-word queries — use this as your default search tool. Matches file contents and filenames. Small directories are live-scanned (always fresh); large ones use an incremental on-disk index built automatically, with coverage reported when partial. Pass includeSullaKnowledge:false to skip the bundled memory seed second pass.',
     category:    'meta',
     schemaDef:   {
       query:            { type: 'string', description: 'Search query — keywords, concepts, or questions to match against file contents and names.' },
       dirPath:          { type: 'string', optional: true, description: 'Absolute path to the primary directory to search in. Defaults to the user home directory.' },
       limit:            { type: 'number', optional: true, description: 'Maximum number of results to return per directory (default 20).' },
       reindex:          { type: 'boolean', optional: true, description: 'Force re-index the directory(ies) before searching.' },
-      includeSullaDocs: { type: 'boolean', optional: true, description: 'Whether to also search the bundled sulla-docs/ reference (default true). Set false to limit search to dirPath only.' },
+      includeSullaKnowledge: { type: 'boolean', optional: true, description: 'Whether to also search the bundled memory seed pack (default true). Set false to limit search to dirPath only.' },
+      includeSullaDocs: { type: 'boolean', optional: true, description: 'Legacy alias for includeSullaKnowledge.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./meta_search'),

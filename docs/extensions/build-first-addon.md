@@ -69,7 +69,7 @@ Add-ons run within Sulla's existing VM, vault, Files, and tool-permission bounda
 
 ## Hooks
 
-See the [Extension Contract v1](../../resources/sulla-docs/extensions.md) for the stable hook list, grants, redaction, and compatibility policy. Function add-ons are executable hook handlers:
+See the [Extension Contract v1](../extension-contract-v1.md) for the stable hook list, grants, redaction, and compatibility policy. Function add-ons are executable hook handlers:
 
 ```yaml
 sullaApi: ^1.0.0

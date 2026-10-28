@@ -1,0 +1,20 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-crawlspace-audit
+slug: crawlspace-audit
+name: Crawlspace audit
+description: Checks captured HTML and robots text for deterministic search visibility signals.
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    html: {type: string, description: Captured raw HTML., required: true}
+    robots: {type: string, description: robots.txt contents., default: '', required: false}
+    llms: {type: string, description: llms.txt contents., default: '', required: false}
+  outputs:
+    checks: {type: array, description: Pass/fail visibility checks.}
+  timeout: 60s
+  permissions: {network: []}

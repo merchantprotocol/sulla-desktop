@@ -1,0 +1,29 @@
+id: ledgerline-month-end
+name: Ledgerline month-end close
+description: Monthly read-only close checklist and exception packet from configured ledger exports.
+version: "1"
+enabled: true
+nodes:
+  - id: trigger
+    type: workflow
+    position: {x: 100, y: 100}
+    data:
+      subtype: schedule
+      category: trigger
+      label: Month-end close review
+      config: {triggerType: schedule, frequency: monthly, dayOfMonth: 1, time: "09:00", timezone: ""}
+  - id: agent
+    type: workflow
+    position: {x: 450, y: 100}
+    data:
+      subtype: agent
+      category: agent
+      label: Stage close packet
+      config:
+        agentId: sulla-desktop
+        agentName: Sulla
+        additionalPrompt: Use Ledgerline for the prior calendar month, read configured ledger and settlement exports, save the exception report and close packet in Files, and do not post entries, alter records, or pay anything.
+        completionContract: default
+edges:
+  - {id: e1, source: trigger, target: agent, sourceHandle: out, targetHandle: in}
+viewport: {x: 0, y: 0, zoom: 1}

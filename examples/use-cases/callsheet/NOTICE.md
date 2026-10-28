@@ -1,0 +1,2 @@
+Adapted from `small-business/skills/job-post-builder` and `small-business/skills/hiring-screener` in anthropics/knowledge-work-plugins, Copyright Anthropic, PBC. Licensed under the Apache License 2.0. Modified for Sulla Desktop.
+Sources: https://github.com/anthropics/knowledge-work-plugins/tree/27ce65c5f86ea44cd694e691d6f9e433cb345b06/small-business/skills/job-post-builder and https://github.com/anthropics/knowledge-work-plugins/tree/b36952ba0497bd9193c1fd47928caa2f524b0f40/small-business/skills/hiring-screener

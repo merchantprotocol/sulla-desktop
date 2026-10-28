@@ -442,8 +442,12 @@ export class VoiceSessionAdapter {
 
   /** Commit one finished turn (from utterance_end or finish). `text` may be empty. */
   private commitTurn(text: string): void {
-    // A PTT press that never activated (a tap) sends nothing.
+    const transcript = text.trim();
     if (!this.active) return;
+    // Whisper uses punctuation wrappers for sounds that are not speech. A sequence
+    // made entirely from those markers is not a user turn (but ordinary words with
+    // an incidental marker remain sendable).
+    const speakable = transcript.replace(/(?:\([^)]*\)|\[[^\]]*\]|\*[^*]+\*)/g, '').trim();
 
     // Remove the interim bubble; controller.send() will append the real user message.
     if (this.interimId) {
@@ -455,7 +459,7 @@ export class VoiceSessionAdapter {
     this.controller.stopVoice(true);
 
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (text) this.controller.send(text, [], { inputSource: 'voice' });
+    if (transcript && speakable) this.controller.send(transcript, [], { inputSource: 'voice' });
 
     // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
     if (this.capturing && this.mode === 'handsfree') {

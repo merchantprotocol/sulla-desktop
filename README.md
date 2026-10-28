@@ -100,7 +100,7 @@ Anything you ask Sulla to do twice is a candidate for an automation, and Sulla w
 
 ## Extending Sulla
 
-Build skills, functions, workflows, recipes, integrations, and local agents without changing core. Follow the [Build your first Sulla add-on](resources/sulla-docs/marketplace/build-first-addon.md) guide, then use the hello-world bundles in [`examples/extensions/`](examples/extensions/). Add-ons are validated locally and reviewed before they appear in the marketplace.
+Build skills, functions, workflows, recipes, integrations, and local agents without changing core. Follow the [Build your first Sulla add-on](docs/extensions/build-first-addon.md) guide, then use the hello-world bundles in [`examples/extensions/`](examples/extensions/). Add-ons are validated locally and reviewed before they appear in the marketplace.
 
 ## Get started
 

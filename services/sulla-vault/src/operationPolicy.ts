@@ -379,7 +379,7 @@ export function validateOperation(
   const streaming = input.responseType === 'stream' || input.responseType === 'binary-stream';
   if (streaming && !policy.allowStreaming) throw new Error('streaming_denied');
   if (input.responseType === 'binary-stream' && !policy.binaryResponse) throw new Error('binary_denied');
-  if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION) throw new Error('binary_denied');
+  if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION && !policy.binaryResponse) throw new Error('binary_denied');
   if (input.bodyEncoding !== undefined && (!policy.binaryRequest || input.bodyEncoding !== 'base64' || typeof input.body !== 'string')) {
     throw new Error('binary_denied');
   }

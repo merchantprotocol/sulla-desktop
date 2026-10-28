@@ -1,0 +1,35 @@
+apiVersion: sulla/v1
+sullaApi: ^1.0.0
+hooks: []
+kind: Function
+id: function-sounding
+slug: sounding
+name: Sounding
+title: Profile a new spreadsheet before you trust it
+line: Surface nulls, duplicates, type problems, outliers, and quality warnings before analysis.
+description: Deterministic offline profile for normalized tabular rows.
+category: data
+tags: [data-quality, csv, profiling]
+schemaversion: 1
+spec:
+  runtime: python
+  entrypoint: main.py::handler
+  inputs:
+    rows:
+      type: array
+      description: Array of row objects.
+      required: true
+    key_columns:
+      type: array
+      description: Optional columns used to count duplicate keys.
+      required: false
+  outputs:
+    profile:
+      type: object
+      description: Dimensions, columns, nulls, duplicates, and numeric summaries.
+    warnings:
+      type: array
+      description: Data-quality warnings.
+  timeout: 60s
+  permissions:
+    network: []

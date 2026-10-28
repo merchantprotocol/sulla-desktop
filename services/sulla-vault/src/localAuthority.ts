@@ -1942,7 +1942,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
         throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
       }
-      if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION) {
+      if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION && input.operation !== 'provider.audio') {
         throw new LocalVaultError('invalid_operation', 400, 'Binary responses are limited to Files sync');
       }
       if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {

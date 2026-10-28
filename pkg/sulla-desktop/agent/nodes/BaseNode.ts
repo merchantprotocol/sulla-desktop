@@ -30,7 +30,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { sanitizeConversationContext } from '../utils/conversationContext';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -299,7 +299,9 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     '{{primaryUserName}}':      primaryUserName || '',
     '{{botName}}':              botName,
     '{{sulla_home}}':           resolveSullaHomeDir(),
-    '{{sulla_docs}}':           resolveSullaDocsDir(),
+    // Kept for stored or user-edited prompts that still reference it; sulla-docs
+    // was replaced by the memory seed pack.
+    '{{sulla_docs}}':           (() => { try { return resolveMemorySeedDir(); } catch { return ''; } })(),
     '{{codebase_dir}}':         resolveSullaCodebaseDir(),
     '{{projects_dir}}':         projectsDir,
     '{{skills_dir}}':           skillsDir,
