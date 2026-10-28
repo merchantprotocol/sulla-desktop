@@ -67,6 +67,17 @@ export class ReturnResultWorker extends BaseTool {
       return { successBoolean: false, responseString: (err as Error).message };
     }
 
+    // Returning the contract is the terminal action for this delegated turn.
+    // AgentNode reads this after tool execution (and in its error path) so it
+    // does not start a post-return provider call or publish a late runtime error.
+    if (this.state?.metadata) {
+      (this.state.metadata as any).delegatedContractReturned = {
+        jobId: job.jobId,
+        taskIndex,
+        returnedAt: recorded.tasks[taskIndex]?.returnedAt ?? Date.now(),
+      };
+    }
+
     if (recorded.visibility !== 'tab') {
       return {
         successBoolean: true,
