@@ -66,6 +66,15 @@ function jsonObject(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 }
 
+
+const agentModelSlot = (tier: unknown, legacy: unknown): 'primary'|'secondary'|'subconscious' => {
+  if (tier === 'primary' || tier === 'secondary' || tier === 'subconscious') return tier;
+  const model = typeof legacy === 'string' ? legacy.toLowerCase() : '';
+  if (/(haiku|mini|flash|nano|lite|luna|fast)/.test(model)) return 'subconscious';
+  if (/(sonnet|sol|turbo|medium)/.test(model)) return 'secondary';
+  return 'primary';
+};
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).map(v => v.trim()).filter(Boolean) : [];
 }
@@ -337,10 +346,10 @@ async function installArtifact(
     if (String(metadata.slug) !== slug) throw new Error(`agent manifest slug "${ metadata.slug }" does not match "${ slug }"`);
     const directory = jsonObject(spec.directory);
     await client.query(`INSERT INTO agent_definitions
-      (id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,source_kind,marketplace_template_id,marketplace_slug,marketplace_version,marketplace_author,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,user_edited)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]'::jsonb,$10,'production',true,$11::jsonb,$5,$12,$13::jsonb,$14,$15,'marketplace',$16,$2,$10,$17,$18,$19,$20,$21,$22,$23,$24,false)
-      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,version=EXCLUDED.version,status='production',enabled=true,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=EXCLUDED.model,source_kind='marketplace',marketplace_template_id=EXCLUDED.marketplace_template_id,marketplace_slug=EXCLUDED.marketplace_slug,marketplace_version=EXCLUDED.marketplace_version,marketplace_author=EXCLUDED.marketplace_author,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=EXCLUDED.front_door,user_edited=false,updated_at=now()`,
-    [`agent-${ randomUUID() }`, slug, metadata.title, metadata.description ?? '', spec.prompt, spec.soul ?? '', stringArray(spec.tools), stringArray(spec.skills), stringArray(spec.routines), input.version, JSON.stringify(spec.config ?? {}), spec.goals ?? '', JSON.stringify(spec.promptFiles ?? {}), spec.provider ?? null, spec.model ?? null, input.templateId, author, directory.whenToCall ?? '', directory.whenNotToCall ?? '', directory.send ?? '', directory.returns ?? '', directory.costTier ?? null, stringArray(directory.canCall), typeof directory.frontDoor === 'boolean' ? directory.frontDoor : null]);
+      (id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,marketplace_template_id,marketplace_slug,marketplace_version,marketplace_author,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,user_edited)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]'::jsonb,$10,'production',true,$11::jsonb,$5,$12,$13::jsonb,$14,NULL,$15,'marketplace',$16,$2,$10,$17,$18,$19,$20,$21,$22,$23,$24,false)
+      ON CONFLICT (slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,version=EXCLUDED.version,status='production',enabled=true,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,source_kind='marketplace',marketplace_template_id=EXCLUDED.marketplace_template_id,marketplace_slug=EXCLUDED.marketplace_slug,marketplace_version=EXCLUDED.marketplace_version,marketplace_author=EXCLUDED.marketplace_author,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=EXCLUDED.front_door,user_edited=false,updated_at=now()`,
+    [`agent-${ randomUUID() }`, slug, metadata.title, metadata.description ?? '', spec.prompt, spec.soul ?? '', stringArray(spec.tools), stringArray(spec.skills), stringArray(spec.routines), input.version, JSON.stringify(spec.config ?? {}), spec.goals ?? '', JSON.stringify(spec.promptFiles ?? {}), spec.provider ?? null, agentModelSlot(spec.modelSlot, spec.model), input.templateId, author, directory.whenToCall ?? '', directory.whenNotToCall ?? '', directory.send ?? '', directory.returns ?? '', directory.costTier ?? null, stringArray(directory.canCall), typeof directory.frontDoor === 'boolean' ? directory.frontDoor : null]);
     break;
   }
   }

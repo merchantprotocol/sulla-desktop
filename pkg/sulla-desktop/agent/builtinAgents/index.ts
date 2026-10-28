@@ -25,7 +25,7 @@ import path from 'node:path';
 
 import bundle from './builtin-agents.json';
 
-import type { AgentCostTier, AgentDefinition, ModelPriorityEntry } from '../database/models/AgentDefinitionModel';
+import type { AgentCostTier, AgentDefinition, AgentModelSlot, ModelPriorityEntry } from '../database/models/AgentDefinitionModel';
 
 export interface BuiltinAgentCard {
   whenToCall:    string;
@@ -47,7 +47,8 @@ export interface BuiltinAgentSpec {
   name:              string;
   description:       string;
   provider:          string | null;
-  model:             string | null;
+  model?:            string | null;
+  modelSlot?:         AgentModelSlot | null;
   card:              BuiltinAgentCard;
   tools?:            string[];
   skills?:           string[];
@@ -79,6 +80,7 @@ export interface BuiltinManagedContent {
   model_priority:   ModelPriorityEntry[];
   provider:         string | null;
   model:            string | null;
+  model_slot:       AgentModelSlot | null;
   config:           Record<string, unknown>;
   when_to_call:     string;
   when_not_to_call: string;
@@ -100,7 +102,7 @@ export const BUILTIN_CARD_FIELDS = ['when_to_call', 'when_not_to_call', 'send', 
 
 const MANAGED_FIELDS: (keyof BuiltinManagedContent)[] = [
   'name', 'description', 'system_prompt', 'prompt_content', 'soul_content', 'goals_content', 'prompt_files',
-  'allowed_tools', 'skill_refs', 'routine_refs', 'model_priority', 'provider', 'model', 'config',
+  'allowed_tools', 'skill_refs', 'routine_refs', 'model_priority', 'provider', 'model', 'model_slot', 'config',
   ...BUILTIN_CARD_FIELDS,
 ];
 
@@ -191,6 +193,7 @@ export function renderBuiltinAgent(spec: BuiltinAgentSpec, home = os.homedir(), 
     model_priority:   s.modelPriority ?? [],
     provider:         s.provider ?? null,
     model:            s.model ?? null,
+    model_slot:       s.modelSlot ?? null,
     config:           s.config ?? {},
     when_to_call:     s.card?.whenToCall ?? '',
     when_not_to_call: s.card?.whenNotToCall ?? '',
@@ -214,7 +217,7 @@ export function hashManagedContent(content: BuiltinManagedContent | AgentDefinit
   const picked: Record<string, unknown> = {};
   for (const field of MANAGED_FIELDS) {
     const value = (content as any)[field];
-    picked[field] = field === 'provider' || field === 'model' || field === 'cost_tier' ? (value || null) : value;
+    picked[field] = field === 'provider' || field === 'model' || field === 'model_slot' || field === 'cost_tier' ? (value || null) : value;
   }
   return `sha256:${ createHash('sha256').update(canonicalJson(picked)).digest('hex') }`;
 }

@@ -407,7 +407,7 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
       tools:       definition.allowed_tools,
       skills:      definition.skill_refs,
       provider:    definition.provider || undefined,
-      model:       definition.model || undefined,
+      model:       definition.model_slot || definition.model || undefined,
     } as AgentConfig;
     const mdFiles = Object.entries(definition.prompt_files)
       .filter(([name]) => name.endsWith('.md') && name !== 'environment.md')

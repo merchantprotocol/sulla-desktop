@@ -1880,7 +1880,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       integrations: (parsed.integrations as string[]) || [],
       prompt:       sections.length > 0 ? sections.join('\n\n') : undefined,
       excludeSoul:  parsed.excludeSoul === true,
-      model:        definition.model || undefined,
+      model:        definition.model_slot || definition.model || undefined,
       provider:     definition.provider || undefined,
       runLocation:  definition.run_location,
     };

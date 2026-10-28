@@ -655,7 +655,7 @@ function buildAgentManifest(opts: BuildOptions): Record<string, unknown> {
     ...baseEnvelope('agent', metadata),
     agentSummary: {
       ...(agent.spec.provider ? { provider: agent.spec.provider } : {}),
-      ...(agent.spec.model ? { model: agent.spec.model } : {}),
+      ...(agent.spec.modelSlot ? { modelSlot: agent.spec.modelSlot } : {}),
       toolsCount: tools.length,
       tools:      tools.map(String),
       skills,

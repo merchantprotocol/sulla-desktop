@@ -277,9 +277,9 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Agent-definition model override. When an agent's config.yaml declares
-   * `model:` (explicit model ID or tier name 'fast'|'balanced'|'powerful')
-   * and/or `provider:`, resolve a dedicated service instance for that agent.
+   * Agent definitions store a Preferences slot, not a provider or model ID.
+   * Resolve that slot through the user's existing model settings at run time.
+   * Legacy provider/model declarations remain readable for old packages.
    *
    * Returns null when the agent declares no override — callers fall back to
    * the role slots (primary / subconscious). Resolution failures also return
@@ -288,6 +288,10 @@ class LLMRegistryImpl {
   async getAgentOverrideService(agentCfg?: { model?: string; provider?: string }): Promise<BaseLanguageModel | null> {
     const model = typeof agentCfg?.model === 'string' ? agentCfg.model.trim() : '';
     const provider = typeof agentCfg?.provider === 'string' ? agentCfg.provider.trim() : '';
+
+    if (model === 'primary') return this.getPrimaryService();
+    if (model === 'secondary') return this.getSecondaryService();
+    if (model === 'subconscious') return this.getSubconsciousLLM();
 
     if (!model && !provider) return null;
 

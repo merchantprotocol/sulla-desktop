@@ -42,6 +42,14 @@ const bytes = (file:StoredFile):Buffer => typeof file === 'string' ? Buffer.from
 const stored = (value:Buffer):StoredFile => value.includes(0) || value.toString('utf8').includes('\uFFFD') ? { encoding:'base64', content:value.toString('base64') } : value.toString('utf8');
 const json = (value:unknown) => JSON.stringify(value);
 const strings = (value:unknown):string[] => Array.isArray(value) ? value.map(String).map(v => v.trim()).filter(Boolean) : [];
+const agentModelSlot = (tier: unknown, legacy: unknown): 'primary'|'secondary'|'subconscious' => {
+  if (tier === 'primary' || tier === 'secondary' || tier === 'subconscious') return tier;
+  const model = typeof legacy === 'string' ? legacy.toLowerCase() : '';
+  if (/(haiku|mini|flash|nano|lite|luna|fast)/.test(model)) return 'subconscious';
+  if (/(sonnet|sol|turbo|medium)/.test(model)) return 'secondary';
+  return 'primary';
+};
+
 
 /** Files is authoritative; this class only maintains the disposable Postgres runtime index. */
 export class SullaUseCaseFiles {
@@ -194,10 +202,10 @@ export class SullaUseCaseFiles {
       if (kind === 'agent') {
         const metadata = manifest.metadata ?? {}; const spec = manifest.spec ?? {}; const directory = spec.directory ?? {};
         if (manifest.apiVersion !== 'sulla/v3' || !metadata.title || typeof spec.prompt !== 'string' || metadata.slug !== slug) throw new Error(`agents/${ slug } has an invalid sulla/v3 agent.json`);
-        await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id)
-          VALUES('agent-'||gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,'[]','1.0.0','production',TRUE,$9,$4,$10,$11,$12,$13,'local',$14,$15,$16,$17,$18,$19,$20,$21,$22)
-          ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=EXCLUDED.model,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()`,
-        [slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,spec.model??null,directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId]);
+        await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id)
+          VALUES('agent-'||gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,'[]','1.0.0','production',TRUE,$9,$4,$10,$11,$12,NULL,$13,'local',$14,$15,$16,$17,$18,$19,$20,$21,$22)
+          ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()`,
+        [slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId]);
       } else if (kind === 'skill') {
         const raw = text(files['SKILL.md']); const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
         if (!parsed || parsed.slug !== slug) throw new Error(`skills/${ slug } has an invalid SKILL.md`);

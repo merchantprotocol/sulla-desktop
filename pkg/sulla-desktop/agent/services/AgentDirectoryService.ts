@@ -18,7 +18,7 @@
 
 import { agentDefinitionService } from './AgentDefinitionService';
 
-import type { AgentCostTier, AgentDefinition } from '../database/models/AgentDefinitionModel';
+import type { AgentCostTier, AgentDefinition, AgentModelSlot } from '../database/models/AgentDefinitionModel';
 
 export interface AgentDirectoryCard {
   slug:          string;
@@ -34,6 +34,7 @@ export interface AgentDirectoryCard {
   frontDoor:     boolean;
   provider:      string | null;
   model:         string | null;
+  modelSlot:     AgentModelSlot | null;
   builtin:       boolean;
   enabled:       boolean;
   status:        string;
@@ -90,6 +91,7 @@ export function toDirectoryCard(agent: AgentDefinition): AgentDirectoryCard {
     frontDoor:     isFrontDoorAgent(agent),
     provider:      agent.provider,
     model:         agent.model,
+    modelSlot:     agent.model_slot,
     builtin:       agent.is_builtin,
     enabled:       agent.enabled,
     status:        agent.status,

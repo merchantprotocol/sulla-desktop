@@ -103,6 +103,7 @@ export interface AgentDefinitionResponse {
   description:        string;
   provider:           string | null;
   model:              string | null;
+  modelSlot:          import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot | null;
   prompt:             string;
   sourceKind:         string;
   marketplaceVersion: string | null;
@@ -191,6 +192,7 @@ export function initAgentsIpc(): void {
       description:        a.description,
       provider:           a.provider,
       model:              a.model,
+      modelSlot:          a.model_slot,
       prompt:             a.prompt_content,
       sourceKind:         a.source_kind,
       marketplaceVersion: a.marketplace_version,
@@ -200,14 +202,14 @@ export function initAgentsIpc(): void {
     }));
   });
 
-  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; model?: string; prompt: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.create({
       slug:          input.slug,
       name:          input.name,
       description:   input.description ?? '',
       provider:      input.provider ?? null,
-      model:         input.model ?? null,
+      modelSlot:     input.modelSlot ?? 'secondary',
       systemPrompt:  input.prompt,
       promptContent: input.prompt,
       promptFiles:   { 'prompt.md': input.prompt },
@@ -217,7 +219,7 @@ export function initAgentsIpc(): void {
     });
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; model?: string; prompt?: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt?: string; runLocation?: 'vm' | 'container' }) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
     return agentDefinitionService.update(id, {
       ...patch,
@@ -514,7 +516,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     const definitions = await agentDefinitionService.list();
     const modelByAgent = new Map(definitions.map(definition => [
       definition.slug,
-      definition.model || definition.provider || undefined,
+      definition.model_slot || definition.model || definition.provider || undefined,
     ]));
     const logsDir = resolveSullaLogsDir();
 

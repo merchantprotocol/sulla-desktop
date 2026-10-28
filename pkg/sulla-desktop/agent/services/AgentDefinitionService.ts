@@ -15,6 +15,7 @@ import {
   type AgentDefinitionInput,
   type AgentDefinitionPatch,
   type AgentDefinitionStatus,
+  type AgentModelSlot,
 } from '../database/models/AgentDefinitionModel';
 import { resolveAllAgentsDirs } from '../utils/sullaPaths';
 
@@ -27,7 +28,9 @@ export interface AgentMarketplaceManifest {
   metadata:        { slug: string; title: string; description: string; version: string; author?: string; marketplaceTemplateId?: string };
   spec: {
     provider?:   string;
+    /** @deprecated Read for compatibility only; new manifests write modelSlot. */
     model?:      string;
+    modelSlot?:  AgentModelSlot;
     prompt:      string;
     soul?:       string;
     goals?:      string;
@@ -50,6 +53,19 @@ export interface AgentMarketplaceManifest {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function isModelSlot(value: unknown): value is AgentModelSlot {
+  return value === 'primary' || value === 'secondary' || value === 'subconscious';
+}
+
+/** Back-compat bridge for old config.yaml/manifest model pins. */
+function legacyModelSlot(value: unknown): AgentModelSlot | null {
+  const model = typeof value === 'string' ? value.toLowerCase() : '';
+  if (!model) return null;
+  if (/(haiku|mini|flash|nano|lite|luna|fast)/.test(model)) return 'subconscious';
+  if (/(sonnet|sol|turbo|medium)/.test(model)) return 'secondary';
+  return 'primary';
 }
 
 /** Runtime-facing facade for database-backed agent definitions. */
@@ -107,6 +123,7 @@ export class AgentDefinitionService {
             routineRefs:   stringArray(config.routines),
             provider:      typeof config.provider === 'string' ? config.provider : null,
             model:         typeof config.model === 'string' ? config.model : null,
+            modelSlot:     isModelSlot(config.modelSlot) ? config.modelSlot : legacyModelSlot(config.model),
             config,
             status:        'production',
             sourceKind:    'filesystem-import',
@@ -136,6 +153,7 @@ export class AgentDefinitionService {
       spec: {
         ...(agent.provider ? { provider: agent.provider } : {}),
         ...(agent.model ? { model: agent.model } : {}),
+        ...(agent.model_slot ? { modelSlot: agent.model_slot } : {}),
         prompt:      agent.prompt_content,
         soul:        agent.soul_content,
         goals:       agent.goals_content,
@@ -184,6 +202,7 @@ export class AgentDefinitionService {
       skillRefs:             spec.skills ?? [],
       provider:              spec.provider ?? null,
       model:                 spec.model ?? null,
+      modelSlot:             spec.modelSlot ?? legacyModelSlot(spec.model),
       config:                spec.config ?? {},
       version:               metadata.version,
       status:                'production',

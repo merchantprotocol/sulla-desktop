@@ -131,6 +131,7 @@ function contentPatch(content: BuiltinManagedContent, bundleHash: string): Agent
     modelPriority: content.model_priority,
     provider:      content.provider,
     model:         content.model,
+    modelSlot:     content.model_slot,
     config:        content.config,
     whenToCall:    content.when_to_call,
     whenNotToCall: content.when_not_to_call,
