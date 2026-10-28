@@ -19,7 +19,18 @@ interface SeedSubject extends SeedDoc { slug: string; overview: string; items: S
 interface SeedItem { id: string; subject: string; kind: 'policy'|'conclusion'; ptype: string|null; text: string; why: string|null; alwaysOn: boolean; }
 
 export const MEMORY_SEED_WORKER = 'memory-seed';
-export const MEMORY_SEED_VERSION = Number(JSON.parse(fs.readFileSync(path.join(resolveMemorySeedDir(), 'manifest.json'), 'utf8')).version);
+// Read at import time for the seeder name, so it must never throw: a missing or
+// broken pack would otherwise break every seeder and database startup with it.
+// Version 0 makes initialize() fail on its own, unrecorded, and retry next boot.
+function readSeedVersion(): number {
+  try {
+    return Number(JSON.parse(fs.readFileSync(path.join(resolveMemorySeedDir(), 'manifest.json'), 'utf8')).version) || 0;
+  } catch (error) {
+    console.warn('[MemorySeedSeeder] memory seed pack unavailable:', error instanceof Error ? error.message : error);
+    return 0;
+  }
+}
+export const MEMORY_SEED_VERSION = readSeedVersion();
 
 function readDoc(file: string): SeedDoc {
   const source = fs.readFileSync(file, 'utf8');
@@ -65,6 +76,7 @@ function parentFirst(subjects: SeedSubject[]): SeedSubject[] {
 }
 
 export async function initialize(): Promise<void> {
+  if (!MEMORY_SEED_VERSION) throw new Error('memory seed pack missing or has no version; skipped');
   const root = resolveMemorySeedDir();
   const subjects = parentFirst(loadSubjects(path.join(root, 'subjects')));
   const skills = fs.readdirSync(path.join(root,'skills')).filter(x => x.endsWith('.md')).sort().map(name => readDoc(path.join(root,'skills',name)));
