@@ -97,7 +97,7 @@ export function validateMemoryPackFormat(packDir: string, packSlug: string): str
   }
 
   const files = packFiles(packDir);
-  if (files.length > MEMORY_PACK_MAX_FILES) issues.push(`memory pack has ${ packFiles.length } files; maximum is ${ MEMORY_PACK_MAX_FILES }`);
+  if (files.length > MEMORY_PACK_MAX_FILES) issues.push(`memory pack has ${ files.length } files; maximum is ${ MEMORY_PACK_MAX_FILES }`);
   let packBytes = 0;
   for (const file of files) {
     const bytes = fs.statSync(file).size;
