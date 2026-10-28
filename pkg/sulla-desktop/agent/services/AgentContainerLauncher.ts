@@ -17,6 +17,7 @@ import {
   createGuestRuntimeDirectory,
   GUEST_AGENT_WORKSPACES_ROOT,
   GUEST_CONVERSATIONS_ROOT,
+  GUEST_RUNTIME_ROOT,
   ensureGuestRuntimeDirectories,
   getGuestRuntimeIdentity,
   inspectGuestWorkspaceForCleanup,
@@ -946,7 +947,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       return { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
     });
     const memorySeedTask = phase('memorySeed', () => seedContentAddressedDirectoryIntoGuest(
-      resolveMemorySeedDir(), '/opt/sulla-memory-seed', 'memory-seed',
+      resolveMemorySeedDir(), `${ GUEST_RUNTIME_ROOT }/memory-seed`, 'memory-seed',
     ));
     const providerFilesTask = phase('providerFiles', () => ContainerProviderFileTransport.create())
       .then(files => { providerFiles = files; return files });
@@ -1301,7 +1302,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
     workspacePath = checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
-    const memorySeedPath = await seedDirectoryIntoGuest(resolveMemorySeedDir(), '/opt/sulla-memory-seed', `${ jobKey }-`);
+    const memorySeedPath = await seedDirectoryIntoGuest(resolveMemorySeedDir(), `${ GUEST_RUNTIME_ROOT }/memory-seed`, `${ jobKey }-`);
     guestRuntimePaths.push(memorySeedPath);
     await chownGuestPaths([workspacePath, memorySeedPath], identity);
     secretDir = await provisionContainerSecrets(`${ containerName }-${ capabilityJti }`, configuration.secrets, identity);
