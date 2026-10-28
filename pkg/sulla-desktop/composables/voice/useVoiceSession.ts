@@ -195,7 +195,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       if (text) {
         console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
         chatController.query.value = text;
-        chatController.send({ inputSource: 'voice' });
+        chatController.send({ inputSource: 'voice', agentId: 'conversationalist' });
         pipelineState.value = 'THINKING';
       }
     },
