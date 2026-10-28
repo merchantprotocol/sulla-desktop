@@ -128,21 +128,35 @@ and packs add to it.
 
 ```
 Use Cases/skills/<pack-slug>/
-├── SKILL.md              # frontmatter includes  memory_pack: true ; body explains the pack and how to customize it
+├── SKILL.md              # frontmatter includes memory_pack: true; body explains the pack and customization
 └── memory/
-    ├── manifest.json     # { "version": <int> }  bump on every change
+    ├── manifest.json     # { "version": <int from 1 through 999999> }; bump on every change
     ├── subjects/<slug>.md   # same format as the core seed
     └── skills/<slug>.md     # same format as the core seed
 ```
 
 - **Provenance:** every row a pack writes is owned by `memory-pack:<pack-slug>`. Items get ids
-  `pack:<pack-slug>:<subject>:<hash>`, with `origin = 'seeded'`.
-- **Precedence:** shipped seed < installed pack < what the install wrote itself. A pack skill with the same
-  slug as a core skill overrides it while the pack is installed. A pack overview beats the seed
-  overview but never one the install wrote.
-- **Install** loads the pack (idempotent). **Sync** reloads it after the human customizes the files;
-  bullets that disappeared are retired. **Uninstall** leaves nothing of the pack active, and whatever
-  it overrode comes back. Subjects a pack created are removed only if nothing else references them.
-- Installing a pack from the marketplace, publishing an edited pack in Files, and deleting or
-  disabling the pack skill trigger install, sync and uninstall automatically. `memory/pack_*` tools
-  do the same by hand.
+  `pack:<pack-slug>:<subject>:<hash>`, with `origin = 'seeded'`. Pack rules are never `always_on`,
+  including rules scoped to `sulla`; only policies from the `memory-seed` worker under `sulla` are always on.
+- **Exact precedence keys:** overviews use primary key `(subject, ts)` and recall takes the greatest `ts`.
+  Skills use `(slug, version_ts)` and `skills_at` takes the greatest `version_ts` not later than now.
+  The core seed uses its small manifest version for both keys. Each pack receives an immutable `install_seq`
+  on first install and uses `ts = version_ts = 1_000_000_000_000 + install_seq * 1_000_000 + manifest.version`.
+  This keeps packs above the seed and below normal epoch-millisecond authored rows. A later-installed pack
+  wins between packs with the same subject or skill slug. Sync keeps the same sequence and changes only the
+  final manifest-version component. An upsert may update only a row owned by that same pack.
+- **Aliases:** a pack records aliases it contributes per subject. The baseline is the aliases that existed
+  before the first pack contribution. Sync removes a dropped alias only when it is not baseline and no other
+  installed pack contributes it. Uninstall applies the same ownership check, so core, authored and shared
+  pack aliases remain.
+- **Install** loads the pack idempotently. **Sync** reloads it after the human customizes the files; bullets
+  that disappeared are retired. **Uninstall** leaves no rows owned by the pack active, so the next-highest
+  pack, core seed or authored row becomes visible. Subjects a pack created are removed only if nothing else
+  references them.
+- Installing a pack from the marketplace, publishing an edited pack in Files, and deleting or disabling the
+  pack skill trigger install, sync and uninstall automatically. `memory/pack_*` tools do the same by hand.
+  Marketplace installation is compensated if memory installation fails, so the skill and memory cannot diverge.
+- File names must be relative and cannot contain a `..` segment. A file may be at most 256 KiB. A pack may
+  contain at most 500 files and 2 MiB total.
+- Validation warns when a pack defines a subject already present under the core seed's `sulla` root. This is
+  allowed for an intentional temporary override, but the pack never gains the core seed's always-on privilege.

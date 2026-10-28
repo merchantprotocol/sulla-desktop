@@ -6,7 +6,7 @@
 import { SkillDefinitionModel } from '../../database/models/SkillDefinitionModel';
 import { skillsRegistry } from '../../database/registry/SkillsRegistry';
 import { BaseTool, ToolResponse } from '../base';
-import { installPackFiles, uninstallPack } from '../../memory/MemoryPackLoader';
+import { installMemoryPackForSkill, uninstallPack } from '../../memory/MemoryPackLoader';
 
 export class SkillDisableWorker extends BaseTool {
   name = '';
@@ -29,8 +29,7 @@ export class SkillDisableWorker extends BaseTool {
     const front = row.frontmatter as Record<string, unknown> | undefined;
     if (front?.memory_pack === true) {
       if (action === 'enable') {
-        const files = (row.files ?? {}) as Record<string,string>;
-        await installPackFiles(slug, Object.entries(files).filter(([name]) => name.startsWith('memory/')).map(([name,value]) => ({ name, content:typeof value === 'string' ? value : Buffer.from(value.content, 'base64').toString('utf8') })));
+        await installMemoryPackForSkill(slug, front, (row.files ?? {}) as Record<string,unknown>);
       } else await uninstallPack(slug);
     }
 

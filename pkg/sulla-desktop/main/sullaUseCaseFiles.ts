@@ -10,7 +10,7 @@ import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
-import { installPackFiles, listPacks, uninstallPack, type MemoryPackFile } from '@pkg/agent/memory/MemoryPackLoader';
+import { installMemoryPackForSkill, listPacks, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
 import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
@@ -229,10 +229,7 @@ export class SullaUseCaseFiles {
     if (kind === 'skill') {
       const raw = text(files['SKILL.md']);
       const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
-      if (parsed?.content.frontmatter?.memory_pack === true) {
-        const memoryFiles:MemoryPackFile[] = Object.entries(files).filter(([name]) => name.startsWith('memory/')).map(([name,value]) => ({ name, content:text(value) }));
-        await installPackFiles(slug, memoryFiles);
-      }
+      await installMemoryPackForSkill(slug, parsed?.content.frontmatter, files);
     }
   }
 
