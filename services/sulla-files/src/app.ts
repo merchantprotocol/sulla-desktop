@@ -62,6 +62,7 @@ import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
+const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
 const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
@@ -179,7 +180,8 @@ export function createApp(
       return response.status(failure.status).json({ code: failure.code, error: failure.message });
     }
   });
-  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest', '/v1/local/system-areas/ingest'].includes(request.path) ? next() : jsonParser(request, response, next));
+  app.use((request, response, next) => ['/v1/files/upload', '/v1/files/import', '/v1/local/native-sources/ingest', '/v1/local/system-areas/ingest'].includes(request.path) ||
+    /^\/v1\/fuse\/files\/[0-9a-f-]+\/content\/stream$/i.test(request.path) ? next() : jsonParser(request, response, next));
   app.use((request:RequestWithIdentity, response, next) => {
     if (request.path === '/healthz') return next();
     if (request.path === '/v1/system/audit-events') {
@@ -878,6 +880,31 @@ export function createApp(
     response.setHeader('X-Sulla-Source-Hash', sourceHash);
     response.type(file.mime).send(bytes);
   } catch (error) { next(error) } });
+  app.put('/v1/fuse/files/:id/content/stream', async(request:RequestWithIdentity, response, next) => {
+    const client=await db.connect(); const uploadId=randomUUID();
+    try {
+      let file=await requireFile(request,request.params.id,'edit');
+      const match=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
+      const sourceHash=request.header('x-sulla-source-hash');
+      const declaredBytes=Number(request.header('content-length'));
+      if(!match||!sourceHash||!/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428,'If-Match version and X-Sulla-Source-Hash are required');
+      if(!Number.isSafeInteger(declaredBytes)||declaredBytes<0) throw new HttpError(400,'valid content-length is required');
+      if(declaredBytes>FUSE_MAX_FILE_BYTES) throw new HttpError(413,'Files mount writes are limited to 64 MiB');
+      const actor=identity(request);
+      await beginUploadIntent(db,uploadId,file.collection_id);
+      await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
+      file=await requireFile(request,file.id,'edit',client);
+      if(match!==file.current_version_id) throw new HttpError(409,'Files mount version changed');
+      const result=await insertStreamingUpload(client,config,store,{uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,
+        expectedBytes:declaredBytes,actor,body:request,intentDb:db,existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'});
+      await client.query('COMMIT');
+      await completeUploadIntent(db,uploadId).catch(()=>undefined);
+      const hash=result.source_hash;
+      await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:'draft'});
+      response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
+      response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
+    } catch(error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+  });
   app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
     let file = await requireFile(request, request.params.id, 'edit');
     const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];

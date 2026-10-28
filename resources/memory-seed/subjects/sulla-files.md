@@ -20,6 +20,7 @@ The Files service exposes the managed surface at `/mnt/sulla-files` through an a
 - `Memory/` and `Projects/` publish immediately only when the target collection does not require approval; an approval-required collection can still produce drafts.
 - Files keeps versions, records audit attribution, enforces locks and retention, and can restore an older version as a new version.
 - `_folder-metadata.yaml` is the File Manager's folder-description file; folder metadata is also served by the Files metadata API.
+- Agents can save files up to 64 MiB through `/mnt/sulla-files`; larger writes fail with `EFBIG` and leave the mount serving other requests.
 
 ## Rules
 - DO: Treat Files as the human's shared desk. Why: every file left there is part of the human's workspace and standards.
@@ -40,3 +41,4 @@ The Files service exposes the managed surface at `/mnt/sulla-files` through an a
 - DON'T: Write Files records directly in Postgres. Why: that bypasses versioning, locks, retention, and audit.
 - LESSON: If a folder has no description, stop and add one through the supported Files path before placing a deliverable there. Why: undocumented folders become dumping grounds.
 - LESSON: If you find duplicate files you created, identify the canonical one and prepare a cleanup; do not silently delete a Files entry without the human's tap.
+- LESSON: If `/mnt/sulla-files` reports `Transport endpoint is not connected`, stop writing through that mount and continue in a newly started agent container. Why: an existing container binds the FUSE root itself, so replacing the daemon's root mount cannot repair that container's detached mount namespace; its workspace remains durable for the replacement container.

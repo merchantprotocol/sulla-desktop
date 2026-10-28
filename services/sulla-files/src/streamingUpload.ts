@@ -36,6 +36,7 @@ interface StreamingUploadInput {
   actor:         FilesIdentity;
   body:          Readable;
   intentDb:      pg.Pool;
+  existingFile?: { id:string; current_version_id:string };
   message?:      string;
 }
 
@@ -90,10 +91,12 @@ export async function insertStreamingUpload(
   const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId);
   const chunkIds:string[] = [];
   const chunks:{ id: string; size: number; storedSize: number }[] = [];
+  const sourceHash = createHash('sha256');
   let totalSize = 0;
 
   for await (const plain of plaintextChunks(input.body, input.expectedBytes)) {
     totalSize += plain.byteLength;
+    sourceHash.update(plain);
     const id = crypto.chunkId(plain, dedupKey);
     chunkIds.push(id);
     const encrypted = await crypto.encryptChunk(plain, dataKey, id);
@@ -116,14 +119,17 @@ export async function insertStreamingUpload(
   const collection = (await client.query('SELECT system_area FROM collections WHERE id=$1', [input.collectionId])).rows[0];
   const createdByType = agentWrite ? 'agent-run' : 'user';
   const createdById = input.actor.jobId ?? input.actor.agentId ?? input.actor.userId;
-  const file = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size)
-    VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [input.collectionId, input.path, createdByType, createdById, input.mime, totalSize])).rows[0];
+  const file = input.existingFile
+    ? (await client.query(`UPDATE files SET mime=$2,size=$3,updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [input.existingFile.id, input.mime, totalSize])).rows[0]
+    : (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size)
+      VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [input.collectionId, input.path, createdByType, createdById, input.mime, totalSize])).rows[0];
   const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id,publication_status)
-    VALUES($1,$2,NULL,$3,$4,$5,$6,$7,$8,NULL,$9) RETURNING *`, [file.id, input.collectionId, manifestHash, totalSize, createdByType, createdById, input.message ?? 'Imported into Files', input.actor.deviceId || 'server-web', isUseCasePath(collection, input.path) ? 'draft' : null])).rows[0];
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,$10) RETURNING *`, [file.id, input.collectionId, input.existingFile?.current_version_id ?? null, manifestHash, totalSize, createdByType, createdById, input.message ?? 'Imported into Files', input.actor.deviceId || 'server-web', isUseCasePath(collection, input.path) ? 'draft' : null])).rows[0];
   await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
   await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
   await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]);
   await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
     VALUES($1,$2,$3,$4,$5,$6,$7)`, [agentWrite ? 'agent-or-device' : 'user', createdById, input.actor.deviceId || null, file.id, version.id, version.publication_status === 'draft' ? 'draft-write' : 'upload', {path:input.path}]);
-  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime };
+  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime, source_hash: sourceHash.digest('hex') };
 }

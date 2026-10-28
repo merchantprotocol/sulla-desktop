@@ -41,6 +41,8 @@ MAX_TOKEN_BYTES = 4096
 # retrying a transient 409 from Files' own SERIALIZABLE-conflict retry loop is safe.
 IDEMPOTENT_RETRY_METHODS = ("DELETE", "PUT")
 MAX_CONFLICT_RETRIES = 3
+STREAMING_WRITE_THRESHOLD = 1024 * 1024
+STREAM_CHUNK_BYTES = 1024 * 1024
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
 METADATA_NAME = "_folder-metadata.yaml"
@@ -84,6 +86,25 @@ def _rss_kb():
             return next((int(line.split()[1]) for line in status if line.startswith("VmRSS:")), None)
     except OSError:
         return None
+
+
+class FileBody:
+    """Repeatable bounded request body backed by the spool file, not Python heap."""
+    def __init__(self, descriptor, size):
+        self.descriptor = descriptor
+        self.size = size
+
+    def __len__(self):
+        return self.size
+
+    def __iter__(self):
+        offset = 0
+        while offset < self.size:
+            chunk = os.pread(self.descriptor, min(STREAM_CHUNK_BYTES, self.size - offset), offset)
+            if not chunk:
+                raise OSError(errno.EIO, "Files spool ended before its declared size")
+            offset += len(chunk)
+            yield chunk
 
 
 def traced(operation, describe=None, mutating=False):
@@ -211,7 +232,7 @@ class FilesApi:
             level = logging.WARNING if outcome["error"] else logging.INFO if slow else logging.DEBUG
             if log.isEnabledFor(level):
                 emit("files-request", level, method=method, path=path.split("?", 1)[0], status=outcome["status"],
-                     ms=round(elapsed * 1000, 1), sent=len(body or b""), received=outcome["bytes"], actor=request_actor.get(),
+                     ms=round(elapsed * 1000, 1), sent=len(body) if body is not None else 0, received=outcome["bytes"], actor=request_actor.get(),
                      slow=slow or None, error=outcome["error"], code=outcome.get("code"))
 
     def _send(self, path, method, body, headers):
@@ -220,7 +241,7 @@ class FilesApi:
             headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with urllib.request.urlopen(request, timeout=120 if method == "PUT" else 15) as response:
                 length = response.headers.get("Content-Length")
                 if length and int(length) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
@@ -236,7 +257,7 @@ class FilesApi:
                 detail = json.loads(payload or b"{}")
             except json.JSONDecodeError:
                 detail = {}
-            failure = OSError(errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or error.code == 423 else errno.EPERM if error.code == 409 else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
+            failure = OSError(errno.EFBIG if error.code == 413 else errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or error.code == 423 else errno.EPERM if error.code == 409 else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
             failure.status = error.code
             failure.detail = detail
             raise failure from error
@@ -253,11 +274,18 @@ class FilesApi:
         _, headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content")
         return body, headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
 
-    async def write(self, file_id, data, version_id, source_hash):
-        if len(data) > MAX_FILE_BYTES:
+    async def write(self, file_id, file, size, version_id, source_hash):
+        if size > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
         headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash}
-        _, response_headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content", "PUT", data, headers)
+        if size > STREAMING_WRITE_THRESHOLD:
+            body = FileBody(file.fileno(), size)
+            headers["Content-Length"] = str(size)
+            path = f"/v1/fuse/files/{file_id}/content/stream"
+        else:
+            body = os.pread(file.fileno(), size, 0)
+            path = f"/v1/fuse/files/{file_id}/content"
+        _, response_headers, body = await trio.to_thread.run_sync(self._request, path, "PUT", body, headers)
         return json.loads(body), response_headers.get("X-Sulla-Merged") == "1"
 
     async def replace(self, target_id, source_id):
@@ -548,7 +576,7 @@ class SullaFiles(pyfuse3.Operations):
         temporary.flush()
         self.handles[handle] = {
             "inode": inode, "fileId": node.get("id"), "file": temporary, "size": len(data),
-            "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failed": False,
+            "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failedErrno": None,
             "append": bool(flags & os.O_APPEND),
             "metadata": current if node.get("virtualMetadata") else None,
             "actor": await self._actor(ctx),
@@ -643,6 +671,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EIO)
         handle["size"] = max(handle["size"], end)
         handle["dirty"] = True
+        handle["failedErrno"] = None
         return len(buf)
 
     @traced("setattr", lambda s, a: s._inode_info(a[0], a[-1]), mutating=True)
@@ -657,6 +686,7 @@ class SullaFiles(pyfuse3.Operations):
             os.ftruncate(handle["file"].fileno(), size)
             handle["size"] = size
             handle["dirty"] = True
+            handle["failedErrno"] = None
             self.nodes[inode]["size"] = size
         unsupported = fields.update_mode or fields.update_uid or fields.update_gid or fields.update_atime or fields.update_mtime
         if unsupported:
@@ -666,39 +696,37 @@ class SullaFiles(pyfuse3.Operations):
     async def _commit(self, fh):
         handle = self.handles[fh]
         if not handle["dirty"]:
-            if handle["failed"]:
-                raise pyfuse3.FUSEError(errno.EIO)
+            if handle["failedErrno"]:
+                raise pyfuse3.FUSEError(handle["failedErrno"])
             return
         try:
             handle["file"].flush()
-            handle["file"].seek(0)
-            data = handle["file"].read(MAX_FILE_BYTES + 1)
-            if len(data) > MAX_FILE_BYTES:
+            if handle["size"] > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
             node = self.nodes[handle["inode"]]
             if node.get("virtualMetadata"):
+                data = os.pread(handle["file"].fileno(), handle["size"], 0)
                 await self._as_actor(handle.get("actor"), self._commit_metadata(handle, node, data))
                 result, merged = {}, False
             else:
-                result, merged = await self._as_actor(handle.get("actor"), self.api.write(handle["fileId"], data, handle["versionId"], handle["sourceHash"]))
+                result, merged = await self._as_actor(handle.get("actor"), self.api.write(handle["fileId"], handle["file"], handle["size"], handle["versionId"], handle["sourceHash"]))
                 if merged:
                     merged_data, merged_version, merged_hash = await self.api.read(handle["fileId"])
                     os.ftruncate(handle["file"].fileno(), 0)
                     os.pwrite(handle["file"].fileno(), merged_data, 0)
                     handle.update({"size": len(merged_data), "versionId": merged_version, "sourceHash": merged_hash})
         except OSError as error:
-            if getattr(error, "status", None) == 409:
-                handle["failed"] = True
-                log.error("Write conflict for file %s; local edit remains buffered and was not dropped: %s", handle.get("fileId"), error)
-            elif self.nodes[handle["inode"]].get("virtualMetadata"):
-                log.error("Metadata update rejected: %s", error)
             fuse_errno = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
+            handle["dirty"] = False
+            handle["failedErrno"] = fuse_errno
+            emit("file-commit-rejected", logging.ERROR, path=self.nodes[handle["inode"]].get("path"), fileId=handle.get("fileId"),
+                 bytes=handle["size"], errno=_errno_name(fuse_errno), status=getattr(error, "status", None), error=str(error))
             raise pyfuse3.FUSEError(fuse_errno) from error
         if result:
             handle["versionId"] = result["versionId"]
             handle["sourceHash"] = result["sourceHash"]
         handle["dirty"] = False
-        handle["failed"] = False
+        handle["failedErrno"] = None
         node = self.nodes[handle["inode"]]
         # The result's `path` is collection-relative; the node keys on its full mount path.
         node.update({key: value for key, value in result.items() if key != "path"})
