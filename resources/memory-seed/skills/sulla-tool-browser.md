@@ -9,6 +9,8 @@ scope: [tool-browser]
 
 **When:** When you need to open a website, click through a page, fill a form, read what a page says or take a screenshot.
 
+For a repeatable QA pass, use `sulla-test-a-web-app`. For post-deploy checks and rollback evidence, use `sulla-deploy-a-site`.
+
 **Do:**
 1. Open a Sulla tab: `sulla browser/tab '{"action":"upsert","url":"https://example.com"}'`; use returned handles and snapshot.
 2. Read current state: `sulla browser/snapshot '{}'`; click a handle with `sulla browser/click '{"handle":"@link-home"}'`.

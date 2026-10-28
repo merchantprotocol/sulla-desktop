@@ -9,11 +9,13 @@ scope: [tool-vault]
 
 **When:** When you need to inspect vault metadata and autofill credentials without exposing secret values.
 
+For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use `sulla-deploy-a-site`; it checks connection state before calling the provider proxy.
+
 **Do:**
 1. List safe credential metadata: `sulla vault/list '{}'` or API-key metadata with `sulla vault/list_api_keys '{}'`.
 2. Check an integration: `sulla vault/is_enabled '{"account_type":"<account-type>"}'`; list accounts with `sulla vault/list_accounts '{"account_type":"<account-type>"}'`.
 3. Autofill an approved browser login: `sulla vault/autofill '{"origin":"https://example.com"}'`.
-4. Call an integration's API through the vault, which injects its auth: `sulla vault/request '{"account_type":"<account-type>","method":"GET","path":"/"}'`. Only call integrations the human has enabled.
+4. For a native integration, list its accounts, discover its installed proxy tools, then call `sulla <account-id>/<slug> '{"method":"GET","path":"<verified-path>"}'`. For an owner-configured generic API item, resolve its id with `sulla vault/list_api_keys '{}'`, then call `sulla vault/request '{"item":"<item-id>","method":"GET","url":"https://<allowed-host>/<verified-path>"}'`. Only call enabled integrations and allowed hosts.
 5. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
 
 **Tools:**
