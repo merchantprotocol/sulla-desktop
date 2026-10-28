@@ -120,9 +120,11 @@ export class TextToSpeechService {
           ? await issueServiceProviderExecutionContext('text-to-speech', 'elevenlabs', runtime!.accountId, controller.signal)
           : undefined;
         const response = await providerFetch('elevenlabs', `${ this.baseUrl }/text-to-speech/${ resolvedVoiceId }/stream`, init, executionContext, {
-          streaming:    true,
+          // TTS is consumed as one buffer by Electron IPC. Settle it atomically
+          // through the broker instead of keeping a second HTTP stream alive.
+          streaming:    false,
           operation:    'provider.audio',
-          responseType: 'binary-stream',
+          responseType: 'base64',
           injections:   [{ field: 'api_key', target: 'header', name: 'xi-api-key', scheme: 'raw' }],
         });
 
@@ -258,9 +260,9 @@ export class TextToSpeechService {
           ? await issueServiceProviderExecutionContext('text-to-speech', 'grok', runtime!.accountId, controller.signal)
           : undefined;
         const response = await providerFetch('grok', GROK_TTS_URL, init, executionContext, {
-          streaming:    true,
+          streaming:    false,
           operation:    'provider.audio',
-          responseType: 'binary-stream',
+          responseType: 'base64',
           injections:   [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
         });
 

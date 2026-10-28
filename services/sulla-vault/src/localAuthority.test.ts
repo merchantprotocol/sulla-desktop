@@ -371,6 +371,7 @@ test('audio policy binds each provider credential to its own host, path, and inj
     responseType: 'binary-stream',
   };
   assert.doesNotThrow(() => validateOperation(base, 'api.elevenlabs.io', DEFAULT_AGENT_POLICY));
+  assert.doesNotThrow(() => validateOperation({ ...base, responseType: 'base64' }, 'api.elevenlabs.io', DEFAULT_AGENT_POLICY));
   assert.throws(() => validateOperation({
     ...base,
     url: 'https://api.x.ai/v1/tts',
