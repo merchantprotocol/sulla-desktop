@@ -357,7 +357,10 @@ export async function recallV7SubjectMemory(
     );
   if (sullaSeed.length)
     docs.push(`## sulla.md — how Sulla works\n${ section('Shipped rules and facts', sullaSeed) }`);
-  const primaryUserName = String(await SullaSettingsModel.get('primaryUserName', '') || '').trim() || 'your human';
+  let primaryUserName = 'your human';
+  try {
+    primaryUserName = String(await SullaSettingsModel.get('primaryUserName', '') || '').trim() || primaryUserName;
+  } catch { /* Settings may not be bootstrapped in an isolated evaluator. */ }
   docs.push(
     `## human.md — how ${ primaryUserName } wants Sulla to work everywhere\n${section(
       'Always',
