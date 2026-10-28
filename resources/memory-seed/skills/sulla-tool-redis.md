@@ -26,9 +26,9 @@ scope: [tool-redis]
 - `sulla redis/ttl '{"key":"<key>"}'`: Get the time to live (TTL) of a Redis key. Required: key. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla redis/get {"key":"<key>"}` and `sulla redis/ttl {"key":"<key>"}` to inspect a key first.
-2. `sulla redis/hgetall {"key":"<hash>"}` to inspect a hash.
-3. Set with `sulla redis/set {"key":"<key>","value":"<value>"}` and expire it with `sulla redis/expire {"key":"<key>","seconds":3600}`.
+1. `sulla redis/get '{"key":"<key>"}'` and `sulla redis/ttl '{"key":"<key>"}'` to inspect a key first.
+2. `sulla redis/hgetall '{"key":"<hash>"}'` to inspect a hash.
+3. Set with `sulla redis/set '{"key":"<key>","value":"<value>"}'` and expire it with `sulla redis/expire '{"key":"<key>","seconds":3600}'`.
 4. Verify the value and TTL after a write.
 
 **Don't:**

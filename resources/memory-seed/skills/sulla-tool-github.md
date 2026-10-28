@@ -72,12 +72,12 @@ scope: [tool-github]
 - `sulla github/heartbeat_new_issues '{"issues":[]}'`: Heartbeat issue-discovery (#500) "touched-before" filter: given the open-issue union from scan_active_issues, returns only issues Heartbeat has NOT handled before — anti-joined against the heartbeat_seen_issues seen-set and excluding issues already assigned to Heartbeat or bearing the claim label. Deterministic, zero-LLM, read-only. Call before triaging so the same issue is never picked up twice. Required: issues. Optional: heartbeat_login, claim_label.
 <!-- tools:generated:end -->
 **Do:**
-1. Create a branch with `sulla github/git_branch {"absolutePath":"<repo>","action":"create","branchName":"<branch>"}`.
-2. Stage and commit with `sulla github/git_commit {"absolutePath":"<repo>","message":"<message>"}`.
-3. Push with `sulla github/git_push {"absolutePath":"<repo>","branch":"<branch>"}`.
-4. Open a PR with `sulla github/create_pr {"owner":"<owner>","repo":"<repo>","title":"<title>","head":"<branch>"}`.
-5. Check CI with `sulla github/check_runs {"owner":"<owner>","repo":"<repo>","ref":"<head SHA>"}` and merge only after verifying the expected head SHA with `sulla github/get_pr {"owner":"<owner>","repo":"<repo>","pull_number":1}`.
-6. Review files with `sulla github/get_pr_files {"owner":"<owner>","repo":"<repo>","pull_number":1}`; clean a worktree with `sulla github/git_worktree {"absolutePath":"<repo>","action":"remove","worktreePath":"<worktree>"}` then `..."action":"prune"`.
+1. Create a branch with `sulla github/git_branch '{"absolutePath":"<repo>","action":"create","branchName":"<branch>"}'`.
+2. Stage and commit with `sulla github/git_commit '{"absolutePath":"<repo>","message":"<message>"}'`.
+3. Push with `sulla github/git_push '{"absolutePath":"<repo>","branch":"<branch>"}'`.
+4. Open a PR with `sulla github/create_pr '{"owner":"<owner>","repo":"<repo>","title":"<title>","head":"<branch>"}'`.
+5. Check CI with `sulla github/check_runs '{"owner":"<owner>","repo":"<repo>","ref":"<head SHA>"}'` and merge only after verifying the expected head SHA with `sulla github/get_pr '{"owner":"<owner>","repo":"<repo>","pull_number":1}'`.
+6. Review files with `sulla github/get_pr_files '{"owner":"<owner>","repo":"<repo>","pull_number":1}'`; clean a worktree with `sulla github/git_worktree '{"absolutePath":"<repo>","action":"remove","worktreePath":"<worktree>"}'` then `..."action":"prune"`.
 
 **Don't:**
 - Don't merge, close, delete refs, or publish releases without the required confirmation flag.

@@ -25,11 +25,11 @@ scope: [tool-agents]
 - `sulla agents/stop_agent_job '{"jobId":"<jobId>"}'`: Kill switch for a running delegated job, hidden or tab. Hidden: fires the job's abort signal, which cascades to every sub-agent it spawned, unwinding them cooperatively (an in-flight LLM/tool call finishes first). Tab: stops the tab's live turn and closes its contract. Use when a job was misfired, duplicated, stalled, or is no longer needed; check_agent_jobs afterwards confirms it settled as 'stopped'. Required: jobId. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla agents/directory {"query":"<work description>"}` to choose a specialist.
-2. `sulla meta/spawn_agent {"tasks":[{"prompt":"<self-contained task>","label":"<label>","returnContract":{"name":"result"}}],"async":true}` to delegate.
-3. `sulla agents/check_agent_jobs {"jobId":"<jobId>"}` to inspect progress and blockers.
-4. `sulla agents/send_job_message {"jobId":"<jobId>","message":"<new direction>"}` to steer a running task.
-5. `sulla agents/return_result {"status":"completed","summary":"<summary>","output":"<deliverable>"}` to close a delegated task.
+1. `sulla agents/directory '{"query":"<work description>"}'` to choose a specialist.
+2. `sulla meta/spawn_agent '{"tasks":[{"prompt":"<self-contained task>","label":"<label>","returnContract":{"name":"result"}}],"async":true}'` to delegate.
+3. `sulla agents/check_agent_jobs '{"jobId":"<jobId>"}'` to inspect progress and blockers.
+4. `sulla agents/send_job_message '{"jobId":"<jobId>","message":"<new direction>"}'` to steer a running task.
+5. `sulla agents/return_result '{"status":"completed","summary":"<summary>","output":"<deliverable>"}'` to close a delegated task.
 
 **Don't:**
 - Don't delegate without a concrete prompt, acceptance checks, and return contract.

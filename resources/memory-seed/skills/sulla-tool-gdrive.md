@@ -18,10 +18,10 @@ scope: [tool-gdrive]
 - `sulla gdrive/search '{}'`: Search Google Drive by file name and full text. Optionally limit to one folder or MIME type, or pass raw Drive query syntax in q. Required: none. Optional: query, q, folder, mimeType, limit, pageToken.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla gdrive/search {"query":"<keywords>"}` to find matching files.
-2. `sulla gdrive/read {"file":"<file id or URL>"}` to read a document, sheet, or slide as text.
-3. `sulla gdrive/download {"file":"<file id or URL>","format":"pdf"}` when a local copy is needed.
-4. `sulla gdrive/list_folder {"folder":"<folder id or URL>","recursive":true}` to inventory a folder.
+1. `sulla gdrive/search '{"query":"<keywords>"}'` to find matching files.
+2. `sulla gdrive/read '{"file":"<file id or URL>"}'` to read a document, sheet, or slide as text.
+3. `sulla gdrive/download '{"file":"<file id or URL>","format":"pdf"}'` when a local copy is needed.
+4. `sulla gdrive/list_folder '{"folder":"<folder id or URL>","recursive":true}'` to inventory a folder.
 
 **Don't:**
 - Don't assume a Drive URL is public; the configured vault account supplies access.

@@ -20,10 +20,10 @@ scope: [tool-pg]
 - `sulla pg/transaction '{"sql":"<sql>"}'`: Execute multiple PostgreSQL statements in a transaction. Required: sql. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
-1. Read with `sulla pg/queryall {"sql":"SELECT ..."}` or `sulla pg/queryone {"sql":"SELECT ..."}`.
-2. Use `sulla pg/count {"sql":"SELECT count(*) FROM ..."}` for a count.
+1. Read with `sulla pg/queryall '{"sql":"SELECT ..."}'` or `sulla pg/queryone '{"sql":"SELECT ..."}'`.
+2. Use `sulla pg/count '{"sql":"SELECT count(*) FROM ..."}'` for a count.
 3. Before a write, identify the exact rows with a read-only query and make a restore plan.
-4. Execute an authorized write with `sulla pg/execute {"sql":"UPDATE ..."}` or group related statements in `sulla pg/transaction {"sql":"BEGIN; ...; COMMIT;"}`.
+4. Execute an authorized write with `sulla pg/execute '{"sql":"UPDATE ..."}'` or group related statements in `sulla pg/transaction '{"sql":"BEGIN; ...; COMMIT;"}'`.
 5. Re-read the affected rows and verify the result.
 
 **Don't:**

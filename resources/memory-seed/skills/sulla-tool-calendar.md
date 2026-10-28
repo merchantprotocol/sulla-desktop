@@ -21,10 +21,10 @@ scope: [tool-calendar]
 - `sulla calendar/update '{"eventId":1}'`: Update an existing calendar event. Required: eventId. Optional: title, start, end, description, location, people, calendarId, allDay.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla calendar/list_upcoming {"days":7}` to see the near-term schedule.
-2. `sulla calendar/get {"eventId":"<eventId>"}` to inspect one event.
-3. `sulla calendar/create {"title":"<title>","start":"2026-11-01T09:00:00Z","end":"2026-11-01T10:00:00Z"}` to add an event.
-4. `sulla calendar/update {"eventId":"<eventId>","title":"<new title>"}` to change it.
+1. `sulla calendar/list_upcoming '{"days":7}'` to see the near-term schedule.
+2. `sulla calendar/get '{"eventId":"<eventId>"}'` to inspect one event.
+3. `sulla calendar/create '{"title":"<title>","start":"<ISO start, e.g. 2030-01-15T09:00:00Z>","end":"<ISO end>"}'` to add an event.
+4. `sulla calendar/update '{"eventId":"<eventId>","title":"<new title>"}'` to change it.
 
 **Don't:**
 - Don't invent event IDs; list or get the event first.

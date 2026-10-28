@@ -16,8 +16,8 @@ scope: [tool-notify]
 - `sulla notify/user '{"title":"<title>","message":"<message>"}'`: Send a notification to the user. Default target is "desktop" (native macOS / Notification Center). Pass targets:["mobile"] to push to the paired phone via the Sulla Cloud relay, or targets:["desktop","mobile"] to fan out. Every call is logged to `notifications` — query via notify/history. Required: title, message. Optional: targets, id, silent.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla notify/history {"only_failures":true}` to inspect delivery failures.
-2. `sulla notify/user {"title":"<title>","message":"<message>","targets":["desktop"]}` to notify the desktop.
+1. `sulla notify/history '{"only_failures":true}'` to inspect delivery failures.
+2. `sulla notify/user '{"title":"<title>","message":"<message>","targets":["desktop"]}'` to notify the desktop.
 3. Add `"mobile"` to `targets` only when the user needs the paired phone.
 
 **Don't:**

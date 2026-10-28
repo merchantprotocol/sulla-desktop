@@ -46,8 +46,8 @@ This is the subject's front page.
 
 - `## Facts` and `## Rules` are optional. Leave out a section rather than pad it.
 - A bullet is one item. Keep each one under about 300 characters. The `Why:` part is optional.
-- Write for an agent on a brand-new install, run by a stranger. Don't name Jonathon,
-  his projects, his machine paths (`/Users/jonathonbyrdziak`), PR numbers or dates.
+- Write for an agent on a brand-new install, run by a stranger. Don't name real people,
+  their projects, personal machine paths (`/Users/<name>`), PR numbers or dates.
   Use `~` or `{{sulla_home}}` style placeholders the way the source does.
 
 ### Subject tree

@@ -28,11 +28,11 @@ scope: [tool-meta]
 - `sulla meta/validate_sulla_workflow '{}'`: Validate a Sulla workflow YAML file for structural correctness before it goes live. Checks top-level schema, node types, subtype/category mapping, required config fields, edge format, trigger presence, and reachability. Use this EVERY time you create or edit a Sulla workflow YAML. Required: none. Optional: filePath, yaml.
 <!-- tools:generated:end -->
 **Do:**
-1. Discover an unfamiliar command with `sulla meta/browse_tools {"query":"<need>"}`.
+1. Discover an unfamiliar command with `sulla meta/browse_tools '{"query":"<need>"}'`.
 2. Run the exact returned CLI string through `exec`.
-3. Use `sulla meta/exec {"command":"<shell command>"}` for VM shell work and `sulla meta/ask_user_question {"questions":[]}` when a user decision is required.
-4. Use `sulla meta/dry_run_workflow {"slug":"<known slug>"}` before a live run; use `sulla meta/execute_workflow {"workflowId":"<exact listed slug>"}` only for a named workflow.
-5. Use `sulla meta/pause_workflow {"executionId":"<id>"}` and `sulla meta/resume_workflow {"executionId":"<id>"}` to control an existing run.
+3. Use `sulla meta/exec '{"command":"<shell command>"}'` for VM shell work and `sulla meta/ask_user_question '{"questions":[]}'` when a user decision is required.
+4. Use `sulla meta/dry_run_workflow '{"slug":"<known slug>"}'` before a live run; use `sulla meta/execute_workflow '{"workflowId":"<exact listed slug>"}'` only for a named workflow.
+5. Use `sulla meta/pause_workflow '{"executionId":"<id>"}'` and `sulla meta/resume_workflow '{"executionId":"<id>"}'` to control an existing run.
 
 **Don't:**
 - Don't call `execute_workflow` for a catalog CLI tool; it accepts named workflow slugs only.

@@ -21,10 +21,10 @@ scope: [tool-slack]
 - `sulla slack/user '{"userId":"<userId>"}'`: Get information about a Slack user. Required: userId. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
-1. `sulla slack/connection_health {}` to confirm the integration.
-2. `sulla slack/search_users {"query":"<name or email>"}` to resolve a user.
-3. `sulla slack/thread {"channel":"<channel>","ts":"<timestamp>"}` to read replies.
-4. Send only an authorized message with `sulla slack/send_message {"channel":"<channel>","text":"<text>"}`.
+1. `sulla slack/connection_health '{}'` to confirm the integration.
+2. `sulla slack/search_users '{"query":"<name or email>"}'` to resolve a user.
+3. `sulla slack/thread '{"channel":"<channel>","ts":"<timestamp>"}'` to read replies.
+4. Send only an authorized message with `sulla slack/send_message '{"channel":"<channel>","text":"<text>"}'`.
 5. Re-read or update an existing message with its exact channel and timestamp.
 
 **Don't:**
