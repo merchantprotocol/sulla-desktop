@@ -35,6 +35,7 @@ import { getStartupProgressHub as getStartupProgressHubInstance } from '@pkg/mai
 import * as threatProxy from '@pkg/main/threat-proxy';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
+import { registerRuntimeCapabilitiesIpc } from '@pkg/main/runtimeCapabilitiesIpc';
 import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
@@ -777,6 +778,7 @@ async function initUI() {
     registerTeleprompterTrackingIpc();
     registerTabContextMenuIpc();
     registerMoreMenuIpc();
+    registerRuntimeCapabilitiesIpc();
     console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
