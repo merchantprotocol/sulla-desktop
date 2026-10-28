@@ -11,6 +11,7 @@
 
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
 import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
+import { initialize as memorySeedSeeder, MEMORY_SEED_VERSION } from './MemorySeedSeeder';
 import { initialize as reflexSeedSeeder, initializeRouteSeed as reflexRouteSeedSeeder } from './ReflexSeedSeeder';
 
 // n8n user and settings seeders have been replaced by the recipe's
@@ -21,6 +22,7 @@ import { initialize as reflexSeedSeeder, initializeRouteSeed as reflexRouteSeedS
 // import { initialize as someOtherSeeder } from './some-other-seeder';
 
 export const seedersRegistry = [
+  { name: `memory-seed-v${ MEMORY_SEED_VERSION }`, run: memorySeedSeeder },
   {
     name: 'firstrun-remote-credentials-seeder',
     run:  firstRunRemoteCredentialsSeeder,

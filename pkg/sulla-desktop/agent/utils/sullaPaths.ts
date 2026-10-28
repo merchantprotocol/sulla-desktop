@@ -28,6 +28,7 @@ const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
 const SULLA_FUNCTIONS_DIR_ENV = 'SULLA_FUNCTIONS_DIR';
 const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
 const SULLA_DOCS_DIR_ENV = 'SULLA_DOCS_DIR';
+const SULLA_MEMORY_SEED_DIR_ENV = 'SULLA_MEMORY_SEED_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
 export function resolveSullaHomeDir(): string {
@@ -92,6 +93,27 @@ export function resolveSullaDocsDir(): string {
     `process.resourcesPath (${ resourcesPath ?? 'unset' }), and dev walk-up from ${ MODULE_DIR }. ` +
     'Ensure resources/sulla-docs/ exists in the dev checkout or that electron-builder packaged it.',
   );
+}
+
+/** Resolve the shipped memory seed pack in packaged and development runs. */
+export function resolveMemorySeedDir(): string {
+  const envPath = String(process.env[SULLA_MEMORY_SEED_DIR_ENV] || '').trim();
+  if (envPath) return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
+    const bundled = path.join(resourcesPath, 'resources', 'memory-seed');
+    if (fs.existsSync(bundled)) return bundled;
+  }
+  let cursor = MODULE_DIR;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(cursor, 'resources', 'memory-seed');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  throw new Error(`resolveMemorySeedDir: memory-seed not found (resourcesPath=${ resourcesPath ?? 'unset' }, moduleDir=${ MODULE_DIR })`);
 }
 
 export function resolveSullaProjectsDir(): string {
