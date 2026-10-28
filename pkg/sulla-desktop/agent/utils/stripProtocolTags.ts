@@ -21,7 +21,8 @@ const AGENT_CONTINUE_RE = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/gi;
 
 // Deliberately silent voice turn. The body is a private, short-lived note kept
 // in graph history so the model can recognise the same overheard conversation
-// on later turns. It must never reach UI, TTS, relay, logs, or observations.
+// on later turns. It must never reach the UI, TTS or relay; the agent saves
+// the gist to memory itself.
 const OVERHEARD_RE = /<overheard>([\s\S]*?)<\/overheard>/gi;
 
 // Voice TTS tags (extracted earlier by BaseNode; strip if they leak through)
