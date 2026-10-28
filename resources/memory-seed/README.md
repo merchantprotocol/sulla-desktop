@@ -109,8 +109,12 @@ scope: [tool-browser]             # subject slugs this skill belongs to
 ## How the seeder loads it
 
 - Subjects: inserted if the slug is new. Existing subjects keep their name and parent; aliases are merged.
+- Recall shows seeded rules and facts under their subject, or under a `sulla.md` section. It never
+  shows them as things the human said.
 - Overview: stored with a timestamp older than any real activity (`version` ms since epoch 0),
   so an overview the install wrote itself always wins.
+- Rules in `subjects/sulla.md` (the `major` subject) are the core harness rules. They are seeded
+  `always_on`, so every conversation gets them once. Keep them to the 10-15 rules every agent needs.
 - Facts and rules: items with `origin = 'seeded'`, id `seed:<subject>:<hash of text>`, scoped to the subject.
   When a new seed version drops or changes a bullet, the old item is retired through supersession.
 - Skills: `version_ts` = seed version. A newer seed version replaces the older one.
