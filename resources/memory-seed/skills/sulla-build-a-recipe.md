@@ -10,7 +10,30 @@ scope: [sulla-plugins, sulla-extensions]
 **Do:**
 1. Copy `examples/extensions/hello-recipe` or scaffold: `sulla marketplace/scaffold '{"kind":"recipe","slug":"my-service","name":"My service","description":"Runs a local service"}'`.
 2. Keep `manifest.yaml`, `installation.yaml`, `docker-compose.yml`, and an icon together. Use fixed image versions, a unique documented host port, a restart policy, and `{{path.data}}` or a named volume for persistent state.
-3. Use this complete minimum:
+3. Use this complete minimum. `manifest.yaml` is the local marketplace manifest:
+
+```yaml
+# manifest.yaml
+sullaApi: ^1.0.0
+hooks: []
+slug: my-service
+name: My service
+description: Runs a small local web service.
+version: "1.0.0"
+publisher: Example publisher
+categories: [development]
+icon: icon.png
+compose: {composeFile: docker-compose.yml}
+setup: []
+commands:
+  start: docker compose -f ${COMPOSE_FILE} up -d
+  stop: docker compose -f ${COMPOSE_FILE} down
+  status: docker compose -f ${COMPOSE_FILE} ps
+extra_urls:
+  - {label: Dashboard, url: "http://localhost:30300"}
+```
+
+`installation.yaml` is the extension-service installation recipe:
 
 ```yaml
 # installation.yaml
