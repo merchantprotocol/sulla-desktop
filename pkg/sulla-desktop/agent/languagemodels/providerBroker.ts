@@ -116,10 +116,10 @@ export async function providerFetch(
   if (options.streaming) return broker.executeStream(request, init.signal ?? undefined);
 
   const result = await broker.execute(request, init.signal ?? undefined);
-  const body = options.responseType === 'base64' && typeof result.body === 'string'
+  const responseBody = options.responseType === 'base64' && typeof result.body === 'string'
     ? Buffer.from(result.body, 'base64')
     : result.body == null ? null : JSON.stringify(result.body);
-  return new Response(body, {
+  return new Response(responseBody, {
     status:  result.status,
     headers: result.headers,
   });
