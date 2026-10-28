@@ -1004,5 +1004,6 @@ export interface ILLMService {
 
 /** Sulla must not curate history for providers whose external CLI owns the loop. */
 export function isCliManagedLoop(provider: BaseLanguageModel | null | undefined): boolean {
-  return provider?.managesOwnLoop() === true;
+  // Providers that predate managesOwnLoop (and test doubles) are not CLI-managed.
+  return typeof provider?.managesOwnLoop === 'function' && provider.managesOwnLoop() === true;
 }
