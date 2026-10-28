@@ -365,6 +365,10 @@ function getInspectMenu(): MenuItem {
         label: 'Docker',
         click: () => openDocker(),
       },
+      {
+        label: 'Process Manager…',
+        click: openProcessManager,
+      },
     ],
   });
 }
@@ -636,10 +640,6 @@ function getMacApplicationMenu(): MenuItem[] {
           async click() {
             await updateManager.checkForUpdates('manual');
           },
-        },
-        {
-          label: 'Process Manager…',
-          click: openProcessManager,
         },
         { type: 'separator' },
         {
