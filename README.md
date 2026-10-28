@@ -102,6 +102,10 @@ Anything you ask Sulla to do twice is a candidate for an automation, and Sulla w
 - **Your data stays home.** Memory, workflows, files and credentials live on your machine. The text of each request goes to the AI provider you connect so it can be processed.
 - **Locks with you.** Log out and the assistant, vault and stored credentials stay locked until you sign back in.
 
+## Extending Sulla
+
+Build skills, functions, workflows, recipes, integrations, and local agents without changing core. Follow the [Build your first Sulla add-on](resources/sulla-docs/marketplace/build-first-addon.md) guide, then use the hello-world bundles in [`examples/extensions/`](examples/extensions/). Add-ons are validated locally and reviewed before they appear in the marketplace.
+
 ## Get started
 
 1. **Install Sulla.** Use the one-line installer above or download from [Releases](https://github.com/merchantprotocol/sulla-desktop/releases/latest). The installer handles macOS Gatekeeper for you.

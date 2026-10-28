@@ -24,6 +24,9 @@ export class MarketplaceScaffoldWorker extends BaseTool {
     const name = typeof input.name === 'string' ? input.name.trim() : slug;
     const description = typeof input.description === 'string' ? input.description.trim() : '';
     const runtime = typeof input.runtime === 'string' ? input.runtime.trim().toLowerCase() : 'python'; // function-only
+    if (kind === 'function' && !['python', 'node', 'shell'].includes(runtime)) {
+      return { successBoolean: false, responseString: `Invalid function runtime "${ runtime }". Choose python or node (shell is also supported).` };
+    }
 
     if (!isArtifactKind(kind)) {
       return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
@@ -188,10 +191,32 @@ version: "1.0.0"
 publisher: ""
 categories: []
 icon: icon.png
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f \${COMPOSE_FILE} up -d
+  stop: docker compose -f \${COMPOSE_FILE} down
+  status: docker compose -f \${COMPOSE_FILE} ps
 extra_urls: []
 `,
-      'docker-compose.yml': `version: "3.9"\nservices:\n  ${ ctx.slug }:\n    image: ghcr.io/your-org/${ ctx.slug }:latest\n    ports:\n      - "PORT:PORT"\n    restart: unless-stopped\n`,
-      'installation.yaml':  `pre_install: []\npost_install: []\n`,
+      'docker-compose.yml': `services:
+  ${ ctx.slug }:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+`,
+      'installation.yaml':  `slug: ${ ctx.slug }
+name: ${ ctx.name }
+description: ${ ctx.description || 'TODO: describe what this recipe does.' }
+version: "1.0.0"
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f \${COMPOSE_FILE} up -d
+  stop: docker compose -f \${COMPOSE_FILE} down
+  status: docker compose -f \${COMPOSE_FILE} ps
+`,
     };
 
   case 'integration': {

@@ -1,0 +1,15 @@
+slug: hello-recipe
+name: Hello recipe
+description: A tiny long-running container for testing recipe installation.
+version: "1.0.0"
+publisher: Example Builder
+categories: [development]
+icon: icon.svg
+compose:
+  composeFile: docker-compose.yml
+setup: []
+commands:
+  start: docker compose -f ${COMPOSE_FILE} up -d
+  stop: docker compose -f ${COMPOSE_FILE} down
+  status: docker compose -f ${COMPOSE_FILE} ps
+extra_urls: []
