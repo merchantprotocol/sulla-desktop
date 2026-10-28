@@ -16,6 +16,7 @@ scope: [tool-ledger]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla ledger/scoreboard '{}'`: Deterministic outcome-ledger scoreboard (zero LLM): outcomes shipped in the window, WORKING items and how many are staged at a gate, unilateral actions logged in AUDIT.md, and a staleness flag against the 7-day rule. The heartbeat reads this each cycle; the human reads it as the trust-ratchet evidence. Required: none. Optional: days.
 <!-- tools:generated:end -->
 
 **Don't:**

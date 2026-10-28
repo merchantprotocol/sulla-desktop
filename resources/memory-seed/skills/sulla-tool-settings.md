@@ -16,6 +16,8 @@ scope: [tool-settings]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla settings/get '{"property":"<property>"}'`: Read a Sulla Desktop setting through SullaSettingsModel (Redis cache → Postgres → file fallback). Use this instead of redis_hget on sulla_settings — raw Redis reads of that hash are blocked. Required: property. Optional: default.
+- `sulla settings/set '{"property":"<property>","value":"<value>"}'`: Write a Sulla Desktop setting through SullaSettingsModel so Postgres and the Redis cache stay in sync. Use this instead of redis_hset on sulla_settings — raw Redis writes of that hash are blocked. Required: property, value. Optional: cast.
 <!-- tools:generated:end -->
 
 **Don't:**

@@ -10,7 +10,7 @@ aliases: [agents, workers, sub-agents, spawn_agent, agent jobs, delegation, chec
 Sulla can launch bounded agent jobs from an active agent turn. `spawn_agent` accepts up to 10 tasks; each task can select an enabled agent definition, run in the VM or a container, and return a contract result. Hidden jobs run in the background; tab jobs open a live agent tab. Jobs retain status and check-ins for a limited period, and completion is delivered to the parent.
 
 ## Facts
-- `agents/spawn_agent` takes a non-empty `tasks` array; each task needs a string `prompt` and may set `agentId`, `agentName`, `model`, `provider`, `runLocation`, `workspacePath`, `contract`, `visibility`, `focus`, and `label`.
+- `meta/spawn_agent` takes a non-empty `tasks` array; each task needs a string `prompt` and may set `agentId`, `agentName`, `model`, `provider`, `runLocation`, `workspacePath`, `contract`, `visibility`, `focus`, and `label`.
 - A spawn call accepts at most 10 tasks. Omit `agentId` for the default agent; a supplied selector must name an enabled agent definition.
 - `visibility` is `hidden` by default or `tab`; a tab launch needs an active chat thread and a valid routable agent.
 - `agents/check_agent_jobs` accepts optional `jobId` and returns job/task status, elapsed time, contract, results, check-ins, and undelivered orchestrator messages.

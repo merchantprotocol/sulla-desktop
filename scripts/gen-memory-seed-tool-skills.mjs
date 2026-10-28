@@ -103,8 +103,9 @@ function render(category) {
     const json = JSON.stringify(args);
     const req = tool.params.filter(p => p.required).map(p => p.name).join(', ') || 'none';
     const opt = tool.params.filter(p => !p.required).map(p => p.name).join(', ') || 'none';
-    const commandName = category === 'agents' && tool.name === 'agents_directory' ? 'directory' : tool.name;
-    return `- \`sulla ${category}/${commandName} ${json}\`: ${tool.description} Required: ${req}. Optional: ${opt}.`;
+    // The CLI drops the `<category>_` prefix: github_get_issue is `sulla github/get_issue`.
+    const commandName = tool.name.startsWith(`${category}_`) ? tool.name.slice(category.length + 1) : tool.name;
+    return `- \`sulla ${category}/${commandName} '${json}'\`: ${tool.description} Required: ${req}. Optional: ${opt}.`;
   }), end].join('\n');
 }
 let changed = false;

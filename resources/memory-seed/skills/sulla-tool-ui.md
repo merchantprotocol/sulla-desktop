@@ -15,6 +15,7 @@ scope: [tool-ui]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla ui/open_tab '{}'`: Open or focus a built-in Sulla Desktop view (Use Cases, vault, integrations, routines, history, secretary, chat, document, browser, files, agents, decide, preferences, docker). Use this when the user asks to "open" or "show me" a section of the app. For external URLs or extension web UIs (e.g. Twenty CRM at localhost:30207), use browser/tab instead. Required: none. Optional: mode, section, url.
 <!-- tools:generated:end -->
 
 **Don't:**

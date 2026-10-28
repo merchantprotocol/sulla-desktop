@@ -12,7 +12,7 @@ scope: [sulla-agents]
 **Do:**
 1. Give each task a self-contained prompt, acceptance checks, and a contract.
 2. Launch up to 10 tasks together when they are independent:
-   `sulla agents/spawn_agent '{"tasks":[{"agentId":"<slug>","prompt":"<self-contained brief>","label":"<short label>","visibility":"hidden","contract":{"name":"result","schema":{"type":"object"}}}]}'`
+   `sulla meta/spawn_agent '{"tasks":[{"agentId":"<slug>","prompt":"<self-contained brief>","label":"<short label>","visibility":"hidden","contract":{"name":"result","schema":{"type":"object"}}}]}'`
 3. Check progress with `sulla agents/check_agent_jobs '{"jobId":"<job-id>"}'` or omit `jobId` for recent jobs.
 4. In a delegated task, check in with `sulla agents/report_progress '{"step":"<milestone>","summary":"<what changed>","percent":50,"filesTouched":["<path>"],"blockers":[]}'`.
 5. Finish from the child thread with `sulla agents/return_result '{"status":"completed","summary":"<one paragraph>","output":{}}'` matching the contract.
@@ -21,7 +21,7 @@ scope: [sulla-agents]
 **Tools:**
 - `sulla agents/directory '{"query":"<capability>"}'`: find enabled agent cards.
 - `sulla agents/list_agents '{}'`: list callable agent definitions.
-- `sulla agents/spawn_agent '{"tasks":[{"prompt":"<brief>"}]}'`: start hidden or tab jobs.
+- `sulla meta/spawn_agent '{"tasks":[{"prompt":"<brief>"}]}'`: start hidden or tab jobs.
 - `sulla agents/check_agent_jobs '{}'`: list active and recent jobs.
 - `sulla agents/report_progress '{"step":"<step>","summary":"<summary>"}'`: record a delegated-task check-in.
 - `sulla agents/return_result '{"status":"completed","summary":"<summary>","output":{}}'`: return a validated contract.

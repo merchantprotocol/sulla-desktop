@@ -12,13 +12,13 @@ scope: [tool-slack]
 **Tools:**
 
 <!-- tools:generated:start -->
-- `sulla slack/slack_connection_health {}`: Check Slack integration health and auto-reinitialize if disconnected/unhealthy. Required: none. Optional: reinitializeIfNeeded, recoveryAttempts, recoveryDelayMs, validateAuth, validateDataPull.
-- `sulla slack/slack_search_users {"query":"<query>"}`: Search Slack users by username, real name, display name, or email. Required: query. Optional: limit.
-- `sulla slack/slack_send_message {"channel":"<channel>","text":"<text>"}`: Send a new message to a Slack channel. Required: channel, text. Optional: none.
-- `sulla slack/slack_thread {"channel":"<channel>","ts":"<ts>"}`: Get replies in a Slack thread. Required: channel, ts. Optional: none.
-- `sulla slack/slack_unreact {"channel":"<channel>","ts":"<ts>","reaction":"<reaction>"}`: Remove a reaction emoji from a Slack message. Required: channel, ts, reaction. Optional: none.
-- `sulla slack/slack_update {"channel":"<channel>","ts":"<ts>","text":"<text>"}`: Update an existing Slack message. Required: channel, ts, text. Optional: none.
-- `sulla slack/slack_user {"userId":"<userId>"}`: Get information about a Slack user. Required: userId. Optional: none.
+- `sulla slack/connection_health '{}'`: Check Slack integration health and auto-reinitialize if disconnected/unhealthy. Required: none. Optional: reinitializeIfNeeded, recoveryAttempts, recoveryDelayMs, validateAuth, validateDataPull.
+- `sulla slack/search_users '{"query":"<query>"}'`: Search Slack users by username, real name, display name, or email. Required: query. Optional: limit.
+- `sulla slack/send_message '{"channel":"<channel>","text":"<text>"}'`: Send a new message to a Slack channel. Required: channel, text. Optional: none.
+- `sulla slack/thread '{"channel":"<channel>","ts":"<ts>"}'`: Get replies in a Slack thread. Required: channel, ts. Optional: none.
+- `sulla slack/unreact '{"channel":"<channel>","ts":"<ts>","reaction":"<reaction>"}'`: Remove a reaction emoji from a Slack message. Required: channel, ts, reaction. Optional: none.
+- `sulla slack/update '{"channel":"<channel>","ts":"<ts>","text":"<text>"}'`: Update an existing Slack message. Required: channel, ts, text. Optional: none.
+- `sulla slack/user '{"userId":"<userId>"}'`: Get information about a Slack user. Required: userId. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
 1. `sulla slack/connection_health {}` to confirm the integration.

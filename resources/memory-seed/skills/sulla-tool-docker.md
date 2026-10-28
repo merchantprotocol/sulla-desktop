@@ -17,6 +17,15 @@ scope: [tool-docker]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla docker/build '{"path":"<absolutePath>","tag":"<tag>"}'`: Build a Docker image from a Dockerfile. Required: path, tag. Optional: options.
+- `sulla docker/exec '{"container":"<container>","command":"<command>"}'`: Execute a command in a running Docker container. Required: container, command. Optional: none.
+- `sulla docker/images '{}'`: List Docker images. Required: none. Optional: all.
+- `sulla docker/logs '{"container":"<container>"}'`: Fetch the logs of a Docker container. Required: container. Optional: follow, tail.
+- `sulla docker/ps '{}'`: List Docker containers. Required: none. Optional: all, format.
+- `sulla docker/pull '{"image":"<image>"}'`: Pull a Docker image from a registry. Required: image. Optional: none.
+- `sulla docker/rm '{"container":"<container>"}'`: Remove one or more Docker containers. Required: container. Optional: force.
+- `sulla docker/run '{"image":"<image>"}'`: Run a Docker container. Required: image. Optional: name, command, options.
+- `sulla docker/stop '{"container":"<container>"}'`: Stop a running Docker container. Required: container. Optional: none.
 <!-- tools:generated:end -->
 
 **Don't:**

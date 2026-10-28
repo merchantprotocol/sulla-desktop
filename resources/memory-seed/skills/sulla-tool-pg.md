@@ -12,12 +12,12 @@ scope: [tool-pg]
 **Tools:**
 
 <!-- tools:generated:start -->
-- `sulla pg/pg_count {"sql":"<sql>"}`: Execute a PostgreSQL count query and return the count. Required: sql. Optional: params.
-- `sulla pg/pg_execute {}`: Execute a PostgreSQL statement and return execution results. Required: none. Optional: sql, query, statement, params.
-- `sulla pg/pg_query {}`: Execute a PostgreSQL query and return results. Required: none. Optional: sql, query, statement, params.
-- `sulla pg/pg_queryall {"sql":"<sql>"}`: Execute a PostgreSQL query and return all result rows. Required: sql. Optional: params.
-- `sulla pg/pg_queryone {"sql":"<sql>"}`: Execute a PostgreSQL query and return the first result row. Required: sql. Optional: params.
-- `sulla pg/pg_transaction {"sql":"<sql>"}`: Execute multiple PostgreSQL statements in a transaction. Required: sql. Optional: none.
+- `sulla pg/count '{"sql":"<sql>"}'`: Execute a PostgreSQL count query and return the count. Required: sql. Optional: params.
+- `sulla pg/execute '{}'`: Execute a PostgreSQL statement and return execution results. Required: none. Optional: sql, query, statement, params.
+- `sulla pg/query '{}'`: Execute a PostgreSQL query and return results. Required: none. Optional: sql, query, statement, params.
+- `sulla pg/queryall '{"sql":"<sql>"}'`: Execute a PostgreSQL query and return all result rows. Required: sql. Optional: params.
+- `sulla pg/queryone '{"sql":"<sql>"}'`: Execute a PostgreSQL query and return the first result row. Required: sql. Optional: params.
+- `sulla pg/transaction '{"sql":"<sql>"}'`: Execute multiple PostgreSQL statements in a transaction. Required: sql. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
 1. Read with `sulla pg/queryall {"sql":"SELECT ..."}` or `sulla pg/queryone {"sql":"SELECT ..."}`.

@@ -12,18 +12,18 @@ scope: [tool-redis]
 **Tools:**
 
 <!-- tools:generated:start -->
-- `sulla redis/redis_decr {"key":"<key>"}`: Decrement the integer value of a Redis key by one. Required: key. Optional: none.
-- `sulla redis/redis_del {"keys":[]}`: Delete one or more Redis keys. Required: keys. Optional: none.
-- `sulla redis/redis_expire {"key":"<key>","seconds":1}`: Set a timeout on a Redis key. Required: key, seconds. Optional: none.
-- `sulla redis/redis_get {"key":"<key>"}`: Get the value of a Redis key. Required: key. Optional: none.
-- `sulla redis/redis_hget {"key":"<key>","field":"<field>"}`: Get the value of a field in a Redis hash. Required: key, field. Optional: none.
-- `sulla redis/redis_hgetall {"key":"<key>"}`: Get all fields and values from a Redis hash. Required: key. Optional: none.
-- `sulla redis/redis_hset {"key":"<key>","field":"<field>","value":"<value>"}`: Set the value of a field in a Redis hash. Required: key, field, value. Optional: none.
-- `sulla redis/redis_incr {"key":"<key>"}`: Increment the integer value of a Redis key by one. Required: key. Optional: none.
-- `sulla redis/redis_lpop {"key":"<key>"}`: Remove and return the first element of a Redis list. Required: key. Optional: none.
-- `sulla redis/redis_rpush {"key":"<key>","values":[]}`: Append one or more values to a Redis list. Required: key, values. Optional: none.
-- `sulla redis/redis_set {"key":"<key>","value":"<value>"}`: Set the value of a Redis key. Required: key, value. Optional: ttl.
-- `sulla redis/redis_ttl {"key":"<key>"}`: Get the time to live (TTL) of a Redis key. Required: key. Optional: none.
+- `sulla redis/decr '{"key":"<key>"}'`: Decrement the integer value of a Redis key by one. Required: key. Optional: none.
+- `sulla redis/del '{"keys":[]}'`: Delete one or more Redis keys. Required: keys. Optional: none.
+- `sulla redis/expire '{"key":"<key>","seconds":1}'`: Set a timeout on a Redis key. Required: key, seconds. Optional: none.
+- `sulla redis/get '{"key":"<key>"}'`: Get the value of a Redis key. Required: key. Optional: none.
+- `sulla redis/hget '{"key":"<key>","field":"<field>"}'`: Get the value of a field in a Redis hash. Required: key, field. Optional: none.
+- `sulla redis/hgetall '{"key":"<key>"}'`: Get all fields and values from a Redis hash. Required: key. Optional: none.
+- `sulla redis/hset '{"key":"<key>","field":"<field>","value":"<value>"}'`: Set the value of a field in a Redis hash. Required: key, field, value. Optional: none.
+- `sulla redis/incr '{"key":"<key>"}'`: Increment the integer value of a Redis key by one. Required: key. Optional: none.
+- `sulla redis/lpop '{"key":"<key>"}'`: Remove and return the first element of a Redis list. Required: key. Optional: none.
+- `sulla redis/rpush '{"key":"<key>","values":[]}'`: Append one or more values to a Redis list. Required: key, values. Optional: none.
+- `sulla redis/set '{"key":"<key>","value":"<value>"}'`: Set the value of a Redis key. Required: key, value. Optional: ttl.
+- `sulla redis/ttl '{"key":"<key>"}'`: Get the time to live (TTL) of a Redis key. Required: key. Optional: none.
 <!-- tools:generated:end -->
 **Do:**
 1. `sulla redis/get {"key":"<key>"}` and `sulla redis/ttl {"key":"<key>"}` to inspect a key first.

@@ -13,7 +13,7 @@ scope: [sulla-workflows]
 1. Gather the trigger, steps, branches, failure behavior, and approval points.
 2. Write YAML with root `id`, `name`, `description`, `version: 1`, `nodes`, and `edges`. Every node uses `type: workflow` and `data: {subtype, category, label, config}`.
 3. Use `manual` or `schedule` triggers. Set `maxConcurrentRuns` when the default one-run ceiling is not enough.
-4. Validate and dry-run: `sulla meta/validate_sulla_workflow '{"filePath":"<path>/routine.yaml"}'`, then `sulla workflow/dry_run_workflow '{"filePath":"<path>/routine.yaml"}'`.
+4. Validate and dry-run: `sulla meta/validate_sulla_workflow '{"filePath":"<path>/routine.yaml"}'`, then `sulla meta/dry_run_workflow '{"filePath":"<path>/routine.yaml"}'`.
 5. Import only as a draft: `sulla workflow/import_workflow '{"slug":"<slug>","yaml":"<complete YAML>","status":"draft"}'`.
 
 **Don't:** publish or enable a workflow before validation and human approval.

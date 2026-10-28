@@ -12,8 +12,8 @@ scope: [tool-notify]
 **Tools:**
 
 <!-- tools:generated:start -->
-- `sulla notify/history {}`: Read the notification history. Every notify_user call writes a row with title, message, targets, delivered flag, and any error. Filter by target ("desktop" | "mobile"), only_failures, and/or since (ISO timestamp). Required: none. Optional: limit, target, only_failures, since.
-- `sulla notify/notify_user {"title":"<title>","message":"<message>"}`: Send a notification to the user. Default target is "desktop" (native macOS / Notification Center). Pass targets:["mobile"] to push to the paired phone via the Sulla Cloud relay, or targets:["desktop","mobile"] to fan out. Every call is logged to `notifications` — query via notify/history. Required: title, message. Optional: targets, id, silent.
+- `sulla notify/history '{}'`: Read the notification history. Every notify_user call writes a row with title, message, targets, delivered flag, and any error. Filter by target ("desktop" | "mobile"), only_failures, and/or since (ISO timestamp). Required: none. Optional: limit, target, only_failures, since.
+- `sulla notify/user '{"title":"<title>","message":"<message>"}'`: Send a notification to the user. Default target is "desktop" (native macOS / Notification Center). Pass targets:["mobile"] to push to the paired phone via the Sulla Cloud relay, or targets:["desktop","mobile"] to fan out. Every call is logged to `notifications` — query via notify/history. Required: title, message. Optional: targets, id, silent.
 <!-- tools:generated:end -->
 **Do:**
 1. `sulla notify/history {"only_failures":true}` to inspect delivery failures.

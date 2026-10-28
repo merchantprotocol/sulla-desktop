@@ -15,6 +15,8 @@ scope: [tool-bridge]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla bridge/get_human_presence '{}'`: Read the current human presence state from Redis. Returns whether the human is available, what they are viewing, their activity, and how long since they were last seen. Required: none. Optional: none.
+- `sulla bridge/update_human_presence '{}'`: Update the human presence state in Redis. Call this to inform other agents about what the human is currently viewing, doing, or whether they are available. Required: none. Optional: available, current_view, current_activity, active_channel.
 <!-- tools:generated:end -->
 
 **Don't:**

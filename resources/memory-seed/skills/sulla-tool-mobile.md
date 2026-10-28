@@ -16,6 +16,7 @@ scope: [tool-mobile]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla mobile/list_devices '{}'`: List every desktop and mobile device registered to the account, annotated with online/offline status. A device is "online" when it has hit the worker within the last 2 minutes (heartbeat or any authenticated call). Useful for checking whether the Sulla Mobile app is reachable before routing something to it. Optionally filter with { online_only: true } or { device_type: "mobile" | "desktop" }. Required: none. Optional: online_only, device_type.
 <!-- tools:generated:end -->
 
 **Don't:**

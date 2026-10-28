@@ -17,6 +17,18 @@ scope: [tool-files]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla files/collections '{}'`: List the Files collections the launching person can see in the File Manager, with ids and roles. Required: none. Optional: none.
+- `sulla files/create_folder '{}'`: Create a Files folder when no described folder fits. Agents must explain the folder purpose. Required: none. Optional: collection_id.
+- `sulla files/history '{}'`: List every version of a Sulla file. Required: none. Optional: path.
+- `sulla files/link '{}'`: Create a public Sulla Cloud share link for a file or folder. Captures default to a temporary Cloud copy; ordinary files default to Desktop pass-through. Legacy target_file_id + kind still creates a graph edge. Required: none. Optional: path.
+- `sulla files/list '{}'`: List files in a collection exactly as the File Manager loads them. Optional path prefix, trash, and limit (default 200). Required: none. Optional: collection_id.
+- `sulla files/request_publish '{}'`: Request human approval to publish a draft file version. Returns immediately. Required: none. Optional: file_id.
+- `sulla files/restore '{}'`: Restore an older file version as a new current version. Required: none. Optional: path.
+- `sulla files/revoke_link '{"id":"<id>"}'`: Revoke a public share link and remove any temporary Cloud copy. Required: id. Optional: none.
+- `sulla files/search '{}'`: Hybrid search over files the launching person can access. Supports folder, type, person, and date filters; accepts an optional absolute path prefix; omit it to search all accessible files. Required: none. Optional: path.
+- `sulla files/shared '{}'`: List public links shared by the signed-in user, including views, expiry, keep-available state, source and revocation. Required: none. Optional: none.
+- `sulla files/versions '{"file_id":"<file_id>"}'`: List versions with publication, lock, and retention state. Required: file_id. Optional: none.
+- `sulla files/where '{}'`: Find the best described Files folder before saving. Returns ranked folders plus a suggested folder and filename. Required: none. Optional: what.
 <!-- tools:generated:end -->
 
 **Don't:**

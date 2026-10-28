@@ -19,7 +19,7 @@ Sulla Workflows are YAML graphs of triggers and nodes. The graph definition is i
 - `import_workflow` writes a draft to Sulla Files; publication is separate from import.
 
 ## Rules
-- DO: Run `meta/validate_sulla_workflow` and `workflow/dry_run_workflow` before importing. Why: structural validity does not prove graph reachability or execution order.
+- DO: Run `meta/validate_sulla_workflow` and `meta/dry_run_workflow` before importing. Why: structural validity does not prove graph reachability or execution order.
 - DO: Use `status: draft` while authoring. Why: the import default is production.
 - DO: Use `sourceHandle: route-N` for router edges and the documented condition and loop handles. Why: handles determine graph traversal.
 - DON'T: Treat moving a YAML file between folders as a status change. Why: the database row controls execution.

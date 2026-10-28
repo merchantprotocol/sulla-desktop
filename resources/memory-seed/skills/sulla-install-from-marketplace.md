@@ -12,6 +12,6 @@ scope: [sulla-marketplace]
 2. Inspect with `sulla marketplace/info '{"kind":"<kind>","slug":"<slug>"}'`.
 3. Download with `sulla marketplace/download '{"kind":"<kind>","slug":"<slug>","overwrite":false}'`.
 4. Validate the installed artifact and verify its status before using it.
-5. Manage extension processes with `sulla extensions/list_installed`, `start_extension`, `stop_extension`, or `uninstall_extension`; never delete data without explicit approval.
+5. Manage extension processes with `sulla extensions/list_installed_extensions`, `start_extension`, `stop_extension`, or `uninstall_extension`; never delete data without explicit approval.
 
 **Don't:** claim a catalog listing is trusted or live without verification.

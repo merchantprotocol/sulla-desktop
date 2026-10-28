@@ -16,6 +16,8 @@ scope: [tool-applescript]
 
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla applescript/execute '{"target_app":"<target_app>","script":"<script>","action_type":"<action_type>"}'`: Execute AppleScript to interact with macOS applications (Calendar, Reminders, Mail, Notes, Safari, Finder, Music, and more). Always specify the target app name. For write operations (creating, sending, deleting), set action_type to "write". Administrative Access must be enabled. Scripts run in the BACKGROUND by default: `activate`, `tell application "X" to activate` and `set frontmost ... to true` are stripped so the user is never pulled to another Space or out of a full-screen app. Only set foreground:true when the app truly must be in front (e.g. System Events keystrokes/clicks), and check the user is idle first. Required: target_app, script, action_type. Optional: foreground.
+- `sulla applescript/audit_log '{}'`: Read the AppleScript execution audit log. Every applescript_execute call writes a row with target_app, script, success, duration, and error. Filter by target_app, only_failures, and/or since (ISO timestamp). Default: 50 most recent entries. Required: none. Optional: limit, target_app, only_failures, since.
 <!-- tools:generated:end -->
 
 **Don't:**

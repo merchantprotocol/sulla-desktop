@@ -12,13 +12,13 @@ scope: [tool-calendar]
 **Tools:**
 
 <!-- tools:generated:start -->
-- `sulla calendar/calendar_cancel {"eventId":1}`: Cancel a calendar event by ID. Required: eventId. Optional: none.
-- `sulla calendar/calendar_create {"title":"<title>","start":"<start>","end":"<end>"}`: Create a new calendar event or reminder. Required: title, start, end. Optional: description, location, people, calendarId, allDay.
-- `sulla calendar/calendar_delete {"eventId":1}`: Delete a calendar event by ID. Required: eventId. Optional: none.
-- `sulla calendar/calendar_get {"eventId":1}`: Get details of a specific calendar event by ID. Required: eventId. Optional: none.
-- `sulla calendar/calendar_list {}`: List calendar events within a date range. Required: none. Optional: startAfter, endBefore, calendarId.
-- `sulla calendar/calendar_list_upcoming {"days":1}`: List upcoming calendar events for the next specified number of days. Required: days. Optional: none.
-- `sulla calendar/calendar_update {"eventId":1}`: Update an existing calendar event. Required: eventId. Optional: title, start, end, description, location, people, calendarId, allDay.
+- `sulla calendar/cancel '{"eventId":1}'`: Cancel a calendar event by ID. Required: eventId. Optional: none.
+- `sulla calendar/create '{"title":"<title>","start":"<start>","end":"<end>"}'`: Create a new calendar event or reminder. Required: title, start, end. Optional: description, location, people, calendarId, allDay.
+- `sulla calendar/delete '{"eventId":1}'`: Delete a calendar event by ID. Required: eventId. Optional: none.
+- `sulla calendar/get '{"eventId":1}'`: Get details of a specific calendar event by ID. Required: eventId. Optional: none.
+- `sulla calendar/list '{}'`: List calendar events within a date range. Required: none. Optional: startAfter, endBefore, calendarId.
+- `sulla calendar/list_upcoming '{"days":1}'`: List upcoming calendar events for the next specified number of days. Required: days. Optional: none.
+- `sulla calendar/update '{"eventId":1}'`: Update an existing calendar event. Required: eventId. Optional: title, start, end, description, location, people, calendarId, allDay.
 <!-- tools:generated:end -->
 **Do:**
 1. `sulla calendar/list_upcoming {"days":7}` to see the near-term schedule.
