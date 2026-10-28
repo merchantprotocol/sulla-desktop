@@ -767,6 +767,9 @@ async function initUI() {
     Tray.getInstance(cfg).show();
   }
 
+  // Capability state is available even when optional media subsystems fail to initialize.
+  registerRuntimeCapabilitiesIpc();
+
   // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
   // Registers IPC handlers in the main process — no window reference needed.
   try {
@@ -778,7 +781,6 @@ async function initUI() {
     registerTeleprompterTrackingIpc();
     registerTabContextMenuIpc();
     registerMoreMenuIpc();
-    registerRuntimeCapabilitiesIpc();
     console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
