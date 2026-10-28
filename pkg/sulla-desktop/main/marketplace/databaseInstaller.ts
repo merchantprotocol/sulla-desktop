@@ -191,9 +191,7 @@ export function publisherKeysPath(): string {
 
 export function isSignedIntegrationPackageManifest(manifest: Record<string, any>): boolean {
   return manifest.apiVersion === 'sulla/v1' && manifest.kind === 'integration' &&
-    typeof manifest.integrity === 'string' && manifest.integrity.length > 0 &&
-    manifest.signature?.algorithm === 'ed25519' && typeof manifest.signature?.keyId === 'string' &&
-    typeof manifest.signature?.value === 'string';
+    Object.hasOwn(manifest, 'integrity') && Object.hasOwn(manifest, 'signature');
 }
 
 function signedPackageFiles(artifact: { manifest: Record<string, any>; files: Record<string, StoredFile> }): Record<string, StoredFile> {
