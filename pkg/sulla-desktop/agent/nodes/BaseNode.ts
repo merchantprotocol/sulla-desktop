@@ -954,6 +954,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // every install; only subconscious observers (observation writer/recall,
     // summarizer) keep the fast subconscious chat peer.
     this.llm = await this.resolveLoopProvider(state);
+    (state.metadata as any).resolvedModel = this.llm.getModel();
+    (state.metadata as any).resolvedProvider = this.llm.getProviderName();
 
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,
