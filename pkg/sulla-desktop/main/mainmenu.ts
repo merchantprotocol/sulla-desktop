@@ -357,6 +357,11 @@ function getInspectMenu(): MenuItem {
         click: () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'live' }),
       },
       {
+        label:       'Token Usage',
+        accelerator: 'CmdOrCtrl+U',
+        click:       () => sendAgentCommand('open-tab', { mode: 'marketplace', studioSection: 'usage' }),
+      },
+      {
         label: 'Docker',
         click: () => openDocker(),
       },
