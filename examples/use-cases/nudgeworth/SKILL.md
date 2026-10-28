@@ -19,7 +19,7 @@ Use when the owner wants to chase unpaid invoices, review receivables aging, or 
 ## Do the work
 1. Ask for or read a CSV/JSON ledger in Files. Keep invoice ID, customer, amount, currency, issue date, due date, status, and prior-contact notes. If a ledger integration is connected, read only the owner's selected account.
 2. Normalize dates and currency; exclude paid, void, and cancelled items. Flag missing due dates or amounts instead of guessing.
-3. Group open balances into current, 1–7, 8–30, 31–60, and 61+ days overdue as of the stated date. Use the `invoice-aging` function when available: `sulla function/run {"slug":"invoice-aging",...}`; otherwise calculate transparently in the report.
+3. Group open balances into current, 1–7, 8–30, 31–60, and 61+ days overdue as of the stated date. Use the `invoice-aging` function when available: `sulla function/run '{"slug":"invoice-aging",...}'`; otherwise calculate transparently in the report.
 4. Draft one message per customer, with a calm tone that names the invoice and amount, asks whether paperwork is needed, and offers a clear next step. Never threaten, shame, invent late fees, or promise a payment plan.
 5. Save the aging report and drafts in the owner's chosen Files folder. Label every message `DRAFT — review before sending`.
 6. Sending email or changing a ledger is gated. Present recipients, exact text, and source rows; wait for the owner's approval before any send or write.

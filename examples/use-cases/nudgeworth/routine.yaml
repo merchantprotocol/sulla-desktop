@@ -1,6 +1,6 @@
 id: nudgeworth-weekly
 name: Nudgeworth weekly aging
- description: Weekly receivables aging and draft follow-ups from a ledger export.
+description: Weekly receivables aging and draft follow-ups from a ledger export.
 version: "1"
 enabled: true
 nodes:

@@ -20,7 +20,7 @@ Use after a discovery call when the owner wants a priced proposal draft. It turn
 1. Read a transcript from Secretary Mode or Capture, plus approved pricing, service descriptions, and a proposal template in Files. If no transcript exists, accept pasted notes.
 2. Extract the customer's goals, constraints, requested outcomes, timeline, decision process, open questions, and exact evidence quotes. Mark unknowns as `OPEN`.
 3. Map requested outcomes to line items from the approved price sheet. Do not invent discounts, tax, legal terms, deliverables, or guarantees. Ask for missing prices rather than extrapolating.
-4. Run the deterministic renderer: `sulla function/run {"slug":"proposal-render",...}` when installed, or write a Markdown draft with sections for situation, scope, assumptions, milestones, investment, options, and next steps.
+4. Run the deterministic renderer: `sulla function/run '{"slug":"proposal-render",...}'` when installed, or write a Markdown draft with sections for situation, scope, assumptions, milestones, investment, options, and next steps.
 5. Save the proposal and an evidence ledger in Files. Label it `DRAFT — review before sending`.
 6. Sending, e-signature, CRM updates, and external writes wait for approval. Show the exact recipient, attachment, price, and terms before any action.
 
