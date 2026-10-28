@@ -1,5 +1,5 @@
--- Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
--- Licensed under the Sulla Fair-Code License. See LICENSE.
+-- Copyright © 2026 Merchant Protocol, LLC.
+-- SPDX-License-Identifier: GPL-2.0-or-later
 --
 -- Cloud backup also sends each collection's folder name, sealed with the collection root
 -- (the 'info' operation), so a new Desktop restores folders under their real names.

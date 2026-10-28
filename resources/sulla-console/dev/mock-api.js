@@ -1,5 +1,5 @@
 // Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
-// Licensed under the Sulla Fair-Code License. See LICENSE.
+// Licensed under the Sulla Fair-Code License 1.0. See LICENSES/Sulla-Fair-Code-1.0.txt.
 
 // Sulla Server console, development only: synthetic data behind the real console pages, so they
 // run without the Console API. dev/serve.mjs injects this script ahead of every other script

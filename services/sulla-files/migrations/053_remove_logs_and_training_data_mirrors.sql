@@ -1,5 +1,5 @@
--- Copyright © 2026 Merchant Protocol, LLC. All rights reserved.
--- Licensed under the Sulla Fair-Code License. See LICENSE.
+-- Copyright © 2026 Merchant Protocol, LLC.
+-- SPDX-License-Identifier: GPL-2.0-or-later
 --
 -- Desktop no longer mirrors its app logs (Logs/app/...) or its conversation transcripts (the
 -- Training Data system collection) into Files, and nothing mounts them any more. Purge those
