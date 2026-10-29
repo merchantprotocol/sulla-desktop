@@ -19,6 +19,7 @@ export interface BrokerExecuteOptions {
 
 /** Files sync has its own vault policy with larger limits; every other Cloud path keeps the general one. */
 function brokerOperation(path:string, method:string):string {
+  if (/^\/shares\/[A-Za-z0-9._~-]{1,200}\/content$/.test(path) && method === 'PUT') return 'sulla-cloud.shares.content';
   if (path === '/shares' || path.startsWith('/shares/')) return 'sulla-cloud.shares';
   if (path.startsWith('/files-sync/')) return 'sulla-cloud.files-sync';
   if (/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}$/.test(path) && method === 'PUT') return 'sulla-cloud.cloud-files.catalog';

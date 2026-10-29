@@ -82,6 +82,18 @@ test('base64 responses and 6 MiB transfers belong to the files-sync operation al
   assert.ok(sixMiB + 1 > brokerTransferLimits(FILES_SYNC_OPERATION).request);
 });
 
+test('share content upload takes a binary body only on its exact PUT route', () => {
+  const content = (path:string, method = 'PUT') => request(path, method, { operation: 'sulla-cloud.shares.content', body: 'AAAA', bodyEncoding: 'base64' });
+  assert.equal(allowed(content(`/shares/${ CID }/content`)), true);
+  for (const [path, method] of [[`/shares/${ CID }/content`, 'GET'], [`/shares/${ CID }`, 'PUT'], ['/shares', 'PUT'], [`/files-sync/v1/uploads/${ CID }`, 'PUT']]) {
+    assert.equal(allowed(content(path, method)), false, `${ method } ${ path }`);
+  }
+  // The general share operation still refuses binary bodies.
+  assert.equal(allowed(request(`/shares/${ CID }/content`, 'PUT', { operation: 'sulla-cloud.shares', body: 'AAAA', bodyEncoding: 'base64' })), false);
+  assert.deepEqual(brokerTransferLimits('sulla-cloud.shares.content'), { request: 25 * 1024 * 1024, response: 1_048_576 });
+  assert.equal(isTrustedFilesCloudCall({ ...request(`/shares/${ CID }/content`, 'PUT'), operation: 'sulla-cloud.shares.content' }), true);
+});
+
 test('only the Files service skips the owner-only policy, and only for its own Cloud operations', () => {
   for (const operation of [FILES_SYNC_OPERATION, 'sulla-cloud.shares', 'sulla-cloud.cloud-files.catalog', 'sulla-cloud.cloud-files.content']) {
     assert.equal(isTrustedFilesCloudCall({ ...request('/files-sync/v1/usage'), operation }), true, operation);
