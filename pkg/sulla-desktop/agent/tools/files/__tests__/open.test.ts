@@ -19,8 +19,13 @@ jest.unstable_mockModule('electron', () => ({ ipcMain: { once: jest.fn(), remove
 jest.unstable_mockModule('@pkg/window', () => ({ getWindow: jest.fn() }));
 
 const { FilesOpenWorker, normalizeOpenPath } = await import('../open');
+const { filesToolManifests } = await import('../manifests');
 
 describe('files/open', () => {
+  it('runs in the Desktop main process', () => {
+    expect(filesToolManifests.find(item => item.name === 'open')?.executionTarget).toBe('desktop-local');
+  });
+
   beforeEach(() => resolvePath.mockReset());
 
   it('accepts Files-relative and mounted paths but rejects traversal', () => {
