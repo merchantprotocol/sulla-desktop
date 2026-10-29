@@ -45,7 +45,7 @@ export class ProviderError extends Error {
   }
 }
 
-const KEY_LIKE = /\b(sk|xai|gsk|pk|rk|key)[-_][A-Za-z0-9_*.-]{6,}/gi;
+const KEY_LIKE = /\b(sk|xai|gsk|pk|rk|key)[-_][A-Za-z0-9_*-]{6,}(?:\.[A-Za-z0-9_*-]+)*/gi;
 
 /** Strip anything that looks like an API key from provider error text. */
 export function redactSecrets(text: string): string {

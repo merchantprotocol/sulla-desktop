@@ -14,12 +14,13 @@
  */
 
 import { ProviderError } from './providers/types.js';
-import { buildToolIndex, formatToolResult, resolveToolCall, validateParams } from './toolCalls.js';
+import { buildToolIndex, formatToolResult, resolveToolCall, validateParams, wireToolName } from './toolCalls.js';
 import { addUsage, emptyUsage } from './types.js';
 
 import type { AbortSignalLike, AgentHost, HttpRequest } from './host.js';
 import type { ProviderAdapter } from './providers/types.js';
-import type { ChatMessage, NormalizedResponse, StreamEvent, ToolCall, ToolSpec, TurnStatus, Usage } from './types.js';
+import type { ResolvedCall } from './toolCalls.js';
+import type { ChatMessage, ContentBlock, NormalizedResponse, StreamEvent, ToolCall, ToolSpec, TurnStatus, Usage } from './types.js';
 
 /** Matches Desktop's `MAX_CONSECTUIVE_LOOP` in `agent/nodes/Graph.ts`. */
 export const DEFAULT_MAX_ITERATIONS = 40;
@@ -131,7 +132,16 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     emit({ type: 'usage', usage: response.usage, durationMs: Math.max(0, now() - started) });
     if (response.content) emit({ type: 'text', text: response.content });
 
-    messages.push({ role: 'assistant', content: response.blocks.length ? response.blocks : response.content });
+    // Resolve once, and store the canonical wire name so a slip like
+    // "functions.web__web_search" is not replayed to the provider.
+    const resolved = new Map<string, ResolvedCall>();
+    for (const call of response.toolCalls) resolved.set(call.id, resolveToolCall(call, index));
+    const blocks = response.blocks.map((b): ContentBlock => {
+      const r = b.type === 'tool_use' ? resolved.get(b.id) : undefined;
+      if (b.type !== 'tool_use' || !r || r.kind !== 'dispatch' || b.name.trim() === 'exec') return b;
+      return { ...b, name: wireToolName(r.spec.name) };
+    });
+    messages.push({ role: 'assistant', content: blocks.length ? blocks : response.content });
     if (response.content) finalText = response.content;
     await checkpoint();
 
@@ -147,7 +157,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
         emit({ type: 'tool_result', id: call.id, name: call.name, success: false });
         continue;
       }
-      const { content, success } = await runOneTool(call, options, index);
+      const { content, success } = await runOneTool(call, resolved.get(call.id) ?? resolveToolCall(call, index), options);
       messages.push(toolMessage(call, content, !success));
       emit({ type: 'tool_result', id: call.id, name: call.name, success });
       await checkpoint();
@@ -159,8 +169,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
   }
 }
 
-async function runOneTool(call: ToolCall, options: RunTurnOptions, index: ReturnType<typeof buildToolIndex>): Promise<{ content: string; success: boolean }> {
-  const resolved = resolveToolCall(call, index);
+async function runOneTool(call: ToolCall, resolved: ResolvedCall, options: RunTurnOptions): Promise<{ content: string; success: boolean }> {
   if (resolved.kind === 'error') return { content: `Error: ${ resolved.message }`, success: false };
 
   const validation = validateParams(resolved.spec.inputSchema, resolved.args);

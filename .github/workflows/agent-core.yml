@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Golden transcripts for @sulla/agent-core on the three runtimes it must
+# run on unchanged: Node, Cloudflare Workers (workerd) and Hermes.
+name: Agent core
+on:
+  pull_request:
+    paths:
+      - 'packages/agent-core/**'
+      - '.github/workflows/agent-core.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/agent-core/**'
+      - '.github/workflows/agent-core.yml'
+permissions:
+  contents: read
+env:
+  HERMES_VERSION: v0.13.0
+  HERMES_SHA256: aead6eb0b8f563bb022354352eae32dad96c933330b6c1941b6db17674ca68ae
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agent-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Install test tools outside the workspace
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/tools" \
+            typescript@5.9.3 esbuild@0.27.3 miniflare@4.20260730.0
+          echo "AGENT_CORE_TOOLS_DIR=$RUNNER_TEMP/tools" >> "$GITHUB_ENV"
+      - name: Install Hermes CLI
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/hermes.tgz" \
+            "https://github.com/facebook/hermes/releases/download/${HERMES_VERSION}/hermes-cli-linux.tar.gz"
+          echo "${HERMES_SHA256}  $RUNNER_TEMP/hermes.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/hermes"
+          tar -xzf "$RUNNER_TEMP/hermes.tgz" -C "$RUNNER_TEMP/hermes"
+          echo "HERMES_BIN=$RUNNER_TEMP/hermes/hermes" >> "$GITHUB_ENV"
+      - name: Build (lib ES2022, no Node/DOM types)
+        run: node "$RUNNER_TEMP/tools/node_modules/typescript/bin/tsc" -p tsconfig.json
+      - name: Node
+        run: node --test test/*.test.mjs
+      - name: Workers (miniflare)
+        run: node test/workers/run.mjs
+      - name: Hermes
+        run: node test/hermes/run.mjs
