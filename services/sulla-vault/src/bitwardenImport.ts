@@ -5,6 +5,7 @@
 
 import { createDecipheriv, createHmac, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
+import { inflateRawSync } from 'node:zlib';
 import { argon2id } from 'hash-wasm';
 
 import { DEFAULT_AGENT_POLICY, type UriMatch, type VaultItemPlaintext } from '@sulla/vault-crypto';
@@ -65,6 +66,17 @@ export async function readBitwardenJson(raw: string, password?: string): Promise
     if (error instanceof BitwardenImportError) throw error;
     throw new BitwardenImportError('invalid_export', 'The decrypted export is not valid Bitwarden JSON.');
   }
+}
+
+/** Reads Bitwarden's ZIP export without writing secret material to disk. */
+export async function readBitwardenZip(encoded:string,password?:string):Promise<Json>{
+  const zip=Buffer.from(encoded,'base64'); if(zip.length<22||zip.length>25*1024*1024)throw new BitwardenImportError('invalid_export','Choose a valid Bitwarden ZIP export.');
+  const end=zip.lastIndexOf(Buffer.from([0x50,0x4b,0x05,0x06])); if(end<0)throw new BitwardenImportError('invalid_export','Choose a valid Bitwarden ZIP export.');
+  const entries=zip.readUInt16LE(end+10),central=zip.readUInt32LE(end+16); let offset=central,json:Json|undefined; const files=new Map<string,string>();
+  for(let i=0;i<entries;i++){if(zip.readUInt32LE(offset)!==0x02014b50)throw new BitwardenImportError('invalid_export','The ZIP directory is invalid.'); const method=zip.readUInt16LE(offset+10),compressedSize=zip.readUInt32LE(offset+20),expandedSize=zip.readUInt32LE(offset+24),nameLength=zip.readUInt16LE(offset+28),extraLength=zip.readUInt16LE(offset+30),commentLength=zip.readUInt16LE(offset+32),local=zip.readUInt32LE(offset+42),name=zip.subarray(offset+46,offset+46+nameLength).toString('utf8'); if(expandedSize>20*1024*1024)throw new BitwardenImportError('invalid_export','A ZIP entry is too large.'); const localName=zip.readUInt16LE(local+26),localExtra=zip.readUInt16LE(local+28),start=local+30+localName+localExtra,compressed=zip.subarray(start,start+compressedSize),data=method===0?compressed:method===8?inflateRawSync(compressed):null; if(!data)throw new BitwardenImportError('invalid_export','The ZIP uses an unsupported compression method.'); if(/(^|\/)data\.json$/i.test(name)||/(^|\/)bitwarden.*\.json$/i.test(name))json=await readBitwardenJson(data.toString('utf8'),password); else if(!name.endsWith('/'))files.set(name,data.toString('base64')); offset+=46+nameLength+extraLength+commentLength; }
+  if(!json)throw new BitwardenImportError('invalid_export','The ZIP does not contain a Bitwarden JSON export.');
+  for(const item of Array.isArray(json.items)?json.items:[]){for(const attachment of Array.isArray(item.attachments)?item.attachments:[]){const id=String(attachment.id??'');const match=[...files].find(([path])=>id&&path.includes(id));if(match){attachment.data=match[1];attachment.zipPath=match[0];}}}
+  return json;
 }
 
 const matchType = (value: unknown): UriMatch | undefined => ({ 0:'domain', 1:'host', 2:'startsWith', 3:'exact', 4:'never', 5:'domain' } as Record<number, UriMatch>)[Number(value)];
