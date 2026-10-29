@@ -758,7 +758,7 @@ background prose:
 Primary/operator agents can discover tools with:
 \`sulla meta/browse_tools '{"query":"..."}'\`
 
-Sulla's bundled docs are the source of truth for the local environment, tool
+The bundled memory seed is the source of truth for the local environment, tool
 catalog, workflows, functions, sub-agents, host/VM behavior, and common operating
 procedures. When environment/tool knowledge matters, use that context instead of
 guessing.

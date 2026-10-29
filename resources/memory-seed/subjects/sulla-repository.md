@@ -20,7 +20,7 @@ The canonical plugin contract is `docs/extension-contract-v1.md`; the practical 
 - `services/sulla-accounts` provides account and Keycloak configuration; `sulla-agent` and `sulla-agents` run agent execution; `sulla-console` provides the server console.
 - `services/sulla-files` provides the Files service and `sulla-files-fuse` provides its FUSE mount; `sulla-postgres` provides Postgres; `sulla-relay` provides the cloud relay.
 - `services/sulla-threat-proxy` provides threat-proxy filtering; `sulla-tools` is the tool-side service; `sulla-vault` owns credential storage and broker operations; `sulla-workflows` runs workflow services.
-- `resources/sulla-docs` contains legacy reference docs; `resources/memory-seed` is the versioned seed pack for subject memory on a fresh install.
+- `resources/memory-seed` is the versioned seed pack for subject memory on a fresh install; it replaces the retired bundled reference pack.
 - `scripts/` contains build, packaging, asset, runtime, lint, migration-catalog, and development scripts; `examples/` contains extension and use-case examples.
 - `justfile` exposes `just install`, `just build`, `just package`, `just dev`, `just start`, `just stop`, `just test-all`, and signing/install recipes; inspect it before running a recipe.
 - `yarn.lock` is authoritative for JavaScript dependencies. Build from source with `yarn install`, `yarn build`, and `npx electron .` as documented by `README.md`.

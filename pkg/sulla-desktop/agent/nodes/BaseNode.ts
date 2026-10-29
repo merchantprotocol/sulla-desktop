@@ -299,8 +299,8 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     '{{primaryUserName}}':      primaryUserName || '',
     '{{botName}}':              botName,
     '{{sulla_home}}':           resolveSullaHomeDir(),
-    // Kept for stored or user-edited prompts that still reference it; sulla-docs
-    // was replaced by the memory seed pack.
+    // Kept for stored or user-edited prompts that still reference it; the
+    // value now resolves to the bundled memory seed pack.
     '{{sulla_docs}}':           (() => { try { return resolveMemorySeedDir(); } catch { return ''; } })(),
     '{{codebase_dir}}':         resolveSullaCodebaseDir(),
     '{{projects_dir}}':         projectsDir,

@@ -4,8 +4,8 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
- * Plain, read-only mirroring of Desktop's system area (the bundled Sulla docs
- * and use cases) into Files.
+ * Plain, read-only mirroring of Desktop-owned system-area content (such as
+ * published Use Cases) into Files.
  *
  * Unlike user-picked native sources this creates no files_native_sources or
  * files_native_source_operations rows, no source handles, no publication
