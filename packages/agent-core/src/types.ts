@@ -43,18 +43,85 @@ export interface JsonSchema {
   required?:    string[];
 }
 
+/** `irreversible` = sends, posts, pays or deletes (Jonathon's rule, memory Yhd3). */
 export type ToolSideEffect = 'read' | 'write' | 'irreversible';
 
+/** A host that may run a tool. */
+export type ToolPlacement = 'desktop' | 'cloud' | 'mobile';
+
+/** Credential custody a tool needs (PLAN.md §4.1). */
+export type ToolCredential = 'none' | { integration: string } | { vaultItem: true };
+
 /**
- * A tool the model may call. `name` may contain `/` (`web/web_search`);
- * adapters send a provider-safe wire name (see `wireToolName`).
+ * Placement metadata a tool manifest publishes (PLAN.md §4.1). This is the
+ * canonical definition: Desktop's `toolPlacement.ts` and the generated
+ * `tool-placements.json` use these exact shapes. `placements` lists the
+ * hosts that are allowed to run the tool; a host only offers it if it also
+ * implements it.
+ */
+export interface ToolPlacementMetadata {
+  placements: ToolPlacement[];
+  /** May a phone or Cloud loop relay the call to an online Desktop? */
+  relayable:  boolean;
+  sideEffect: ToolSideEffect;
+  credential: ToolCredential;
+}
+
+/**
+ * Canonical tool id: `<category>/<manifest name>`, e.g. `web/web_search` or
+ * `github/github_create_pr`. ToolSpec names, `tool-placements.json` keys and
+ * runtime-protocol calls all use this form.
+ */
+export function toolId(category: string, name: string): string {
+  return `${ category }/${ name }`;
+}
+
+/** Splits a canonical tool id. Returns null when there is no category. */
+export function parseToolId(id: string): { category: string; name: string } | null {
+  const slash = id.indexOf('/');
+  if (slash <= 0 || slash === id.length - 1) return null;
+  return { category: id.slice(0, slash), name: id.slice(slash + 1) };
+}
+
+/**
+ * A tool the model may call. `name` is the canonical tool id
+ * (`web/web_search`); adapters send a provider-safe wire name (see
+ * `wireToolName`).
  */
 export interface ToolSpec {
-  name:         string;
-  description:  string;
-  inputSchema?: JsonSchema;
-  /** `irreversible` (sends, posts, pays, deletes) always needs host approval. */
-  sideEffect?:  ToolSideEffect;
+  name:              string;
+  description:       string;
+  inputSchema?:      JsonSchema;
+  /**
+   * Required. Anything other than `read` or `write` (including a missing
+   * value from untyped callers) is treated as irreversible and needs a tap.
+   */
+  sideEffect:        ToolSideEffect;
+  /**
+   * Set by the host when this call needs a tap even though `sideEffect` alone
+   * wouldn't ask, e.g. a relayed `write` (PLAN.md §4.4). See
+   * `requiresApprovalFor`. It can add a gate, never remove one.
+   */
+  requiresApproval?: boolean;
+  placements?:       ToolPlacement[];
+  relayable?:        boolean;
+  credential?:       ToolCredential;
+}
+
+/** Does this call need a human tap before it runs? Fails closed. */
+export function needsApproval(spec: Pick<ToolSpec, 'sideEffect' | 'requiresApproval'>): boolean {
+  if (spec.requiresApproval === true) return true;
+  return spec.sideEffect !== 'read' && spec.sideEffect !== 'write';
+}
+
+/**
+ * The host-side rule for `ToolSpec.requiresApproval`: irreversible calls
+ * always need a tap, and so does any relayed call that isn't a read
+ * (PLAN.md §4.4).
+ */
+export function requiresApprovalFor(meta: { sideEffect: ToolSideEffect; relayed?: boolean }): boolean {
+  if (meta.sideEffect !== 'read' && meta.sideEffect !== 'write') return true;
+  return meta.relayed === true && meta.sideEffect !== 'read';
 }
 
 /** A tool call as the model produced it, before normalization. */
@@ -72,10 +139,18 @@ export interface ToolResult {
   error?:  { code: string; message: string; details?: unknown };
 }
 
+/**
+ * Token usage with the same meaning for every provider. `inputTokens` is the
+ * whole prompt, including cache reads and cache writes (OpenAI's
+ * `prompt_tokens`; Anthropic's `input_tokens + cache_read_input_tokens +
+ * cache_creation_input_tokens`). `cachedTokens` (cache reads) and
+ * `cacheWriteTokens` are subsets of `inputTokens`, for pricing.
+ */
 export interface Usage {
-  inputTokens:  number;
-  outputTokens: number;
-  cachedTokens: number;
+  inputTokens:      number;
+  outputTokens:     number;
+  cachedTokens:     number;
+  cacheWriteTokens: number;
 }
 
 /** One model reply, mapped from any provider. */
@@ -85,6 +160,10 @@ export interface NormalizedResponse {
   /** Assistant content to append to the transcript (text + tool_use). */
   blocks:       ContentBlock[];
   toolCalls:    ToolCall[];
+  /**
+   * The provider's real stop reason. `length` (or `content_filter`) wins
+   * over `tool_calls`: a tool call in a cut-off reply may be incomplete.
+   */
   finishReason: FinishReason;
   usage:        Usage;
   model?:       string;
@@ -100,17 +179,18 @@ export type StreamEvent =
   | { type: 'usage'; usage: Usage; durationMs: number }
   | { type: 'done'; status: TurnStatus };
 
-export type TurnStatus = 'completed' | 'max_iterations' | 'token_budget' | 'aborted' | 'provider_error';
+export type TurnStatus = 'completed' | 'max_iterations' | 'token_budget' | 'aborted' | 'provider_error' | 'checkpoint_failed';
 
 export function emptyUsage(): Usage {
-  return { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  return { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
 }
 
 export function addUsage(a: Usage, b: Usage): Usage {
   return {
-    inputTokens:  a.inputTokens + b.inputTokens,
-    outputTokens: a.outputTokens + b.outputTokens,
-    cachedTokens: a.cachedTokens + b.cachedTokens,
+    inputTokens:      a.inputTokens + b.inputTokens,
+    outputTokens:     a.outputTokens + b.outputTokens,
+    cachedTokens:     a.cachedTokens + b.cachedTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
   };
 }
 

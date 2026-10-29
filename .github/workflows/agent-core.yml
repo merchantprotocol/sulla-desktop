@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Golden transcripts for @sulla/agent-core on the three runtimes it must
-# run on unchanged: Node, Cloudflare Workers (workerd) and Hermes.
+# @sulla/agent-core: portability lint, then golden transcripts on the three
+# runtimes it must run on unchanged: Node, Cloudflare Workers (workerd) and
+# Hermes.
 name: Agent core
 on:
   pull_request:
     paths:
       - 'packages/agent-core/**'
       - '.github/workflows/agent-core.yml'
+      - 'eslint.config.mts'
   push:
     branches: [main]
     paths:
@@ -18,6 +20,23 @@ env:
   HERMES_VERSION: v0.13.0
   HERMES_SHA256: aead6eb0b8f563bb022354352eae32dad96c933330b6c1941b6db17674ca68ae
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/agent-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+      - name: Install ESLint outside the workspace
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/tools" \
+            eslint@9.39.2 typescript-eslint@8.56.1 typescript@5.9.3
+          echo "AGENT_CORE_TOOLS_DIR=$RUNNER_TEMP/tools" >> "$GITHUB_ENV"
+      - name: ESLint (portability rules from eslint-rules.mjs)
+        run: node test/lint.mjs
   golden:
     runs-on: ubuntu-latest
     defaults:

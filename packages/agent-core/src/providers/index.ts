@@ -6,13 +6,16 @@
 import { createAnthropicMessagesAdapter } from './anthropicMessages.js';
 import { createOpenAIChatAdapter } from './openaiChat.js';
 
+import type { AnthropicMessagesOptions } from './anthropicMessages.js';
+import type { OpenAIChatOptions } from './openaiChat.js';
 import type { ProviderAdapter, ProviderApi } from './types.js';
 
 export * from './anthropicMessages.js';
 export * from './openaiChat.js';
+export * from './sse.js';
 export * from './types.js';
 
-export function createAdapter(api: ProviderApi, options: { baseUrl?: string } = {}): ProviderAdapter {
+export function createAdapter(api: ProviderApi, options: AnthropicMessagesOptions & OpenAIChatOptions = {}): ProviderAdapter {
   switch (api) {
   case 'anthropic-messages':
     return createAnthropicMessagesAdapter(options);

@@ -68,11 +68,21 @@ export interface ToolIndex {
   byName: Map<string, ToolSpec>;
 }
 
+/**
+ * Index the allowed tools by name and wire name. Throws when two tools would
+ * share a name or a wire name (including after the 64-character cut), since
+ * a call could then run the wrong tool.
+ */
 export function buildToolIndex(tools: ToolSpec[]): ToolIndex {
   const byName = new Map<string, ToolSpec>();
   for (const spec of tools) {
-    byName.set(spec.name, spec);
-    byName.set(wireToolName(spec.name), spec);
+    for (const key of [spec.name, wireToolName(spec.name)]) {
+      const other = byName.get(key);
+      if (other && other !== spec) {
+        throw new Error(`Tools "${ other.name }" and "${ spec.name }" both map to the name "${ key }". Rename one of them.`);
+      }
+      byName.set(key, spec);
+    }
   }
   return { byName };
 }

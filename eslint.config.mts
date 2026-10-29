@@ -15,6 +15,8 @@ import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescri
 import pluginVue from 'eslint-plugin-vue';
 import globals from 'globals';
 
+import { agentCorePortableRules } from './packages/agent-core/eslint-rules.mjs';
+
 export default defineConfigWithVueTs(
   eslint.configs.recommended,
   pluginVue.configs['flat/recommended'],
@@ -94,17 +96,7 @@ export default defineConfigWithVueTs(
     // The portable agent loop must run unchanged on Node, Workers and Hermes.
     name:  'agent-core-portable',
     files: ['packages/agent-core/src/**/*.ts'],
-    rules: {
-      'no-restricted-imports': ['error', {
-        patterns: [{
-          regex:   '^(node:|fs$|path$|crypto$|os$|http$|https$|net$|child_process$|buffer$|stream$|url$|util$|electron|react-native|cloudflare:)',
-          message: 'agent-core is platform-neutral: take this through a host interface instead.',
-        }],
-      }],
-      'no-restricted-globals': ['error', 'process', 'Buffer', 'require', 'fetch', 'window', 'document', 'console', 'setTimeout', 'setInterval'],
-      // The Hermes CLI can't parse classes without a Babel pass.
-      'no-restricted-syntax':  ['error', 'ClassDeclaration', 'ClassExpression'],
-    },
+    rules: agentCorePortableRules,
   },
   {
     name:            'sulla-desktop-vue',
