@@ -44,6 +44,7 @@ import {
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
 import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
+import { newVoiceTurnId, voiceTrace } from '@pkg/composables/voice/VoiceTrace';
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
@@ -117,6 +118,9 @@ export class VoiceSessionAdapter {
   private lastLevel = 0;
   private lastSpeaking = false;
   private captureRequestedAt = 0;
+  private voiceTurnId = '';
+  private vadSpeaking = false;
+  private speakSegment = 0;
 
   private readonly bargeIn = createVoiceBargeInDetector();
 
@@ -134,11 +138,19 @@ export class VoiceSessionAdapter {
 
   // Bound IPC listeners so we can unregister on teardown.
   private readonly onTranscript = (_event: any, msg: any) => {
-    if (!this.capturing && !this.finishing) return;
+    if (!this.capturing && !this.finishing) {
+      voiceTrace(this.voiceTurnId, 'stt_dropped', { reason: 'capture_inactive', state: this.mode ?? 'none' });
+      return;
+    }
     vlog('TIMING', 'STT_EVENT', {
       event:      msg?.event_type,
       elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
       textLength: typeof msg?.text === 'string' ? msg.text.length : 0,
+    });
+    voiceTrace(this.voiceTurnId, msg?.event_type === 'utterance_end' ? 'end_of_speech' : 'stt_event', {
+      elapsedMs: this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
+      size:      typeof msg?.text === 'string' ? msg.text.length : 0,
+      state:     msg?.event_type ?? 'unknown',
     });
     this.turn.handleEvent(msg);
   };
@@ -147,11 +159,19 @@ export class VoiceSessionAdapter {
     if (!this.capturing) return;
     this.lastLevel = Math.max(0, Math.min(1, data.level));
     this.lastSpeaking = !!data.speaking;
+    if (this.lastSpeaking !== this.vadSpeaking) {
+      this.vadSpeaking = this.lastSpeaking;
+      voiceTrace(this.voiceTurnId, this.lastSpeaking ? 'vad_speech_start' : 'vad_silence_start', {
+        elapsedMs: this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
+        speaking:  this.lastSpeaking,
+      });
+    }
 
     // Hands-free barge-in: sustained speech while Sulla talks stops her.
     // (Hold-to-talk stops TTS outright on activation.)
     if (this.mode === 'handsfree' && this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
       logBargeIn();
+      voiceTrace(this.voiceTurnId, 'barge_in', { elapsedMs: Date.now() - this.captureRequestedAt, reason: 'sustained_vad_during_playback' });
       this.tts.stop();
     }
 
@@ -177,7 +197,7 @@ export class VoiceSessionAdapter {
       this.tts.on('playbackStart', () => this.handleTtsStart()),
       this.tts.on('queueEmpty', () => this.handleTtsEnd()),
       controller.on('voiceCommand', e => this.handleCommand(e.command)),
-      controller.on('speakRequested', e => this.speak(e.text)),
+      controller.on('speakRequested', e => this.speak(e.text, undefined, e.voiceTurnId)),
       // The transcript's "stop" button (TtsIndicator) and Esc only flip controller
       // state — actually silence the audio.
       controller.on('ttsStopped', () => {
@@ -284,8 +304,13 @@ export class VoiceSessionAdapter {
     this.bargeIn.reset();
     this.lastLevel = 0;
     this.lastSpeaking = false;
+    this.vadSpeaking = false;
+    this.voiceTurnId = newVoiceTurnId();
+    this.speakSegment = 0;
+    this.tts.setTraceTurn(this.voiceTurnId);
     this.captureRequestedAt = Date.now();
     vlog('TIMING', 'CAPTURE_REQUESTED', { mode: ptt ? 'ptt' : 'handsfree' });
+    voiceTrace(this.voiceTurnId, 'capture_start', { state: ptt ? 'ptt' : 'handsfree' });
 
     ipcRenderer.on('gateway-transcript', this.onTranscript);
     ipcRenderer.on('audio-driver:mic-vad', this.onMicVad);
@@ -298,6 +323,7 @@ export class VoiceSessionAdapter {
       try {
         const micResult = await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
         vlog('TIMING', 'MIC_READY', { durationMs: Date.now() - this.captureRequestedAt });
+        voiceTrace(this.voiceTurnId, 'capture_ready', { durationMs: Date.now() - this.captureRequestedAt, state: micResult?.ok ? 'ready' : 'failed' });
         if (gen !== this.generation) return false;
         if (!micResult?.ok) throw new Error(micResult?.error || 'mic-start-failed');
         const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
@@ -305,6 +331,7 @@ export class VoiceSessionAdapter {
           manualTurn: ptt,
         });
         vlog('TIMING', 'STT_READY', { durationMs: Date.now() - this.captureRequestedAt });
+        voiceTrace(this.voiceTurnId, 'stt_ready', { durationMs: Date.now() - this.captureRequestedAt, state: whisperResult?.ok ? 'ready' : 'failed' });
         if (gen !== this.generation) return false;
         if (!whisperResult?.ok) {
           this.onError?.('Failed to start transcription. Check that whisper is installed with a model downloaded.');
@@ -313,6 +340,7 @@ export class VoiceSessionAdapter {
         }
         return true;
       } catch (err) {
+        voiceTrace(this.voiceTurnId, 'capture_error', { elapsedMs: Date.now() - this.captureRequestedAt, error: err instanceof Error ? err.message : String(err) });
         console.error('[VoiceSessionAdapter] start failed', err);
         if (gen === this.generation) {
           this.onError?.('Voice capture failed to start.');
@@ -360,6 +388,7 @@ export class VoiceSessionAdapter {
   /** Stop everything and discard whatever wasn't committed. Safe to call repeatedly. */
   private teardown(keepMicWarm = false): void {
     const wasCapturing = this.capturing || this.finishing;
+    if (wasCapturing) voiceTrace(this.voiceTurnId, 'capture_end', { elapsedMs: Date.now() - this.captureRequestedAt, reason: keepMicWarm ? 'turn_complete_mic_warm' : 'session_stopped' });
 
     this.generation++;
     this.capturing = false;
@@ -456,6 +485,7 @@ export class VoiceSessionAdapter {
       elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
       textLength: text.trim().length,
     });
+    voiceTrace(this.voiceTurnId, 'agent_dispatch', { elapsedMs: Date.now() - this.captureRequestedAt, size: text.trim().length });
     const transcript = text.trim();
     if (!this.active) return;
     // Whisper uses punctuation wrappers for sounds that are not speech. A sequence
@@ -473,10 +503,15 @@ export class VoiceSessionAdapter {
     this.controller.stopVoice(true);
 
     // Tagged as voice so the reply comes back in voice mode (<speak> → TTS).
-    if (transcript && speakable) this.controller.send(transcript, [], { inputSource: 'voice' });
+    if (transcript && speakable) this.controller.send(transcript, [], { inputSource: 'voice', voiceTurnId: this.voiceTurnId });
+    else voiceTrace(this.voiceTurnId, 'turn_skipped', { reason: transcript ? 'non_speech_only' : 'empty_transcript' });
 
     // Hands-free and still listening? Spin up a fresh interim bubble for the next utterance.
     if (this.capturing && this.mode === 'handsfree') {
+      this.voiceTurnId = newVoiceTurnId();
+      this.captureRequestedAt = Date.now();
+      this.speakSegment = 0;
+      voiceTrace(this.voiceTurnId, 'capture_start', { state: 'handsfree_continuation' });
       this.recordingStartedAt = Date.now();
       this.spawnInterim();
     }
@@ -485,7 +520,7 @@ export class VoiceSessionAdapter {
   // ─── TTS ──────────────────────────────────────────────────────────
 
   /** Enqueue text for spoken playback. Caller decides *what* gets spoken. */
-  speak(text: string, messageId?: string): void {
+  speak(text: string, messageId?: string, voiceTurnId?: string): void {
     if (window.__sullaTTSDisabled) return;
     if (!text?.trim()) return;
     // Only the conversation on screen — or the one you're talking to by voice —
@@ -493,10 +528,15 @@ export class VoiceSessionAdapter {
     if (!this.isActive() && liveAdapter !== this) return;
     // Holding Space means "I'm talking" — don't talk over the user.
     if (this.mode === 'ptt' && this.active && !this.finishing) return;
+    if (voiceTurnId) {
+      this.voiceTurnId = voiceTurnId;
+      this.tts.setTraceTurn(voiceTurnId);
+    }
     vlog('TIMING', 'AGENT_SPEAK_RECEIVED', {
       elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
       textLength: text.trim().length,
     });
+    voiceTrace(this.voiceTurnId, 'speak_segment', { elapsedMs: Date.now() - this.captureRequestedAt, segment: ++this.speakSegment, size: text.trim().length });
     this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
   }
 

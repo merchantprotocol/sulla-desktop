@@ -111,7 +111,7 @@ export class PersonaAdapter {
     this.hasSentMessage = this.ci.hasMessages;
 
     // Tell the controller to delegate send/stop/continue to us.
-    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource));
+    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId));
     this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
     this.controller.setRunHandlers({
       onStop:     () => this.ci.stop(),
@@ -262,9 +262,9 @@ export class PersonaAdapter {
     // controller bus, where its VoiceSessionAdapter plays it. (It used to be a
     // window event — every mounted chat tab heard it and spoke it, so two open
     // tabs meant two overlapping voices.)
-    const unsubscribeSpeak = this.ci.onSpeakDispatch((text, _threadId, _seq) => {
+    const unsubscribeSpeak = this.ci.onSpeakDispatch((text, _threadId, _seq, voiceTurnId) => {
       if (!text?.trim()) return;
-      this.controller.requestSpeak(text);
+      this.controller.requestSpeak(text, voiceTurnId ?? undefined);
     });
     this.stopWatchers.push(unsubscribeSpeak);
 
@@ -304,7 +304,7 @@ export class PersonaAdapter {
   }
 
   // ─── Intents dispatched by the controller ──────────────────────────
-  async send(text: string, attachments: Attachment[], inputSource?: 'voice'): Promise<void> {
+  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string): Promise<void> {
     this.ci.query.value = text;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
@@ -315,6 +315,7 @@ export class PersonaAdapter {
     const selection = {
       ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
       ...(inputSource ? { inputSource } : {}),
+      ...(voiceTurnId ? { voiceTurnId } : {}),
       ...(this.controller.thread.value.agentId ? { agentId: this.controller.thread.value.agentId } : {}),
       ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
       ...(this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),

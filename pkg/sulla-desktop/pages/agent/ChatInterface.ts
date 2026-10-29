@@ -460,7 +460,7 @@ export class ChatInterface {
    * Bypasses the messages array watcher for lower-latency TTS triggering.
    * Returns an unsubscribe function.
    */
-  onSpeakDispatch(cb: (text: string, threadId: string, pipelineSequence: number | null) => void): () => void {
+  onSpeakDispatch(cb: (text: string, threadId: string, pipelineSequence: number | null, voiceTurnId: string | null) => void): () => void {
     return this.persona.addSpeakListener(cb);
   }
 }

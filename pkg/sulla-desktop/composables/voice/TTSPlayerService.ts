@@ -21,6 +21,7 @@
 import { TypedEventEmitter } from './TypedEventEmitter';
 import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSSynthFailed, timingFirstAudio, vlog } from './VoiceLogger';
 import { splitForSynthesis } from './speechText';
+import { voiceTrace } from './VoiceTrace';
 
 // Speaking-rate multipliers for the native OS voice, mirroring Sulla Mobile's TtsService.
 const RATE_MAP: Record<string, number> = {
@@ -66,6 +67,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   private currentAudioUrl: string | null = null;
   private currentPlaybackResolve: (() => void) | null = null;
   private sequence = 0; // monotonic counter — incremented on stop()
+  private traceTurnId = '';
+  private traceSegment = 0;
 
   // ── Deduplication ──
   private readonly processedIds = new Set<string>();
@@ -125,6 +128,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.playNext();
   }
 
+  setTraceTurn(turnId: string): void {
+    this.traceTurnId = turnId;
+    this.traceSegment = 0;
+  }
+
   /**
    * Immediately stops all TTS playback. Clears the queue, cancels in-flight
    * prefetch, pauses current audio, cancels browser speechSynthesis. Increments
@@ -132,6 +140,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
    */
   stop(): void {
     logTTSStop();
+    voiceTrace(this.traceTurnId, 'tts_cancelled', { reason: 'stop_requested', state: this.playing ? 'playing' : 'idle' });
     if (audible.player === this) audible.player = null;
     this.sequence++; // invalidate in-flight operations
     this.queue.length = 0;
@@ -214,6 +223,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     const text = this.queue.shift()!;
     this.queueLength = this.queue.length;
     const playStartTime = Date.now();
+    const segment = ++this.traceSegment;
+    voiceTrace(this.traceTurnId, 'tts_synth_start', { segment, size: text.length });
     logTTSPlayStart(text, seq, this.queue.length);
 
     this.emit('playbackStart', undefined as any);
@@ -280,6 +291,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
 
       console.log(`[TTSPlayer] Audio ready (source=${ source }), size=${ result?.audio?.byteLength ?? 0 }`);
       vlog('TIMING', 'TTS_SYNTH_DONE', { durationMs: Date.now() - playStartTime, source });
+      voiceTrace(this.traceTurnId, 'tts_synth_end', { segment, durationMs: Date.now() - playStartTime, size: result?.audio?.byteLength ?? 0 });
 
       if (result?.audio) {
         const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
@@ -314,6 +326,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
           audio.play().then(() => {
             timingFirstAudio();
             vlog('TIMING', 'PLAYBACK_STARTED', { durationMs: Date.now() - playStartTime });
+            voiceTrace(this.traceTurnId, 'playback_start', { segment, durationMs: Date.now() - playStartTime });
           }).catch((err) => {
             console.warn('[TTSPlayer] audio.play() rejected:', err);
             finish();
@@ -321,6 +334,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
         });
 
         this.emit('playbackEnd', undefined as any);
+        voiceTrace(this.traceTurnId, 'playback_end', { segment, durationMs: Date.now() - playStartTime });
       } else {
         console.warn('[TTSPlayer] No audio data in result');
       }
@@ -329,6 +343,7 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       // while its model downloads) can't render is skipped, not read in a
       // different voice.
       logTTSSynthFailed(text);
+      voiceTrace(this.traceTurnId, 'tts_error', { segment, durationMs: Date.now() - playStartTime, error: err instanceof Error ? err.message : String(err) });
       console.warn('[TTSPlayer] Synthesis failed, skipping unit:', err);
       this.emit('playbackEnd', undefined as any);
     } finally {

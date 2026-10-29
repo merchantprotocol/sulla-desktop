@@ -1540,6 +1540,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<NormalizedResponse | null> {
     const controller = this.getChatController();
     const ctx = controller.buildContext(state);
+    const voiceTurnId = String((state.metadata as any).voiceTurnId || '');
+    const voiceStartedAt = Date.now();
+
+    if (voiceTurnId) console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'agent_start', ts: new Date().toISOString() }) }`);
 
     this.voiceLog(state, 'LLM', 'STREAM_START', { mode: controller.getMode(), model: provider.getModel() });
 
@@ -1552,8 +1556,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let streamingWsSent = false;
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
+    let firstTokenSeen = false;
 
     const onToken = (token: string): void => {
+      if (voiceTurnId && !firstTokenSeen) {
+        firstTokenSeen = true;
+        console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'first_token', ts: new Date().toISOString(), durationMs: Date.now() - voiceStartedAt, size: token.length }) }`);
+      }
       contentBuffer += token;
 
       // Sub-agent inactivity watchdog in PlaybookController reads this —
