@@ -197,7 +197,23 @@
 
                 <!-- Title and URL -->
                 <div class="flex-1 min-w-0">
-                  <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
+                  <input
+                    v-if="renamingId === entry.id"
+                    v-model="renameTitle"
+                    data-rename-input
+                    type="text"
+                    class="w-full rounded border border-sky-400 bg-white px-2 py-1 text-sm text-slate-900 outline-none ring-2 ring-sky-300/30 dark:bg-slate-800 dark:text-slate-100"
+                    aria-label="Conversation title"
+                    @click.stop
+                    @keydown.enter.prevent="saveRename(entry)"
+                    @keydown.esc.prevent="cancelRename"
+                    @blur="saveRename(entry)"
+                  >
+                  <p
+                    v-else
+                    class="text-sm text-slate-800 dark:text-slate-200 truncate"
+                    @dblclick.stop="startRename(entry)"
+                  >
                     {{ entry.title || 'Untitled' }}
                   </p>
                   <p
@@ -257,7 +273,7 @@
       >
         <button
           class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
-          @click="renameEntry(actionMenu.entry)"
+          @click="startRename(actionMenu.entry)"
         >
           Rename
         </button>
@@ -340,7 +356,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
@@ -379,6 +395,8 @@ const actionMenu = ref<{ entry: HistoryEntry; x: number; y: number } | null>(nul
 const loading = ref(true);
 const entries = ref<HistoryEntry[]>([]);
 const showClearConfirm = ref(false);
+const renamingId = ref<string | null>(null);
+const renameTitle = ref('');
 
 let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -495,9 +513,30 @@ async function patchEntry(entry: HistoryEntry, patch: { title?: string; pinned?:
   await loadHistory();
 }
 
-async function renameEntry(entry: HistoryEntry) {
-  const title = window.prompt('Rename conversation', entry.title || '');
-  if (title?.trim()) await patchEntry(entry, { title: title.trim() });
+function startRename(entry: HistoryEntry) {
+  actionMenu.value = null;
+  renamingId.value = entry.id;
+  renameTitle.value = entry.title || '';
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>('[data-rename-input]');
+
+    input?.focus();
+    input?.select();
+  });
+}
+
+function cancelRename() {
+  renamingId.value = null;
+  renameTitle.value = '';
+}
+
+async function saveRename(entry: HistoryEntry) {
+  if (renamingId.value !== entry.id) return;
+  const title = renameTitle.value.trim();
+
+  renamingId.value = null;
+  renameTitle.value = '';
+  if (title && title !== entry.title) await patchEntry(entry, { title });
 }
 
 async function togglePin(entry: HistoryEntry) {

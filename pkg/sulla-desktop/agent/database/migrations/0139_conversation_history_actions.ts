@@ -10,11 +10,17 @@ export const up = `
 
   ALTER TABLE claude_conversations
     ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+    ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE;
 
   UPDATE conversation_history
   SET archived = TRUE, status = 'closed'
   WHERE status = 'archived';
+
+  UPDATE conversation_history
+  SET deleted_at = COALESCE(deleted_at, last_active_at, NOW())
+  WHERE status = 'deleted' AND deleted_at IS NULL;
 
   CREATE INDEX IF NOT EXISTS idx_conv_history_visible_order
     ON conversation_history (archived, pinned DESC, last_active_at DESC)
@@ -24,5 +30,9 @@ export const up = `
 export const down = `
   DROP INDEX IF EXISTS idx_conv_history_visible_order;
   ALTER TABLE conversation_history DROP COLUMN IF EXISTS archived;
-  ALTER TABLE claude_conversations DROP COLUMN IF EXISTS pinned, DROP COLUMN IF EXISTS archived;
+  ALTER TABLE claude_conversations
+    DROP COLUMN IF EXISTS pinned,
+    DROP COLUMN IF EXISTS pinned_at,
+    DROP COLUMN IF EXISTS archived,
+    DROP COLUMN IF EXISTS archived_at;
 `;

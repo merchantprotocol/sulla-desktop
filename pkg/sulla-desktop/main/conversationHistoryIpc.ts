@@ -11,9 +11,11 @@ import fs from 'node:fs';
 
 import { ipcMain } from 'electron';
 
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { RecordConversationInput, ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { enqueueSyncOp } from '@pkg/main/sync/syncQueue';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -97,6 +99,23 @@ export function initConversationHistoryIpc(): void {
 
   ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => {
     const updated = await ConversationHistoryModel.update(id, patch);
+    if (updated?.type === 'chat') {
+      const syncId = updated.thread_id || updated.id;
+      const rows = await postgresClient.query<{ id: string }>(
+        `UPDATE claude_conversations
+            SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+                pinned = COALESCE($4, pinned),
+                pinned_at = CASE WHEN $4::boolean IS NULL THEN pinned_at WHEN $4 THEN now() ELSE NULL END,
+                archived = COALESCE($5, archived),
+                archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END,
+                deleted_at = CASE WHEN $6::boolean IS NULL THEN deleted_at WHEN $6 THEN now() ELSE NULL END,
+                updated_at = now()
+          WHERE id = $1 OR id = $7
+          RETURNING id`,
+        [syncId, patch.title !== undefined, patch.title?.trim() ?? null, patch.pinned ?? null, patch.archived ?? null, patch.deleted ?? null, updated.id],
+      );
+      await Promise.all(rows.map(row => enqueueSyncOp('claude_conversation', { id: row.id }, patch.deleted ? 'delete' : 'upsert')));
+    }
     mainEvents.emit('conversation-history:changed' as any);
     return updated;
   });

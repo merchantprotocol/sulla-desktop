@@ -45,6 +45,10 @@ describeDatabase('conversation history actions and durable resume', () => {
         model TEXT, status TEXT, kind TEXT, turn_id TEXT, position INTEGER, payload JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), deleted_at TIMESTAMPTZ
       );
+      CREATE TABLE claude_conversations (
+        id TEXT PRIMARY KEY, contractor_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT 'New Conversation',
+        status TEXT NOT NULL DEFAULT 'active', updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
     `);
     const { postgresClient } = await import('../../PostgresClient');
     jest.spyOn(postgresClient, 'query').mockImplementation(async(text: string, params: any[] = []) => (await pool.query(text, params)).rows as any);
@@ -79,6 +83,17 @@ describeDatabase('conversation history actions and durable resume', () => {
     expect((await history.list('deleted'))[0].id).toBe('older');
     await history.update('older', { deleted: false });
     expect((await history.list('active')).map(row => row.id)).toEqual(['older', 'newer']);
+  });
+
+  it('maps legacy deleted status to a deletion timestamp during migration', async() => {
+    await q(`INSERT INTO conversation_history (id, type, title, status, last_active_at)
+      VALUES ('legacy-deleted', 'chat', 'Legacy deleted', 'deleted', '2026-01-02T03:04:05Z')`);
+    const { up } = await import('../../migrations/0139_conversation_history_actions');
+
+    await q(up);
+
+    expect((await q(`SELECT deleted_at FROM conversation_history WHERE id = 'legacy-deleted'`))[0].deleted_at.toISOString())
+      .toBe('2026-01-02T03:04:05.000Z');
   });
 
   it('reloads every message in order and appends new turns to the same durable thread', async() => {

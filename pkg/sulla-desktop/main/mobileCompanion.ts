@@ -283,7 +283,8 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
     const archived = params.archived === true;
     const conversations = await postgresClient.query(
-      `SELECT id, title, pinned, archived, status, last_message_at, last_message_preview, created_at
+      `SELECT id, title, pinned, pinned_at, archived, archived_at, status,
+              last_message_at, last_message_preview, unread_count, created_at, updated_at, deleted_at
          FROM claude_conversations
         WHERE deleted_at IS NULL AND archived = $2
         ORDER BY pinned DESC, last_message_at DESC NULLS LAST
@@ -302,9 +303,13 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     const rows = await postgresClient.query(
       `UPDATE claude_conversations
           SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
-              pinned = COALESCE($4, pinned), archived = COALESCE($5, archived), updated_at = now()
+              pinned = COALESCE($4, pinned),
+              pinned_at = CASE WHEN $4::boolean IS NULL THEN pinned_at WHEN $4 THEN now() ELSE NULL END,
+              archived = COALESCE($5, archived),
+              archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END,
+              updated_at = now()
         WHERE id = $1 AND deleted_at IS NULL
-        RETURNING id, title, pinned, archived`,
+        RETURNING id, title, pinned, pinned_at, archived, archived_at, unread_count, updated_at, deleted_at`,
       [id, hasTitle, title, pinned, archived],
     );
     if (!rows[0]) throw new Error('Conversation not found');
