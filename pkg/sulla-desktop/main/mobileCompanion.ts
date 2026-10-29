@@ -17,6 +17,7 @@ import { getModelProviderService } from '@pkg/agent/services/ModelProviderServic
 import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
 import { findTaskByThread, getAllJobs, getJob } from '@pkg/agent/tools/agents/jobRegistry';
 import { stopAgentJob } from '@pkg/agent/tools/agents/stop_agent_job';
+import Logging from '@pkg/utils/logging';
 
 // The only desktop switches the phone may flip. Each toggle writes exactly
 // one key. (Projects has no automation switch: it is a plain board.)
@@ -130,9 +131,32 @@ function companionHeartbeatState(conversationId: string) {
   };
 }
 
+const voiceTraceLog = Logging.background;
+
+function storeMobileVoiceTraces(params: Record<string, unknown>) {
+  if (params.version !== 1 || !Array.isArray(params.entries) || params.entries.length > 500) {
+    throw new Error('Invalid voice trace payload');
+  }
+  const allowed = ['turnId', 'stage', 'ts', 'durationMs', 'elapsedMs', 'size', 'state', 'reason', 'error', 'segment', 'speaking'];
+  let stored = 0;
+  for (const raw of params.entries) {
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as Record<string, unknown>;
+    if (entry.tag !== '[VoiceTrace]' || !entry.data || typeof entry.data !== 'object') continue;
+    const data = entry.data as Record<string, unknown>;
+    if (typeof data.turnId !== 'string' || !/^vt_[a-z0-9_]{3,80}$/i.test(data.turnId)) continue;
+    if (typeof data.stage !== 'string' || data.stage.length > 100) continue;
+    const safe = Object.fromEntries(allowed.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
+    voiceTraceLog.log(`[VoiceTrace] ${ JSON.stringify(safe) }`);
+    stored++;
+  }
+  return { stored };
+}
+
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
 export async function mobileCompanionRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
+  case 'voice.trace.store': return storeMobileVoiceTraces(params);
   case 'decisions.list': return { decisions: await decisionService.list() };
   case 'decisions.resolve': return decisionService.resolve(params as unknown as DecisionResponse);
   case 'chat.answer': {
