@@ -49,6 +49,11 @@ electronLanguages: [ en-US ]
 extraResources:
   - resources/
   - '!resources/host/'
+  # Lima was removed (#1535); stale local Lima/qemu downloads must never ship.
+  - '!resources/darwin/lima/'
+  - '!resources/darwin/lima*'
+  - '!resources/darwin/qemu*'
+  - '!resources/darwin/alpine-lima*'
   - '!resources/**/*.js.map'
 files:
   - dist/app/**/*
