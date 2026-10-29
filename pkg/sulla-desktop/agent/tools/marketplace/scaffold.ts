@@ -76,7 +76,11 @@ export class MarketplaceScaffoldWorker extends BaseTool {
   }
 }
 
-function generateSkeleton(
+function yamlScalar(value: string): string {
+  return JSON.stringify(value);
+}
+
+export function generateSkeleton(
   kind: ArtifactKind,
   ctx: { slug: string; name: string; description: string; runtime: string; memoryPack: boolean },
 ): Record<string, string> {
@@ -85,10 +89,10 @@ function generateSkeleton(
   switch (kind) {
   case 'skill':
     if (ctx.memoryPack) return {
-      [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\nslug: ${ ctx.slug }\nname: ${ JSON.stringify(ctx.name) }\ndescription: ${ JSON.stringify(ctx.description || 'Installable subject memory and operating guidance.') }\nversion: 1.0.0\nmemory_pack: true\ntags: [memory-pack]\n---\n# ${ ctx.name }\n\n${ ctx.description || 'An installable memory pack.' }\n\n## Customize\n\nEdit the files under \`memory/\`, then increment \`memory/manifest.json\` version before syncing or publishing.\n`,
+      [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\nslug: ${ yamlScalar(ctx.slug) }\nname: ${ JSON.stringify(ctx.name) }\ndescription: ${ JSON.stringify(ctx.description || 'Installable subject memory and operating guidance.') }\nversion: 1.0.0\nmemory_pack: true\ntags: [memory-pack]\n---\n# ${ ctx.name }\n\n${ ctx.description || 'An installable memory pack.' }\n\n## Customize\n\nEdit the files under \`memory/\`, then increment \`memory/manifest.json\` version before syncing or publishing.\n`,
       'memory/manifest.json': JSON.stringify({ version: 1 }, null, 2) + '\n',
-      [`memory/subjects/${ ctx.slug }.md`]: `---\nslug: ${ ctx.slug }\nkind: system\nname: ${ JSON.stringify(ctx.name) }\nparent: global\naliases: []\n---\n\n## Overview\n\n${ ctx.description || `${ ctx.name } knowledge supplied by an installed memory pack.` }\n`,
-      [`memory/skills/${ ctx.slug }.md`]: `---\nslug: ${ ctx.slug }\nlabel: ${ JSON.stringify(`Use ${ ctx.name }`) }\ntrigger_when: ${ JSON.stringify(`When the current task needs the knowledge and instructions in ${ ctx.name }.`) }\ntrigger_actions: []\ntrigger_phrases: [${ ctx.slug }]\nscope: [${ ctx.slug }]\n---\n\n**When:** The task needs this memory pack.\n\n**Do:**\n1. Follow the pack's subject facts, rules, and current instructions.\n`,
+      [`memory/subjects/${ ctx.slug }.md`]: `---\nslug: ${ yamlScalar(ctx.slug) }\nkind: system\nname: ${ JSON.stringify(ctx.name) }\nparent: global\naliases: []\n---\n\n## Overview\n\n${ ctx.description || `${ ctx.name } knowledge supplied by an installed memory pack.` }\n`,
+      [`memory/skills/${ ctx.slug }.md`]: `---\nslug: ${ yamlScalar(ctx.slug) }\nlabel: ${ JSON.stringify(`Use ${ ctx.name }`) }\ntrigger_when: ${ JSON.stringify(`When the current task needs the knowledge and instructions in ${ ctx.name }.`) }\ntrigger_actions: []\ntrigger_phrases: [${ ctx.slug }]\nscope: [${ ctx.slug }]\n---\n\n**When:** The task needs this memory pack.\n\n**Do:**\n1. Follow the pack's subject facts, rules, and current instructions.\n`,
     };
     return {
       [KIND_LAYOUTS.skill.manifest]: `---\nsullaApi: ^1.0.0\nhooks: []\n---\n# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
@@ -101,10 +105,10 @@ function generateSkeleton(
 sullaApi: ^1.0.0
 hooks: []
 kind: Function
-id: function-${ ctx.slug }
-slug: ${ ctx.slug }
-name: ${ ctx.name }
-description: ${ ctx.description || 'TODO: describe what this function does.' }
+id: ${ yamlScalar(`function-${ ctx.slug }`) }
+slug: ${ yamlScalar(ctx.slug) }
+name: ${ yamlScalar(ctx.name) }
+description: ${ yamlScalar(ctx.description || 'TODO: describe what this function does.') }
 schemaversion: 1
 spec:
   runtime: ${ ctx.runtime }
@@ -138,9 +142,9 @@ spec:
     return {
       [KIND_LAYOUTS.workflow.manifest]: `sullaApi: ^1.0.0
 hooks: []
-id: ${ ctx.slug }
-name: ${ ctx.name }
-description: ${ ctx.description || 'TODO: describe what this workflow does.' }
+id: ${ yamlScalar(ctx.slug) }
+name: ${ yamlScalar(ctx.name) }
+description: ${ yamlScalar(ctx.description || 'TODO: describe what this workflow does.') }
 version: "1"
 enabled: true
 createdAt: "${ now }"
@@ -182,9 +186,9 @@ viewport: { x: 0, y: 0, zoom: 1 }
 
   case 'agent':
     return {
-      [KIND_LAYOUTS.agent.manifest]: `id: ${ ctx.slug }
-name: ${ ctx.name }
-description: ${ ctx.description || 'TODO: describe what this agent does.' }
+      [KIND_LAYOUTS.agent.manifest]: `id: ${ yamlScalar(ctx.slug) }
+name: ${ yamlScalar(ctx.name) }
+description: ${ yamlScalar(ctx.description || 'TODO: describe what this agent does.') }
 model: claude-sonnet-4-6
 tools:
   - meta
@@ -198,9 +202,9 @@ tools:
     return {
       [KIND_LAYOUTS.recipe.manifest]: `sullaApi: ^1.0.0
 hooks: []
-slug: ${ ctx.slug }
-name: ${ ctx.name }
-description: ${ ctx.description || 'TODO: describe what this recipe does.' }
+slug: ${ yamlScalar(ctx.slug) }
+name: ${ yamlScalar(ctx.name) }
+description: ${ yamlScalar(ctx.description || 'TODO: describe what this recipe does.') }
 version: "1.0.0"
 publisher: ""
 categories: []
@@ -219,9 +223,9 @@ extra_urls: []
     image: alpine:3.20
     command: ["sh", "-c", "while true; do sleep 3600; done"]
 `,
-      'installation.yaml':  `slug: ${ ctx.slug }
-name: ${ ctx.name }
-description: ${ ctx.description || 'TODO: describe what this recipe does.' }
+      'installation.yaml':  `slug: ${ yamlScalar(ctx.slug) }
+name: ${ yamlScalar(ctx.name) }
+description: ${ yamlScalar(ctx.description || 'TODO: describe what this recipe does.') }
 version: "1.0.0"
 compose:
   composeFile: docker-compose.yml
@@ -239,8 +243,8 @@ commands:
     const sampleEndpoint = `${ ctx.slug === 'example' ? 'items' : 'example' }.v1.yaml`;
     return {
       'INTEGRATION.md': `# ${ ctx.name }\n\n${ ctx.description || 'TODO: describe what this integration exposes and when the agent should reach for it.' }\n\n## Auth\n\nTODO: describe the auth model users should know about (OAuth app to create, API key to generate, etc.)\n\n## Endpoints\n\nTODO: list the main endpoints and when to use each.\n`,
-      [authFilename]:   `api:\n  name: ${ ctx.slug }\n  version: "1"\n  provider: ""\n  base_url: https://api.example.com\n  transport: rest\n\nauth:\n  type: apiKey      # oauth2 | apiKey | bearer\n  header: X-API-Key\n  # For oauth2 instead, set:\n  #   type: oauth2\n  #   flow: authorization_code\n  #   authorization_url: https://.../oauth/authorize\n  #   token_url: https://.../oauth/token\n  #   scopes: ["read", "write"]\n  #   pkce: true\n`,
-      [sampleEndpoint]: `endpoint:\n  name: ${ sampleEndpoint.replace('.v1.yaml', '') }\n  description: TODO\n  path: /v1/${ sampleEndpoint.replace('.v1.yaml', '') }\n  method: GET\n  auth: required\n  # quota_cost: 1\n`,
+      [authFilename]:   `api:\n  name: ${ yamlScalar(ctx.slug) }\n  version: "1"\n  provider: ""\n  base_url: https://api.example.com\n  transport: rest\n\nauth:\n  type: apiKey      # oauth2 | apiKey | bearer\n  header: X-API-Key\n  # For oauth2 instead, set:\n  #   type: oauth2\n  #   flow: authorization_code\n  #   authorization_url: https://.../oauth/authorize\n  #   token_url: https://.../oauth/token\n  #   scopes: ["read", "write"]\n  #   pkce: true\n`,
+      [sampleEndpoint]: `endpoint:\n  name: ${ yamlScalar(sampleEndpoint.replace('.v1.yaml', '')) }\n  description: "TODO"\n  path: /v1/${ sampleEndpoint.replace('.v1.yaml', '') }\n  method: GET\n  auth: required\n  # quota_cost: 1\n`,
     };
   }
   }
