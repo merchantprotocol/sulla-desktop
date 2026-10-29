@@ -11,7 +11,9 @@ import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { syncHandlers } from '../syncHandlers';
 
 describe('claude conversation sync handler', () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it('upserts mobile pin and archive timestamps using updated_at conflict ordering', async() => {
     const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
