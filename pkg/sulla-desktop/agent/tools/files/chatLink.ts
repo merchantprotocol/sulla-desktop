@@ -7,6 +7,7 @@ export function fileChatLink(file: any): string | undefined {
   const id = file?.fileId ?? file?.file_id ?? file?.id;
   const path = file?.path;
   if (!id || !path) return undefined;
+  if (file?.kind === 'folder' || file?.type === 'folder' || file?.isFolder === true) return undefined;
   const version = file?.versionId ?? file?.version_id ?? file?.current_version_id ?? file?.version?.id;
   const name = file?.name ?? String(path).split('/').pop() ?? String(path);
   const params = new URLSearchParams({ ...(version ? { version: String(version) } : {}), name: String(name), path: String(path) });

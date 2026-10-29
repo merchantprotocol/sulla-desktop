@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <article class="file-card" role="button" tabindex="0" :aria-label="`Open ${reference.name} in File Manager`" @click="open" @keydown.enter="open" @keydown.space.prevent="open">
+  <article class="file-card" role="button" tabindex="0" :aria-label="`Open ${reference.name} in File Manager`" @click="open" @keydown.enter.self="open" @keydown.space.self.prevent="open">
     <FileGlyph
       :name="reference.name"
       :mime="reference.mime"
@@ -42,7 +42,7 @@
         <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" /></svg><span>Link</span>
       </button>
     </div>
-    <div v-if="editing" class="inline-editor">
+    <div v-if="editing" class="inline-editor" @click.stop>
       <textarea v-model="draft" :disabled="saving" aria-label="Edit project file markdown" />
       <div><span v-if="error" role="alert">{{ error }}</span><button type="button" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save new version' }}</button><button type="button" @click="editing = false">Cancel</button></div>
     </div>
