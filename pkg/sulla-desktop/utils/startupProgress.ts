@@ -185,6 +185,9 @@ const BACKEND_LABELS: Record<string, string> = {
   'Waiting for Kubernetes API ready (up to 10 min)': 'Getting Kubernetes ready for your services',
   'Preparing Sulla Docker Compose file':             'Planning Sulla\'s private services',
   'Docker Compose file prepared':                    'Private services planned',
+  'Loading bundled container images':                'Unpacking Sulla\'s private services',
+  'Bundled container images loaded':                 'Sulla\'s private services unpacked',
+  'Preparing the threat proxy':                      'Turning on threat protection for web traffic',
   'Deploying Sulla services with Docker Compose':    'Starting Sulla\'s private services',
   'Verifying compose file':                          'Double-checking the service plan',
   'Checking Docker credentials config':              'Checking your Docker sign-in',
@@ -211,7 +214,9 @@ const CONTAINER_CHECKPOINTS = [0, 5, 15, 20, 35];
 const CONTAINER_SCALE = 35;
 
 const CONTAINER_STEP = /^Starting container (\S+) \((\d+) of (\d+)\)$/;
-const CONTAINERS_DESCRIPTION = /docker compose|compose file|deploying|sulla services|docker credentials|sulla deployment|^starting container /i;
+/** First boot unpacks every bundled service image (several GB) between the 15 and 20 checkpoints. */
+const IMAGE_STEP = /^Loading bundled image (.+)$/;
+const CONTAINERS_DESCRIPTION = /docker compose|compose file|deploying|sulla services|docker credentials|sulla deployment|^starting container |bundled (container )?image|threat proxy/i;
 const GENERIC_DESCRIPTIONS = new Set(['Starting Backend', 'System configuration ready', 'Virtual machine started',
   'Kubernetes downloaded', 'Services configured', 'Components installed', 'Kubernetes starting']);
 
@@ -244,6 +249,15 @@ export function backendLabel(input: BackendProgressInput): { key: string; label:
   if (container) {
     return { key: `container:${ container[1] }`, label: containerLabel(container[1], Number(container[2]), Number(container[3])) };
   }
+  const image = IMAGE_STEP.exec(description);
+
+  if (image) {
+    const nice = image[1].replace(/^.*\//, '').replace(/[:@].*$/, '');
+    const total = Math.max(1, input.max);
+    const index = Math.min(total, Math.max(0, input.current) + 1);
+
+    return { key: 'images', label: `Unpacking Sulla's private services: ${ nice } (${ index } of ${ total })` };
+  }
   if (!description || GENERIC_DESCRIPTIONS.has(description)) {
     const checkpoint = lastCheckpoint(BOOT_CHECKPOINTS, input.max > 0 ? input.current * 100 / input.max : 0);
 
@@ -274,6 +288,9 @@ const SLOW_NOTES: Record<string, string> = {
   'boot:60':                          'Installing and checking the tools your agents use, so they\'re ready the moment you ask.',
   'boot:75':                          'Kubernetes is turned on, so Sulla waits for it before starting your services.',
   'backend:Deploying new containers': 'Waiting for your private database and cache to report healthy.',
+  'images':                           'The first launch unpacks Sulla\'s private services onto this Mac, several GB in all. It takes a few minutes once; later starts skip it.',
+  'backend:Loading bundled container images': 'The first launch unpacks Sulla\'s private services onto this Mac, several GB in all. It takes a few minutes once; later starts skip it.',
+  'backend:Preparing the threat proxy': 'Setting up the proxy that screens your agents\' web traffic for threats.',
   'service:postgres':                 'Waiting for your private database to accept connections.',
   'service:redis':                    'Waiting for the cache to answer.',
   'service:database-manager':         'Applying any database updates so your data matches this version.',
@@ -384,6 +401,8 @@ export class StartupProgressModel {
     if (this.ready || stageOrder(this.stage) >= stageOrder('services')) return;
     const description = input.description;
     const container = CONTAINER_STEP.exec((description ?? '').trim());
+    const image = IMAGE_STEP.test((description ?? '').trim());
+    const imagesLoaded = (description ?? '').trim() === 'Bundled container images loaded';
     const kind = classifyBackendDescription(description);
     const complete = input.max > 0 && input.current >= input.max;
 
@@ -401,6 +420,14 @@ export class StartupProgressModel {
         this.stepIndex = BOOT_CHECKPOINTS.indexOf(lastCheckpoint(BOOT_CHECKPOINTS, value)) + 1;
         this.stepTotal = BOOT_CHECKPOINTS.length;
       }
+    } else if (image || imagesLoaded) {
+      // Image counts (done of total) map onto the 15→20 slice of the container scale.
+      const total = Math.max(1, input.max);
+      const done = imagesLoaded ? total : Math.min(total, Math.max(0, input.current));
+
+      this.setStageProgress((15 + 5 * done / total) / CONTAINER_SCALE, (15 + 5 * Math.min(total, done + 1) / total) / CONTAINER_SCALE);
+      this.stepIndex = imagesLoaded ? null : Math.min(total, done + 1);
+      this.stepTotal = imagesLoaded ? null : total;
     } else if (container) {
       const index = Number(container[2]);
       const total = Math.max(index, Number(container[3]));
