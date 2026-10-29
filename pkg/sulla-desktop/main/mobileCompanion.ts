@@ -281,15 +281,35 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
   // desktop, so it works even when conversation sync to the cloud is off.
   case 'conversations.list': {
     const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+    const archived = params.archived === true;
     const conversations = await postgresClient.query(
-      `SELECT id, title, status, last_message_at, last_message_preview, created_at
+      `SELECT id, title, pinned, archived, status, last_message_at, last_message_preview, created_at
          FROM claude_conversations
-        WHERE deleted_at IS NULL
-        ORDER BY last_message_at DESC NULLS LAST
+        WHERE deleted_at IS NULL AND archived = $2
+        ORDER BY pinned DESC, last_message_at DESC NULLS LAST
         LIMIT $1`,
-      [limit],
+      [limit, archived],
     );
     return { conversations };
+  }
+  case 'conversations.update': {
+    const id = companionString(params.conversationId, 'Conversation', 200, true)!;
+    const hasTitle = Object.prototype.hasOwnProperty.call(params, 'title');
+    const title = hasTitle ? companionString(params.title, 'Title', 200, true) : null;
+    const pinned = typeof params.pinned === 'boolean' ? params.pinned : null;
+    const archived = typeof params.archived === 'boolean' ? params.archived : null;
+    if (!hasTitle && pinned === null && archived === null) throw new Error('title, pinned, or archived required');
+    const rows = await postgresClient.query(
+      `UPDATE claude_conversations
+          SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+              pinned = COALESCE($4, pinned), archived = COALESCE($5, archived), updated_at = now()
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING id, title, pinned, archived`,
+      [id, hasTitle, title, pinned, archived],
+    );
+    if (!rows[0]) throw new Error('Conversation not found');
+    await enqueueSyncOp('claude_conversation', { id }, 'upsert');
+    return { conversation: rows[0] };
   }
   case 'conversations.messages': {
     if (typeof params.conversationId !== 'string' || !params.conversationId || params.conversationId.length > 200) throw new Error('Conversation required');

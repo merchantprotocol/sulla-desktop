@@ -91,6 +91,16 @@ export function initConversationHistoryIpc(): void {
 
   // ── Invoke handlers (renderer → main, with return value) ──
 
+  ipcMain.handle('conversation-history:list', async(_event, options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: string }) => {
+    return await ConversationHistoryModel.list(options?.view, options?.limit, options?.type as any);
+  });
+
+  ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => {
+    const updated = await ConversationHistoryModel.update(id, patch);
+    mainEvents.emit('conversation-history:changed' as any);
+    return updated;
+  });
+
   ipcMain.handle('conversation-history:get-recent', async(_event, limit?: number, type?: string) => {
     try {
       return await ConversationHistoryModel.getRecent(
@@ -103,9 +113,9 @@ export function initConversationHistoryIpc(): void {
     }
   });
 
-  ipcMain.handle('conversation-history:search', async(_event, query: string) => {
+  ipcMain.handle('conversation-history:search', async(_event, query: string, options?: { view?: 'active' | 'archived' | 'deleted'; type?: string }) => {
     try {
-      return await ConversationHistoryModel.search(query);
+      return options ? await ConversationHistoryModel.searchView(query, options.view, options.type as any) : await ConversationHistoryModel.search(query);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to search:', err);
       return [];
@@ -123,18 +133,8 @@ export function initConversationHistoryIpc(): void {
 
   ipcMain.handle('conversation-history:delete', async(_event, id: string) => {
     try {
-      const associations = await ConversationHistoryModel.getFileAssociations(id);
-
+      // Recoverable soft delete: preserve transcript, thread state, and log file.
       await ConversationHistoryModel.deleteConversation(id);
-
-      // Clean up log file
-      if (associations.log_file) {
-        try {
-          await fs.promises.unlink(associations.log_file);
-        } catch {
-          // Already gone
-        }
-      }
 
       // Trigger menu rebuild
       mainEvents.emit('conversation-history:changed' as any);

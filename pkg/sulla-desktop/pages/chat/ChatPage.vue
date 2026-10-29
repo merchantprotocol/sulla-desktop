@@ -156,6 +156,7 @@ interface HistoryRecord {
   created_at:     string;
   last_active_at: string;
   pinned:         boolean;
+  archived:       boolean;
   message_count:  number;
 }
 

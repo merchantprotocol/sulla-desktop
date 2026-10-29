@@ -43,6 +43,23 @@
                   >
                 </div>
 
+                <select
+                  v-model="historyView"
+                  class="history-filter h-10 rounded-lg bg-white border border-slate-300 px-3 text-sm text-slate-700 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-1 dark:ring-white/5 dark:border-none focus:outline-none"
+                  aria-label="History view"
+                  @change="loadHistory"
+                >
+                  <option value="active">
+                    Conversations
+                  </option>
+                  <option value="archived">
+                    Archived
+                  </option>
+                  <option value="deleted">
+                    Recently deleted
+                  </option>
+                </select>
+
                 <!-- Filter -->
                 <select
                   v-model="filterType"
@@ -125,6 +142,7 @@
                 :key="entry.id"
                 class="history-entry group flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-colors"
                 @click="openEntry(entry)"
+                @contextmenu.prevent="openActionMenu($event, entry)"
               >
                 <!-- Type icon -->
                 <div
@@ -200,7 +218,7 @@
                   type="button"
                   class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
                   :class="entry.pinned ? 'opacity-100 text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
-                  title="Pin"
+                  :title="entry.pinned ? 'Unpin' : 'Pin'"
                   @click.stop="togglePin(entry)"
                 >
                   <svg
@@ -214,27 +232,62 @@
                   </svg>
                 </button>
 
-                <!-- Delete button -->
+                <!-- Item actions -->
                 <button
                   type="button"
-                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400"
-                  title="Delete"
-                  @click.stop="deleteEntry(entry)"
+                  class="flex-shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 dark:text-slate-500"
+                  title="Conversation actions"
+                  aria-label="Conversation actions"
+                  @click.stop="openActionMenu($event, entry)"
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    class="h-3.5 w-3.5"
-                  >
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
+                  <span aria-hidden="true">⋯</span>
                 </button>
               </div>
             </div>
           </template>
         </div>
+      </div>
+
+      <div
+        v-if="actionMenu"
+        class="fixed z-50 min-w-40 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-xl py-1"
+        :style="{ left: `${actionMenu.x}px`, top: `${actionMenu.y}px` }"
+        role="menu"
+        @click.stop
+      >
+        <button
+          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="renameEntry(actionMenu.entry)"
+        >
+          Rename
+        </button>
+        <button
+          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="togglePin(actionMenu.entry)"
+        >
+          {{ actionMenu.entry.pinned ? 'Unpin' : 'Pin' }}
+        </button>
+        <button
+          v-if="historyView !== 'deleted'"
+          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="toggleArchive(actionMenu.entry)"
+        >
+          {{ actionMenu.entry.archived ? 'Unarchive' : 'Archive' }}
+        </button>
+        <button
+          v-if="historyView !== 'deleted'"
+          class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="deleteEntry(actionMenu.entry)"
+        >
+          Delete
+        </button>
+        <button
+          v-else
+          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="restoreEntry(actionMenu.entry)"
+        >
+          Restore
+        </button>
       </div>
 
       <!-- Clear confirmation dialog -->
@@ -306,6 +359,8 @@ interface HistoryEntry {
   created_at:     string;
   last_active_at: string;
   pinned:         boolean;
+  archived:       boolean;
+  deleted_at?:    string;
 }
 
 interface DateGroup {
@@ -319,6 +374,8 @@ const router = useRouter();
 
 const searchQuery = ref('');
 const filterType = ref('');
+const historyView = ref<'active' | 'archived' | 'deleted'>('active');
+const actionMenu = ref<{ entry: HistoryEntry; x: number; y: number } | null>(null);
 const loading = ref(true);
 const entries = ref<HistoryEntry[]>([]);
 const showClearConfirm = ref(false);
@@ -392,12 +449,12 @@ async function loadHistory() {
       entries.value = await ipcRenderer.invoke(
         'conversation-history:search' as any,
         searchQuery.value.trim(),
+        { view: historyView.value, type: filterType.value || undefined },
       );
     } else {
       entries.value = await ipcRenderer.invoke(
-        'conversation-history:get-recent' as any,
-        200,
-        filterType.value || undefined,
+        'conversation-history:list' as any,
+        { view: historyView.value, limit: 200, type: filterType.value || undefined },
       );
     }
   } catch {
@@ -428,24 +485,39 @@ function openEntry(entry: HistoryEntry) {
   emit('navigate-entry', entry);
 }
 
+function openActionMenu(event: MouseEvent, entry: HistoryEntry) {
+  actionMenu.value = { entry, x: Math.min(event.clientX, window.innerWidth - 180), y: Math.min(event.clientY, window.innerHeight - 190) };
+}
+
+async function patchEntry(entry: HistoryEntry, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) {
+  await ipcRenderer.invoke('conversation-history:update' as any, entry.id, patch);
+  actionMenu.value = null;
+  await loadHistory();
+}
+
+async function renameEntry(entry: HistoryEntry) {
+  const title = window.prompt('Rename conversation', entry.title || '');
+  if (title?.trim()) await patchEntry(entry, { title: title.trim() });
+}
+
 async function togglePin(entry: HistoryEntry) {
+  await patchEntry(entry, { pinned: !entry.pinned });
+}
+
+async function toggleArchive(entry: HistoryEntry) {
+  await patchEntry(entry, { archived: !entry.archived });
+}
+
+async function deleteEntry(entry: HistoryEntry) {
   try {
-    // Toggle via IPC — for now we just reload after
-    // The pin method is on the model but not exposed via IPC yet,
-    // so we'll do a direct call pattern
-    entry.pinned = !entry.pinned;
+    await patchEntry(entry, { deleted: true });
   } catch {
     // ignore
   }
 }
 
-async function deleteEntry(entry: HistoryEntry) {
-  try {
-    await ipcRenderer.invoke('conversation-history:delete' as any, entry.id);
-    entries.value = entries.value.filter(e => e.id !== entry.id);
-  } catch {
-    // ignore
-  }
+async function restoreEntry(entry: HistoryEntry) {
+  await patchEntry(entry, { deleted: false });
 }
 
 function clearHistory(scope: 'hour' | 'today' | 'all') {
@@ -474,9 +546,13 @@ function onHistoryCleared() {
 onMounted(() => {
   loadHistory();
   ipcRenderer.on('conversation-history:cleared' as any, onHistoryCleared);
+  window.addEventListener('click', closeActionMenu);
 });
 
+function closeActionMenu() { actionMenu.value = null }
+
 onUnmounted(() => {
+  window.removeEventListener('click', closeActionMenu);
   ipcRenderer.removeListener('conversation-history:cleared' as any, onHistoryCleared);
   if (searchTimeout) clearTimeout(searchTimeout);
 });
