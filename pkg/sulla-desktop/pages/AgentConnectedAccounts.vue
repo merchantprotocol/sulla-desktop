@@ -208,6 +208,11 @@
                 Cancel
               </button>
             </form>
+            <div v-if="importPreview" class="flex items-center justify-end gap-2 mb-4 text-xs text-slate-400">
+              <span>{{ importPreviewText }}</span>
+              <button type="button" class="px-3 py-1.5 font-medium rounded-md border border-slate-700 hover:border-slate-500" @click="confirmImport">Import {{ importPreview.importable }}</button>
+              <button type="button" class="px-3 py-1.5 font-medium rounded-md border border-slate-700 hover:border-slate-500" @click="cancelImportPreview">Cancel</button>
+            </div>
             <p
               v-if="vaultNotice"
               class="mb-4 text-right text-xs"
@@ -574,6 +579,9 @@ const vaultNotice = ref('');
 const vaultNoticeIsError = ref(false);
 const importSecretFile = ref('');
 const importSecret = ref('');
+const importPreview = ref<any>(null);
+const importPreviewPassword = ref('');
+const importPreviewText = computed(()=>importPreview.value ? `Found ${importPreview.value.total}: ${Object.entries(importPreview.value.counts).map(([type,count])=>`${type} ${count}`).join(', ')}. ${importPreview.value.duplicates} already present.` : '');
 const backupSummary = ref('');
 
 function showVaultNotice(message: string, isError = false) {
@@ -607,17 +615,22 @@ async function exportVault(encrypted: boolean) {
   }
 }
 
-async function importVault(args?: { filePath: string; password: string; recoveryKey: string }) {
+async function importVault(args?: { filePath: string; password: string; recoveryKey: string; confirm?: boolean }) {
   try {
     const result = await ipcRenderer.invoke('vault:import', args);
     if (result.success) {
       importSecretFile.value = '';
       showVaultNotice(result.format === 'sulla-snapshot'
         ? `Restored ${ result.inserted } credentials (${ result.skipped } already present${ result.unreadable ? `, ${ result.unreadable } unreadable` : '' }).`
-        : `Imported ${ result.count } accounts.`);
+        : `Imported ${ result.count } accounts${ result.skipped ? ` (${ result.skipped } already present)` : '' }.`);
       await loadAccounts(); // Refresh the list
     } else if (result.needsSecret) {
       importSecretFile.value = result.filePath;
+      showVaultNotice('');
+    } else if (result.needsConfirmation) {
+      importSecretFile.value = '';
+      importPreview.value = { ...result.preview, filePath:result.filePath };
+      importPreviewPassword.value = args?.password || '';
       showVaultNotice('');
     } else if (!result.canceled) {
       showVaultNotice(`Import failed: ${ result.error }`, true);
@@ -634,6 +647,9 @@ async function submitImportSecret() {
   // The same string is tried as both; only the matching one can open the backup.
   await importVault({ filePath: importSecretFile.value, password: secret, recoveryKey: secret });
 }
+
+async function confirmImport(){const pending=importPreview.value;if(!pending)return;const password=importPreviewPassword.value;importPreview.value=null;importPreviewPassword.value='';await importVault({filePath:pending.filePath,password,recoveryKey:password,confirm:true});}
+function cancelImportPreview(){importPreview.value=null;importPreviewPassword.value='';}
 
 function cancelImportSecret() {
   importSecretFile.value = '';

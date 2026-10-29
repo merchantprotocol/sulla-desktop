@@ -36,7 +36,7 @@ import * as fs from 'fs';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
-import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
+import { BitwardenImportError, decryptBitwardenExport, mapBitwardenExport, parseCSV, readBitwardenZip } from '@pkg/agent/services/vaultImportParsers';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -1372,7 +1372,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // file the user already picked in the dialog — never an arbitrary path.
   const userPickedImportFiles = new Set<string>();
 
-  ipcMainProxy.handle('vault:import', async(_event: Electron.IpcMainInvokeEvent, data?: { filePath?: string; password?: string; recoveryKey?: string }) => {
+  ipcMainProxy.handle('vault:import', async(_event: Electron.IpcMainInvokeEvent, data?: { filePath?: string; password?: string; recoveryKey?: string; confirm?: boolean }) => {
     denyLegacyVaultIpc();
     try {
       let filePath = data?.filePath;
@@ -1386,7 +1386,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           title:       'Import Passwords',
           defaultPath: (await import('@pkg/agent/services/VaultBackupService')).getVaultBackupService().backupDir,
           filters:     [
-            { name: 'Password Files', extensions: ['json', 'csv', 'enc'] },
+            { name: 'Password Files', extensions: ['json', 'csv', 'zip', 'enc'] },
             { name: 'All Files', extensions: ['*'] },
           ],
           properties: ['openFile'],
@@ -1399,7 +1399,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         userPickedImportFiles.add(filePath);
       }
 
-      let raw = (await fsPromises.readFile(filePath, 'utf-8')).replace(/^\uFEFF/, '');
+      const importBytes = await fsPromises.readFile(filePath);
+      let raw = importBytes.toString('utf-8').replace(/^\uFEFF/, '');
 
       // ── Sulla vault snapshot / encrypted backup (self-contained) ──
       {
@@ -1440,12 +1441,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       // ── Detect format and normalize to a common shape ──
-      interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string }
+      interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string; sourceId?: string; type?: string; properties?: Record<string,string> }
       const entries: ImportEntry[] = [];
       let format = 'unknown';
 
+      if (filePath.toLowerCase().endsWith('.zip')) {
+        format = 'bitwarden-json';
+        try { entries.push(...mapBitwardenExport(await readBitwardenZip(importBytes,data?.password))); }
+        catch(error){if(error instanceof BitwardenImportError&&error.code==='password_required')return{success:false,needsSecret:true,filePath,error:error.message};throw error;}
+      }
+
       // Try JSON first (Sulla native or Bitwarden JSON)
-      try {
+      try { if (format !== 'unknown') throw new SyntaxError('already parsed');
         const parsed = JSON.parse(raw);
 
         if (Array.isArray(parsed) && parsed[0]?.integrationId) {
@@ -1469,20 +1476,13 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           return { success: true, count: imported, format };
         }
 
-        if (parsed.encrypted !== undefined && parsed.items) {
+        if (parsed.encrypted !== undefined) {
           // ── Bitwarden JSON export ──
           format = 'bitwarden-json';
-          for (const item of parsed.items) {
-            if (item.type !== 1) continue; // type 1 = login
-            entries.push({
-              label:    item.name || '',
-              url:      item.login?.uris?.[0]?.uri || '',
-              username: item.login?.username || '',
-              password: item.login?.password || '',
-              notes:    item.notes || '',
-              totp:     item.login?.totp || '',
-              folder:   '',
-            });
+          try { entries.push(...mapBitwardenExport(await decryptBitwardenExport(parsed, data?.password))); }
+          catch (error) {
+            if (error instanceof BitwardenImportError && error.code === 'password_required') return { success:false, needsSecret:true, filePath, error:error.message };
+            throw error;
           }
         }
       } catch {
@@ -1506,7 +1506,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
           const col = (row: string[], name: string) => row[headers.indexOf(name)] || '';
           for (const line of dataLines) {
             const row = line;
-            if (col(row, 'type') !== 'login' && col(row, 'type') !== '') continue;
+            const csvType = col(row, 'type') === 'note' ? 'note' : 'login';
             entries.push({
               label:    col(row, 'name'),
               url:      col(row, 'login_uri'),
@@ -1515,6 +1515,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
               notes:    col(row, 'notes'),
               totp:     col(row, 'login_totp'),
               folder:   col(row, 'folder'),
+              type:     csvType,
+              properties: { bitwarden_type:csvType, favorite:col(row,'favorite'), custom_fields:col(row,'fields'), bitwarden_source_json:JSON.stringify(Object.fromEntries(headers.map((header,index)=>[header,row[index]??'']))) },
             });
           }
         } else if (headers.includes('url') && headers.includes('username') && headers.includes('grouping')) {
@@ -1562,17 +1564,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
       const service = getIS();
       await service.initialize();
+      const existingAccountIds = new Set((await service.getAccounts('website')).map(account => account.account_id));
+      const accountIdFor = (entry:ImportEntry) => (entry.sourceId ? `bitwarden_${ entry.sourceId }` : ((entry.url || entry.label || 'unknown') + '_' + (entry.username || entry.type || 'unknown'))).toLowerCase().replace(/^https?:\/\//,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,200);
+      if (format.startsWith('bitwarden') && !data?.confirm) {
+        const counts=Object.fromEntries([...new Set(entries.map(entry=>entry.type||'login'))].map(type=>[type,entries.filter(entry=>(entry.type||'login')===type).length]));
+        const duplicates=entries.filter(entry=>existingAccountIds.has(accountIdFor(entry))).length;
+        return { success:false,needsConfirmation:true,filePath,preview:{total:entries.length,importable:entries.length-duplicates,duplicates,counts},format };
+      }
 
       let imported = 0;
+      let skipped = 0;
       for (const entry of entries) {
-        if (!entry.username && !entry.password) continue;
-
-        const accountId = ((entry.url || 'unknown') + '_' + (entry.username || 'unknown'))
-          .toLowerCase()
-          .replace(/^https?:\/\//, '')
-          .replace(/[^a-z0-9]+/g, '_')
-          .replace(/^_|_$/g, '')
-          .slice(0, 200);
+        const accountId = accountIdFor(entry);
+        if (existingAccountIds.has(accountId)) { skipped++; continue }
 
         const values: { integration_id: string; account_id: string; property: string; value: string }[] = [
           { integration_id: 'website', account_id: accountId, property: 'website_url', value: entry.url },
@@ -1586,6 +1590,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
         if (entry.totp) {
           values.push({ integration_id: 'website', account_id: accountId, property: 'custom_totp', value: entry.totp });
         }
+        for (const [property,value] of Object.entries(entry.properties ?? {})) {
+          values.push({ integration_id:'website', account_id:accountId, property:property.startsWith('bitwarden_') ? property : `bitwarden_${ property }`, value });
+        }
 
         await service.setFormValues(values);
 
@@ -1596,7 +1603,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       console.log(`[Vault] Imported ${ imported } entries (${ format }) from ${ filePath }`);
-      return { success: true, count: imported, format };
+      return { success: true, count: imported, skipped, format };
     } catch (err: any) {
       console.error('[Vault] Import failed:', err);
       return { success: false, error: err.message };

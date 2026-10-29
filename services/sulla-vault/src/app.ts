@@ -423,12 +423,6 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
     app.get('/v1/human/items', async(request, response) => {
       response.json({ items: await localAuthority.listHumanItems(humanCookie(request), request.header('x-csrf-token')) });
     });
-    app.post('/v1/human/import/bitwarden/preview', async(request,response)=>{
-      response.json(await localAuthority.previewBitwardenImport(humanCookie(request),request.header('x-csrf-token'),request.body));
-    });
-    app.post('/v1/human/import/bitwarden', async(request,response)=>{
-      response.json(await localAuthority.importBitwarden(humanCookie(request),request.header('x-csrf-token'),request.body));
-    });
     app.get('/v1/human/activity', async(request, response) => {
       const sessionId = humanCookie(request);
       const csrf = request.header('x-csrf-token');
