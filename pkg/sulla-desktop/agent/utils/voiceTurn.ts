@@ -6,10 +6,10 @@
 /**
  * Routing for spoken turns from Sulla Mobile (voice mode and push-to-talk).
  *
- * A spoken turn always runs on the built-in voice agent with that agent's own
- * fast model. The phone's agent/model picker only applies to typed turns:
- * applying it to voice put the reply on the user's heavy chat model and also
- * paid a live provider/model catalog check before the turn could start.
+ * A spoken turn runs on whatever agent and model the chat has selected, the
+ * same as a typed turn. Jonathon (2026-10-29) did not want voice locked to the
+ * Conversationalist: its one-to-three-sentence cap withheld the context he
+ * kept asking for. The Conversationalist stays available in the picker.
  */
 
 export const VOICE_AGENT_ID = 'conversationalist';
@@ -23,19 +23,18 @@ export function cleanVoiceTurnId(value: unknown): string {
 }
 
 export interface VoiceTurnRoute {
-  agentId:      string;
   voiceTurnId?: string;
 }
 
 /**
- * The selection a relay chat frame runs with when it was spoken, or null for
- * a typed turn (which keeps validating the phone's picker as before).
+ * Voice metadata for a spoken relay frame, or null for a typed turn. It never
+ * picks the agent: both kinds of turn honour the phone's agent/model picker.
  */
 export function voiceTurnRoute(frame: { voiceMode?: unknown; voiceTurnId?: unknown } | null | undefined): VoiceTurnRoute | null {
   if (frame?.voiceMode !== true) return null;
   const voiceTurnId = cleanVoiceTurnId(frame.voiceTurnId);
 
-  return voiceTurnId ? { agentId: VOICE_AGENT_ID, voiceTurnId } : { agentId: VOICE_AGENT_ID };
+  return voiceTurnId ? { voiceTurnId } : {};
 }
 
 /** One content-free `[VoiceTrace]` line, same format as BaseNode's spans. */
