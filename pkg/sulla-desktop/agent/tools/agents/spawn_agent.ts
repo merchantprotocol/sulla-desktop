@@ -487,7 +487,10 @@ export class SpawnAgentWorker extends BaseTool {
         // "signals[0] must be AbortSignal". Keep the contract: always write
         // an AbortService that fans out from whichever sources exist.
         const parentAbort = (this.state as any)?.metadata?.options?.abort;
-        const combined = combineAborts(parentAbort, jobAbortSignal);
+        // Fire-and-forget children outlive a superseded parent turn. Their
+        // durable job abort is fired by stop_agent_job and by an explicit
+        // stop_run on the parent thread. Synchronous children remain coupled.
+        const combined = async_ ? combineAborts(undefined, jobAbortSignal) : combineAborts(parentAbort, jobAbortSignal);
 
         if (combined) {
           subState.metadata.options ??= {};

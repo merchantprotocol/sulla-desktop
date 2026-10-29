@@ -11,8 +11,8 @@
  */
 
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { enqueueAgentCompletion } from '../../services/AgentCompletionInbox';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
-import { markCompletionDelivered } from './jobRegistry';
 
 import type { AgentJobResult, AgentJobTask } from './jobRegistry';
 
@@ -76,31 +76,7 @@ export async function wakeParentGraph(
 ): Promise<boolean> {
   if (!parentThreadId) return false;
 
-  try {
-    const ws = getWebSocketClientService();
-    const content = buildWakeContent(jobId, results, failureReason);
-
-    await ws.send(parentChannel, {
-      type: 'user_message',
-      data: {
-        content,
-        threadId: parentThreadId,
-        metadata: {
-          // Marks this as a background-completion wake rather than human input,
-          // so downstream nodes/telemetry can tell it apart from typed messages.
-          source:      'sub_agent_completion',
-          origin:      'spawn_agent',
-          inputSource: 'system',
-          jobId,
-        },
-      },
-    });
-    console.log(`[jobDelivery] Woke parent graph — channel="${ parentChannel }" thread="${ parentThreadId.slice(-8) }" job=${ jobId }`);
-    return true;
-  } catch (e) {
-    console.warn('[jobDelivery] wakeParentGraph failed:', e);
-    return false;
-  }
+  return enqueueAgentCompletion(parentChannel, parentThreadId, { jobId, results, failureReason });
 }
 
 // ─── Proactive completion card ───────────────────────────────────
@@ -163,6 +139,7 @@ export async function deliverJobCompletion(job: {
   const channel = job.parentChannel || 'sulla-desktop';
   await emitProactiveCompletion(channel, job.jobId, results, undefined, job.parentThreadId);
   const delivered = await wakeParentGraph(channel, job.parentThreadId, job.jobId, results);
-  if (delivered) await markCompletionDelivered(job.jobId);
+  // The inbox owns acknowledgement: the durable row remains pending until
+  // BackendGraphWebSocketService actually dispatches the batch into a turn.
   return delivered;
 }
