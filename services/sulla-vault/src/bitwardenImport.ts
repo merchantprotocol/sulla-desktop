@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createDecipheriv, createHmac, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import { argon2id } from 'hash-wasm';
@@ -21,7 +21,9 @@ export interface BitwardenImportResult extends BitwardenImportPreview { items: V
 const b64 = (value: string) => Buffer.from(value, 'base64');
 
 async function deriveMasterKey(password: string, input: Json): Promise<Buffer> {
-  const salt = b64(String(input.salt || ''));
+  // Bitwarden derives export keys from the salt string's UTF-8 bytes; it is
+  // never base64-decoded. Argon2id additionally hashes that salt with SHA-256.
+  const salt = Buffer.from(String(input.salt || ''), 'utf8');
   if (salt.length < 8) throw new BitwardenImportError('invalid_export', 'The encrypted export has an invalid salt.');
   if (Number(input.kdfType) === 0) {
     const iterations = Number(input.kdfIterations);
@@ -33,7 +35,7 @@ async function deriveMasterKey(password: string, input: Json): Promise<Buffer> {
     if (![iterations, memorySize, parallelism].every(Number.isSafeInteger) || iterations < 1 || iterations > 20 || memorySize < 8 || memorySize > 1024 || parallelism < 1 || parallelism > 16) {
       throw new BitwardenImportError('invalid_export', 'The encrypted export has invalid Argon2id settings.');
     }
-    const binary = await argon2id({ password, salt, iterations, memorySize, parallelism, hashLength: 32, outputType: 'binary' });
+    const binary = await argon2id({ password, salt: createHash('sha256').update(salt).digest(), iterations, memorySize: memorySize * 1024, parallelism, hashLength: 32, outputType: 'binary' });
     return Buffer.from(binary);
   }
   throw new BitwardenImportError('invalid_export', 'The encrypted export uses an unsupported key derivation method.');
