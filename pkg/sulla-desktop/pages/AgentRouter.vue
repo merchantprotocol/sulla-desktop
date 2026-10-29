@@ -542,6 +542,30 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'open-files-item': {
+    const reply = (value:Record<string, unknown>) => ipcRenderer.send(`agent-command-result:${ args.requestId }` as any, value);
+    if (!args.requestId || !args.path || (args.kind !== 'folder' && !args.fileId)) {
+      reply({ error: 'The resolved Files item is incomplete.' });
+      break;
+    }
+    if (args.kind === 'file' && args.mode !== 'view' && supportsDocumentEditor(args.path)) {
+      const tab = openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId }, args.focus !== false);
+      reply({ opened: true, tabId: tab.id, path: args.path, how: 'document-editor' });
+      break;
+    }
+    // File Manager owns viewer selection for every other type. Feeding its
+    // normal navigation input reaches the same navigateTo -> selectEntry/openPath
+    // path used by a click and keeps viewer behavior in one place.
+    const filesNavigation = args.kind === 'folder'
+      ? { path: args.path, collectionId: args.collectionId }
+      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId };
+    const existing = browserTabs.find(tab => tab.mode === 'files');
+    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
+    if (existing) updateTab(existing.id, { filesNavigation });
+    if (args.focus !== false) router.push(`/Browser/${ tab.id }`);
+    reply({ opened: true, tabId: tab.id, path: args.path, how: args.kind === 'folder' ? 'file-manager-folder' : 'file-manager-viewer' });
+    break;
+  }
   case 'open-url': {
     const url = args.url || 'about:blank';
     const tab = createTab(url);

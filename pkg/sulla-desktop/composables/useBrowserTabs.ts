@@ -719,7 +719,7 @@ export function useBrowserTabs() {
 }
 
 /** Open one durable Paper tab per Files identity and focus it. */
-export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string }): BrowserTab {
+export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string }, focus = true): BrowserTab {
   const { createTab } = useBrowserTabs();
   const existing = tabs.find(tab => tab.mode === 'paper' && tab.documentFile?.fileId === documentFile.fileId);
   const tab = existing ?? createTab('about:blank', {
@@ -733,9 +733,11 @@ export function openDocumentTab(documentFile: { fileId: string; path: string; co
     existing.title = documentFile.path.split('/').at(-1) || 'Paper';
     existing.lastAccessedAt = Date.now();
   }
-  try {
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-  } catch { /* non-browser context */ }
+  if (focus) {
+    try {
+      window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    } catch { /* non-browser context */ }
+  }
 
   return tab;
 }
