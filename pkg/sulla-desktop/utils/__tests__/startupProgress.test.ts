@@ -281,3 +281,42 @@ describe('smoothing', () => {
     }
   });
 });
+
+describe('first-boot image unpacking', () => {
+  it('shows each bundled image instead of freezing on "Private services planned"', () => {
+    const { model, tick } = clockModel();
+
+    model.onBackendProgress({ current: 15, max: 100, description: 'Docker Compose file prepared' });
+    const planned = model.snapshot().percent;
+
+    tick(1000);
+    model.onBackendProgress({ current: 0, max: -1, description: 'Loading bundled container images' });
+    expect(model.snapshot().stepLabel).toBe('Unpacking Sulla\'s private services');
+
+    tick(1000);
+    model.onBackendProgress({ current: 2, max: 9, description: 'Loading bundled image ghcr.io/merchantprotocol/sulla-vault:1.7.1' });
+    const unpacking = model.snapshot();
+
+    expect(unpacking.stage).toBe('containers');
+    expect(unpacking.stepLabel).toBe('Unpacking Sulla\'s private services: sulla-vault (3 of 9)');
+    expect(unpacking.stepIndex).toBe(3);
+    expect(unpacking.stepTotal).toBe(9);
+    expect(unpacking.percent).toBeGreaterThan(planned);
+
+    tick(1000);
+    model.onBackendProgress({ current: 100, max: 100, description: 'Bundled container images loaded' });
+    const loaded = model.snapshot();
+
+    expect(loaded.percent).toBeGreaterThanOrEqual(unpacking.percent);
+    expect(loaded.percent).toBeLessThan(stage('containers').end);
+
+    tick(1000);
+    model.onBackendProgress({ current: 0, max: -1, description: 'Preparing the threat proxy' });
+    expect(model.snapshot().stepLabel).toBe('Turning on threat protection for web traffic');
+  });
+
+  it('explains a slow unpack', () => {
+    expect(classifyBackendDescription('Loading bundled image postgres')).toBe('containers');
+    expect(slowStepNote('images', SLOW_STEP_MS + 1)).toMatch(/first launch/i);
+  });
+});
