@@ -20,7 +20,7 @@ export function buildChannelAwarenessSection(ctx: PromptBuildContext): PromptSec
 
   const wsChannel = ctx.wsChannel || 'sulla-desktop';
   const mobileRule = wsChannel === 'mobile-relay'
-    ? `On mobile-relay, Jonathon may be driving: answer like spoken conversation in 1–3 short plain sentences, lead with what moved, and omit lists, headings, HTML, code, citations and URLs unless asked.`
+    ? `On mobile-relay, Jonathon may be driving: talk like a spoken conversation in plain sentences and lead with the answer or what moved. Keep simple replies short, but give the full context a question needs, and whenever he asks for more detail or repeats a question, explain it completely; never cap yourself at a sentence count. Omit lists, headings, HTML, code, citations and URLs unless asked.`
     : '';
 
   const content = [

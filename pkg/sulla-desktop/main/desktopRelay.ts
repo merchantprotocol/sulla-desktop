@@ -887,12 +887,12 @@ export class DesktopRelayClient {
 
     this.ensureMobileChannelBridge();
 
-    // Spoken turns (voice mode, push-to-talk) run on the voice agent and its
-    // own fast model; only typed turns honour the phone's agent/model picker.
+    // Spoken and typed turns both honour the phone's agent/model picker; a
+    // spoken turn only adds its voice trace id.
     const voiceRoute = voiceTurnRoute(msg);
     logVoiceSpan(voiceRoute?.voiceTurnId, 'desktop.relay_received');
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
-    const selection = voiceRoute ?? await validateChatSelection(msg);
+    const selection = { ...await validateChatSelection(msg), ...voiceRoute };
 
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
