@@ -55,7 +55,17 @@ async function loadDesktopIdentity(fileName: string, serviceId: string): Promise
   if (!Electron.safeStorage.isEncryptionAvailable()) {
     throw new Error('OS-protected vault service identity is unavailable');
   }
-  const encrypted = await fs.readFile(path.join(paths.appHome, fileName));
+  let encrypted: Buffer;
+  try {
+    encrypted = await fs.readFile(path.join(paths.appHome, fileName));
+  } catch (error) {
+    // The runtime writes these identities when it starts the vault. Before that
+    // (first launch, startup still running or failed) there is nothing to read.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('Sulla is still starting its password vault. Wait for startup to finish, then try again.');
+    }
+    throw error;
+  }
   const serviceToken = Electron.safeStorage.decryptString(encrypted);
   if (!serviceToken) throw new Error('Vault service identity is empty');
   return { serviceId, serviceToken };
