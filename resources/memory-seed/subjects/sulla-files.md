@@ -33,6 +33,7 @@ The Files service exposes the managed surface at `/mnt/sulla-files` through an a
 - DO: Keep project state in `Projects/<slug>/PROJECT.md` and `TASKS.md`; keep plans, specs, decisions, and progress in that project folder.
 - DO: Keep Use Case artifacts under `Use Cases/<type>/<slug>/` as drafts, then request publication through `sulla files/request_publish` so the human can approve in Decide.
 - DO: Delete your own scratch, logs, briefs, test data, and build output from `/mnt/worktrees/_scratch/<job>/` or the agent workspace when finished.
+- DO: Open a finished deliverable for the human with `sulla files/open '{"path":"<path>"}'`. Why: it uses the same editor or viewer as a File Manager click.
 - DO: Use `sulla files/history` and `sulla files/versions` to inspect history before restoring; use `sulla files/restore` to make an older version current as a new version.
 - DO: Prepare share links with `sulla files/link`; revoke them with `sulla files/revoke_link` when the human authorizes it.
 - DON'T: Put scratch, drafts of drafts, worker briefs, logs, build output, test data, or notes to yourself in Files. Why: Files is the human's workspace, not agent storage.

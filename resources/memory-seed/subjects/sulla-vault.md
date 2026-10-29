@@ -16,8 +16,11 @@ The Sulla Vault is the encrypted credential boundary for Desktop. It keeps integ
 - Vault broker code is under `pkg/sulla-desktop/vault-broker`; Desktop and tool transports enforce caller identity, operation policy, and credential scope.
 - Container-vault generic agent-browser autofill is intentionally unsupported by the broker; Desktop browser-tab autofill and the supported integration autofill flow route through the vault authority without returning the password to chat.
 - Cloud session tokens, integration credentials, provider credentials, and relay credentials must remain in vault custody; agents receive only allowed metadata or brokered results.
+- Agents can create new vault items through authenticated ingress-only broker routes (`/v1/broker/items/create`, `PATCH /v1/broker/items/:id`, `PUT /v1/broker/integrations/:id/credential`) exposed as `vault/create_password`, `vault/generate_password`, `vault/update_password`, and `vault/set_credential`. These never return the secret and write an audit row.
 
 ## Rules
 - DO: Unlock the vault through the Desktop unlock surface when a vault-gated service is waiting. Why: locked services cannot access credentials.
 - DON'T: ask the agent to print, export, copy, or inspect raw secrets. Why: that defeats the vault boundary.
 - DON'T: claim that “autofill” means the agent can read the password. Why: autofill is a narrower policy.
+- DO: Store any new password an agent creates (site passwords, generated logins, new API keys) with the vault create tools, preferring `vault/generate_password`. Why: the human asked that agents keep new passwords in the vault, not in files.
+- DON'T: Delete vault items as an agent. Why: deletion stays human-only.
