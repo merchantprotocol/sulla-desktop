@@ -19,6 +19,7 @@ const config: AccountsConfig = {
   allowedReturnOrigins: new Set(),
   sessionSecret: Buffer.alloc(32),
   encryptionKey: Buffer.alloc(32),
+  bootstrapSecret: Buffer.alloc(32),
   serviceTokens: new Map(),
   trustedProxy: false,
 };

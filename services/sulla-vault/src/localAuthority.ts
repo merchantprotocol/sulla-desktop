@@ -1504,7 +1504,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         type: 'login', name: title, username: input.username, password,
         uris: input.url ? [{ uri: input.url }] : undefined, notes: input.notes, folder: input.folder,
         tags: Array.isArray(input.tags) ? input.tags.map(String).filter(Boolean).slice(0, 50) : undefined,
-        agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites, expiresAt: null },
+        agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites, expiresAt: null, askFirst: false, allowServerAgents: false },
       };
       const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
       const generation = this.generation;
@@ -1615,7 +1615,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
 
   private async createAgentIntegrationItem(keys: UnlockedKeys, input: BrokerIntegrationCredentialWriteRequest, integrationId: string, accountId: string, property: string): Promise<BrokerVaultItemWriteResponse> {
     const id = randomUUID();
-    const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null } };
+    const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false } };
     const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
     const revision = await this.runTransaction(async client => {
       const created = await client.query<{ revision: number }>(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`, [id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`]);
