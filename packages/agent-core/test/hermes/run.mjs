@@ -8,7 +8,7 @@
 // ES2016 syntax (React Native apps are transpiled by Metro/Babel too); no
 // runtime polyfills are added.
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,10 +27,14 @@ const dir = mkdtempSync(join(tmpdir(), 'agent-core-hermes-'));
 try {
   const file = join(dir, 'golden.js');
   writeFileSync(file, code);
-  const out = execFileSync(hermes, [file], { encoding: 'utf8' });
+  const run = spawnSync(hermes, [file], { encoding: 'utf8' });
+  const out = `${ run.stdout || '' }${ run.stderr || '' }`;
   const line = out.split('\n').find(l => l.startsWith('GOLDEN_RESULT ') || l.startsWith('GOLDEN_ERROR '));
-  if (!line || line.startsWith('GOLDEN_ERROR ')) {
-    console.error(out);
+  if (run.status !== 0 || !line || line.startsWith('GOLDEN_ERROR ')) {
+    const detail = out || String(run.error || 'no output');
+    console.error(detail);
+    // Also as a CI annotation, which is readable without log access.
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Hermes golden::exit ${ run.status }%0A${ detail.slice(0, 1500).replace(/%/g, '%25').replace(/\r?\n/g, '%0A') }`);
     process.exit(1);
   }
   report('hermes', JSON.parse(line.slice('GOLDEN_RESULT '.length)));

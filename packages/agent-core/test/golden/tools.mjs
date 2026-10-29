@@ -35,7 +35,10 @@ export function report(runtime, results) {
   for (const r of results) {
     console.log(`${ r.ok ? 'ok' : 'not ok' } - golden (${ runtime }): ${ r.name }`);
     for (const p of r.problems) console.log(`    ${ p }`);
-    if (!r.ok) failed++;
+    if (!r.ok) {
+      failed++;
+      if (process.env.GITHUB_ACTIONS) console.log(`::error title=Golden (${ runtime })::${ r.name }: ${ r.problems.join(' | ').slice(0, 1500) }`);
+    }
   }
   console.log(`# ${ runtime }: ${ results.length - failed } passed, ${ failed } failed`);
   if (failed || !results.length) process.exitCode = 1;
