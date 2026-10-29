@@ -15,12 +15,17 @@
 #   curl -fsSL https://raw.githubusercontent.com/merchantprotocol/sulla-desktop/main/install.sh | sh
 #
 # Or if you already cloned the repo:
-#   bash install.sh
+#   sh install.sh
+#
+# Must stay POSIX sh: `curl | sh` on macOS runs bash in POSIX mode, and on
+# Linux it runs dash. No bashisms (echo -e, &>, [[ ]], arrays, :: names).
 #
 # Supports macOS (arm64/x86_64) and Linux.
 # ============================================================================
 
-set -euo pipefail
+set -eu
+# pipefail is not POSIX; use it where the shell supports it.
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 GITHUB_REPO="merchantprotocol/sulla-desktop"
 
@@ -31,15 +36,15 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-log()   { echo -e "${GREEN}[sulla]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[sulla]${NC} $1"; }
-error() { echo -e "${RED}[sulla]${NC} $1" >&2; }
-info()  { echo -e "${CYAN}[sulla]${NC} $1"; }
+log()   { printf '%b[sulla]%b %s\n' "$GREEN" "$NC" "$1"; }
+warn()  { printf '%b[sulla]%b %s\n' "$YELLOW" "$NC" "$1"; }
+error() { printf '%b[sulla]%b %s\n' "$RED" "$NC" "$1" >&2; }
+info()  { printf '%b[sulla]%b %s\n' "$CYAN" "$NC" "$1"; }
 
 # ─── Helpers ─────────────────────────────────────────────────
 
 require_cmd() {
-    if ! command -v "$1" &>/dev/null; then
+    if ! command -v "$1" >/dev/null 2>&1; then
         error "$1 is required but not installed."
         exit 1
     fi
@@ -80,14 +85,28 @@ get_release_tag() {
 
 # ─── macOS installer ────────────────────────────────────────
 
+# Replacing the app under a running Sulla kills every agent and chat in it.
+ensure_sulla_not_running() {
+    if pgrep -f "/Applications/Sulla Desktop.app/Contents/MacOS/" >/dev/null 2>&1; then
+        error "Sulla Desktop is running. Quit it, then run the installer again."
+        exit 1
+    fi
+}
+
 install_macos() {
     local arch
     arch=$(uname -m)
 
+    # A Rosetta shell reports x86_64 on Apple silicon; ask the hardware.
+    if [ "$arch" = "x86_64" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
+        arch="arm64"
+    fi
+
+    # Release assets are named Sulla-Desktop-<ver>-arm64-mac.zip / -x64-mac.zip
     local arch_label
     case "$arch" in
-        arm64|aarch64) arch_label="aarch64" ;;
-        x86_64)        arch_label="x86_64" ;;
+        arm64|aarch64) arch_label="arm64" ;;
+        x86_64)        arch_label="x64" ;;
         *)
             error "Unsupported macOS architecture: $arch"
             exit 1
@@ -95,6 +114,7 @@ install_macos() {
     esac
 
     log "Detected macOS ($arch_label)"
+    ensure_sulla_not_running
     log "Fetching latest release..."
 
     local release_json
@@ -105,17 +125,13 @@ install_macos() {
 
     # Try DMG first, fall back to ZIP
     local dmg_url
-    dmg_url=$(get_asset_url "$release_json" "mac.*\\.dmg")
+    dmg_url=$(get_asset_url "$release_json" "${arch_label}[^\"/]*\\.dmg")
 
     if [ -n "$dmg_url" ]; then
         install_macos_dmg "$dmg_url" "$version"
     else
         local zip_url
-        zip_url=$(get_asset_url "$release_json" "mac\\.${arch_label}\\.zip\\|mac.*${arch_label}.*\\.zip")
-        if [ -z "$zip_url" ]; then
-            # Try generic mac zip
-            zip_url=$(get_asset_url "$release_json" "mac.*\\.zip")
-        fi
+        zip_url=$(get_asset_url "$release_json" "-${arch_label}-mac\\.zip")
         if [ -n "$zip_url" ]; then
             install_macos_zip "$zip_url" "$version"
         else
