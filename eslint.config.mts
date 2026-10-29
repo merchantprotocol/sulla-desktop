@@ -102,6 +102,8 @@ export default defineConfigWithVueTs(
         }],
       }],
       'no-restricted-globals': ['error', 'process', 'Buffer', 'require', 'fetch', 'window', 'document', 'console', 'setTimeout', 'setInterval'],
+      // The Hermes CLI can't parse classes without a Babel pass.
+      'no-restricted-syntax':  ['error', 'ClassDeclaration', 'ClassExpression'],
     },
   },
   {

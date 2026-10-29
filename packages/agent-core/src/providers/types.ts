@@ -30,19 +30,30 @@ export interface ProviderAdapter {
   complete(input: ProviderCallInput, transport: Transport, signal?: AbortSignalLike): Promise<NormalizedResponse>;
 }
 
-/** A provider call failed. `message` is safe to show: key-like strings are redacted. */
-export class ProviderError extends Error {
-  readonly status:    number;
-  readonly retryable: boolean;
-  readonly code:      string;
+/**
+ * A provider call failed. `message` is safe to show: key-like strings are
+ * redacted. A plain Error with fields, not a subclass: the Hermes CLI
+ * can't parse `class` syntax without a Babel pass.
+ */
+export interface ProviderError extends Error {
+  readonly isProviderError: true;
+  readonly status:          number;
+  readonly retryable:       boolean;
+  readonly code:            string;
+}
 
-  constructor(message: string, status: number, code: string) {
-    super(message);
-    this.name = 'ProviderError';
-    this.status = status;
-    this.code = code;
-    this.retryable = status === 429 || status >= 500;
-  }
+export function providerError(message: string, status: number, code: string): ProviderError {
+  const err = new Error(message) as Error & Record<string, unknown>;
+  err.name = 'ProviderError';
+  err.isProviderError = true;
+  err.status = status;
+  err.code = code;
+  err.retryable = status === 429 || status >= 500;
+  return err as unknown as ProviderError;
+}
+
+export function isProviderError(err: unknown): err is ProviderError {
+  return !!err && typeof err === 'object' && (err as { isProviderError?: unknown }).isProviderError === true;
 }
 
 const KEY_LIKE = /\b(sk|xai|gsk|pk|rk|key)[-_][A-Za-z0-9_*-]{6,}(?:\.[A-Za-z0-9_*-]+)*/gi;
@@ -66,8 +77,8 @@ export async function sendJson(request: HttpRequest, transport: Transport, signa
   try {
     response = await transport(request, signal);
   } catch (err) {
-    if (signal?.aborted) throw new ProviderError('Request aborted', 0, 'aborted');
-    throw new ProviderError(redactSecrets(`Network error: ${ (err as Error)?.message ?? String(err) }`), 0, 'network');
+    if (signal?.aborted) throw providerError('Request aborted', 0, 'aborted');
+    throw providerError(redactSecrets(`Network error: ${ (err as Error)?.message ?? String(err) }`), 0, 'network');
   }
   const text = await response.text();
   if (!response.ok) {
@@ -77,11 +88,11 @@ export async function sendJson(request: HttpRequest, transport: Transport, signa
       detail = parsed?.error?.message ?? parsed?.message ?? text;
     } catch { /* not JSON */ }
     const message = redactSecrets(`Provider returned ${ response.status }: ${ String(detail).slice(0, 500) }`);
-    throw new ProviderError(message, response.status, errorCode(response.status));
+    throw providerError(message, response.status, errorCode(response.status));
   }
   try {
     return JSON.parse(text);
   } catch {
-    throw new ProviderError('Provider returned a response that is not JSON', response.status, 'bad_response');
+    throw providerError('Provider returned a response that is not JSON', response.status, 'bad_response');
   }
 }

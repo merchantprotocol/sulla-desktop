@@ -13,7 +13,7 @@
  * always be sent to any provider again.
  */
 
-import { ProviderError } from './providers/types.js';
+import { isProviderError, providerError } from './providers/types.js';
 import { buildToolIndex, formatToolResult, resolveToolCall, validateParams, wireToolName } from './toolCalls.js';
 import { addUsage, emptyUsage } from './types.js';
 
@@ -125,7 +125,7 @@ export async function runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
     } catch (err) {
       if (signal?.aborted) return finish('aborted');
       // Provider errors end the turn with a plain message; the loop never retries them.
-      const e = err instanceof ProviderError ? err : new ProviderError(String((err as Error)?.message ?? err), 0, 'adapter');
+      const e = isProviderError(err) ? err : providerError(String((err as Error)?.message ?? err), 0, 'adapter');
       return finish('provider_error', { code: e.code, message: e.message, status: e.status });
     }
     usage = addUsage(usage, response.usage);

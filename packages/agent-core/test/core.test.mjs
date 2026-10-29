@@ -156,7 +156,7 @@ test('the source imports nothing platform-specific', () => {
   assert.ok(files.length > 5);
   const banned = [
     /from\s+['"]node:/, /from\s+['"](fs|path|crypto|os|http|https|net|child_process|buffer|stream|url|util)['"]/,
-    /from\s+['"](react-native|electron|cloudflare:)/, /\brequire\(/, /\bprocess\./, /\bBuffer\./, /\bglobalThis\b/, /\bconsole\./,
+    /from\s+['"](react-native|electron|cloudflare:)/, /\brequire\(/, /\bprocess\./, /\bBuffer\./, /\bglobalThis\b/, /\bconsole\./, /^\s*(export\s+)?(abstract\s+)?class\s/m, /=\s*class\b/,
   ];
   for (const f of files) {
     const text = readFileSync(f, 'utf8');
