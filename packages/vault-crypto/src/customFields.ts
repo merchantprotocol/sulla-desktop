@@ -22,7 +22,7 @@
 // They are kept untouched on save and shown as plain text; they are never dropped.
 
 export const CUSTOM_FIELD_TYPES = [
-  'text', 'multiline', 'password', 'url', 'email', 'number', 'date', 'phone', 'one-time', 'boolean',
+  'text', 'multiline', 'password', 'url', 'email', 'number', 'date', 'phone', 'one-time', 'boolean', 'linked',
 ] as const;
 
 export type CustomFieldType = typeof CUSTOM_FIELD_TYPES[number];
@@ -38,6 +38,7 @@ export const CUSTOM_FIELD_TYPE_LABELS: Record<CustomFieldType, string> = {
   phone:      'Phone',
   'one-time': 'One-time code (TOTP)',
   boolean:    'Yes / No',
+  linked:     'Linked field',
 };
 
 /** Types whose value is a secret: masked in the UI and treated like the item password. */
@@ -110,6 +111,7 @@ export function customFieldValueError(type: string, value: unknown): string | nu
   const trimmed = value.trim();
   switch (type) {
   case 'text':
+  case 'linked':
   case 'password':
     return /[\r\n]/.test(value) ? 'must be a single line' : null;
   case 'multiline':
