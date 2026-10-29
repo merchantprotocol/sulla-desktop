@@ -20,6 +20,8 @@ import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
+import { cleanVoiceTurnId } from '../utils/voiceTurn';
+import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -63,6 +65,7 @@ export class BackendGraphWebSocketService {
   private conversationContainers = new Map<string, {
     provider: string;
     model?: string;
+    agentId: string;
     lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle;
     idleTimer: ReturnType<typeof setTimeout>;
   }>();
@@ -119,7 +122,11 @@ export class BackendGraphWebSocketService {
       // Same trigger mapping as handleChannelMessage: only heartbeat has its own
       // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
       const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
-      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, undefined, 'system', {
+      // Wake the agent that owns the thread. The trigger default is the typed
+      // sulla-desktop agent, so a voice thread's worker results came back from
+      // the heavy agent instead of as a short spoken reply.
+      const threadAgentId = String((delegated?.state.metadata as any)?.agentId || '').trim() || undefined;
+      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
       }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
     });
@@ -151,6 +158,10 @@ export class BackendGraphWebSocketService {
     const key = this.abortKey(channelId, threadId);
     const existing = this.conversationContainers.get(key);
     const model = state.metadata.agent?.model;
+    // The container's capability token, Files actor and runtime binding all
+    // carry the agent it was built for (AgentContainerLauncher), so it is
+    // never handed to a different agent, not even mid-turn.
+    const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
     // A lifecycle that aborted or closed (container died, secrets were wiped, capability renewal
     // failed) is dead for good. Reusing it failed every later message in the thread; rebuild it.
     // The conversation itself survives: its workspace and provider homes live on the data disk.
@@ -158,13 +169,16 @@ export class BackendGraphWebSocketService {
     // or model switch inside that turn must reuse it: recreating it removed the container under the
     // running turn ("No such container"). Both providers' homes are mounted in every container.
     const inUse = this.hasActiveRun(channelId, threadId);
-    if (existing && !existing.lifecycle.closed && ((existing.provider === provider && existing.model === model) || inUse)) {
+    // Compare what the container's provider bridge actually pins: slot aliases
+    // ('primary', …) pin nothing, while 'fast' pins the resolved light model.
+    const pinned = (value: string | undefined) => cliPinnedModelId(provider, value);
+    if (existing && !existing.lifecycle.closed && existing.agentId === agentId && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
       clearTimeout(existing.idleTimer);
       return existing.lifecycle;
     }
     if (existing) {
       clearTimeout(existing.idleTimer);
-      await existing.lifecycle.close('provider-or-model-switch', 'BackendGraphWebSocketService.conversationContainer')
+      await existing.lifecycle.close(existing.agentId === agentId ? 'provider-or-model-switch' : 'agent-switch', 'BackendGraphWebSocketService.conversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
     }
@@ -175,7 +189,7 @@ export class BackendGraphWebSocketService {
       persistenceKey: `conversation:${ channelId }:${ threadId }`,
     });
     const idleTimer = this.armConversationIdle(key, lifecycle);
-    this.conversationContainers.set(key, { provider, model, lifecycle, idleTimer });
+    this.conversationContainers.set(key, { provider, model, agentId, lifecycle, idleTimer });
     return lifecycle;
   }
 
@@ -578,6 +592,9 @@ export class BackendGraphWebSocketService {
       // Track input modality so downstream nodes can adapt (e.g. voice → TTS).
       // Reset each dispatch so keyboard messages don't inherit a prior voice flag.
       (state.metadata as any).inputSource = inputSource || 'keyboard';
+      // Content-free trace id of a spoken turn; BaseNode/SpeakExtractor stamp
+      // their [VoiceTrace] spans with it. Reset per dispatch like inputSource.
+      (state.metadata as any).voiceTurnId = cleanVoiceTurnId(metadata?.voiceTurnId);
 
       // Inter-agent wake: propagate replyToThread so ChannelTagExtractor on this
       // agent can include toThreadId when routing responses back to the caller.

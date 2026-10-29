@@ -15,6 +15,7 @@
  */
 
 import { modelDiscoveryService } from './ModelDiscoveryService';
+import { isModelRoutingAlias } from './modelSlotRouting';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
@@ -88,6 +89,39 @@ async function getApiKeyForProvider(providerId: string): Promise<string> {
   } catch {
     return '';
   }
+}
+
+// CLI providers pick their own default model, which is their heaviest one.
+// An agent that explicitly declares the 'fast' tier (the voice agent) gets the
+// provider's light model instead. Same ids the built-in Haiku and Codex Luna
+// workers already run on.
+const CLI_FAST_MODELS: Record<string, string> = {
+  'claude-code': 'claude-haiku-5-5',
+  codex:         'gpt-5.6-luna',
+};
+
+/**
+ * Light model for a CLI provider when an agent asks for the 'fast' tier by
+ * name. Undefined for other tiers and providers (the CLI picks its default).
+ * Deliberately NOT applied inside resolveTierToModelId: the subconscious and
+ * heartbeat slots default to 'fast' too, and they keep their current model.
+ */
+export function cliTierModelId(providerId: string, tier: ModelTier): string | undefined {
+  return tier === 'fast' ? CLI_FAST_MODELS[providerId] : undefined;
+}
+
+/**
+ * The model id a CLI provider's bridge pins for an agent's configured model.
+ * A tier the CLI resolves itself ('fast' → the light model) pins that resolved
+ * id; other slot/tier aliases pin nothing, since the CLI picks its default.
+ */
+export function cliPinnedModelId(providerId: string, model: string | null | undefined): string | undefined {
+  const value = model?.trim();
+  if (!value || value === providerId) return undefined;
+  const alias = value.toLowerCase();
+  if (isTierName(alias)) return cliTierModelId(providerId, alias);
+
+  return isModelRoutingAlias(alias) ? undefined : value;
 }
 
 /**
