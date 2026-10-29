@@ -1,0 +1,3219 @@
+{
+  "version": 1,
+  "tools": {
+    "add_identity_observation": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "add_observational_memory": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "add_rule": {
+      "category": "rules",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "agent_storage": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "agents_directory": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "applescript_execute": {
+      "category": "applescript",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "archive_rule": {
+      "category": "rules",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "artifact_append": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_close": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_create": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_delete": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "artifact_edit": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_focus": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "artifact_history": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "artifact_list": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "artifact_open": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "artifact_read": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "artifact_reopen": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_revert": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "artifact_update": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "ask_user_question": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "audio_state": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "audit_log": {
+      "category": "applescript",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "background_browse": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "bookmarks_add": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "bookmarks_create_folder": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "bookmarks_list": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "bookmarks_move": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "bookmarks_remove": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "bookmarks_search": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "bookmarks_update": {
+      "category": "bookmarks",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "browse_tools": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "browser_controller": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "calendar_cancel": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_create": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_delete": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_get": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_list": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_list_upcoming": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "calendar_update": {
+      "category": "calendar",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "calendar"
+      }
+    },
+    "camera_list": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "camera_release": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "camera_set": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "catch_up_schedules": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "check_agent_jobs": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "click": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "click_at": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "close_agent_conversation": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "diff": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "display_workflow": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "docker_build": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "docker_exec": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "docker_images": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "docker_logs": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "docker_ps": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "docker_pull": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "docker_rm": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "docker_run": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "docker_stop": {
+      "category": "docker",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "download": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "dry_run_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "episodic_recall": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "episodic_resolve": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "episodic_search": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "eval_js": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "exec": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "exechost": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "execute_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "file_search": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_collections": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_create_folder": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "files_history": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_link": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "files_list": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_request_publish": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "files_restore": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "files_revoke_link": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "files_search": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_shared": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_versions": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "files_where": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "fill": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "find_repeated_tasks": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "form": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "function_list": {
+      "category": "function",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "function_run": {
+      "category": "function",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "function_runs": {
+      "category": "function",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "gdrive_download": {
+      "category": "gdrive",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "gdrive"
+      }
+    },
+    "gdrive_list_folder": {
+      "category": "gdrive",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "gdrive"
+      }
+    },
+    "gdrive_read": {
+      "category": "gdrive",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "gdrive"
+      }
+    },
+    "gdrive_search": {
+      "category": "gdrive",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "gdrive"
+      }
+    },
+    "get_extension_status": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "get_human_presence": {
+      "category": "bridge",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "git_add": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_blame": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_branch": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_checkout": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_commit": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_conflicts": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_diff": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_fetch": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_log": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_pull": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_push": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_stash": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_status": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "git_worktree": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_add_issue_to_project": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_add_pr_review": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_add_remote": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_check_runs": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_ci_logs": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_claim_files": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_close_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_close_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_comment_on_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_file": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_ref": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_release": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_create_repo": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_delete_ref": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_delete_repo": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_draft_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_fork_repo": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_issue_comments": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_issues": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_pr_files": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_get_repo": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_init": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_branches": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_claims": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_pr_reviews": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_projects": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_prs": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_list_repos": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_merge_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_read_file": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_ready_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_release_files": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_request_pr_reviewers": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_set_project_field": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_trigger_workflow_run": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_update_file": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_update_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "github_update_pr": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "heartbeat_claim_issue": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "heartbeat_new_issues": {
+      "category": "github",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "github"
+      }
+    },
+    "history": {
+      "category": "notify",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "hover": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "import_workflow": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "info": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "install_extension": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "launch_agent_tab": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "ledger_scoreboard": {
+      "category": "ledger",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_agents": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_devices": {
+      "category": "mobile",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_extension_catalog": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_identity_observations": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_installed_extensions": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_local": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_observations": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_published": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_rules": {
+      "category": "rules",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_screens": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "list_tab_contracts": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "manage_cookies": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "message_tab": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "mic_start": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "mic_stop": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "models_list": {
+      "category": "models",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "models_providers": {
+      "category": "models",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "models_usage": {
+      "category": "models",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "modify_history": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "monitor_network": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "notify_user": {
+      "category": "notify",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "open": {
+      "category": "files",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "open_tab": {
+      "category": "ui",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pack_install": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pack_list": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "pack_sync": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pack_uninstall": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "pack_validate": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "pause_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pg_count": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "pg_execute": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pg_query": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "pg_queryall": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "pg_queryone": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "pg_transaction": {
+      "category": "pg",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "press_key": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "publish": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "quality_set": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "read_agent_conversation": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "read_file": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "recall_conversations": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "recall_index_lookup": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "recall_index_store": {
+      "category": "memory",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "recorder_start": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "recorder_status": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "recorder_stop": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_decr": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_del": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_expire": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_get": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "redis_hget": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "redis_hgetall": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "redis_hset": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_incr": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_lpop": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_rpush": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_set": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "redis_ttl": {
+      "category": "redis",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "reflex_correct": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "reflex_export": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "reflex_forget": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "reflex_list_examples": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "reflex_predict": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "reflex_stats": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "reflex_teach": {
+      "category": "reflex",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "refresh_schedules": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "remove_identity_observation": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "remove_observational_memory": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "report_progress": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "restart_from_checkpoint": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "resume_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "return_contract": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "return_result": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "route_agent": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "routine_report": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "routines_digest": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "scaffold": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "schedule_alarm": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "screen_set": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "screenshot": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "scroll": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "search": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_conversation_keywords": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_conversation_logs": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_conversations": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_history": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_identity_observations": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_observations": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "search_rules": {
+      "category": "rules",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "send_agent_message": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "send_job_message": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "set_heartbeat": {
+      "category": "chat",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "set_workflow_status": {
+      "category": "workflow",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "settings_get": {
+      "category": "settings",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "settings_set": {
+      "category": "settings",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "skill_disable": {
+      "category": "skills",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "skill_get": {
+      "category": "skills",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "skill_list": {
+      "category": "skills",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "skill_save": {
+      "category": "skills",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "slack_connection_health": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_search_users": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_send_message": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_thread": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_unreact": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_update": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "slack_user": {
+      "category": "slack",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": {
+        "integration": "slack"
+      }
+    },
+    "snapshot": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "spawn_agent": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "speaker_start": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "speaker_stop": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "start": {
+      "category": "secretary",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "start_agent_conversation": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "start_extension": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "status": {
+      "category": "secretary",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "stop": {
+      "category": "secretary",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "stop_agent_job": {
+      "category": "agents",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "stop_extension": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "stop_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "tab": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "teleprompter_close": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "teleprompter_open": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "teleprompter_script": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "teleprompter_status": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "teleprompter_style": {
+      "category": "capture",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "text": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "type_at": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "uninstall_extension": {
+      "category": "extensions",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "unpublish": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": "none"
+    },
+    "update": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "update_human_presence": {
+      "category": "bridge",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "update_identity_section": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "upsert_conversation_keywords": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
+    "validate": {
+      "category": "marketplace",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "validate_sulla_workflow": {
+      "category": "meta",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "vault_autofill": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_create_password": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_delete_credential": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "irreversible",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_generate_password": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_is_enabled": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_list": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_list_accounts": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_list_api_keys": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_read_secrets": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "read",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_request": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_set_active_account": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_set_credential": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "vault_update_password": {
+      "category": "vault",
+      "placements": [
+        "desktop",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": {
+        "vaultItem": true
+      }
+    },
+    "wait": {
+      "category": "browser",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": true,
+      "sideEffect": "read",
+      "credential": "none"
+    },
+    "write_file": {
+      "category": "observation",
+      "placements": [
+        "desktop",
+        "cloud",
+        "mobile"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    }
+  }
+}

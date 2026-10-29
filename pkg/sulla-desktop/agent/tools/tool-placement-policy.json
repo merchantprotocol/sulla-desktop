@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "families": {
+    "integrations": ["calendar", "gdrive", "github", "integrations", "slack", "communication", "developer_tools", "productivity", "project_management", "crm_sales", "marketing", "customer_support", "social_media", "finance", "file_storage", "ecommerce", "analytics", "automation", "database", "design", "hr_recruiting", "ai_ml"],
+    "files": ["files"],
+    "vault": ["vault"],
+    "memory": ["episodic", "memory", "observation"],
+    "agents": ["agents"],
+    "workflows": ["workflow"],
+    "desktopRelay": ["applescript", "browser", "capture", "docker", "extensions", "fs", "function", "kubectl", "pg", "redis", "secretary", "ui", "workspace"]
+  },
+  "irreversibleTools": [
+    "artifact_delete",
+    "bookmarks_remove",
+    "calendar_delete",
+    "files_request_publish",
+    "files_revoke_link",
+    "github_close_issue",
+    "github_comment_on_issue",
+    "github_create_issue",
+    "github_create_release",
+    "github_delete_ref",
+    "github_delete_repo",
+    "github_merge_pr",
+    "marketplace_publish",
+    "marketplace_unpublish",
+    "publish",
+    "remove_identity_observation",
+    "remove_observational_memory",
+    "send_agent_message",
+    "send_job_message",
+    "slack_send_message",
+    "uninstall_extension",
+    "unpublish",
+    "vault_delete_credential"
+  ]
+}

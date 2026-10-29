@@ -8,6 +8,12 @@
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
 
 import type { ToolOperation } from './base';
+import {
+  defaultToolPlacementMetadata,
+  type ToolCredential,
+  type ToolPlacement,
+  type ToolSideEffect,
+} from './toolPlacement';
 
 type ToolLoader = () => Promise<any>;
 
@@ -40,6 +46,14 @@ export interface ToolManifest {
   operationTypes?:          ToolOperation[];
   loader:                   () => Promise<any>;
   executionTarget?:         ToolExecutionTarget;
+  /** Hosts that can execute the tool. Omitted tools remain Desktop-only. */
+  placements?:              ToolPlacement[];
+  /** Whether another host may relay the call to an online Desktop. */
+  relayable?:               boolean;
+  /** Used by hosts to decide when a human tap is mandatory. */
+  sideEffect?:              ToolSideEffect;
+  /** Credential custody required to execute the tool. */
+  credential?:              ToolCredential;
   /** When true, this tool uses a provider-native format (e.g. Anthropic computer_20250124) */
   isAnthropicNative?:       boolean;
   /** Raw Anthropic tool definition — injected directly, not converted. */
@@ -156,6 +170,11 @@ export class ToolRegistry {
         this.nativeToolDefs.set(m.name, m.anthropicToolDefinition);
       }
       this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
+      const placementDefaults = defaultToolPlacementMetadata(m.name, m.category, m.operationTypes);
+      m.placements ??= placementDefaults.placements;
+      m.relayable ??= placementDefaults.relayable;
+      m.sideEffect ??= placementDefaults.sideEffect;
+      m.credential ??= placementDefaults.credential;
       m.executionTarget ??= executionTargetFor(m.category, m.name);
       this.executionTargets.set(m.name, m.executionTarget);
       this.register(m.name, m.description, m.category, async() => {
