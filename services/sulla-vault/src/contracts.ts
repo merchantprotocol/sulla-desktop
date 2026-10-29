@@ -237,7 +237,7 @@ export interface BrokerClaims {
 export interface BrokerItemMetadata {
   id:    string;
   name:  string;
-  type:  'login' | 'apiKey' | 'note' | 'card' | 'identity';
+  type:  'login' | 'apiKey' | 'note' | 'card' | 'identity' | 'sshKey';
   hosts: string[];
   rules: Array<{ target: 'header' | 'query'; name: string; scheme: 'raw' | 'Bearer' | 'Token' | 'Basic' }>;
 }
