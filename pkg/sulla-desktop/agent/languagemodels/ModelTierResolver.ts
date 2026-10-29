@@ -15,6 +15,7 @@
  */
 
 import { modelDiscoveryService } from './ModelDiscoveryService';
+import { isModelRoutingAlias } from './modelSlotRouting';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
@@ -107,6 +108,20 @@ const CLI_FAST_MODELS: Record<string, string> = {
  */
 export function cliTierModelId(providerId: string, tier: ModelTier): string | undefined {
   return tier === 'fast' ? CLI_FAST_MODELS[providerId] : undefined;
+}
+
+/**
+ * The model id a CLI provider's bridge pins for an agent's configured model.
+ * A tier the CLI resolves itself ('fast' → the light model) pins that resolved
+ * id; other slot/tier aliases pin nothing, since the CLI picks its default.
+ */
+export function cliPinnedModelId(providerId: string, model: string | null | undefined): string | undefined {
+  const value = model?.trim();
+  if (!value || value === providerId) return undefined;
+  const alias = value.toLowerCase();
+  if (isTierName(alias)) return cliTierModelId(providerId, alias);
+
+  return isModelRoutingAlias(alias) ? undefined : value;
 }
 
 /**
