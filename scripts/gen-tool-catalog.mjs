@@ -5,7 +5,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -14,9 +14,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Tool skills are hand-curated in resources/memory-seed/skills; this generator no longer writes files.
 const execFileAsync = promisify(execFile);
 const sentenceSegmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
-const placementPolicyPath = path.join(root, 'pkg/sulla-desktop/agent/tools/tool-placement-policy.json');
-const placementOutputPath = path.join(root, 'resources/tool-placements.json');
-const placementPolicy = JSON.parse(readFileSync(placementPolicyPath, 'utf8'));
 
 const compare = (a, b) => a.localeCompare(b, 'en');
 const escapeMarkdown = value => value.replaceAll('|', '\\|').replaceAll('\n', ' ');
@@ -114,52 +111,6 @@ function renderCategory(category, tools) {
   return `${ output.join('\n').trimEnd() }\n`;
 }
 
-function manifestTools() {
-  const toolsRoot = path.join(root, 'pkg/sulla-desktop/agent/tools');
-  const tools = [];
-  for (const entry of readdirSync(toolsRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = path.join(toolsRoot, entry.name, 'manifests.ts');
-    let source;
-    try { source = readFileSync(manifestPath, 'utf8'); } catch { continue; }
-    const objectPattern = /\{\s*name:\s*['"]([^'"]+)['"][\s\S]*?category:\s*['"]([^'"]+)['"][\s\S]*?operationTypes:\s*\[([^\]]*)\][\s\S]*?loader:/g;
-    for (const match of source.matchAll(objectPattern)) {
-      tools.push({
-        name: match[1],
-        category: match[2],
-        operationTypes: [...match[3].matchAll(/['"]([^'"]+)['"]/g)].map(operation => operation[1]),
-      });
-    }
-  }
-  return tools.sort((a, b) => compare(a.name, b.name));
-}
-
-function placementFor(tool) {
-  const family = Object.entries(placementPolicy.families)
-    .find(([, categories]) => categories.includes(tool.category))?.[0];
-  const sideEffect = tool.operationTypes.includes('delete') || placementPolicy.irreversibleTools.includes(tool.name)
-    ? 'irreversible'
-    : tool.operationTypes.length > 0 && tool.operationTypes.every(operation => operation === 'read')
-      ? 'read'
-      : 'write';
-  if (family === 'integrations') return { placements: ['desktop', 'cloud', 'mobile'], relayable: true, sideEffect, credential: { integration: tool.category } };
-  if (family === 'files') return { placements: ['desktop', 'mobile'], relayable: true, sideEffect, credential: 'none' };
-  if (family === 'vault') return { placements: ['desktop', 'mobile'], relayable: false, sideEffect, credential: { vaultItem: true } };
-  if (family === 'memory') return { placements: ['desktop', 'cloud', 'mobile'], relayable: false, sideEffect, credential: 'none' };
-  if (family === 'agents' || family === 'workflows') return { placements: ['desktop', 'cloud', 'mobile'], relayable: true, sideEffect, credential: 'none' };
-  if (family === 'desktopRelay') return { placements: ['desktop'], relayable: true, sideEffect, credential: 'none' };
-  return { placements: ['desktop'], relayable: false, sideEffect, credential: 'none' };
-}
-
-function writeToolPlacements() {
-  const tools = Object.fromEntries(manifestTools().map(tool => [tool.name, {
-    category: tool.category,
-    ...placementFor(tool),
-  }]));
-  mkdirSync(path.dirname(placementOutputPath), { recursive: true });
-  writeFileSync(placementOutputPath, `${ JSON.stringify({ version: placementPolicy.version, tools }, null, 2) }\n`);
-}
-
 const categories = parseCategories(await browseTools({}));
 const categoryCatalogs = new Array(categories.length);
 let nextCategory = 0;
@@ -174,5 +125,4 @@ await Promise.all(Array.from({ length: Math.min(2, categories.length) }, async (
   }
 }));
 const catalog = [];
-writeToolPlacements();
 console.log('Tool catalog generation retired; use resources/memory-seed/skills.');

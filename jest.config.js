@@ -34,9 +34,11 @@ export default {
     '<rootDir>/screenshots',
   ],
   moduleNameMapper: {
-    '\\.css$':       '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
-    '^@pkg/assets/': '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
-    '^@pkg/(.*)$':   '<rootDir>/pkg/sulla-desktop/$1',
+    '\\.css$':                            '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
+    '^@pkg/assets/':                      '<rootDir>/pkg/sulla-desktop/config/emptyStubForJSLinter.js',
+    '^@pkg/(.*)$':                        '<rootDir>/pkg/sulla-desktop/$1',
+    // Desktop re-exports workspace package sources with NodeNext `.js` specifiers.
+    '^(.*/packages/[^/]+/src/.*)\\.js$': '$1',
   },
   setupFiles: [
     '<rootDir>/pkg/sulla-desktop/utils/testUtils/setupTextEncoder.ts',
