@@ -89,7 +89,7 @@ export class ToolRegistry {
     mobile:             'Sulla Mobile companion — check whether signed-in desktop and mobile devices are reachable.',
     models:             'AI provider/model inventory — provider connection status, Sulla compatibility, CLI installation checks, model discovery, and locally tracked usage.',
     notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
-    vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
+    vault:              'Credential vault — create or generate passwords ingress-only, list safe metadata, check connections, and autofill without exposing secrets.',
     function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
     ledger:             'Outcome-ledger measurement — historical scoreboard of WORKING / OUTCOMES / AUDIT at ~/sulla/ledger/. Files are archive/readout only; Projects project-state is the structured agenda.',
     reflex:             'Reflex decision engine — teach, test, correct, and export the examples Sulla uses to act on a message instantly, before the language model.',

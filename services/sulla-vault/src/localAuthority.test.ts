@@ -146,6 +146,41 @@ test('Sulla Cloud session mutation rejects non-Desktop service principals', asyn
   );
 });
 
+test('agent password ingress returns only a reference, audits identity, and keeps policy gates closed', async() => {
+  const actorId = '11111111-1111-4111-8111-111111111111';
+  const secret = 'synthetic-agent-ingress-secret';
+  const queries: Array<{ sql: string; params?: unknown[] }> = [];
+  const db = {
+    query: async(sql: string, params?: unknown[]) => {
+      queries.push({ sql, params });
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql.includes('INSERT INTO items')) return { rowCount: 1, rows: [{ revision: 1 }] };
+      if (sql.includes('INSERT INTO audit_log')) return { rowCount: 1, rows: [] };
+      if (sql.includes("action='agent_vault_item_created'")) return { rowCount: 0, rows: [] };
+      throw new Error(`Unexpected query: ${ sql }`);
+    },
+  } as any;
+  db.connect = async() => ({ query: db.query, release() {} });
+  const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
+  (authority as any).keys = { userId: actorId, publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32) };
+  (authority as any).migrationState = 'unlocked';
+  const claims = { sub: actorId, agent_id: 'agent-test', pod_id: 'pod-test' };
+  const result = await authority.createAgentVaultItem('sulla-tools', TOKEN.broker, {
+    claims, title: 'Synthetic login', username: 'synthetic-user', password: secret, url: 'https://example.test',
+  });
+  assert.match(result.itemId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(Object.keys(result).sort(), ['generated', 'itemId', 'revision']);
+  assert.doesNotMatch(JSON.stringify(result), new RegExp(secret));
+  const audit = queries.find(query => query.sql.includes('INSERT INTO audit_log'))!;
+  assert.deepEqual(audit.params?.slice(0, 3), [actorId, result.itemId, 'pod-test']);
+  assert.doesNotMatch(JSON.stringify(audit), new RegExp(secret));
+  await assert.rejects(
+    authority.updateAgentVaultItem('sulla-tools', TOKEN.broker, { claims, itemId: result.itemId, password: 'rotation' }),
+    (error: any) => error.code === 'policy_denied',
+  );
+  assert.equal(typeof (authority as any).deleteAgentVaultItem, 'undefined', 'no agent delete path exists');
+});
+
 test('lock linearizes behind in-flight plaintext reads and mutations', async() => {
   const actorId = '11111111-1111-4111-8111-111111111111';
   const itemId = '22222222-2222-4222-8222-222222222222';

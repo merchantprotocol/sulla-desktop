@@ -26,6 +26,22 @@ export interface ToolCardDisplay {
 
 type Args = Record<string, unknown>;
 
+const VAULT_SECRET_ARGS: Record<string, string[]> = {
+  vault_create_password: ['password'],
+  vault_update_password: ['password'],
+  vault_set_credential: ['value'],
+};
+
+/** Strip ingress-only values before a tool call is persisted or rendered. */
+export function redactToolArgs(toolName: string, args: unknown): unknown {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  const fields = VAULT_SECRET_ARGS[toolName] ?? VAULT_SECRET_ARGS[toolName.replace(/^vault\//, 'vault_')];
+  if (!fields) return args;
+  const safe = { ...(args as Record<string, unknown>) };
+  for (const field of fields) if (field in safe) safe[field] = '[REDACTED]';
+  return safe;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function str(val: unknown): string {
@@ -463,6 +479,15 @@ const formatters: Record<string, Formatter> = {
   },
   vault_set_credential(args) {
     return { label: 'Vault', summary: `Saving credential for ${ str(args.account_type) }` };
+  },
+  vault_create_password(args) {
+    return { label: 'Vault', summary: `Saving password for ${ str(args.title) }` };
+  },
+  vault_generate_password(args) {
+    return { label: 'Vault', summary: `Generating password for ${ str(args.title) }` };
+  },
+  vault_update_password() {
+    return { label: 'Vault', summary: 'Rotating vault password' };
   },
 
   // Fallback handled by prefix matching below

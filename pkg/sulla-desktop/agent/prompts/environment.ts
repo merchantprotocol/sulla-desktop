@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 // Detailed integration API instructions — exported so BaseNode can conditionally inject them
-export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above). Credentials for all integrations are stored in the Password Manager (vault) with per-account AI access levels. Use \`vault/list\` to see what accounts are available and \`vault/autofill\` to log into websites. Use \`vault/read_secrets\` to retrieve API keys and tokens for connected services — access is controlled by the AI access level the user has set for each account.`;
+export const INTEGRATIONS_INSTRUCTIONS_BLOCK = `All integrations, connections, and tools are discoverable via the unified Tools API (see "Tools API" section above). Credentials for all integrations are stored in the Password Manager (vault) with per-account AI access levels. Use \`vault/list\` to see what accounts are available and \`vault/autofill\` to log into websites. Use \`vault/create_password\` or \`vault/generate_password\` for ingress-only creation without widening read access. Use \`vault/read_secrets\` to retrieve API keys and tokens for connected services — access is controlled by the AI access level the user has set for each account.`;
 
 // Environment prompt content for agent awareness
 export const environmentPrompt = `

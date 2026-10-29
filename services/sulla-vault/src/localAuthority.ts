@@ -57,6 +57,11 @@ import type {
   BrokerCredentialRef,
   BrokerItemListResponse,
   BrokerOAuthAccountRequest,
+  BrokerClaims,
+  BrokerVaultItemWriteRequest,
+  BrokerVaultItemUpdateRequest,
+  BrokerVaultItemWriteResponse,
+  BrokerIntegrationCredentialWriteRequest,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerRelayCreateRequest,
@@ -1420,6 +1425,161 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.requireBrokerIdentity(callerId, token);
     const { state, unlocked, principalId } = this.status();
     return { state, unlocked, principalId };
+  }
+
+  private validateAgentWriteClaims(claims: BrokerClaims, callerId: string, token: string | undefined): UnlockedKeys {
+    this.requireBrokerIdentity(callerId, token);
+    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
+    if (!claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id)) {
+      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
+    }
+    const keys = this.requireKeys();
+    if (claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
+    return keys;
+  }
+
+  private generatedPassword(): string {
+    // 192 random bits, encoded without ambiguous punctuation; generation stays inside Vault.
+    return randomBytes(24).toString('base64url');
+  }
+
+  async createAgentVaultItem(
+    callerId: string, token: string | undefined, input: BrokerVaultItemWriteRequest,
+  ): Promise<BrokerVaultItemWriteResponse> {
+    return this.runSecurityOperation(async() => {
+      const keys = this.validateAgentWriteClaims(input?.claims, callerId, token);
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      if (!title || title.length > 200) throw new LocalVaultError('invalid_operation', 400, 'Item title is invalid');
+      if ((input.password === undefined) === (input.generate !== true)) {
+        throw new LocalVaultError('invalid_operation', 400, 'Provide exactly one of password or generate:true');
+      }
+      const password = input.generate === true ? this.generatedPassword() : String(input.password);
+      if (!password || Buffer.byteLength(password) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('invalid_operation', 400, 'Password is invalid');
+      const id = randomUUID();
+      const sites = input.url ? [new URL(input.url).hostname] : [];
+      const item: VaultItemPlaintext = {
+        type: 'login', name: title, username: input.username, password,
+        uris: input.url ? [{ uri: input.url }] : undefined, notes: input.notes, folder: input.folder,
+        tags: Array.isArray(input.tags) ? input.tags.map(String).filter(Boolean).slice(0, 50) : undefined,
+        agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites, expiresAt: null },
+      };
+      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
+      const generation = this.generation;
+      const result = await this.runTransaction(async client => {
+        const created = await client.query<{ revision: number }>(
+          `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
+           VALUES ($1,$2,$3,$4,$5,$6,NULL) RETURNING revision`,
+          [id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy],
+        );
+        this.requireGeneration(generation);
+        await client.query(
+          `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked)
+           VALUES ($1,$2,'agent_vault_item_created',$3,$4,false)`,
+          [keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }],
+        );
+        return Number(created.rows[0].revision);
+      });
+      return { itemId: id, revision: result, generated: input.generate === true };
+    });
+  }
+
+  async updateAgentVaultItem(
+    callerId: string, token: string | undefined, input: BrokerVaultItemUpdateRequest,
+  ): Promise<BrokerVaultItemWriteResponse> {
+    return this.runSecurityOperation(async() => {
+      const keys = this.validateAgentWriteClaims(input?.claims, callerId, token);
+      if (!UUID_PATTERN.test(input.itemId)) throw new LocalVaultError('invalid_operation', 400, 'Item reference is invalid');
+      const owned = await this.db.query(
+        `SELECT 1 FROM audit_log WHERE item_id=$1 AND action='agent_vault_item_created' AND metadata->>'agentId'=$2 LIMIT 1`,
+        [input.itemId, input.claims.agent_id],
+      );
+      if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only vault items they created');
+      const rows = await this.db.query<ItemRow>(
+        `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
+         WHERE id=$1 AND owner_user_id=$2 AND deleted_at IS NULL`, [input.itemId, keys.userId],
+      );
+      const row = rows.rows[0];
+      if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
+      const item = JSON.parse(await decryptItemText(
+        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
+        { itemId: row.id, ownerId: keys.userId },
+      )) as VaultItemPlaintext;
+      if (input.password !== undefined && input.generate === true) throw new LocalVaultError('invalid_operation', 400, 'Provide password or generate:true, not both');
+      if (input.password !== undefined) item.password = String(input.password);
+      if (input.generate === true) item.password = this.generatedPassword();
+      if (input.title !== undefined) item.name = String(input.title).trim();
+      if (input.username !== undefined) item.username = String(input.username);
+      if (input.url !== undefined) item.uris = [{ uri: String(input.url) }];
+      if (input.notes !== undefined) item.notes = String(input.notes);
+      if (input.folder !== undefined) item.folder = String(input.folder);
+      if (input.tags !== undefined) item.tags = input.tags.map(String).filter(Boolean).slice(0, 50);
+      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
+      const generation = this.generation;
+      const revision = await this.runTransaction(async client => {
+        const updated = await client.query<{ revision: number }>(
+          `UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now()
+           WHERE id=$3 AND owner_user_id=$4 AND revision=$5 AND deleted_at IS NULL RETURNING revision`,
+          [encrypted.ciphertext, encrypted.encryptedItemKey, row.id, keys.userId, row.revision],
+        );
+        if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
+        this.requireGeneration(generation);
+        await client.query(
+          `INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked)
+           VALUES ($1,$2,'agent_vault_item_updated',$3,$4,false)`,
+          [keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }],
+        );
+        return Number(updated.rows[0].revision);
+      });
+      return { itemId: row.id, revision, generated: input.generate === true };
+    });
+  }
+
+  async setAgentIntegrationCredential(
+    callerId: string, token: string | undefined, input: BrokerIntegrationCredentialWriteRequest,
+  ): Promise<BrokerVaultItemWriteResponse> {
+    return this.runSecurityOperation(async() => {
+      const integrationId = String(input.integrationId ?? '').trim();
+      const accountId = String(input.accountId ?? 'default').trim();
+      const property = String(input.property ?? '').trim();
+      if (![integrationId, accountId, property].every(value => /^[A-Za-z0-9._-]{1,128}$/.test(value))) {
+        throw new LocalVaultError('invalid_operation', 400, 'Credential reference is invalid');
+      }
+      const keys = this.validateAgentWriteClaims(input.claims, callerId, token);
+      const existing = await this.db.query<ItemRow>(
+        `SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items
+         WHERE owner_user_id=$1 AND integration_ref=$2 AND deleted_at IS NULL LIMIT 1`, [keys.userId, `${ integrationId }/${ accountId }`],
+      );
+      if (!existing.rowCount) {
+        const result = await this.createAgentIntegrationItem(keys, input, integrationId, accountId, property);
+        return result;
+      }
+      const row = existing.rows[0];
+      const owned = await this.db.query(`SELECT 1 FROM audit_log WHERE item_id=$1 AND action='agent_vault_item_created' AND metadata->>'agentId'=$2 LIMIT 1`, [row.id, input.claims.agent_id]);
+      if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only credentials they created');
+      const item = JSON.parse(await decryptItemText({ version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey, { itemId: row.id, ownerId: keys.userId })) as VaultItemPlaintext;
+      item.integration ??= { integrationId, accountId, properties: {} };
+      item.integration.properties[property] = String(input.value);
+      const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
+      const updated = await this.runTransaction(async client => {
+        const result = await client.query<{ revision: number }>(`UPDATE items SET ciphertext=$1,encrypted_item_key=$2,revision=revision+1,updated_at=now() WHERE id=$3 AND revision=$4 RETURNING revision`, [encrypted.ciphertext, encrypted.encryptedItemKey, row.id, row.revision]);
+        if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
+        await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked) VALUES ($1,$2,'agent_vault_item_updated',$3,$4,false)`, [keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }]);
+        return Number(result.rows[0].revision);
+      });
+      return { itemId: row.id, revision: updated, generated: false };
+    });
+  }
+
+  private async createAgentIntegrationItem(keys: UnlockedKeys, input: BrokerIntegrationCredentialWriteRequest, integrationId: string, accountId: string, property: string): Promise<BrokerVaultItemWriteResponse> {
+    const id = randomUUID();
+    const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null } };
+    const encrypted = await encryptItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
+    const revision = await this.runTransaction(async client => {
+      const created = await client.query<{ revision: number }>(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING revision`, [id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`]);
+      await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked) VALUES ($1,$2,'agent_vault_item_created',$3,$4,false)`, [keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }]);
+      return Number(created.rows[0].revision);
+    });
+    return { itemId: id, revision, generated: false };
   }
 
   async integrationMetadata(

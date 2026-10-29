@@ -51,7 +51,7 @@ export const integrationsToolManifests: ToolManifest[] = [
   },
   {
     name:        'vault_set_credential',
-    description: 'Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or other credentials. Cannot change llm_access (user-only); overwriting an existing secret requires confirm:true.',
+    description: 'Store or update a credential for an integration account. The value is encrypted in the vault and never appears in conversation after this call. Use this to save API keys, bearer tokens, base URLs, or custom account types not present in the integration catalog. In container-vault mode writes are ingress-only. Cannot change llm_access (user-only); overwriting an existing secret requires confirm:true.',
     category:    'vault',
     schemaDef:   {
       account_type: { type: 'string', description: "The slug identifier of the integration (e.g. 'twenty', 'slack', 'github')" },
@@ -62,6 +62,46 @@ export const integrationsToolManifests: ToolManifest[] = [
     },
     operationTypes: ['update'],
     loader:         () => import('./integration_set_credential'),
+  },
+  {
+    name: 'vault_create_password',
+    description: 'Create a password item in the human Passwords/Vault UI. This is ingress-only: the password is encrypted by Vault, never echoed in the result, logs, or tool card. Use vault/generate_password instead when the agent must not see the password.',
+    category: 'vault', schemaDef: {
+      title: { type: 'string', description: 'Name shown in the Passwords UI' },
+      username: { type: 'string', optional: true, description: 'Optional login username' },
+      url: { type: 'string', optional: true, description: 'Optional website URL' },
+      notes: { type: 'string', optional: true, description: 'Optional encrypted notes' },
+      folder: { type: 'string', optional: true, description: 'Optional folder name' },
+      tags: { type: 'array', items: { type: 'string' }, optional: true, description: 'Optional tags' },
+      password: { type: 'string', description: 'Password to store; never returned' },
+    }, operationTypes: ['create'], loader: () => import('./vault_create_password'),
+  },
+  {
+    name: 'vault_generate_password',
+    description: 'Generate a strong password inside Vault and store it in the human Passwords UI without exposing it to the agent. Returns only the vault item id/reference.',
+    category: 'vault', schemaDef: {
+      title: { type: 'string', description: 'Name shown in the Passwords UI' },
+      username: { type: 'string', optional: true, description: 'Optional login username' },
+      url: { type: 'string', optional: true, description: 'Optional website URL' },
+      notes: { type: 'string', optional: true, description: 'Optional encrypted notes' },
+      folder: { type: 'string', optional: true, description: 'Optional folder name' },
+      tags: { type: 'array', items: { type: 'string' }, optional: true, description: 'Optional tags' },
+    }, operationTypes: ['create'], loader: () => import('./vault_generate_password'),
+  },
+  {
+    name: 'vault_update_password',
+    description: 'Rotate or update a vault password item previously created by this agent. Supply password, or generate:true to generate and store one entirely inside Vault. Never returns the secret; deletion remains human-only.',
+    category: 'vault', schemaDef: {
+      item_id: { type: 'string', description: 'Vault item id returned by create/generate' },
+      password: { type: 'string', optional: true, description: 'New password; never returned' },
+      generate: { type: 'boolean', optional: true, description: 'Generate the replacement inside Vault' },
+      title: { type: 'string', optional: true, description: 'Name shown in the Passwords UI' },
+      username: { type: 'string', optional: true, description: 'Optional login username' },
+      url: { type: 'string', optional: true, description: 'Optional website URL' },
+      notes: { type: 'string', optional: true, description: 'Optional encrypted notes' },
+      folder: { type: 'string', optional: true, description: 'Optional folder name' },
+      tags: { type: 'array', items: { type: 'string' }, optional: true, description: 'Optional tags' },
+    }, operationTypes: ['update'], loader: () => import('./vault_update_password'),
   },
   {
     name:           'vault_list',
