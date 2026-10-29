@@ -29,6 +29,7 @@ type DesktopToggle = keyof typeof DESKTOP_TOGGLES;
 import { BrowserBookmarkModel } from '@pkg/agent/database/models/BrowserBookmarkModel';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import { isLoopbackUrl, previewShares } from '@pkg/main/previewShare';
+import { enqueueSyncOp } from '@pkg/main/sync/syncQueue';
 
 const MAX_RELAY_FAVICON_CHARS = 12_000;
 const MAX_FLEET_TEXT_CHARS = 400;
