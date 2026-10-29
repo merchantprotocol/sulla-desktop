@@ -97,22 +97,23 @@ export function initConversationHistoryIpc(): void {
     return await ConversationHistoryModel.list(options?.view, options?.limit, options?.type as any);
   });
 
-  ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => {
+  ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; unread_count?: number; deleted?: boolean }) => {
     const updated = await ConversationHistoryModel.update(id, patch);
     if (updated?.type === 'chat') {
       const syncId = updated.thread_id || updated.id;
       const rows = await postgresClient.query<{ id: string }>(
         `UPDATE claude_conversations
             SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
-                pinned = COALESCE($4, pinned),
-                pinned_at = CASE WHEN $4::boolean IS NULL THEN pinned_at WHEN $4 THEN now() ELSE NULL END,
+                pinned = CASE WHEN $5::boolean IS TRUE THEN FALSE ELSE COALESCE($4, pinned) END,
+                pinned_at = CASE WHEN $5::boolean IS TRUE OR $4::boolean IS FALSE THEN NULL WHEN $4::boolean IS TRUE AND pinned IS FALSE THEN now() ELSE pinned_at END,
                 archived = COALESCE($5, archived),
                 archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END,
-                deleted_at = CASE WHEN $6::boolean IS NULL THEN deleted_at WHEN $6 THEN now() ELSE NULL END,
+                unread_count = COALESCE($6, unread_count),
+                deleted_at = CASE WHEN $7::boolean IS NULL THEN deleted_at WHEN $7 THEN now() ELSE NULL END,
                 updated_at = now()
-          WHERE id = $1 OR id = $7
+          WHERE id = $1 OR id = $8
           RETURNING id`,
-        [syncId, patch.title !== undefined, patch.title?.trim() ?? null, patch.pinned ?? null, patch.archived ?? null, patch.deleted ?? null, updated.id],
+        [syncId, patch.title !== undefined, patch.title?.trim() ?? null, patch.pinned ?? null, patch.archived ?? null, patch.unread_count ?? null, patch.deleted ?? null, updated.id],
       );
       await Promise.all(rows.map(row => enqueueSyncOp('claude_conversation', { id: row.id }, patch.deleted ? 'delete' : 'upsert')));
     }

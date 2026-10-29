@@ -131,6 +131,7 @@ import { up as up_0135, down as down_0135 } from './0135_seeded_subject_memory';
 import { up as up_0136, down as down_0136 } from './0136_create_memory_packs';
 import { up as up_0138, down as down_0138 } from './0138_trim_builtin_agent_environment_boilerplate';
 import { up as up_0139, down as down_0139 } from './0139_conversation_history_actions';
+import { up as up_0140, down as down_0140 } from './0140_conversation_history_sync_fields';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -258,4 +259,5 @@ export const migrationsRegistry = [
   { name: '0137_agent_model_slots', up: up_0137, down: down_0137 },
   { name: '0138_trim_builtin_agent_environment_boilerplate', up: up_0138, down: down_0138 },
   { name: '0139_conversation_history_actions', up: up_0139, down: down_0139 },
+  { name: '0140_conversation_history_sync_fields', up: up_0140, down: down_0140 },
 ] as const;
