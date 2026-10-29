@@ -6,7 +6,11 @@
 /** Stable action fields shared by Desktop, mobile, and Cloud projections. */
 export const up = `
   ALTER TABLE conversation_history
-    ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE;
+    ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS unread_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
   ALTER TABLE claude_conversations
     ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE,
@@ -29,7 +33,12 @@ export const up = `
 
 export const down = `
   DROP INDEX IF EXISTS idx_conv_history_visible_order;
-  ALTER TABLE conversation_history DROP COLUMN IF EXISTS archived;
+  ALTER TABLE conversation_history
+    DROP COLUMN IF EXISTS archived,
+    DROP COLUMN IF EXISTS pinned_at,
+    DROP COLUMN IF EXISTS archived_at,
+    DROP COLUMN IF EXISTS unread_count,
+    DROP COLUMN IF EXISTS updated_at;
   ALTER TABLE claude_conversations
     DROP COLUMN IF EXISTS pinned,
     DROP COLUMN IF EXISTS pinned_at,

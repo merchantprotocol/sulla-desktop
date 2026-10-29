@@ -212,8 +212,10 @@
                   <p
                     v-else
                     class="text-sm text-slate-800 dark:text-slate-200 truncate"
+                    :class="entry.unread_count > 0 ? 'font-semibold' : ''"
                     @dblclick.stop="startRename(entry)"
                   >
+                    <span v-if="entry.unread_count > 0" class="inline-block h-2 w-2 rounded-full bg-sky-500 mr-2" />
                     {{ entry.title || 'Untitled' }}
                   </p>
                   <p
@@ -261,6 +263,14 @@
               </div>
             </div>
           </template>
+          <button
+            v-if="historyView === 'active' && !searchQuery"
+            type="button"
+            class="history-archived-link w-full flex items-center gap-3 px-4 py-3 mt-5 rounded-xl text-left"
+            @click="historyView = 'archived'; loadHistory()"
+          >
+            <span>Archived</span><span class="ml-auto">View conversations →</span>
+          </button>
         </div>
       </div>
 
@@ -272,30 +282,44 @@
         @click.stop
       >
         <button
-          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
           @click="startRename(actionMenu.entry)"
         >
-          Rename
+          Rename <kbd class="ml-auto">F2</kbd>
         </button>
         <button
-          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
           @click="togglePin(actionMenu.entry)"
         >
-          {{ actionMenu.entry.pinned ? 'Unpin' : 'Pin' }}
+          {{ actionMenu.entry.pinned ? 'Unpin' : 'Pin' }} <kbd class="ml-auto">⌘P</kbd>
         </button>
         <button
           v-if="historyView !== 'deleted'"
-          class="block w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="toggleUnread(actionMenu.entry)"
+        >
+          {{ actionMenu.entry.unread_count ? 'Mark as read' : 'Mark as unread' }} <kbd class="ml-auto">⌘U</kbd>
+        </button>
+        <button
+          v-if="historyView !== 'deleted' && actionMenu.entry.type === 'chat'"
+          class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="openShare(actionMenu.entry)"
+        >
+          Share…
+        </button>
+        <button
+          v-if="historyView !== 'deleted'"
+          class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
           @click="toggleArchive(actionMenu.entry)"
         >
-          {{ actionMenu.entry.archived ? 'Unarchive' : 'Archive' }}
+          {{ actionMenu.entry.archived ? 'Unarchive' : 'Archive' }} <kbd class="ml-auto">⌘E</kbd>
         </button>
         <button
           v-if="historyView !== 'deleted'"
-          class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700"
-          @click="deleteEntry(actionMenu.entry)"
+          class="flex w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-slate-100 dark:hover:bg-slate-700"
+          @click="confirmDelete(actionMenu.entry)"
         >
-          Delete
+          Delete… <kbd class="ml-auto">⌫</kbd>
         </button>
         <button
           v-else
@@ -304,6 +328,38 @@
         >
           Restore
         </button>
+      </div>
+
+      <div v-if="shareEntry" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="shareEntry = null">
+        <div class="history-dialog bg-white rounded-xl p-6 w-[420px] shadow-2xl">
+          <h3 class="text-lg font-semibold">Share “{{ shareEntry.title }}”</h3>
+          <p class="text-sm text-slate-500 my-2">A read-only copy of the conversation up to now.</p>
+          <div v-if="shareUrl" class="flex items-center gap-2 rounded-lg bg-slate-100 p-2 font-mono text-xs">
+            <input :value="shareUrl" readonly class="min-w-0 flex-1 bg-transparent" aria-label="Read-only share link">
+            <button class="rounded bg-sky-700 px-3 py-2 text-white" @click="copyShareLink">Copy link</button>
+          </div>
+          <div class="flex items-center gap-3 border-t mt-3 py-3">
+            <div class="flex-1">Include tool output and files<small class="block text-slate-500">Off shares only the messages</small></div>
+            <input v-model="includeToolOutput" type="checkbox" aria-label="Include tool output and files">
+          </div>
+          <div class="flex justify-end gap-2 mt-3">
+            <button class="px-4 py-2" @click="shareEntry = null">Cancel</button>
+            <button class="rounded bg-sky-700 px-4 py-2 text-white" :disabled="shareLoading" @click="createShareLink">{{ shareLoading ? 'Creating…' : 'Create link' }}</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="deleteCandidate" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="deleteCandidate = null">
+        <div class="history-dialog bg-white rounded-xl p-6 w-[420px] shadow-2xl">
+          <h3 class="text-lg font-semibold">Delete conversation?</h3>
+          <p class="text-sm text-slate-500 my-3">Removed from your phone, Mac and Cloud. This can't be undone.</p>
+          <div class="flex justify-end gap-2"><button class="px-4 py-2" @click="deleteCandidate = null">Cancel</button><button class="rounded bg-red-700 px-4 py-2 text-white" @click="deleteConfirmed">Delete</button></div>
+        </div>
+      </div>
+
+      <div v-if="undoArchive" class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-slate-900 px-4 py-3 text-white shadow-xl">
+        {{ undoArchive.archived ? 'Archived' : 'Moved back to History' }}
+        <button class="ml-4 font-semibold text-sky-300" @click="undoLastArchive">Undo</button>
       </div>
 
       <!-- Clear confirmation dialog -->
@@ -376,6 +432,7 @@ interface HistoryEntry {
   last_active_at: string;
   pinned:         boolean;
   archived:       boolean;
+  unread_count:   number;
   deleted_at?:    string;
 }
 
@@ -397,6 +454,12 @@ const entries = ref<HistoryEntry[]>([]);
 const showClearConfirm = ref(false);
 const renamingId = ref<string | null>(null);
 const renameTitle = ref('');
+const shareEntry = ref<HistoryEntry | null>(null);
+const shareUrl = ref('');
+const shareLoading = ref(false);
+const includeToolOutput = ref(false);
+const deleteCandidate = ref<HistoryEntry | null>(null);
+const undoArchive = ref<{ entry: HistoryEntry; archived: boolean } | null>(null);
 
 let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -490,6 +553,7 @@ function debouncedSearch() {
 // ── Actions ──
 
 function openEntry(entry: HistoryEntry) {
+  if (entry.unread_count) void patchEntry(entry, { unread_count: 0 });
   let tab;
 
   if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
@@ -507,7 +571,7 @@ function openActionMenu(event: MouseEvent, entry: HistoryEntry) {
   actionMenu.value = { entry, x: Math.min(event.clientX, window.innerWidth - 180), y: Math.min(event.clientY, window.innerHeight - 190) };
 }
 
-async function patchEntry(entry: HistoryEntry, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) {
+async function patchEntry(entry: HistoryEntry, patch: { title?: string; pinned?: boolean; archived?: boolean; unread_count?: number; deleted?: boolean }) {
   await ipcRenderer.invoke('conversation-history:update' as any, entry.id, patch);
   actionMenu.value = null;
   await loadHistory();
@@ -544,7 +608,63 @@ async function togglePin(entry: HistoryEntry) {
 }
 
 async function toggleArchive(entry: HistoryEntry) {
-  await patchEntry(entry, { archived: !entry.archived });
+  const archived = entry.archived;
+
+  await patchEntry(entry, { archived: !archived });
+  undoArchive.value = { entry, archived };
+  window.setTimeout(() => { undoArchive.value = null }, 4_500);
+}
+
+async function undoLastArchive() {
+  if (!undoArchive.value) return;
+  const { entry, archived } = undoArchive.value;
+
+  undoArchive.value = null;
+  await patchEntry(entry, { archived });
+}
+
+async function toggleUnread(entry: HistoryEntry) {
+  await patchEntry(entry, { unread_count: entry.unread_count ? 0 : 1 });
+}
+
+function openShare(entry: HistoryEntry) {
+  actionMenu.value = null;
+  shareEntry.value = entry;
+  shareUrl.value = '';
+  includeToolOutput.value = false;
+}
+
+async function createShareLink() {
+  if (!shareEntry.value) return;
+  shareLoading.value = true;
+  try {
+    // ConversationSync filters tool output and files at the privacy boundary.
+    // The approved toggle defaults off; it remains explicit rather than
+    // silently widening the link payload.
+    const result = await ipcRenderer.invoke('sulla-cloud-chat:link' as any, shareEntry.value.thread_id || shareEntry.value.id, shareEntry.value.title, 'encrypted_bodies') as any;
+    const link = result?.data?.link ?? result?.data ?? result;
+
+    shareUrl.value = String(link?.url ?? link?.public_url ?? link?.publicUrl ?? '');
+  } finally {
+    shareLoading.value = false;
+  }
+}
+
+async function copyShareLink() {
+  if (shareUrl.value) await navigator.clipboard.writeText(shareUrl.value);
+}
+
+function confirmDelete(entry: HistoryEntry) {
+  actionMenu.value = null;
+  deleteCandidate.value = entry;
+}
+
+async function deleteConfirmed() {
+  if (!deleteCandidate.value) return;
+  const entry = deleteCandidate.value;
+
+  deleteCandidate.value = null;
+  await deleteEntry(entry);
 }
 
 async function deleteEntry(entry: HistoryEntry) {
@@ -586,12 +706,23 @@ onMounted(() => {
   loadHistory();
   ipcRenderer.on('conversation-history:cleared' as any, onHistoryCleared);
   window.addEventListener('click', closeActionMenu);
+  window.addEventListener('keydown', onKeydown);
 });
 
 function closeActionMenu() { actionMenu.value = null }
 
+function onKeydown(event: KeyboardEvent) {
+  if (!actionMenu.value || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+  if (event.key === 'F2') { event.preventDefault(); startRename(actionMenu.value.entry) }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'p') { event.preventDefault(); void togglePin(actionMenu.value.entry) }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'u') { event.preventDefault(); void toggleUnread(actionMenu.value.entry) }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') { event.preventDefault(); void toggleArchive(actionMenu.value.entry) }
+  if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); confirmDelete(actionMenu.value.entry) }
+}
+
 onUnmounted(() => {
   window.removeEventListener('click', closeActionMenu);
+  window.removeEventListener('keydown', onKeydown);
   ipcRenderer.removeListener('conversation-history:cleared' as any, onHistoryCleared);
   if (searchTimeout) clearTimeout(searchTimeout);
 });
@@ -620,11 +751,17 @@ onUnmounted(() => {
   background: transparent;
 }
 
+.history-archived-link { border: 1px dashed var(--nx-read-5, #94a3b8); color: var(--nx-read-3, #64748b); }
+.history-archived-link:hover { background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04)); }
+
 .history-entry:hover {
   background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04));
 }
 
-.history-page.dark .history-entry:hover {
+.history-page.dark .history-archived-link { border: 1px dashed var(--nx-read-5, #94a3b8); color: var(--nx-read-3, #64748b); }
+.history-archived-link:hover { background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04)); }
+
+.history-entry:hover {
   background: rgba(255, 255, 255, 0.03);
 }
 </style>
@@ -692,7 +829,10 @@ onUnmounted(() => {
   transition: transform 0.35s cubic-bezier(.22, 1, .36, 1), background 0.16s, border-color 0.16s;
 }
 
-.theme-noir .history-entry:hover {
+.theme-noir .history-archived-link { border: 1px dashed var(--nx-read-5, #94a3b8); color: var(--nx-read-3, #64748b); }
+.history-archived-link:hover { background: var(--bg-surface-hover, rgba(0, 0, 0, 0.04)); }
+
+.history-entry:hover {
   background: color-mix(in srgb, var(--nx-accent) 9%, transparent);
   border-color: color-mix(in srgb, var(--nx-accent-2) 20%, transparent);
   transform: translateX(2px);
