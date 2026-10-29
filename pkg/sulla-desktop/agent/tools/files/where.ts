@@ -6,6 +6,7 @@
 import { FilesTool } from './common';
 
 import type { ToolResponse } from '../base';
+import { addChatLinks } from './chatLink';
 
 export class FilesWhereWorker extends FilesTool {
   name = '';
@@ -15,6 +16,6 @@ export class FilesWhereWorker extends FilesTool {
     const query = new URLSearchParams({ what:String(input.what), ...(input.kind ? {kind:String(input.kind)} : {}), ...(input.project ? {project:String(input.project)} : {}) });
     const result = await this.containerJson(`/v1/folders/where?${query}`, input);
 
-    return { successBoolean:true, responseString:JSON.stringify(result) };
+    return { successBoolean:true, responseString:JSON.stringify(addChatLinks(result)) };
   }
 }

@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <article class="file-card">
+  <article class="file-card" role="button" tabindex="0" :aria-label="`Open ${reference.name} in File Manager`" @click="open" @keydown.enter="open" @keydown.space.prevent="open">
     <FileGlyph
       :name="reference.name"
       :mime="reference.mime"
@@ -17,22 +17,27 @@
     <div class="actions">
       <button
         type="button"
-        @click="open"
+        @click.stop="open"
       >
         <svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5" /></svg><span>Open</span>
       </button><button
+        v-if="supportsDocumentEditor(reference.path)"
+        type="button"
+        @click.stop="openEditor"
+      ><svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4z" /></svg><span>Open editor</span>
+      </button><button
         v-if="editable"
         type="button"
-        @click="toggleEditor"
+        @click.stop="toggleEditor"
       ><svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4zM13.5 6.5l4 4" /></svg><span>Edit inline</span>
       </button><button
         type="button"
-        @click="navigate('versions')"
+        @click.stop="navigate('versions')"
       >
         <svg viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5" /><path d="M3.5 3.5v5h5M12 7.5V12l3 2" /></svg><span>History</span>
       </button><button
         type="button"
-        @click="navigate('share-review')"
+        @click.stop="navigate('share-review')"
       >
         <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" /></svg><span>Link</span>
       </button>
@@ -78,13 +83,10 @@ async function save() {
 }
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
 async function open() {
-  if (supportsDocumentEditor(props.reference.path)) {
-    openDocumentTab({ fileId: props.reference.fileId, path: props.reference.path });
-    return;
-  }
-  await ipcRenderer.invoke('files-ui:open-file', { fileId: props.reference.fileId, versionId: props.reference.versionId });
+  navigate('detail');
 }
-function navigate(section:'versions' | 'share-review') {
+function openEditor() { openDocumentTab({ fileId: props.reference.fileId, path: props.reference.path }); }
+function navigate(section:'detail' | 'versions' | 'share-review') {
   const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, section };
   const existing = tabs.find(tab => tab.mode === 'files');
   const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
