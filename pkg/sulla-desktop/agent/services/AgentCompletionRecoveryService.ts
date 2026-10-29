@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { getWebSocketClientService } from './WebSocketClientService';
-import { buildWakeContent } from '../tools/agents/jobDelivery';
-import { getPendingCompletions, markCompletionDelivered } from '../tools/agents/jobRegistry';
+import { enqueueAgentCompletion } from './AgentCompletionInbox';
+import { getPendingCompletions } from '../tools/agents/jobRegistry';
 
 let recoveryPromise: Promise<void> | null = null;
 const inFlight = new Set<string>();
@@ -24,22 +23,9 @@ export async function recoverPendingAgentCompletions(): Promise<void> {
       if (inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) continue;
       inFlight.add(job.jobId);
       try {
-        const ws = getWebSocketClientService();
-        await ws.send(job.parentChannel, {
-          type: 'user_message',
-          data: {
-            content: buildWakeContent(job.jobId, job.results),
-            threadId: job.parentThreadId,
-            metadata: {
-              source: 'sub_agent_completion',
-              origin: 'spawn_agent_recovery',
-              inputSource: 'system',
-              jobId: job.jobId,
-              recovered: true,
-            },
-          },
+        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, {
+          jobId: job.jobId, results: job.results,
         });
-        await markCompletionDelivered(job.jobId);
       } catch (error) {
         console.warn(`[AgentCompletionRecovery] delivery failed for ${ job.jobId }; will retry:`, error);
       } finally {

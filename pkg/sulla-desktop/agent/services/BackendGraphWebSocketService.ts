@@ -8,6 +8,7 @@
 // heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
 import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -19,6 +20,7 @@ import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
+import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
@@ -92,6 +94,35 @@ export class BackendGraphWebSocketService {
   }
 
   constructor() {
+    registerCompletionIdleDispatcher((channelId, threadId) => {
+      if (this.hasActiveRun(channelId, threadId)) return;
+      const entries = takeAgentCompletions(channelId, threadId);
+      if (!entries.length) return;
+      const content = formatCompletionBatch(entries);
+      // A parent that is itself a hidden delegated child runs under its
+      // spawn_agent runner, not activeAborts. Starting a second execution on
+      // that state would race the runner, so hand it the batch as one steer.
+      const delegated = GraphRegistry.get(threadId);
+      if ((delegated?.state.metadata as any)?.delegatedRunActive) {
+        injectSteer(delegated!.state, {
+          id:        nextMessageId(),
+          role:      'user',
+          content,
+          timestamp: Date.now(),
+          metadata:  { source: 'sub_agent_completion', inputSource: 'system' },
+        } as any);
+        for (const entry of entries) {
+          markCompletionDelivered(entry.jobId).catch(err => console.warn('[BackendGraphWS] Failed to mark completion delivered:', err));
+        }
+        return;
+      }
+      // Same trigger mapping as handleChannelMessage: only heartbeat has its own
+      // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
+      const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
+      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, undefined, 'system', {
+        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
+      }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
+    });
     this.initialize();
   }
 
@@ -284,6 +315,8 @@ export class BackendGraphWebSocketService {
         return;
       }
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
+      setCompletionInboxStopped(channelId, stopThreadId, true);
+      for (const job of await getJobsForParentThread(stopThreadId)) abortJob(job.jobId);
       return;
     }
 
@@ -393,6 +426,16 @@ export class BackendGraphWebSocketService {
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
+    if (metadata?.source !== 'sub_agent_completion') {
+      const pendingCompletions = takeAgentCompletions(channelId, threadId);
+      if (pendingCompletions.length) {
+        message = `${ message }\n\n${ formatCompletionBatch(pendingCompletions) }`;
+        metadata = {
+          ...metadata,
+          completionJobIds: pendingCompletions.map(entry => entry.jobId),
+        };
+      }
+    }
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
@@ -488,6 +531,14 @@ export class BackendGraphWebSocketService {
         });
       }
 
+      // Completion wakes are accumulated instead of superseding the active
+      // parent. Human/new-turn messages still replace the prior turn.
+      if (metadata?.source === 'sub_agent_completion' && this.activeAborts.has(abortKey)) {
+        for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+        return;
+      }
+      if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
+
       // Abort any prior run still in flight FOR THIS SAME THREAD before
       // starting a new one. Per-thread (not per-channel) so multiple chat
       // tabs sharing the same WebSocket channel can run in parallel.
@@ -509,6 +560,9 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      for (const jobId of Array.isArray(metadata?.completionJobIds) ? metadata.completionJobIds : []) {
+        await markCompletionDelivered(String(jobId));
+      }
       // A turn starting is activity: a delegated tab that sat idle waiting on
       // its human must not read as a dead run the moment it wakes.
       RunActivity.touch(state.metadata);
@@ -626,12 +680,17 @@ export class BackendGraphWebSocketService {
         // would otherwise sit unread in an idle thread. Run it as a new turn.
         // Skipped when the run was stopped by the user — stop means stop.
         const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        if (leftovers.length) {
-          const text = leftovers.map(steerText).filter(Boolean).join('\n\n');
+        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
+        if (leftovers.length || completions.length) {
+          const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
           const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
           const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
           console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
-          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, images.length || fileReferences.length ? { attachments: images, fileReferences } : undefined)
+          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
+            ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
+            ...(completions.length ? { source: 'sub_agent_completion', completionJobIds: completions.map(entry => entry.jobId) } : {}),
+            ...(completions.length ? { completionEntries: completions } : {}),
+          })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         }
       }
