@@ -6,6 +6,8 @@
 import { mayInjectSecretIntoAgentCode, resolveLlmAccess, AGENT_PROTECTED_PROPERTIES } from '../vaultAccessPolicy';
 import { createCipheriv, createHmac, pbkdf2Sync } from 'node:crypto';
 
+import { argon2id } from 'hash-wasm';
+
 import { decryptBitwardenExport, mapBitwardenExport, parseCSV } from '../vaultImportParsers';
 
 describe('parseCSV', () => {
@@ -46,6 +48,7 @@ describe('Bitwarden import',()=>{
   ]};
   it('maps every item type and preserves the complete source payload',()=>{const entries=mapBitwardenExport(synthetic);expect(entries.map(entry=>entry.type)).toEqual(['login','note','card','identity','sshKey']);expect(JSON.parse(entries[0].properties.uris)).toHaveLength(2);expect(JSON.parse(entries[0].properties.passkeys)[0].credentialId).toBe('synthetic');expect(JSON.parse(entries[0].properties.bitwarden_source_json).fields).toHaveLength(1);expect(entries[0].folder).toBe('Finance');});
   it('decrypts password-protected PBKDF2 JSON and rejects a wrong password without leaking contents',async()=>{const password='synthetic export password',salt=Buffer.alloc(16,7),key=pbkdf2Sync(password,salt,100_000,32,'sha256'),expand=(info:string)=>createHmac('sha256',key).update(info).update(Buffer.from([1])).digest(),enc=expand('enc'),mac=expand('mac'),seal=(plain:string)=>{const iv=Buffer.alloc(16,9),cipher=createCipheriv('aes-256-cbc',enc,iv),body=Buffer.concat([cipher.update(plain),cipher.final()]),tag=createHmac('sha256',mac).update(iv).update(body).digest();return `2.${iv.toString('base64')}|${body.toString('base64')}|${tag.toString('base64')}`};const exported={encrypted:true,passwordProtected:true,salt:salt.toString('base64'),kdfType:0,kdfIterations:100_000,encKeyValidation_DO_NOT_EDIT:seal('validation'),data:seal(JSON.stringify(synthetic))};expect((await decryptBitwardenExport(exported,password)).items).toHaveLength(5);await expect(decryptBitwardenExport(exported,'wrong')).rejects.toMatchObject({code:'wrong_password'});});
+  it('decrypts password-protected Argon2id JSON',async()=>{const password='synthetic argon password',salt=Buffer.alloc(16,5),key=Buffer.from(await argon2id({password,salt,iterations:1,memorySize:8*1024,parallelism:1,hashLength:32,outputType:'binary'})),expand=(info:string)=>createHmac('sha256',key).update(info).update(Buffer.from([1])).digest(),enc=expand('enc'),mac=expand('mac'),seal=(plain:string)=>{const iv=Buffer.alloc(16,4),cipher=createCipheriv('aes-256-cbc',enc,iv),body=Buffer.concat([cipher.update(plain),cipher.final()]),tag=createHmac('sha256',mac).update(iv).update(body).digest();return `2.${iv.toString('base64')}|${body.toString('base64')}|${tag.toString('base64')}`};const exported={encrypted:true,passwordProtected:true,salt:salt.toString('base64'),kdfType:1,kdfIterations:1,kdfMemory:8,kdfParallelism:1,data:seal(JSON.stringify(synthetic))};expect((await decryptBitwardenExport(exported,password)).items).toHaveLength(5);});
   it('explains account-restricted encrypted JSON',async()=>{await expect(decryptBitwardenExport({encrypted:true,passwordProtected:false})).rejects.toEqual(expect.objectContaining({code:'account_restricted'}));});
 });
 
