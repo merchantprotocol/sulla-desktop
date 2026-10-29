@@ -14,11 +14,14 @@ describe('which agent a mobile relay turn runs on', () => {
     expect(voiceTurnRoute(null)).toBeNull();
   });
 
-  it('never locks spoken turns to the voice agent', () => {
-    expect(voiceTurnRoute({ voiceMode: true })).toEqual({});
-    expect(voiceTurnRoute({ voiceMode: true, voiceTurnId: 'vt_mh2k9x_1' })).toEqual({ voiceTurnId: 'vt_mh2k9x_1' });
+  it('runs spoken turns (voice mode and push-to-talk) on the voice agent', () => {
+    expect(voiceTurnRoute({ voiceMode: true })).toEqual({ agentId: VOICE_AGENT_ID });
+    expect(voiceTurnRoute({ voiceMode: true, voiceTurnId: 'vt_mh2k9x_1' })).toEqual({ agentId: VOICE_AGENT_ID, voiceTurnId: 'vt_mh2k9x_1' });
+  });
+
+  it('drops the picker model so the voice agent keeps its own fast model', () => {
     const frame = { voiceMode: true, providerId: 'claude-code', modelId: 'claude-opus-5-5', agentId: 'director' };
-    expect(voiceTurnRoute(frame)).not.toHaveProperty('agentId');
+    expect(voiceTurnRoute(frame)).toEqual({ agentId: VOICE_AGENT_ID });
   });
 
   it('only accepts content-free trace ids', () => {
@@ -26,7 +29,7 @@ describe('which agent a mobile relay turn runs on', () => {
     expect(cleanVoiceTurnId('hello there')).toBe('');
     expect(cleanVoiceTurnId('vt_')).toBe('');
     expect(cleanVoiceTurnId(42)).toBe('');
-    expect(voiceTurnRoute({ voiceMode: true, voiceTurnId: 'what did I say' })).toEqual({});
+    expect(voiceTurnRoute({ voiceMode: true, voiceTurnId: 'what did I say' })).toEqual({ agentId: VOICE_AGENT_ID });
   });
 });
 
