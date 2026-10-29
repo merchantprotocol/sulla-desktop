@@ -44,7 +44,9 @@ export class PostgresClient {
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
-      connectionTimeoutMillis: 2000,
+      // Also bounds the wait for a free pooled client, so a busy burst of
+      // agents must not fail saves after 2s.
+      connectionTimeoutMillis: Number(process.env.SULLA_DATABASE_CONNECT_TIMEOUT_MS ?? 10000),
     });
 
     // Graceful pool error handling
