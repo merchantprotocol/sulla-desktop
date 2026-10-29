@@ -300,6 +300,31 @@ export interface BrokerIntegrationMetadataResponse {
   }>;
 }
 
+export interface BrokerVaultItemWriteRequest {
+  claims: BrokerClaims;
+  title: string;
+  username?: string;
+  password?: string;
+  generate?: boolean;
+  url?: string;
+  notes?: string;
+  folder?: string;
+  tags?: string[];
+}
+export interface BrokerVaultItemUpdateRequest extends Omit<BrokerVaultItemWriteRequest, 'title' | 'generate'> {
+  itemId: string;
+  title?: string;
+  generate?: boolean;
+}
+export interface BrokerVaultItemWriteResponse { itemId: string; revision: number; generated: boolean }
+export interface BrokerIntegrationCredentialWriteRequest {
+  claims: BrokerClaims;
+  integrationId: string;
+  accountId?: string;
+  property: string;
+  value: string;
+}
+
 export interface BrokerSetActiveAccountRequest { accountId: string }
 
 /** Trusted Desktop-only request to create the empty account a first OAuth sign-in fills in. */

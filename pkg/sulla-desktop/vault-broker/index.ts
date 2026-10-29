@@ -14,6 +14,10 @@ import type {
   BrokerExecuteResponse,
   BrokerItemListResponse,
   BrokerIntegrationMetadataResponse,
+  BrokerVaultItemWriteRequest,
+  BrokerVaultItemUpdateRequest,
+  BrokerVaultItemWriteResponse,
+  BrokerIntegrationCredentialWriteRequest,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
@@ -31,6 +35,10 @@ export type {
   BrokerExecuteResponse,
   BrokerItemListResponse,
   BrokerIntegrationMetadataResponse,
+  BrokerVaultItemWriteRequest,
+  BrokerVaultItemUpdateRequest,
+  BrokerVaultItemWriteResponse,
+  BrokerIntegrationCredentialWriteRequest,
   BrokerInjection,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
@@ -213,6 +221,30 @@ export class LocalVaultBrokerClient {
     });
     if (!response.ok) await this.throwRelayResponse(response);
     return response.json() as Promise<BrokerItemListResponse>;
+  }
+
+  async createItem(ctx: ToolExecutionContext, input: Omit<BrokerVaultItemWriteRequest, 'claims'>, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/items/create`, {
+      method: 'POST', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerVaultItemWriteResponse>;
+  }
+
+  async updateItem(ctx: ToolExecutionContext, input: Omit<BrokerVaultItemUpdateRequest, 'claims'>, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/items/${ encodeURIComponent(input.itemId) }`, {
+      method: 'PATCH', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerVaultItemWriteResponse>;
+  }
+
+  async setIntegrationCredential(ctx: ToolExecutionContext, input: Omit<BrokerIntegrationCredentialWriteRequest, 'claims' | 'integrationId'> & { integrationId: string }, signal?: AbortSignal): Promise<BrokerVaultItemWriteResponse> {
+    const response = await this.transport(`${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(input.integrationId) }/credential`, {
+      method: 'PUT', headers: await this.serviceHeaders(true), body: JSON.stringify({ ...input, claims: claimsFromContext(ctx) }), signal,
+    });
+    if (!response.ok) await this.throwRelayResponse(response);
+    return response.json() as Promise<BrokerVaultItemWriteResponse>;
   }
 
   async integrationMetadata(

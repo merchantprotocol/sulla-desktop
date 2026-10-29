@@ -19,7 +19,7 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
+import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
@@ -798,8 +798,9 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
 
     if (toolRunId) {
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;
-      const description = typeof args?.description === 'string' ? args.description : undefined;
-      const display = formatToolCard(toolName, args);
+      const safeArgs = redactToolArgs(toolName, args) as Record<string, unknown>;
+      const description = typeof safeArgs?.description === 'string' ? safeArgs.description : undefined;
+      const display = formatToolCard(toolName, safeArgs);
       const message: ChatMessage = {
         id:        messageId,
         channelId: agentId,
@@ -812,7 +813,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
           toolName,
           description,
           status:       'running',
-          args,
+          args:         safeArgs,
           label:        display.label,
           summary:      display.summary,
           input:        display.input,

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { integrations } from '../../integrations/catalog';
+import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { AGENT_PROTECTED_PROPERTIES } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
@@ -37,6 +38,17 @@ export class IntegrationSetCredentialWorker extends BaseTool {
     try {
       const service = getIntegrationService();
       await service.initialize();
+
+      if (usesContainerVaultAuthority()) {
+        if (!this.executionContext) throw new Error('Vault writes require a verified execution context');
+        const result = await requireConfiguredCredentialBroker().setIntegrationCredential(this.executionContext, {
+          integrationId: String(account_type), accountId: account_id || 'default', property: String(property), value: String(value),
+        });
+        return {
+          successBoolean: true,
+          responseString: `Credential saved as vault item ${ result.itemId }. The value was not returned.`,
+        };
+      }
 
       // Overwriting a stored secret destroys the only copy the user has.
       const secretKeys = new Set(['password', 'api_key', 'bearer_token', 'access_token', 'refresh_token', 'client_secret', 'token', 'secret']);

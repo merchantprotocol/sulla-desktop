@@ -505,6 +505,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(await localAuthority.listBrokerItems(request.body.claims, identity.serviceId, identity.token));
     });
+    app.post('/v1/broker/items/create', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.status(201).json(await localAuthority.createAgentVaultItem(identity.serviceId, identity.token, request.body));
+    });
+    app.patch('/v1/broker/items/:itemId', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.updateAgentVaultItem(identity.serviceId, identity.token, { ...request.body, itemId: requiredString(request.params.itemId, 'itemId') }));
+    });
+    app.put('/v1/broker/integrations/:integrationId/credential', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.setAgentIntegrationCredential(identity.serviceId, identity.token, { ...request.body, integrationId: requiredString(request.params.integrationId, 'integrationId') }));
+    });
     app.get('/v1/broker/integrations/:integrationId/metadata', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.integrationMetadata(

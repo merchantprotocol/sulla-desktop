@@ -68,6 +68,8 @@ export interface VaultItemPlaintext {
   proxy?: VaultItemProxy;
   /** Human-readable folder name, encrypted with the rest of the item. */
   folder?:     string;
+  /** Human-readable tags, encrypted with the rest of the item. */
+  tags?:       string[];
   agentPolicy: AgentPolicy;
 }
 

@@ -20,8 +20,20 @@ For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use 
 6. For an owner-configured generic API key, resolve its id with `sulla vault/list_api_keys '{}'`, then call `sulla vault/request '{"item":"<item-id>","method":"GET","url":"https://<allowed-host>/<verified-path>"}'`. Only call enabled integrations and the hosts that item allows.
 7. Never read or delete a secret casually; deletion requires `confirm:true` and a deliberate owner-approved action.
 
+
+**Create (ingress only):**
+- `sulla vault/create_password '{"title":"Example","username":"me","password":"<new-password>","url":"https://example.com"}'` stores a new Passwords item and never returns the secret.
+- `sulla vault/generate_password '{"title":"Example","url":"https://example.com"}'` generates and stores a strong password inside Vault; only the item id returns.
+- `sulla vault/update_password '{"item_id":"<item-id>","generate":true}'` rotates an item the calling agent created. Agents cannot update human-created items or delete items.
+- `sulla vault/set_credential '{"account_type":"custom","property":"site_password","value":"<new-password>"}'` supports custom account types absent from the catalog.
+
+These authenticated ingress-only writes preserve the NIST SP 800-171 boundary: secrets remain in the isolated Vault, and agent read/export/delete protections stay closed.
+
 **Tools:**
 <!-- tools:generated:start -->
+- `sulla vault/create_password '{"title":"<title>","password":"<password>"}'`: Create a Passwords item through authenticated ingress. Returns an item id, never the password. Required: title, password. Optional: username, url, notes, folder, tags.
+- `sulla vault/generate_password '{"title":"<title>"}'`: Generate and store a strong password entirely inside Vault. Returns only an item id. Required: title. Optional: username, url, notes, folder, tags.
+- `sulla vault/update_password '{"item_id":"<item-id>","generate":true}'`: Rotate an item created by the calling agent without secret egress. Required: item_id. Optional: password, generate, title, username, url, notes, folder, tags.
 - `sulla vault/autofill '{}'`: Autofill a login form on the active browser tab, or an explicitly requested background tab, with saved vault credentials. Success is returned only after the target tab proves the expected fields are non-empty. The password is injected directly into the browser — it never appears in this conversation. Requires the credential to have AI access set to "autofill" or "full". Required: none. Optional: origin, account_id, assetId.
 - `sulla vault/delete_credential '{"account_type":"<account_type>","property":"<property>","confirm":true}'`: Delete a single credential property from the vault. Destructive — refuses without {"confirm":true}. Only removes the specified property on the specified account; other properties and other accounts on the same integration are untouched. Anything using that credential will stop working until it is re-entered. Required: account_type, property, confirm. Optional: account_id.
 - `sulla vault/is_enabled '{"account_type":"<account_type>"}'`: Check whether a specific integration is enabled (connected). Returns the enabled status along with connection timestamps. Required: account_type. Optional: none.
