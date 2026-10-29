@@ -9,13 +9,14 @@ scope: [tool-files]
 
 **When:** When you need to find, read, version, share and publish deliverables in Sulla Files. Treat Files as the human's area: save only work the human would open, never agent scratch or notes.
 
-**Required inputs:** `files/where` needs `what`; `files/search` needs `query`; `files/create_folder` needs `collection_id`, `path`, and `description`; `files/versions` needs `file_id`; `files/request_publish` needs `file_id` and `version_id`; `files/restore` needs `version_id` plus `path` or `file_id`; `files/revoke_link` needs `id`. Path-based calls use `/mnt/sulla-files/...`.
+**Required inputs:** `files/open` needs `path` or `file_id`; `files/where` needs `what`; `files/search` needs `query`; `files/create_folder` needs `collection_id`, `path`, and `description`; `files/versions` needs `file_id`; `files/request_publish` needs `file_id` and `version_id`; `files/restore` needs `version_id` plus `path` or `file_id`; `files/revoke_link` needs `id`. Most path-based calls use `/mnt/sulla-files/...`; `files/open` also accepts a Files-relative path.
 
 **Do:**
 1. Find the existing destination: `sulla files/search '{"query":"<topic>"}'`; choose the returned collection and path, then inspect it with `sulla files/list '{"collection_id":"<collection-id>","path":"<folder>"}'`. Read `/mnt/sulla-files/<folder>/_folder-metadata.yaml` before saving.
 2. Write the finished content through the managed `/mnt/sulla-files/<folder>/<name>` mount. Do not invent a Files write tool or write records directly to Postgres; the Files service versions and audits mount writes.
 3. Read history: `sulla files/history '{"path":"/mnt/sulla-files/<folder>/<name>.md"}'`; restore a version with the returned version id using `sulla files/restore '{"path":"<path>","version_id":"<version-id>"}'`.
 4. For a Use Case draft, request publication with `sulla files/request_publish '{"file_id":"<file-id>","version_id":"<version-id>","reason":"Finished deliverable"}'` after reviewing it; the human approves it in Decide.
+5. Open a deliverable for the human with `sulla files/open '{"path":"<folder>/<name>"}'`. This uses the same editor or viewer as a File Manager click and returns only tab metadata, never file contents.
 
 **Tools:**
 <!-- tools:generated:start -->
@@ -24,6 +25,7 @@ scope: [tool-files]
 - `sulla files/history '{}'`: List every version of a Sulla file. Required: none. Optional: path, file_id.
 - `sulla files/link '{}'`: Create a public Sulla Cloud share link for a file or folder. Captures default to a temporary Cloud copy; ordinary files default to Desktop pass-through. Legacy target_file_id + kind still creates a graph edge. Required: none. Optional: path, file_id, collection_id, folder_path, target_file_id, kind, access_mode, password, expires_at, keep_available, asset_kind, capture_metadata.
 - `sulla files/list '{"collection_id":"<collection_id>"}'`: List files in a collection exactly as the File Manager loads them. Optional path prefix, trash, and limit (default 200). Required: collection_id. Optional: path, trash, limit.
+- `sulla files/open '{"path":"<path>"}'`: Open a Sulla Files item in Sulla Desktop exactly like a File Manager click, reusing an existing tab. Required: path or file_id. Optional: mode, focus.
 - `sulla files/request_publish '{"file_id":"<file_id>","version_id":"<version_id>"}'`: Request human approval to publish a draft file version. Returns immediately. Required: file_id, version_id. Optional: reason.
 - `sulla files/restore '{"version_id":"<version_id>"}'`: Restore an older file version as a new current version. Required: version_id. Optional: path, file_id.
 - `sulla files/revoke_link '{"id":"<id>"}'`: Revoke a public share link and remove any temporary Cloud copy. Required: id. Optional: none.
