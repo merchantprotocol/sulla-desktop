@@ -20,8 +20,9 @@
  * WebSocket relay was offline.
  */
 
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { dispatchClaudeForMessage } from './syncDispatcher';
+
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 export interface SyncItem {
   dataType:  string;
@@ -76,14 +77,18 @@ const claudeConversationHandler: SyncHandler = {
     await postgresClient.query(
       `INSERT INTO claude_conversations
          (id, contractor_id, title, status, last_message_at, last_message_preview,
-          unread_count, created_at, updated_at, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         unread_count, pinned, pinned_at, archived, archived_at, created_at, updated_at, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (id) DO UPDATE SET
          title                = EXCLUDED.title,
          status               = EXCLUDED.status,
          last_message_at      = EXCLUDED.last_message_at,
          last_message_preview = EXCLUDED.last_message_preview,
          unread_count         = EXCLUDED.unread_count,
+         pinned              = EXCLUDED.pinned,
+         pinned_at           = EXCLUDED.pinned_at,
+         archived            = EXCLUDED.archived,
+         archived_at         = EXCLUDED.archived_at,
          updated_at           = EXCLUDED.updated_at,
          deleted_at           = EXCLUDED.deleted_at
        WHERE EXCLUDED.updated_at > claude_conversations.updated_at`,
@@ -95,6 +100,10 @@ const claudeConversationHandler: SyncHandler = {
         data.last_message_at ?? null,
         data.last_message_preview ?? null,
         data.unread_count ?? 0,
+        data.pinned ?? false,
+        data.pinned_at ?? null,
+        data.archived ?? false,
+        data.archived_at ?? null,
         data.created_at ?? item.updatedAt,
         data.updated_at ?? item.updatedAt,
         data.deleted_at ?? null,

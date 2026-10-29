@@ -11,9 +11,11 @@ import fs from 'node:fs';
 
 import { ipcMain } from 'electron';
 
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { RecordConversationInput, ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { enqueueSyncOp } from '@pkg/main/sync/syncQueue';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -91,6 +93,33 @@ export function initConversationHistoryIpc(): void {
 
   // ── Invoke handlers (renderer → main, with return value) ──
 
+  ipcMain.handle('conversation-history:list', async(_event, options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: string }) => {
+    return await ConversationHistoryModel.list(options?.view, options?.limit, options?.type as any);
+  });
+
+  ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => {
+    const updated = await ConversationHistoryModel.update(id, patch);
+    if (updated?.type === 'chat') {
+      const syncId = updated.thread_id || updated.id;
+      const rows = await postgresClient.query<{ id: string }>(
+        `UPDATE claude_conversations
+            SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+                pinned = COALESCE($4, pinned),
+                pinned_at = CASE WHEN $4::boolean IS NULL THEN pinned_at WHEN $4 THEN now() ELSE NULL END,
+                archived = COALESCE($5, archived),
+                archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END,
+                deleted_at = CASE WHEN $6::boolean IS NULL THEN deleted_at WHEN $6 THEN now() ELSE NULL END,
+                updated_at = now()
+          WHERE id = $1 OR id = $7
+          RETURNING id`,
+        [syncId, patch.title !== undefined, patch.title?.trim() ?? null, patch.pinned ?? null, patch.archived ?? null, patch.deleted ?? null, updated.id],
+      );
+      await Promise.all(rows.map(row => enqueueSyncOp('claude_conversation', { id: row.id }, patch.deleted ? 'delete' : 'upsert')));
+    }
+    mainEvents.emit('conversation-history:changed' as any);
+    return updated;
+  });
+
   ipcMain.handle('conversation-history:get-recent', async(_event, limit?: number, type?: string) => {
     try {
       return await ConversationHistoryModel.getRecent(
@@ -103,9 +132,9 @@ export function initConversationHistoryIpc(): void {
     }
   });
 
-  ipcMain.handle('conversation-history:search', async(_event, query: string) => {
+  ipcMain.handle('conversation-history:search', async(_event, query: string, options?: { view?: 'active' | 'archived' | 'deleted'; type?: string }) => {
     try {
-      return await ConversationHistoryModel.search(query);
+      return options ? await ConversationHistoryModel.searchView(query, options.view, options.type as any) : await ConversationHistoryModel.search(query);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to search:', err);
       return [];
@@ -123,18 +152,8 @@ export function initConversationHistoryIpc(): void {
 
   ipcMain.handle('conversation-history:delete', async(_event, id: string) => {
     try {
-      const associations = await ConversationHistoryModel.getFileAssociations(id);
-
+      // Recoverable soft delete: preserve transcript, thread state, and log file.
       await ConversationHistoryModel.deleteConversation(id);
-
-      // Clean up log file
-      if (associations.log_file) {
-        try {
-          await fs.promises.unlink(associations.log_file);
-        } catch {
-          // Already gone
-        }
-      }
 
       // Trigger menu rebuild
       mainEvents.emit('conversation-history:changed' as any);

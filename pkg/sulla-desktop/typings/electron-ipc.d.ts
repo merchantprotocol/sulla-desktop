@@ -1090,6 +1090,8 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Conversation History
+  'conversation-history:list': (options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: 'chat' | 'browser' | 'workflow' | 'graph' }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord[];
+  'conversation-history:update': (id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord | null;
   'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
     id:             string;
     type:           string;
@@ -1104,7 +1106,7 @@ export interface IpcMainInvokeEvents {
     last_active_at: string;
     closed_at?:     string;
   }[];
-  'conversation-history:search': (query: string) => {
+  'conversation-history:search': (query: string, options?: { view?: 'active' | 'archived' | 'deleted'; type?: 'chat' | 'browser' | 'workflow' | 'graph' }) => {
     id:             string;
     type:           string;
     title?:         string;
