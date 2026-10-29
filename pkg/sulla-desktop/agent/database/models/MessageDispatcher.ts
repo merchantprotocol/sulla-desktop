@@ -125,7 +125,7 @@ function contentToString(content: any): string {
 
 // ─── Types ──────────────────────────────────────────────────────
 
-export type SpeakListener = (text: string, threadId: string, pipelineSequence: number | null) => void;
+export type SpeakListener = (text: string, threadId: string, pipelineSequence: number | null, voiceTurnId: string | null) => void;
 
 /**
  * Shared state and helpers that handlers need from AgentPersonaService.
@@ -739,6 +739,7 @@ function handleSpeakDispatch(ctx: DispatchContext, agentId: string, msgThreadId:
   if (!text) return;
 
   const pipelineSequence = typeof data?.pipelineSequence === 'number' ? data.pipelineSequence : null;
+  const voiceTurnId = typeof data?.voiceTurnId === 'string' ? data.voiceTurnId : null;
 
   console.log(`[MessageDispatcher] speak_dispatch → "${ text.slice(0, 80) }" seq=${ pipelineSequence }`);
   ctx.messages.push({
@@ -751,7 +752,7 @@ function handleSpeakDispatch(ctx: DispatchContext, agentId: string, msgThreadId:
   });
 
   for (const listener of ctx.speakListeners) {
-    listener(text, msgThreadId, pipelineSequence);
+    listener(text, msgThreadId, pipelineSequence, voiceTurnId);
   }
 }
 

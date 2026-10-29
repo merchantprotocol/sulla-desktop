@@ -200,6 +200,7 @@ export class SpeakExtractor implements Extractor {
       thread_id: ctx.threadId,
       timestamp: Date.now(),
       pipelineSequence,
+      voiceTurnId: (ctx.state.metadata as any).voiceTurnId ?? null,
     });
   }
 

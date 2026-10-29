@@ -33,7 +33,7 @@ export type ChatEvent =
   // Voice commands + speech for THIS tab's VoiceSessionAdapter. Every chat tab stays
   // mounted, so these must never go through window-level events (every tab would react).
   | { kind: 'voiceCommand';       threadId: ThreadId; command: VoiceCommand }
-  | { kind: 'speakRequested';     threadId: ThreadId; text: string }
+  | { kind: 'speakRequested';     threadId: ThreadId; text: string; voiceTurnId?: string }
   | { kind: 'threadSerialized';   threadId: ThreadId };
 
 /** toggle = hands-free on/off; ptt-* = hold-to-talk (Space) lifecycle. */

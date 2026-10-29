@@ -76,6 +76,8 @@ export interface ChatControllerOptions {
 export interface SendOptions {
   /** 'voice' for spoken turns — the backend answers in voice mode (<speak> for TTS). */
   inputSource?: 'voice';
+  /** Content-free correlation id used only for voice lifecycle diagnostics. */
+  voiceTurnId?: string;
 }
 
 export type SendHandler = (
@@ -596,8 +598,8 @@ export class ChatController {
   }
 
   /** Speak text aloud through this tab's voice session. */
-  requestSpeak(text: string): void {
-    this.bus.emit({ kind: 'speakRequested', threadId: this.thread.value.id, text });
+  requestSpeak(text: string, voiceTurnId?: string): void {
+    this.bus.emit({ kind: 'speakRequested', threadId: this.thread.value.id, text, voiceTurnId });
   }
 
   setVoice(v: VoiceState): void {
