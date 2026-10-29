@@ -43,7 +43,7 @@ describe('claude conversation sync handler', () => {
     expect(sql).toContain('pinned_at');
     expect(sql).toContain('archived_at');
     expect(sql).toContain('claude_conversations.contractor_id = $2');
-    expect(sql).toContain('WHERE EXCLUDED.updated_at > claude_conversations.updated_at');
+    expect(sql).toContain('AND EXCLUDED.updated_at > claude_conversations.updated_at');
     expect(params[1]).toBe('synthetic-contractor');
     expect(params).toEqual(expect.arrayContaining([
       true,
