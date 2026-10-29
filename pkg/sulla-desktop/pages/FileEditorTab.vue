@@ -146,7 +146,9 @@ export default defineComponent({
         minimap:              { enabled: false },
         scrollBeyondLastLine: false,
         automaticLayout:      true,
-        wordWrap:             'off',
+        // Long lines (logs, .jsonl records, prose) wrap to the tab width instead of scrolling sideways.
+        wordWrap:             'on',
+        wrappingIndent:       'indent',
         renderWhitespace:     'none',
         folding:              true,
         padding:              { top: 8, bottom: 8 },
