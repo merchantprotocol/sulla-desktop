@@ -5,6 +5,7 @@
 
 import { FilesTool } from './common';
 import type { ToolResponse } from '../base';
+import { addChatLinks } from './chatLink';
 
 /** Same listing the File Manager shows, capped so large collections stay readable. */
 export class FilesListWorker extends FilesTool {
@@ -16,7 +17,7 @@ export class FilesListWorker extends FilesTool {
     const limit = Math.min(Math.max(Number(input.limit) || 200, 1), 2000);
     return { successBoolean: true, responseString: JSON.stringify({
       total: files.length,
-      files: files.slice(0, limit).map(file => ({ id: file.id, path: file.path, size: file.size, updatedAt: file.updated_at ?? file.updatedAt })),
+      files: files.slice(0, limit).map(file => addChatLinks({ id: file.id, path: file.path, name: file.name, versionId: file.current_version_id ?? file.version_id, mime: file.mime, size: file.size, updatedAt: file.updated_at ?? file.updatedAt })),
     }) };
   }
 }
