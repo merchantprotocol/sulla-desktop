@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { app, powerMonitor, shell } from 'electron';
+import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
@@ -17,7 +17,6 @@ import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync } from './sullaFinderBadges';
-import { SullaFilesSystemIngestJob, type SystemIngestRequest, type SystemIngestStatus } from './sullaFilesSystemIngest';
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
@@ -147,16 +146,11 @@ class SullaFilesWatcher {
   private badgeTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
-  private docsWatcher?: fs.FSWatcher;
   private nativePolling = false;
   private unlocking = 0;
-  private customerWork = 0;
   private nativePollRunning = false;
   private nativePollDelayMs = NATIVE_POLL_ACTIVE_MS;
   private nativeNextPollAt = 0;
-  private customerServicePending = false;
-  private customerStatusAt = 0;
-  private customerStatusRefreshing = false;
   private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init));
   private nativeEnabled = false;
   private started = false;
@@ -187,25 +181,6 @@ class SullaFilesWatcher {
     logError: (message, error) => console.debug(`[SullaFiles] ${ message }:`, error),
   });
 
-  /** Native handles stay in Electron; guests only see Files identities and encrypted snapshots. */
-  private readonly systemIngest = new SullaFilesSystemIngestJob({
-    // No bundled documentation is mirrored into Files.
-    sources: () => [],
-    fetchAreas: async() => {
-      const response = await this.rawLocalRequest('/v1/local/system-areas');
-      if (!response.ok) throw new Error(`System collections unavailable (${ response.status })`);
-      return response.json();
-    },
-    ingest: request => this.ingestSystemAreaFile(request),
-    customerBusy: () => this.customerFilesBusy(),
-    active:    () => this.nativePolling && !this.stopped,
-    busy:      () => Boolean(this.lockPromise) || this.unlocking > 0,
-    onBattery: () => powerMonitor?.isOnBatteryPower?.() ?? false,
-    statePath: () => path.join(app.getPath('userData'), 'sulla-files-system-ingest.json'),
-    log:       message => console.log(message),
-    debug:     (message, error) => console.debug(message, error),
-  });
-
   private async appUnlocked(): Promise<boolean> {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
     return getVaultKeyService().isUnlocked();
@@ -222,8 +197,6 @@ class SullaFilesWatcher {
     this.lockGeneration++;
     this.unlockPermitted = false;
     this.nativePolling = false;
-    // Cancel the background system-area ingest at its next file; never wait on it.
-    this.systemIngest.pause().catch(() => undefined);
     const lock = (async() => {
       // Stop guest admission first so dirty FUSE handles can flush through the
       // still-live broker. Then drain publication work, revoke host handles,
@@ -254,7 +227,6 @@ class SullaFilesWatcher {
     for (const root of await getSullaFilesRootRegistry().stored()) {
       await this.enrollRoot(root).catch(error => console.warn(`[SullaFiles] tracked root ${ root.id } re-enrollment after unlock failed:`, error));
     }
-    this.startBackgroundIngest();
     this.useCases.start();
   }
 
@@ -284,19 +256,6 @@ class SullaFilesWatcher {
         if (epoch !== this.unlockRetryEpoch || this.stopped) return;
       }
     }
-  }
-
-  /**
-   * Arms the system-area ingest (the bundled Sulla docs). It only
-   * sets an unref'd timer for after the startup grace delay; the work never runs
-   * inside the unlock or lifecycle promise chain.
-   */
-  startBackgroundIngest():void {
-    if (this.nativeEnabled && this.nativePolling && !this.stopped) this.systemIngest.start();
-  }
-
-  systemIngestStatus():SystemIngestStatus {
-    return this.systemIngest.status();
   }
 
   private async ensureUnlocked(): Promise<void> {
@@ -471,7 +430,7 @@ class SullaFilesWatcher {
     }catch(error){const message=error instanceof Error?error.message:String(error);await state('error',0,message).catch(()=>undefined);throw error}
   }
 
-  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); this.systemIngest.pause().catch(() => undefined); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); this.docsWatcher?.close(); this.docsWatcher = undefined; if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.badgeTimer) clearInterval(this.badgeTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
+  async shutdown():Promise<void> { this.stopped = true; this.nativePolling = false; this.useCases.stop(); await this.lockService().catch(() => undefined); for (const watcher of this.watchers.values()) watcher.close(); this.watchers.clear(); if (this.rescanTimer) clearTimeout(this.rescanTimer); if (this.safetyTimer) clearInterval(this.safetyTimer); if (this.badgeTimer) clearInterval(this.badgeTimer); if (this.nativeTimer) clearInterval(this.nativeTimer); if (this.resumeTimer) clearTimeout(this.resumeTimer); this.started = false }
   private scheduleRescan():void {
     if (this.rescanTimer) clearTimeout(this.rescanTimer);
     this.rescanTimer = setTimeout(() => {
@@ -480,31 +439,6 @@ class SullaFilesWatcher {
     }, 350);
   }
 
-  /** P0: the user's own Files work (watch events, rescans, user-picked native sources) in flight. */
-  private async trackCustomerWork<T>(work:Promise<T>):Promise<T> {
-    this.customerWork++;
-    try { return await work } finally { this.customerWork-- }
-  }
-
-  /**
-   * True while the user's own Files have pending work, so the system-area job
-   * starts nothing new. Combines local in-flight work with the Files service's
-   * watched-folder scan state (cached; refreshed in the background).
-   */
-  private customerFilesBusy():boolean {
-    if (this.customerWork > 0 || this.rescanTimer) return true;
-    if (Date.now() - this.customerStatusAt > 2_000 && !this.customerStatusRefreshing) {
-      this.customerStatusRefreshing = true;
-      this.rawLocalRequest('/v1/local/status', {}, 5_000)
-        .then(async response => {
-          const status = response.ok ? await response.json() as Partial<SullaFilesStatus> : undefined;
-          this.customerServicePending = status?.state === 'syncing' && Number(status.pendingFiles) > 0;
-        })
-        .catch(() => { this.customerServicePending = false })
-        .finally(() => { this.customerStatusAt = Date.now(); this.customerStatusRefreshing = false });
-    }
-    return this.customerServicePending;
-  }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
     if (ignored(relativePath, await this.patterns())) return; const absolute = path.resolve(this.folder, relativePath); if (!absolute.startsWith(`${ this.folder }${ path.sep }`)) return;
@@ -678,7 +612,7 @@ class SullaFilesWatcher {
   }
 
   async notifyRescan():Promise<void> {
-    return this.trackCustomerWork(this.notifyRescanNow());
+    return this.notifyRescanNow();
   }
 
   private async notifyRescanNow():Promise<void> {
@@ -767,7 +701,7 @@ class SullaFilesWatcher {
 
   /** User-picked native sources count as P0 customer work; internal system-area ingest does not. */
   async ingestNativeSource(input:NativeSourceIngestInput):Promise<NativeSourceFileResult> {
-    return input.internal ? this.ingestNativeSourceNow(input) : this.trackCustomerWork(this.ingestNativeSourceNow(input));
+    return this.ingestNativeSourceNow(input);
   }
 
   private async ingestNativeSourceNow(input:NativeSourceIngestInput):Promise<NativeSourceFileResult> {
@@ -794,25 +728,6 @@ class SullaFilesWatcher {
       : await this.request(`/v1/local/native-sources/ingest?${ query }`, {method:'PUT',headers,body});
     if (!response.ok) throw new Error(`Native source ingestion failed (${ response.status }): ${ await response.text() }`);
     return await response.json() as NativeSourceFileResult;
-  }
-
-  /**
-   * Plain read-only mirror of one system-area file. Creates no native-source
-   * rows, handles, publication or recovery state in Files, and is a no-op when
-   * Files already holds these bytes.
-   */
-  private async ingestSystemAreaFile(request:SystemIngestRequest):Promise<{ unchanged: boolean }> {
-    const query = new URLSearchParams({ collectionId: request.collectionId, path: request.filesPath });
-    const headers:Record<string, string> = { 'content-type': request.mime, 'x-sulla-source-hash': request.snapshot.contentHash };
-    if (request.skipSearchIndex) headers['x-sulla-files-skip-search-index'] = '1';
-    const body = new ArrayBuffer(request.snapshot.bytes.byteLength);
-    new Uint8Array(body).set(request.snapshot.bytes);
-    const response = await this.rawLocalRequest(`/v1/local/system-areas/ingest?${ query }`, { method: 'PUT', headers, body }, 60_000);
-    // Never fall back to native-source ingest: that is what created ~19k native rows for system files.
-    if (response.status === 404) throw new Error('Files service update required for system-area ingest');
-    if (!response.ok) throw new Error(`System-area ingest failed (${ response.status }): ${ await response.text() }`);
-    const result = await response.json() as { unchanged?: unknown };
-    return { unchanged: result.unchanged === true };
   }
 
   async planNativePublication(input:{ operationId: string; handle: string; sourceRevision: string; contentHash: string; fileId: string; baseVersionId: string }):Promise<void> {

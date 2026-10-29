@@ -568,7 +568,7 @@ export function createApp(
   } catch(error){next(error)} });
   app.get('/v1/local/identity', (_request, response) => response.json({ principalId: config.userId }));
   app.get('/v1/local/system-areas',async(_request,response,next)=>{try {
-    // The only ingest lane, 'sulla' (bundled Docs), writes into the owner's home collection.
+    // The 'sulla' system area writes owned content such as published Use Cases into the owner's home collection.
     response.json((await db.query(`SELECT home.id,'sulla' AS "systemArea" FROM (${ homeQuery }) home`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
