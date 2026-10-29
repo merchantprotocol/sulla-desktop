@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import Electron from 'electron';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
+import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
 import {
@@ -161,6 +162,18 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, '-').slice(0, 80);
 }
 
+class GuestExecError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode: number | null,
+    readonly command: string,
+    readonly stderr: string,
+  ) {
+    super(message);
+    this.name = 'GuestExecError';
+  }
+}
+
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], {
@@ -171,8 +184,20 @@ function guestExec(args: string[], input?: string): Promise<{ stdout: string; st
     let stderr = '';
     proc.stdout.on('data', chunk => { stdout += String(chunk) });
     proc.stderr.on('data', chunk => { stderr += String(chunk) });
-    proc.once('error', reject);
-    proc.once('close', code => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(stderr.trim() || `sulla-runtime exited ${ code }`)));
+    const command = args.slice(0, 4).join(' ');
+    proc.once('error', error => reject(new GuestExecError(
+      `sulla-runtime exec ${ command } failed to start: ${ error.message }`, null, command, '',
+    )));
+    proc.once('close', code => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      const detail = stderr.trim() || 'no stderr';
+      reject(new GuestExecError(
+        `sulla-runtime exec ${ command } exited ${ code }: ${ detail }`, code, command, stderr.trim(),
+      ));
+    });
     if (input !== undefined) proc.stdin.end(input);
     else proc.stdin.end();
   });
@@ -1061,15 +1086,22 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     }));
     await Promise.all([
       phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
+      // `docker network connect` is not safe to replay after a lost response:
+      // Docker rejects a second connect, so leave this one-shot and visible.
       phase('network', () => guestExec(connectServiceNetworkCommand('sulla_default', containerName))),
     ]);
-    await phase('start', () => runtime.start(containerId!));
+    await phase('start', () => retryIdempotent(
+      () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
+    ));
     log.info(`[AgentContainer] ${ containerName } started on network ${ AGENT_NETWORK }`);
     const mcpUrl = new URL(agentContainerRelayUrl(getMCPServerHost().getVmReachableUrl()));
-    await phase('mcpProbe', () => guestExec([
-      'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '3',
+    const probeMcp = () => guestExec([
+      'docker', 'exec', containerName, 'curl', '--fail', '--silent', '--show-error', '--max-time', '2',
       `${ mcpUrl.origin }${ mcpUrl.pathname.replace(/\/mcp$/, '/healthz') }`,
-    ])).catch(error => {
+    ]).then(() => undefined);
+    await phase('mcpProbe', () => probeAgentMcpHost(
+      probeMcp, () => ensureHostRelay(image), undefined, message => log.warn(`[AgentContainer] ${ message }`),
+    )).catch(error => {
       throw new Error(`Container cannot reach the graph MCP host ${ mcpUrl.hostname }: ${ (error as Error).message }`);
     });
     log.info(`[AgentContainer] ${ containerName } can reach graph MCP host`);
@@ -1377,6 +1409,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       oomScoreAdj: AGENT_OOM_SCORE_ADJ,
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
+    // Not retried: unlike `docker start`, network connect rejects a replay.
     await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
