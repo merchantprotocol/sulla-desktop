@@ -8,6 +8,7 @@ import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '..
 import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
+import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { requeuePendingSteers } from '../utils/steerChannel';
 import Logging from '@pkg/utils/logging';
@@ -419,6 +420,9 @@ export class AgentNode extends BaseNode {
 
       // Re-throw abort errors so they propagate to the graph loop
       if ((error as any)?.name === 'AbortError') throw error;
+      // A vanished agent container is infrastructure loss. The conversation owner
+      // rebuilds the container and retries this turn; a chat banner here hid that retry.
+      if (isContainerLifecycleLost(error)) throw error;
 
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error('[AgentNode] Execution failed:', errorMsg);
