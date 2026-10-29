@@ -74,6 +74,7 @@ export interface IpcMainEvents {
   'factory-reset':         (keepSystemImages: boolean) => void;
   'get-app-version':       () => void;
   'update-network-status': (status: boolean) => void;
+  'voice-trace':           (entry: Record<string, unknown>) => void;
 
   // #region main/update
   'update-state':    () => void;
