@@ -43,7 +43,7 @@ import {
   createVoiceBargeInDetector,
   createVoiceTurnAccumulator,
 } from '@pkg/composables/voice';
-import { logBargeIn } from '@pkg/composables/voice/VoiceLogger';
+import { logBargeIn, vlog } from '@pkg/composables/voice/VoiceLogger';
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
@@ -116,6 +116,7 @@ export class VoiceSessionAdapter {
   private recordingStartedAt = 0;
   private lastLevel = 0;
   private lastSpeaking = false;
+  private captureRequestedAt = 0;
 
   private readonly bargeIn = createVoiceBargeInDetector();
 
@@ -134,6 +135,11 @@ export class VoiceSessionAdapter {
   // Bound IPC listeners so we can unregister on teardown.
   private readonly onTranscript = (_event: any, msg: any) => {
     if (!this.capturing && !this.finishing) return;
+    vlog('TIMING', 'STT_EVENT', {
+      event:      msg?.event_type,
+      elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
+      textLength: typeof msg?.text === 'string' ? msg.text.length : 0,
+    });
     this.turn.handleEvent(msg);
   };
 
@@ -278,6 +284,8 @@ export class VoiceSessionAdapter {
     this.bargeIn.reset();
     this.lastLevel = 0;
     this.lastSpeaking = false;
+    this.captureRequestedAt = Date.now();
+    vlog('TIMING', 'CAPTURE_REQUESTED', { mode: ptt ? 'ptt' : 'handsfree' });
 
     ipcRenderer.on('gateway-transcript', this.onTranscript);
     ipcRenderer.on('audio-driver:mic-vad', this.onMicVad);
@@ -289,12 +297,14 @@ export class VoiceSessionAdapter {
     this.startPromise = (async() => {
       try {
         const micResult = await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
+        vlog('TIMING', 'MIC_READY', { durationMs: Date.now() - this.captureRequestedAt });
         if (gen !== this.generation) return false;
         if (!micResult?.ok) throw new Error(micResult?.error || 'mic-start-failed');
         const whisperResult = await ipcRenderer.invoke('audio-driver:transcribe-start', {
           mode:       'conversation',
           manualTurn: ptt,
         });
+        vlog('TIMING', 'STT_READY', { durationMs: Date.now() - this.captureRequestedAt });
         if (gen !== this.generation) return false;
         if (!whisperResult?.ok) {
           this.onError?.('Failed to start transcription. Check that whisper is installed with a model downloaded.');
@@ -442,6 +452,10 @@ export class VoiceSessionAdapter {
 
   /** Commit one finished turn (from utterance_end or finish). `text` may be empty. */
   private commitTurn(text: string): void {
+    vlog('TIMING', 'TURN_COMMITTED', {
+      elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
+      textLength: text.trim().length,
+    });
     const transcript = text.trim();
     if (!this.active) return;
     // Whisper uses punctuation wrappers for sounds that are not speech. A sequence
@@ -479,6 +493,10 @@ export class VoiceSessionAdapter {
     if (!this.isActive() && liveAdapter !== this) return;
     // Holding Space means "I'm talking" — don't talk over the user.
     if (this.mode === 'ptt' && this.active && !this.finishing) return;
+    vlog('TIMING', 'AGENT_SPEAK_RECEIVED', {
+      elapsedMs:  this.captureRequestedAt ? Date.now() - this.captureRequestedAt : 0,
+      textLength: text.trim().length,
+    });
     this.tts.enqueue(text.trim(), messageId ?? `speak_${ Date.now() }`);
   }
 

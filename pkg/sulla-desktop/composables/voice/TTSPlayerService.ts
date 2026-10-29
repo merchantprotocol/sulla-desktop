@@ -18,9 +18,9 @@
  * stack trace to VoiceLogger for debugging.
  */
 
-import { splitForSynthesis } from './speechText';
 import { TypedEventEmitter } from './TypedEventEmitter';
-import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSSynthFailed, timingFirstAudio } from './VoiceLogger';
+import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSSynthFailed, timingFirstAudio, vlog } from './VoiceLogger';
+import { splitForSynthesis } from './speechText';
 
 // Speaking-rate multipliers for the native OS voice, mirroring Sulla Mobile's TtsService.
 const RATE_MAP: Record<string, number> = {
@@ -63,6 +63,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   private readonly queue: string[] = [];
   private playing = false; // internal re-entrancy lock
   private currentAudio:   HTMLAudioElement | null = null;
+  private currentAudioUrl: string | null = null;
+  private currentPlaybackResolve: (() => void) | null = null;
   private sequence = 0; // monotonic counter — incremented on stop()
 
   // ── Deduplication ──
@@ -140,6 +142,14 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       this.currentAudio.src = '';
       this.currentAudio = null;
     }
+    if (this.currentAudioUrl) {
+      URL.revokeObjectURL(this.currentAudioUrl);
+      this.currentAudioUrl = null;
+    }
+    // pause()/src='' does not reliably fire ended/error. Explicitly settle the
+    // old waiter so it cannot linger and later clobber a newer spoken turn.
+    this.currentPlaybackResolve?.();
+    this.currentPlaybackResolve = null;
 
     // Cancel in-flight prefetch
     if (this.prefetchAbort) {
@@ -269,35 +279,44 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       }
 
       console.log(`[TTSPlayer] Audio ready (source=${ source }), size=${ result?.audio?.byteLength ?? 0 }`);
+      vlog('TIMING', 'TTS_SYNTH_DONE', { durationMs: Date.now() - playStartTime, source });
 
       if (result?.audio) {
         const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         this.currentAudio = audio;
+        this.currentAudioUrl = url;
 
         // Prefetch next while this plays
         this.prefetch();
 
         await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (this.currentAudio === audio) this.currentAudio = null;
+            if (this.currentAudioUrl === url) this.currentAudioUrl = null;
+            URL.revokeObjectURL(url);
+            if (this.currentPlaybackResolve === finish) this.currentPlaybackResolve = null;
+            resolve();
+          };
+          this.currentPlaybackResolve = finish;
           audio.onended = () => {
             logTTSPlayEnd(text, Date.now() - playStartTime);
-            URL.revokeObjectURL(url);
-            this.currentAudio = null;
-            resolve();
+            finish();
           };
           audio.onerror = (e) => {
             console.warn('[TTSPlayer] Audio error:', e, text.slice(0, 40));
-            URL.revokeObjectURL(url);
-            this.currentAudio = null;
-            resolve();
+            finish();
           };
           audio.play().then(() => {
             timingFirstAudio();
+            vlog('TIMING', 'PLAYBACK_STARTED', { durationMs: Date.now() - playStartTime });
           }).catch((err) => {
             console.warn('[TTSPlayer] audio.play() rejected:', err);
-            this.currentAudio = null;
-            resolve();
+            finish();
           });
         });
 
@@ -313,8 +332,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       console.warn('[TTSPlayer] Synthesis failed, skipping unit:', err);
       this.emit('playbackEnd', undefined as any);
     } finally {
-      this.playing = false;
       if (seq === this.sequence) {
+        this.playing = false;
         if (this.queue.length > 0) {
           this.playNext();
         } else {
@@ -324,9 +343,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
           this.emit('queueEmpty', undefined as any);
         }
       } else {
-        this.isPlaying = false;
-        this.queueLength = 0;
-        this.emit('queueEmpty', undefined as any);
+        // stop() already published the old turn's end. A newer turn may be live;
+        // stale cleanup must not clear its state or emit a false queueEmpty.
       }
     }
   }
