@@ -148,13 +148,9 @@ class SullaFilesWatcher {
   private nativeTimer?: NodeJS.Timeout;
   private nativePolling = false;
   private unlocking = 0;
-  private customerWork = 0;
   private nativePollRunning = false;
   private nativePollDelayMs = NATIVE_POLL_ACTIVE_MS;
   private nativeNextPollAt = 0;
-  private customerServicePending = false;
-  private customerStatusAt = 0;
-  private customerStatusRefreshing = false;
   private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init));
   private nativeEnabled = false;
   private started = false;
@@ -443,31 +439,6 @@ class SullaFilesWatcher {
     }, 350);
   }
 
-  /** P0: the user's own Files work (watch events, rescans, user-picked native sources) in flight. */
-  private async trackCustomerWork<T>(work:Promise<T>):Promise<T> {
-    this.customerWork++;
-    try { return await work } finally { this.customerWork-- }
-  }
-
-  /**
-   * True while the user's own Files have pending work, so the system-area job
-   * starts nothing new. Combines local in-flight work with the Files service's
-   * watched-folder scan state (cached; refreshed in the background).
-   */
-  private customerFilesBusy():boolean {
-    if (this.customerWork > 0 || this.rescanTimer) return true;
-    if (Date.now() - this.customerStatusAt > 2_000 && !this.customerStatusRefreshing) {
-      this.customerStatusRefreshing = true;
-      this.rawLocalRequest('/v1/local/status', {}, 5_000)
-        .then(async response => {
-          const status = response.ok ? await response.json() as Partial<SullaFilesStatus> : undefined;
-          this.customerServicePending = status?.state === 'syncing' && Number(status.pendingFiles) > 0;
-        })
-        .catch(() => { this.customerServicePending = false })
-        .finally(() => { this.customerStatusAt = Date.now(); this.customerStatusRefreshing = false });
-    }
-    return this.customerServicePending;
-  }
   private async patterns():Promise<string[]> { try { return [...DEFAULT_IGNORES, ...(await fs.promises.readFile(path.join(this.folder, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return DEFAULT_IGNORES } }
   private async changed(relativePath:string):Promise<void> {
     if (ignored(relativePath, await this.patterns())) return; const absolute = path.resolve(this.folder, relativePath); if (!absolute.startsWith(`${ this.folder }${ path.sep }`)) return;
@@ -641,7 +612,7 @@ class SullaFilesWatcher {
   }
 
   async notifyRescan():Promise<void> {
-    return this.trackCustomerWork(this.notifyRescanNow());
+    return this.notifyRescanNow();
   }
 
   private async notifyRescanNow():Promise<void> {
@@ -730,7 +701,7 @@ class SullaFilesWatcher {
 
   /** User-picked native sources count as P0 customer work; internal system-area ingest does not. */
   async ingestNativeSource(input:NativeSourceIngestInput):Promise<NativeSourceFileResult> {
-    return input.internal ? this.ingestNativeSourceNow(input) : this.trackCustomerWork(this.ingestNativeSourceNow(input));
+    return this.ingestNativeSourceNow(input);
   }
 
   private async ingestNativeSourceNow(input:NativeSourceIngestInput):Promise<NativeSourceFileResult> {
