@@ -35,6 +35,8 @@ export interface BrokerOperationPolicy {
 const DEFAULT_TRANSFER_BYTES = 1_048_576;
 const TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const FILES_SYNC_TRANSFER_BYTES = 6 * 1024 * 1024;
+// Fits a full-screen Retina capture; base64 in the 36 MB desktop JSON body limit.
+const SHARE_CONTENT_REQUEST_BYTES = 25 * 1024 * 1024;
 
 /** The only operation that may use responseType 'base64' and the 6 MiB Files sync limits. */
 export const FILES_SYNC_OPERATION = 'sulla-cloud.files-sync';
@@ -43,6 +45,7 @@ export const FILES_SYNC_OPERATION = 'sulla-cloud.files-sync';
 export function brokerTransferLimits(operation: string): { request: number; response: number } {
   if (operation === FILES_SYNC_OPERATION || operation === 'sulla-cloud.cloud-files.content') return { request: FILES_SYNC_TRANSFER_BYTES, response: FILES_SYNC_TRANSFER_BYTES };
   if (operation === 'provider.transcription') return { request: TRANSCRIPTION_REQUEST_BYTES, response: DEFAULT_TRANSFER_BYTES };
+  if (operation === 'sulla-cloud.shares.content') return { request: SHARE_CONTENT_REQUEST_BYTES, response: DEFAULT_TRANSFER_BYTES };
   return { request: DEFAULT_TRANSFER_BYTES, response: DEFAULT_TRANSFER_BYTES };
 }
 
@@ -343,7 +346,7 @@ function hostMatches(host: string, allowed: string): boolean {
 
 /** Files' own Cloud calls (shares, encrypted backup, catalog) on the owner's Sulla Cloud login. */
 export function isTrustedFilesCloudCall(input: BrokerExecuteRequest): boolean {
-  return (input.operation === 'sulla-cloud.shares' || input.operation === FILES_SYNC_OPERATION || input.operation.startsWith('sulla-cloud.cloud-files.')) &&
+  return (input.operation === 'sulla-cloud.shares' || input.operation === 'sulla-cloud.shares.content' || input.operation === FILES_SYNC_OPERATION || input.operation.startsWith('sulla-cloud.cloud-files.')) &&
     input.ref.integrationId === 'sulla-cloud' && input.claims.agent_id === 'sulla-files' && input.claims.pod_id === 'sulla-files';
 }
 

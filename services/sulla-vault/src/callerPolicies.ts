@@ -35,6 +35,14 @@ export const CALLER_OPERATION_POLICIES: Readonly<Record<string, CallerOperationP
     injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
     pathPattern: /^\/shares(?:\/[A-Za-z0-9._~-]{1,200}(?:\/content)?)?$/,
   },
+  // Share content upload: the shared file's bytes go up as a base64 body, so
+  // only this exact PUT gets binary bodies and the larger share upload limit.
+  'sulla-cloud.shares.content': {
+    integrations: ['sulla-cloud'], hosts: ['sulla-workers.merchantprotocol.workers.dev'], methods: ['PUT'],
+    injections: [{ field: 'api_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
+    pathPattern: /^\/shares\/[A-Za-z0-9._~-]{1,200}\/content$/,
+    binaryRequest: true,
+  },
   // Files cloud sync ciphertext API. Only the sulla-files service identity is
   // trusted for it (localAuthority), and only it gets the larger byte limits.
   'sulla-cloud.files-sync': {
