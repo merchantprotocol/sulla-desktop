@@ -64,17 +64,26 @@ const claudeConversationHandler: SyncHandler = {
     if (!data?.id) return;
 
     if (item.deleted || data.deleted_at) {
-      await postgresClient.query(
+      const applied = await postgresClient.query<{ id: string }>(
         `UPDATE claude_conversations
          SET deleted_at = COALESCE($1, CURRENT_TIMESTAMP),
              updated_at = $2
-         WHERE id = $3 AND contractor_id = $4 AND (updated_at IS NULL OR updated_at < $2)`,
+         WHERE id = $3 AND contractor_id = $4 AND (updated_at IS NULL OR updated_at < $2)
+         RETURNING id`,
         [data.deleted_at ?? null, item.updatedAt, data.id, contractorId],
       );
+      if (applied.length) {
+        await postgresClient.query(
+          `UPDATE conversation_history
+           SET deleted_at = COALESCE($1, CURRENT_TIMESTAMP), updated_at = $2
+           WHERE (id = $3 OR thread_id = $3) AND (updated_at IS NULL OR updated_at < $2)`,
+          [data.deleted_at ?? null, item.updatedAt, data.id],
+        );
+      }
       return;
     }
 
-    await postgresClient.query(
+    const applied = await postgresClient.query<{ id: string }>(
       `INSERT INTO claude_conversations
          (id, contractor_id, title, status, last_message_at, last_message_preview,
          unread_count, pinned, pinned_at, archived, archived_at, created_at, updated_at, deleted_at)
@@ -92,7 +101,8 @@ const claudeConversationHandler: SyncHandler = {
          updated_at           = EXCLUDED.updated_at,
          deleted_at           = EXCLUDED.deleted_at
        WHERE claude_conversations.contractor_id = $2
-         AND EXCLUDED.updated_at > claude_conversations.updated_at`,
+         AND EXCLUDED.updated_at > claude_conversations.updated_at
+       RETURNING id`,
       [
         data.id,
         contractorId,
@@ -110,6 +120,7 @@ const claudeConversationHandler: SyncHandler = {
         data.deleted_at ?? null,
       ],
     );
+    if (!applied.length) return;
 
     // Keep Desktop History in lockstep with the mobile-owned metadata. The
     // timestamp guard makes this the same last-writer-wins projection as the
