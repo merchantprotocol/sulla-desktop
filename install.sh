@@ -70,7 +70,7 @@ get_asset_url() {
         | grep -o '"browser_download_url": *"[^"]*'"$pattern"'[^"]*"' \
         | head -1 \
         | sed 's/"browser_download_url": *"//' \
-        | sed 's/"$//'
+        | sed 's/"$//' || true  # no match is not an error; callers check for empty
 }
 
 # Extract version tag from release JSON
@@ -80,7 +80,7 @@ get_release_tag() {
         | grep -o '"tag_name": *"[^"]*"' \
         | head -1 \
         | sed 's/"tag_name": *"//' \
-        | sed 's/"$//'
+        | sed 's/"$//' || true
 }
 
 # ─── macOS installer ────────────────────────────────────────
@@ -154,7 +154,7 @@ install_macos_dmg() {
 
     log "Mounting DMG..."
     local mount_point
-    mount_point=$(hdiutil attach "$tmp_dmg" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | tail -1 | awk -F'\t' '{print $NF}')
+    mount_point=$(hdiutil attach "$tmp_dmg" -nobrowse -noautoopen 2>/dev/null | grep '/Volumes/' | tail -1 | awk -F'\t' '{print $NF}') || true
 
     if [ -z "$mount_point" ]; then
         error "Failed to mount DMG."
@@ -163,7 +163,7 @@ install_macos_dmg() {
     fi
 
     local app_name
-    app_name=$(ls "$mount_point" | grep '\.app$' | head -1)
+    app_name=$(ls "$mount_point" | grep '\.app$' | head -1) || true
     if [ -z "$app_name" ]; then
         error "No .app found in DMG."
         hdiutil detach "$mount_point" -quiet 2>/dev/null || true
