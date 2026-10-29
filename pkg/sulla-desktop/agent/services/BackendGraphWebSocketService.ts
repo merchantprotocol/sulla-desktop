@@ -98,7 +98,28 @@ export class BackendGraphWebSocketService {
       if (this.hasActiveRun(channelId, threadId)) return;
       const entries = takeAgentCompletions(channelId, threadId);
       if (!entries.length) return;
-      this.dispatchToAgent(channelId, channelId, formatCompletionBatch(entries), threadId, undefined, undefined, 'system', {
+      const content = formatCompletionBatch(entries);
+      // A parent that is itself a hidden delegated child runs under its
+      // spawn_agent runner, not activeAborts. Starting a second execution on
+      // that state would race the runner, so hand it the batch as one steer.
+      const delegated = GraphRegistry.get(threadId);
+      if ((delegated?.state.metadata as any)?.delegatedRunActive) {
+        injectSteer(delegated!.state, {
+          id:        nextMessageId(),
+          role:      'user',
+          content,
+          timestamp: Date.now(),
+          metadata:  { source: 'sub_agent_completion', inputSource: 'system' },
+        } as any);
+        for (const entry of entries) {
+          markCompletionDelivered(entry.jobId).catch(err => console.warn('[BackendGraphWS] Failed to mark completion delivered:', err));
+        }
+        return;
+      }
+      // Same trigger mapping as handleChannelMessage: only heartbeat has its own
+      // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
+      const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
+      this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, undefined, 'system', {
         source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
       }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
     });
