@@ -133,8 +133,20 @@ jobs:
           details="$(codesign --display --verbose=4 "$app" 2>&1)"
           grep -Fq 'Identifier=io.sulla.desktop' <<<"$details"
           grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" <<<"$details"
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose "$app"
+          # stapler and spctl look the ticket up on Apple's CloudKit; a dropped
+          # connection there (error 68) is not a signing failure, so retry it.
+          for attempt in 1 2 3 4 5; do
+            xcrun stapler validate "$app" && break
+            [[ $attempt == 5 ]] && exit 1
+            echo "::warning::stapler validate failed (attempt $attempt), retrying"
+            sleep $((attempt * 15))
+          done
+          for attempt in 1 2 3; do
+            spctl --assess --type execute --verbose "$app" && break
+            [[ $attempt == 3 ]] && exit 1
+            echo "::warning::spctl assess failed (attempt $attempt), retrying"
+            sleep 15
+          done
           rm -rf "$app_dir"
         done
     # DMG upload removed — see packaging/electron-builder.yml mac.target
