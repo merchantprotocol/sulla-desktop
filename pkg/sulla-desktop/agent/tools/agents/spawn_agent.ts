@@ -49,6 +49,10 @@ import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import type { AgentJobResult, AgentJobTask, AgentJobVisibility } from './jobRegistry';
 import type { RoutableAgent } from '../../services/ChatAgentRouting';
 
+export function childAbortForJob(asyncJob: boolean, parentAbort: any, jobAbortSignal?: AbortSignal) {
+  return asyncJob ? combineAborts(undefined, jobAbortSignal) : combineAborts(parentAbort, jobAbortSignal);
+}
+
 // No depth or open-tab caps: who may launch whom, and how many, is steered by
 // agent prompts, never blocked in code (Jonathon, 2026-10-11).
 const MAX_TASKS = 10;
@@ -490,7 +494,7 @@ export class SpawnAgentWorker extends BaseTool {
         // Fire-and-forget children outlive a superseded parent turn. Their
         // durable job abort is fired by stop_agent_job and by an explicit
         // stop_run on the parent thread. Synchronous children remain coupled.
-        const combined = async_ ? combineAborts(undefined, jobAbortSignal) : combineAborts(parentAbort, jobAbortSignal);
+        const combined = childAbortForJob(async_, parentAbort, jobAbortSignal);
 
         if (combined) {
           subState.metadata.options ??= {};
@@ -702,7 +706,6 @@ export class SpawnAgentWorker extends BaseTool {
           // report that the sub-agents "died".
           const delivered = await wakeParentGraph(parentChannel, parentThreadId, job.jobId, results, failureReason);
           if (delivered) {
-            await markCompletionDelivered(job.jobId);
             await safeMarkDelegationsDelivered(delegationIds);
           }
         })

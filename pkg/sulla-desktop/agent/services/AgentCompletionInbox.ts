@@ -70,3 +70,10 @@ export function formatCompletionBatch(entries: PendingCompletion[]): string {
     return `${ content.slice(0, COMPLETION_RESULT_LIMIT) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
   }).join('\n\n==========\n\n');
 }
+
+/** Test/process-shutdown hygiene; pending jobs remain durable in agent_jobs. */
+export function clearCompletionInboxes(): void {
+  for (const inbox of inboxes.values()) if (inbox.timer) clearTimeout(inbox.timer);
+  inboxes.clear();
+  idleDispatcher = undefined;
+}

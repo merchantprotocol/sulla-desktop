@@ -8,7 +8,7 @@
 // heartbeat channels to the default agent via GraphRegistry.
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, setCompletionInboxStopped, takeAgentCompletions } from './AgentCompletionInbox';
 import { executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, resolveFrontDoorAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -99,7 +99,7 @@ export class BackendGraphWebSocketService {
       const entries = takeAgentCompletions(channelId, threadId);
       if (!entries.length) return;
       this.dispatchToAgent(channelId, channelId, formatCompletionBatch(entries), threadId, undefined, undefined, 'system', {
-        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId),
+        source: 'sub_agent_completion', completionJobIds: entries.map(entry => entry.jobId), completionEntries: entries,
       }).catch(err => console.error('[BackendGraphWS] Failed to dispatch completion batch:', err));
     });
     this.initialize();
@@ -405,6 +405,16 @@ export class BackendGraphWebSocketService {
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
+    if (metadata?.source !== 'sub_agent_completion') {
+      const pendingCompletions = takeAgentCompletions(channelId, threadId);
+      if (pendingCompletions.length) {
+        message = `${ message }\n\n${ formatCompletionBatch(pendingCompletions) }`;
+        metadata = {
+          ...metadata,
+          completionJobIds: pendingCompletions.map(entry => entry.jobId),
+        };
+      }
+    }
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
@@ -502,7 +512,10 @@ export class BackendGraphWebSocketService {
 
       // Completion wakes are accumulated instead of superseding the active
       // parent. Human/new-turn messages still replace the prior turn.
-      if (metadata?.source === 'sub_agent_completion' && this.activeAborts.has(abortKey)) return;
+      if (metadata?.source === 'sub_agent_completion' && this.activeAborts.has(abortKey)) {
+        for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+        return;
+      }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
       // Abort any prior run still in flight FOR THIS SAME THREAD before
@@ -655,6 +668,7 @@ export class BackendGraphWebSocketService {
           this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
             ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
             ...(completions.length ? { source: 'sub_agent_completion', completionJobIds: completions.map(entry => entry.jobId) } : {}),
+            ...(completions.length ? { completionEntries: completions } : {}),
           })
             .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
         }
