@@ -6,6 +6,12 @@
 // src/tools/registry.ts
 
 import { executionTargetFor, type ToolExecutionTarget } from './executionTargets';
+import {
+  resolveToolPlacement,
+  type ToolCredential,
+  type ToolPlacement,
+  type ToolSideEffect,
+} from './toolPlacement';
 
 import type { ToolOperation } from './base';
 
@@ -40,6 +46,14 @@ export interface ToolManifest {
   operationTypes?:          ToolOperation[];
   loader:                   () => Promise<any>;
   executionTarget?:         ToolExecutionTarget;
+  /** Hosts eligible to run the tool (see toolPlacement.ts). Overrides tool-placement-policy.json. */
+  placements?:              ToolPlacement[];
+  /** Whether another host may relay the call to an online Desktop. */
+  relayable?:               boolean;
+  /** Decides when a human tap is mandatory. Overrides tool-placement-policy.json. */
+  sideEffect?:              ToolSideEffect;
+  /** Credential custody required to execute the tool. */
+  credential?:              ToolCredential;
   /** When true, this tool uses a provider-native format (e.g. Anthropic computer_20250124) */
   isAnthropicNative?:       boolean;
   /** Raw Anthropic tool definition — injected directly, not converted. */
@@ -156,6 +170,7 @@ export class ToolRegistry {
         this.nativeToolDefs.set(m.name, m.anthropicToolDefinition);
       }
       this.operationTypesMap.set(m.name, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
+      Object.assign(m, resolveToolPlacement(m));
       m.executionTarget ??= executionTargetFor(m.category, m.name);
       this.executionTargets.set(m.name, m.executionTarget);
       this.register(m.name, m.description, m.category, async() => {

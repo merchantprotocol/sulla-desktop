@@ -33,27 +33,33 @@ export interface ConversationHistoryRecord {
   log_file?:      string;
   last_summary?:  string;
   pinned:         boolean;
+  pinned_at?:     string;
+  archived:       boolean;
+  archived_at?:   string;
+  unread_count:   number;
+  updated_at:     string;
+  deleted_at?:    string;
   hidden:         boolean;
 }
 
 export interface RecordConversationInput {
-  id:             string;
-  type:           ConversationHistoryType;
-  thread_id?:     string;
-  session_id?:    string;
-  title?:         string;
-  summary?:       string;
-  url?:           string;
-  favicon?:       string;
-  channel_id?:    string;
-  agent_id?:      string;
-  tab_id?:        string;
-  status?:        ConversationHistoryStatus;
-  log_file?:      string;
-  last_summary?:  string;
-  pinned?:        boolean;
+  id:            string;
+  type:          ConversationHistoryType;
+  thread_id?:    string;
+  session_id?:   string;
+  title?:        string;
+  summary?:      string;
+  url?:          string;
+  favicon?:      string;
+  channel_id?:   string;
+  agent_id?:     string;
+  tab_id?:       string;
+  status?:       ConversationHistoryStatus;
+  log_file?:     string;
+  last_summary?: string;
+  pinned?:       boolean;
   /** Explicit override. Omit to let recordConversation() derive it from channel_id (see isHiddenChannel). */
-  hidden?:        boolean;
+  hidden?:       boolean;
 }
 
 /**
@@ -101,6 +107,12 @@ export class ConversationHistoryModel {
           training_file   TEXT,  -- unused; kept so existing tables need no migration
           last_summary    TEXT,
           pinned          BOOLEAN DEFAULT FALSE,
+          archived        BOOLEAN NOT NULL DEFAULT FALSE,
+          pinned_at       TIMESTAMP WITH TIME ZONE,
+          archived_at     TIMESTAMP WITH TIME ZONE,
+          unread_count    INTEGER NOT NULL DEFAULT 0,
+          updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          deleted_at      TIMESTAMP WITH TIME ZONE,
           hidden          BOOLEAN NOT NULL DEFAULT FALSE
         )
       `);
@@ -263,17 +275,17 @@ export class ConversationHistoryModel {
       if (type) {
         return await postgresClient.query<ConversationHistoryRecord>(`
           SELECT * FROM ${ ConversationHistoryModel.TABLE }
-          WHERE type = $1 AND status != 'deleted'
+          WHERE type = $1 AND deleted_at IS NULL AND archived = FALSE
             AND hidden = FALSE
-          ORDER BY last_active_at DESC
+          ORDER BY pinned DESC, pinned_at DESC NULLS LAST, last_active_at DESC
           LIMIT $2
         `, [type, limit]);
       }
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
-        WHERE status != 'deleted'
+        WHERE deleted_at IS NULL AND archived = FALSE
           AND hidden = FALSE
-        ORDER BY last_active_at DESC
+        ORDER BY pinned DESC, pinned_at DESC NULLS LAST, last_active_at DESC
         LIMIT $1
       `, [limit]);
     } catch (err) {
@@ -290,7 +302,7 @@ export class ConversationHistoryModel {
     try {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
-        WHERE channel_id = $1 AND status != 'deleted'
+        WHERE channel_id = $1 AND deleted_at IS NULL
         ORDER BY last_active_at DESC
         LIMIT $2 OFFSET $3
       `, [channelId, limit, offset]);
@@ -308,9 +320,9 @@ export class ConversationHistoryModel {
       const pattern = `%${ query }%`;
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
-        WHERE (title ILIKE $1 OR summary ILIKE $1) AND status != 'deleted'
+        WHERE (title ILIKE $1 OR summary ILIKE $1) AND deleted_at IS NULL AND archived = FALSE
           AND hidden = FALSE
-        ORDER BY last_active_at DESC
+        ORDER BY pinned DESC, pinned_at DESC NULLS LAST, last_active_at DESC
         LIMIT 100
       `, [pattern]);
     } catch (err) {
@@ -326,7 +338,7 @@ export class ConversationHistoryModel {
     try {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
-        WHERE created_at >= $1 AND created_at <= $2 AND status != 'deleted'
+        WHERE created_at >= $1 AND created_at <= $2 AND deleted_at IS NULL AND archived = FALSE
           AND hidden = FALSE
         ORDER BY last_active_at DESC
       `, [from.toISOString(), to.toISOString()]);
@@ -406,18 +418,57 @@ export class ConversationHistoryModel {
   // Deletion & archival
   // ──────────────────────────────────────────────
 
-  /**
-   * Hard delete a conversation record.
-   */
+  /** Recoverable delete. Transcript rows and thread state remain intact. */
   static async deleteConversation(id: string): Promise<void> {
-    try {
-      await postgresClient.query(`
-        DELETE FROM ${ ConversationHistoryModel.TABLE }
-        WHERE id = $1
-      `, [id]);
-    } catch (err) {
-      console.error('[ConversationHistoryModel] Failed to delete conversation:', err);
-    }
+    await ConversationHistoryModel.update(id, { deleted: true });
+  }
+
+  static async update(id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; unread_count?: number; deleted?: boolean }): Promise<ConversationHistoryRecord | null> {
+    const title = patch.title === undefined ? null : patch.title.trim();
+    if (patch.title !== undefined && !title) throw new Error('Conversation title cannot be empty');
+    return await postgresClient.queryOne<ConversationHistoryRecord>(`
+      UPDATE ${ ConversationHistoryModel.TABLE }
+      SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+          pinned = CASE WHEN $5::boolean IS TRUE THEN FALSE ELSE COALESCE($4, pinned) END,
+          pinned_at = CASE
+            WHEN $5::boolean IS TRUE OR $4::boolean IS FALSE THEN NULL
+            WHEN $4::boolean IS TRUE AND pinned IS FALSE THEN NOW()
+            ELSE pinned_at
+          END,
+          archived = COALESCE($5, archived),
+          archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN NOW() ELSE NULL END,
+          unread_count = COALESCE($6, unread_count),
+          deleted_at = CASE WHEN $7::boolean IS NULL THEN deleted_at WHEN $7 THEN NOW() ELSE NULL END,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [id, patch.title !== undefined, title, patch.pinned ?? null, patch.archived ?? null, patch.unread_count ?? null, patch.deleted ?? null]);
+  }
+
+  static async list(view: 'active' | 'archived' | 'deleted' = 'active', limit = 200, type?: ConversationHistoryType): Promise<ConversationHistoryRecord[]> {
+    const visibility = view === 'deleted'
+      ? 'deleted_at IS NOT NULL'
+      : `deleted_at IS NULL AND archived = ${ view === 'archived' ? 'TRUE' : 'FALSE' }`;
+    return await postgresClient.query<ConversationHistoryRecord>(`
+      SELECT * FROM ${ ConversationHistoryModel.TABLE }
+      WHERE ${ visibility } AND hidden = FALSE AND ($1::text IS NULL OR type = $1)
+      ORDER BY pinned DESC, pinned_at DESC NULLS LAST, last_active_at DESC
+      LIMIT $2
+    `, [type ?? null, limit]);
+  }
+
+  static async searchView(query: string, view: 'active' | 'archived' | 'deleted' = 'active', type?: ConversationHistoryType): Promise<ConversationHistoryRecord[]> {
+    // Searching History includes archived conversations, matching the approved
+    // UX. The dedicated Archived and Recently deleted views remain scoped.
+    const visibility = view === 'deleted'
+      ? 'deleted_at IS NOT NULL'
+      : view === 'archived' ? 'deleted_at IS NULL AND archived = TRUE' : 'deleted_at IS NULL';
+    return await postgresClient.query<ConversationHistoryRecord>(`
+      SELECT * FROM ${ ConversationHistoryModel.TABLE }
+      WHERE ${ visibility } AND hidden = FALSE AND ($2::text IS NULL OR type = $2)
+        AND (title ILIKE $1 OR summary ILIKE $1 OR last_message_preview ILIKE $1)
+      ORDER BY pinned DESC, pinned_at DESC NULLS LAST, last_active_at DESC LIMIT 100
+    `, [`%${ query }%`, type ?? null]);
   }
 
   /**
@@ -428,7 +479,7 @@ export class ConversationHistoryModel {
       if (olderThan) {
         const deleted = await postgresClient.query<ConversationHistoryRecord>(`
           DELETE FROM ${ ConversationHistoryModel.TABLE }
-          WHERE created_at < $1
+          WHERE created_at >= $1
           RETURNING *
         `, [olderThan.toISOString()]);
         return deleted;
@@ -451,7 +502,7 @@ export class ConversationHistoryModel {
     try {
       await postgresClient.query(`
         UPDATE ${ ConversationHistoryModel.TABLE }
-        SET status = 'archived', last_active_at = NOW()
+        SET archived = TRUE
         WHERE id = $1
       `, [id]);
     } catch (err) {

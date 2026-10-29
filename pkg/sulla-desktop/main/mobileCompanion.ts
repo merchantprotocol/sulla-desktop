@@ -17,6 +17,7 @@ import { getModelProviderService } from '@pkg/agent/services/ModelProviderServic
 import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
 import { findTaskByThread, getAllJobs, getJob } from '@pkg/agent/tools/agents/jobRegistry';
 import { stopAgentJob } from '@pkg/agent/tools/agents/stop_agent_job';
+import Logging from '@pkg/utils/logging';
 
 // The only desktop switches the phone may flip. Each toggle writes exactly
 // one key. (Projects has no automation switch: it is a plain board.)
@@ -130,9 +131,32 @@ function companionHeartbeatState(conversationId: string) {
   };
 }
 
+const voiceTraceLog = Logging.background;
+
+function storeMobileVoiceTraces(params: Record<string, unknown>) {
+  if (params.version !== 1 || !Array.isArray(params.entries) || params.entries.length > 500) {
+    throw new Error('Invalid voice trace payload');
+  }
+  const allowed = ['turnId', 'stage', 'ts', 'durationMs', 'elapsedMs', 'size', 'state', 'reason', 'error', 'segment', 'speaking'];
+  let stored = 0;
+  for (const raw of params.entries) {
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as Record<string, unknown>;
+    if (entry.tag !== '[VoiceTrace]' || !entry.data || typeof entry.data !== 'object') continue;
+    const data = entry.data as Record<string, unknown>;
+    if (typeof data.turnId !== 'string' || !/^vt_[a-z0-9_]{3,80}$/i.test(data.turnId)) continue;
+    if (typeof data.stage !== 'string' || data.stage.length > 100) continue;
+    const safe = Object.fromEntries(allowed.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
+    voiceTraceLog.log(`[VoiceTrace] ${ JSON.stringify(safe) }`);
+    stored++;
+  }
+  return { stored };
+}
+
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
 export async function mobileCompanionRequest(method: string, params: Record<string, unknown>): Promise<unknown> {
   switch (method) {
+  case 'voice.trace.store': return storeMobileVoiceTraces(params);
   case 'decisions.list': return { decisions: await decisionService.list() };
   case 'decisions.resolve': return decisionService.resolve(params as unknown as DecisionResponse);
   case 'chat.answer': {
@@ -257,15 +281,40 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
   // desktop, so it works even when conversation sync to the cloud is off.
   case 'conversations.list': {
     const limit = Math.min(Math.max(Number(params.limit) || 50, 1), 200);
+    const archived = params.archived === true;
     const conversations = await postgresClient.query(
-      `SELECT id, title, status, last_message_at, last_message_preview, created_at
+      `SELECT id, title, pinned, pinned_at, archived, archived_at, status,
+              last_message_at, last_message_preview, unread_count, created_at, updated_at, deleted_at
          FROM claude_conversations
-        WHERE deleted_at IS NULL
-        ORDER BY last_message_at DESC NULLS LAST
+        WHERE deleted_at IS NULL AND archived = $2
+        ORDER BY pinned DESC, last_message_at DESC NULLS LAST
         LIMIT $1`,
-      [limit],
+      [limit, archived],
     );
     return { conversations };
+  }
+  case 'conversations.update': {
+    const id = companionString(params.conversationId, 'Conversation', 200, true)!;
+    const hasTitle = Object.prototype.hasOwnProperty.call(params, 'title');
+    const title = hasTitle ? companionString(params.title, 'Title', 200, true) : null;
+    const pinned = typeof params.pinned === 'boolean' ? params.pinned : null;
+    const archived = typeof params.archived === 'boolean' ? params.archived : null;
+    if (!hasTitle && pinned === null && archived === null) throw new Error('title, pinned, or archived required');
+    const rows = await postgresClient.query(
+      `UPDATE claude_conversations
+          SET title = CASE WHEN $2::boolean THEN $3 ELSE title END,
+              pinned = COALESCE($4, pinned),
+              pinned_at = CASE WHEN $4::boolean IS NULL THEN pinned_at WHEN $4 THEN now() ELSE NULL END,
+              archived = COALESCE($5, archived),
+              archived_at = CASE WHEN $5::boolean IS NULL THEN archived_at WHEN $5 THEN now() ELSE NULL END,
+              updated_at = now()
+        WHERE id = $1 AND deleted_at IS NULL
+        RETURNING id, title, pinned, pinned_at, archived, archived_at, unread_count, updated_at, deleted_at`,
+      [id, hasTitle, title, pinned, archived],
+    );
+    if (!rows[0]) throw new Error('Conversation not found');
+    await enqueueSyncOp('claude_conversation', { id }, 'upsert');
+    return { conversation: rows[0] };
   }
   case 'conversations.messages': {
     if (typeof params.conversationId !== 'string' || !params.conversationId || params.conversationId.length > 200) throw new Error('Conversation required');

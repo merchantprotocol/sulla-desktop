@@ -11,10 +11,10 @@
 (root => {
   'use strict';
 
-  const TYPES = ['text', 'multiline', 'password', 'url', 'email', 'number', 'date', 'phone', 'one-time', 'boolean'];
+  const TYPES = ['text', 'multiline', 'password', 'url', 'email', 'number', 'date', 'phone', 'one-time', 'boolean', 'linked'];
   const TYPE_LABELS = {
     text: 'Text', multiline: 'Long text', password: 'Password', url: 'Website / URL', email: 'Email',
-    number: 'Number', date: 'Date', phone: 'Phone', 'one-time': 'One-time code (TOTP)', boolean: 'Yes / No',
+    number: 'Number', date: 'Date', phone: 'Phone', 'one-time': 'One-time code (TOTP)', boolean: 'Yes / No', linked: 'Linked field',
   };
   const SECRET_TYPES = ['password', 'one-time'];
   const LIMITS = { maxFields: 40, maxLabelLength: 80, maxValueBytes: 8 * 1024 };

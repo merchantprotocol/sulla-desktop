@@ -45,6 +45,7 @@ import {
   type ProviderName,
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
+import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -71,6 +72,7 @@ import type { BaseThreadState } from '../nodes/Graph';
 const log = Logging.background;
 const perf = Logging.perf;
 const IDLE_MS = 30 * 60_000;
+const LIVENESS_MAX_FAILURES = 3;
 const MEMORY = process.env.SULLA_AGENT_MEMORY ?? '4g';
 const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
 /**
@@ -934,6 +936,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let renewTimer: ReturnType<typeof setInterval> | undefined;
   let livenessTimer: ReturnType<typeof setInterval> | undefined;
   let checkingLiveness = false;
+  let livenessFailures = 0;
   let closePromise: Promise<AgentContainerCleanupReceipt> | undefined;
   let closeRemoval = { reason: 'lifecycle-abort', caller: 'createAgentContainerLifecycle.abort' };
   let providerFiles: ContainerProviderFileTransport | undefined;
@@ -1189,12 +1192,16 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             request_id:       crypto.randomUUID(),
           };
         };
+        // A slot/tier alias ('primary', 'fast', …) is not a model id; pinning
+        // it denied every real request the CLI made through this bridge.
+        // 'fast' pins the light model the CLI is launched with instead.
+        const pinnedModel = run.provider === provider ? cliPinnedModelId(provider, run.model) : undefined;
         const bridge = await createProviderCliBridge({
           context:        bridgeContext(),
           provider,
           accountId,
           authMode,
-          models:         run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
+          models:         pinnedModel ? [pinnedModel] : undefined,
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
           signal:         lifecycleAbort.signal,
@@ -1245,9 +1252,20 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       if (checkingLiveness || closePromise) return;
       checkingLiveness = true;
       runtime.inspect(containerName).then(details => {
-        if (!closePromise && details?.State?.Running !== true) abortGraph('persistent runtime exited');
-      }).catch(() => {
-        if (!closePromise) abortGraph('persistent runtime disappeared');
+        livenessFailures = 0;
+        if (!closePromise && details?.State?.Running !== true) {
+          log.warn(`[AgentContainer] ${ containerName } liveness: state=${ details?.State?.Status } exitCode=${ details?.State?.ExitCode } oomKilled=${ details?.State?.OOMKilled }`);
+          abortGraph('persistent runtime exited');
+        }
+      }).catch(error => {
+        if (closePromise) return;
+        // A failed inspect is not proof the container is gone: the guest exec path can
+        // hiccup under load. Only "No such container" or repeated failures end it.
+        const message = (error as Error)?.message ?? String(error);
+        const gone = /no such (container|object)/i.test(message);
+        livenessFailures++;
+        log.warn(`[AgentContainer] ${ containerName } liveness inspect failed (${ livenessFailures }/${ LIVENESS_MAX_FAILURES }): ${ message }`);
+        if (gone || livenessFailures >= LIVENESS_MAX_FAILURES) abortGraph('persistent runtime disappeared');
       }).finally(() => {
         checkingLiveness = false;
       });

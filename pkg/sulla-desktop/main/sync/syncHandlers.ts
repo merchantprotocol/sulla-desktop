@@ -20,8 +20,9 @@
  * WebSocket relay was offline.
  */
 
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { dispatchClaudeForMessage } from './syncDispatcher';
+
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 
 export interface SyncItem {
   dataType:  string;
@@ -57,48 +58,88 @@ const claudeConversationHandler: SyncHandler = {
     };
   },
 
-  async applyRemote(item, _contractorId) {
+  async applyRemote(item, contractorId) {
     let data: any;
     try { data = JSON.parse(item.payload) } catch { return }
     if (!data?.id) return;
 
     if (item.deleted || data.deleted_at) {
-      await postgresClient.query(
+      const applied = await postgresClient.query<{ id: string }>(
         `UPDATE claude_conversations
          SET deleted_at = COALESCE($1, CURRENT_TIMESTAMP),
              updated_at = $2
-         WHERE id = $3 AND (updated_at IS NULL OR updated_at < $2)`,
-        [data.deleted_at ?? null, item.updatedAt, data.id],
+         WHERE id = $3 AND contractor_id = $4 AND (updated_at IS NULL OR updated_at < $2)
+         RETURNING id`,
+        [data.deleted_at ?? null, item.updatedAt, data.id, contractorId],
       );
+      if (applied.length) {
+        await postgresClient.query(
+          `UPDATE conversation_history
+           SET deleted_at = COALESCE($1, CURRENT_TIMESTAMP), updated_at = $2
+           WHERE (id = $3 OR thread_id = $3) AND (updated_at IS NULL OR updated_at < $2)`,
+          [data.deleted_at ?? null, item.updatedAt, data.id],
+        );
+      }
       return;
     }
 
-    await postgresClient.query(
+    const applied = await postgresClient.query<{ id: string }>(
       `INSERT INTO claude_conversations
          (id, contractor_id, title, status, last_message_at, last_message_preview,
-          unread_count, created_at, updated_at, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         unread_count, pinned, pinned_at, archived, archived_at, created_at, updated_at, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        ON CONFLICT (id) DO UPDATE SET
          title                = EXCLUDED.title,
          status               = EXCLUDED.status,
          last_message_at      = EXCLUDED.last_message_at,
          last_message_preview = EXCLUDED.last_message_preview,
          unread_count         = EXCLUDED.unread_count,
+         pinned              = EXCLUDED.pinned,
+         pinned_at           = EXCLUDED.pinned_at,
+         archived            = EXCLUDED.archived,
+         archived_at         = EXCLUDED.archived_at,
          updated_at           = EXCLUDED.updated_at,
          deleted_at           = EXCLUDED.deleted_at
-       WHERE EXCLUDED.updated_at > claude_conversations.updated_at`,
+       WHERE claude_conversations.contractor_id = $2
+         AND EXCLUDED.updated_at > claude_conversations.updated_at
+       RETURNING id`,
       [
         data.id,
-        data.contractor_id ?? null,
+        contractorId,
         data.title ?? 'New Conversation',
         data.status ?? 'active',
         data.last_message_at ?? null,
         data.last_message_preview ?? null,
         data.unread_count ?? 0,
+        data.pinned ?? false,
+        data.pinned_at ?? null,
+        data.archived ?? false,
+        data.archived_at ?? null,
         data.created_at ?? item.updatedAt,
         data.updated_at ?? item.updatedAt,
         data.deleted_at ?? null,
       ],
+    );
+    if (!applied.length) return;
+
+    // Keep Desktop History in lockstep with the mobile-owned metadata. The
+    // timestamp guard makes this the same last-writer-wins projection as the
+    // canonical claude_conversations row.
+    await postgresClient.query(
+      `UPDATE conversation_history
+       SET title = $1,
+           pinned = $2,
+           pinned_at = $3,
+           archived = $4,
+           archived_at = $5,
+           unread_count = $6,
+           deleted_at = $7,
+           updated_at = $8
+       WHERE (id = $9 OR thread_id = $9)
+         AND (updated_at IS NULL OR updated_at < $8)`,
+      [data.title ?? 'New Conversation', data.pinned ?? false, data.pinned_at ?? null,
+        data.archived ?? false, data.archived_at ?? null, data.unread_count ?? 0,
+        data.deleted_at ?? null, data.updated_at ?? item.updatedAt, data.id],
     );
   },
 };

@@ -27,10 +27,9 @@ The <speak> content will be read aloud via text-to-speech.
 Your full text response still displays in chat as normal.
 
 CRITICAL RULES for <speak> tags:
-- Be extremely brief — 1-3 short sentences max.
-- Talk like a real conversation: concise, direct, no fluff. Think texting, not essay.
-- If the user asks a complex question, give the short spoken answer in <speak> and put details in the text response outside the tags.
-- Only speak at length if the user explicitly asks for a long explanation.
+- Talk like a real conversation: direct, no fluff. Lead with the answer.
+- Keep simple replies short, but give the full context a question needs. Never cap yourself at a sentence count.
+- When the user asks for more detail, context or an explanation, or repeats a question, give the complete answer out loud.
 - Do NOT put markdown, code blocks, or URLs inside <speak> tags — only natural speech.
 
 ## Sub-Agent Delegation

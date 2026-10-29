@@ -827,6 +827,15 @@ export function initSullaEvents(): void {
     }
   });
 
+  // Content-free, grep-able voice lifecycle diagnostics. console output is
+  // captured by Desktop's normal background log in ~/Library/Logs/sulla-desktop.
+  ipcMainProxy.on('voice-trace', (_event: unknown, entry: Record<string, unknown>) => {
+    const allowed = ['turnId', 'stage', 'ts', 'durationMs', 'elapsedMs', 'size', 'state', 'reason', 'error', 'segment', 'speaking'];
+    const safe = Object.fromEntries(allowed.filter(key => entry[key] !== undefined).map(key => [key, entry[key]]));
+
+    console.log(`[VoiceTrace] ${ JSON.stringify(safe) }`);
+  });
+
   // ─────────────────────────────────────────────────────────────
   // Integration value change relay — renderer → main process
   // ─────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@
 
 import type { VaultItemCustomField } from './customFields.js';
 
-export type VaultItemType ='login' | 'note' | 'card' | 'identity' | 'apiKey';
+export type VaultItemType ='login' | 'note' | 'card' | 'identity' | 'apiKey' | 'sshKey';
 
 export type UriMatch = 'domain' | 'host' | 'startsWith' | 'exact' | 'never';
 
@@ -57,7 +57,16 @@ export interface VaultItemPlaintext {
   customFields?:    VaultItemCustomField[];
   card?:            { holder?: string; brand?: string; number?: string; expMonth?: string; expYear?: string; code?: string };
   identity?:        Record<string, string>;
+  /** Bitwarden FIDO2 credentials are retained verbatim so future fields round-trip. */
+  passkeys?:         Array<Record<string, unknown>>;
+  sshKey?:           { privateKey?: string; publicKey?: string; fingerprint?: string };
   passwordHistory?: { password: string; changedAt: string }[];
+  /** Import provenance that must survive even when Sulla has no first-class editor yet. */
+  sourceMetadata?: {
+    source: 'bitwarden'; sourceId?: string; folderId?: string; organizationId?: string;
+    collectionIds?: string[]; reprompt?: number; createdAt?: string; revisedAt?: string;
+    deletedAt?: string; attachments?: Array<Record<string, unknown>>;
+  };
   /** Optional Desktop migration link. Values remain inside the encrypted item. */
   integration?: {
     integrationId: string;

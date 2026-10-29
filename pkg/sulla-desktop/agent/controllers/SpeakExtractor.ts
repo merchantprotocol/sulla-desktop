@@ -28,12 +28,46 @@ import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 // ─── Constants ──────────────────────────────────────────────────
 
 const MIN_SENTENCE_LENGTH = 20;
+// The first sentence of a <speak> block goes out as soon as it ends, however
+// short ("Sure, one sec."): it's the user's first audio. Merging it into the
+// next sentence held the first sound back by a whole sentence of generation.
+const MIN_FIRST_SENTENCE_LENGTH = 4;
 
 const ABBREVIATIONS = new Set([
   'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'etc',
   'inc', 'ltd', 'corp', 'dept', 'univ', 'approx', 'est', 'govt',
   'e.g', 'i.e', 'a.m', 'p.m',
 ]);
+
+/**
+ * Complete sentences at the head of `buffer`, plus how much of it they used.
+ * Splits at `. ? !` followed by whitespace, skipping abbreviations and short
+ * fragments (which stay attached to the next sentence). `first` applies the
+ * shorter minimum to the first sentence found.
+ */
+export function splitSpeakSentences(buffer: string, first: boolean): { sentences: string[]; consumed: number } {
+  const sentenceEndPattern = /([.!?])(\s+)/g;
+  const sentences: string[] = [];
+  let lastSplit = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = sentenceEndPattern.exec(buffer)) !== null) {
+    const splitPos = match.index + match[1].length;
+    const candidate = buffer.slice(lastSplit, splitPos).trim();
+    const min = first && sentences.length === 0 ? MIN_FIRST_SENTENCE_LENGTH : MIN_SENTENCE_LENGTH;
+
+    if (candidate.length < min) continue;
+
+    const lastWord = candidate.split(/\s+/).pop()?.replace(/[.!?]$/, '').toLowerCase() || '';
+
+    if (ABBREVIATIONS.has(lastWord)) continue;
+
+    sentences.push(candidate);
+    lastSplit = splitPos + match[2].length;
+  }
+
+  return { sentences, consumed: lastSplit };
+}
 
 // ─── Extractor ──────────────────────────────────────────────────
 
@@ -47,6 +81,8 @@ export class SpeakExtractor implements Extractor {
   private contentBuffer = '';
   private insideSpeakTag = false;
   private sentenceBuffer = '';
+  // Sentences dispatched from the current <speak> block.
+  private blockSentences = 0;
   private readonly spokenSentences: string[] = [];
 
   constructor(dispatch: DispatchFn, voiceLog: VoiceLogFn) {
@@ -88,6 +124,7 @@ export class SpeakExtractor implements Extractor {
         this.contentBuffer = this.contentBuffer.slice(openIdx + '<speak>'.length);
         this.insideSpeakTag = true;
         this.sentenceBuffer = '';
+        this.blockSentences = 0;
         this.voiceLog(ctx.state, 'SPEAK', 'OPEN');
       }
 
@@ -149,6 +186,7 @@ export class SpeakExtractor implements Extractor {
     this.contentBuffer = '';
     this.insideSpeakTag = false;
     this.sentenceBuffer = '';
+    this.blockSentences = 0;
     this.spokenSentences.length = 0;
   }
 
@@ -200,6 +238,7 @@ export class SpeakExtractor implements Extractor {
       thread_id: ctx.threadId,
       timestamp: Date.now(),
       pipelineSequence,
+      voiceTurnId: (ctx.state.metadata as any).voiceTurnId ?? null,
     });
   }
 
@@ -208,31 +247,17 @@ export class SpeakExtractor implements Extractor {
    * Splits at `. ? !` boundaries, skipping abbreviations and short fragments.
    */
   private tryDispatchSentence(ctx: StreamContext): void {
-    const buffer = this.sentenceBuffer;
-    const sentenceEndPattern = /([.!?])(\s+)/g;
-    let lastSplit = 0;
-    let match: RegExpExecArray | null;
+    const { sentences, consumed } = splitSpeakSentences(this.sentenceBuffer, this.blockSentences === 0);
 
-    while ((match = sentenceEndPattern.exec(buffer)) !== null) {
-      const splitPos = match.index + match[1].length;
-      const candidate = buffer.slice(lastSplit, splitPos).trim();
-
-      if (candidate.length < MIN_SENTENCE_LENGTH) continue;
-
-      // Check for abbreviations
-      const lastWord = candidate.split(/\s+/).pop()?.replace(/[.!?]$/, '').toLowerCase() || '';
-
-      if (ABBREVIATIONS.has(lastWord)) continue;
-
-      // Dispatch this sentence
-      this.voiceLog(ctx.state, 'SPEAK', 'SENTENCE', { text: candidate.slice(0, 200) });
-      this.dispatchSpeak(ctx, candidate);
-      this.spokenSentences.push(candidate);
-      lastSplit = splitPos + match[2].length;
+    for (const sentence of sentences) {
+      this.voiceLog(ctx.state, 'SPEAK', 'SENTENCE', { text: sentence.slice(0, 200) });
+      this.dispatchSpeak(ctx, sentence);
+      this.spokenSentences.push(sentence);
+      this.blockSentences++;
     }
 
-    if (lastSplit > 0) {
-      this.sentenceBuffer = buffer.slice(lastSplit);
+    if (consumed > 0) {
+      this.sentenceBuffer = this.sentenceBuffer.slice(consumed);
     }
   }
 }

@@ -34,6 +34,7 @@ import {
 } from '@sulla/vault-crypto';
 
 import { makeLoginVerifier, verifyLoginHash } from './auth.js';
+import { mapBitwardenExport, parseBitwardenCsv, readBitwardenJson, readBitwardenZip, type BitwardenImportPreview } from './bitwardenImport.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
@@ -1049,6 +1050,48 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }));
     this.requireGeneration(generation);
     return items;
+    });
+  }
+
+  private async prepareBitwardenImport(
+    sessionId: string | undefined, csrf: string | undefined,
+    input: { content: string; format: 'json'|'csv'|'zip'; password?: string },
+  ): Promise<{ preview: BitwardenImportPreview & { duplicates: number; importable: number }; items: VaultItemPlaintext[]; keys: { userId: string; userKey: Uint8Array }; generation: number }> {
+    const session = this.validateHumanSession(sessionId, csrf);
+    if (session.phase !== 'unlocked') throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
+    const maxContent = input.format === 'zip' ? 34 * 1024 * 1024 : 25 * 1024 * 1024;
+    if (typeof input.content !== 'string' || Buffer.byteLength(input.content) > maxContent) throw new LocalVaultError('invalid_operation', 400, 'Bitwarden exports are limited to 25 MB');
+    const keys = this.requireKeys(), generation = this.generation;
+    const mapped = input.format === 'csv' ? parseBitwardenCsv(input.content) : mapBitwardenExport(input.format === 'zip' ? await readBitwardenZip(input.content,input.password) : await readBitwardenJson(input.content, input.password));
+    const rows = await this.db.query<ItemRow>(`SELECT id,owner_user_id,collection_id,ciphertext,encrypted_item_key,agent_policy,revision FROM items WHERE owner_user_id=$1 AND deleted_at IS NULL`, [keys.userId]);
+    const existing = new Set<string>();
+    for (const row of rows.rows) {
+      const item = JSON.parse(await decryptItemText({ version:1, ciphertext:row.ciphertext, encryptedItemKey:row.encrypted_item_key }, keys.userKey, { itemId:row.id, ownerId:keys.userId })) as VaultItemPlaintext;
+      existing.add(this.bitwardenDedupeKey(item));
+    }
+    const seen = new Set(existing); let duplicates = 0;
+    const items = mapped.items.filter(item => { const key=this.bitwardenDedupeKey(item); if(seen.has(key)){duplicates++;return false;} seen.add(key);return true; });
+    this.requireGeneration(generation);
+    return { preview:{ counts:mapped.counts,total:mapped.total,unmapped:mapped.unmapped,warnings:mapped.warnings,duplicates,importable:items.length }, items, keys, generation };
+  }
+
+  private bitwardenDedupeKey(item: VaultItemPlaintext): string {
+    const sourceId = item.sourceMetadata?.source === 'bitwarden' && item.sourceMetadata.sourceId;
+    if (sourceId) return `bitwarden:${sourceId}`;
+    return `content:${createHash('sha256').update(JSON.stringify([item.type,item.name,item.username,item.password,item.totp,item.uris,item.card,item.identity,item.sshKey])).digest('hex')}`;
+  }
+
+  async previewBitwardenImport(sessionId: string|undefined, csrf: string|undefined, input: { content:string; format:'json'|'csv'|'zip'; password?:string }): Promise<BitwardenImportPreview & { duplicates:number; importable:number }> {
+    return this.runSecurityOperation(async()=> (await this.prepareBitwardenImport(sessionId,csrf,input)).preview);
+  }
+
+  async importBitwarden(sessionId: string|undefined, csrf: string|undefined, input: { content:string; format:'json'|'csv'|'zip'; password?:string }): Promise<BitwardenImportPreview & { duplicates:number; importable:number; imported:number }> {
+    return this.runSecurityOperation(async()=>{
+      const prepared=await this.prepareBitwardenImport(sessionId,csrf,input);
+      await this.runTransaction(async client => { for(const item of prepared.items){ const id=randomUUID(); const encrypted=await encryptItem(JSON.stringify(item),prepared.keys.userKey,{itemId:id,ownerId:prepared.keys.userId}); await client.query(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy) VALUES ($1,$2,$3,$4,$5,$6)`,[id,prepared.keys.userId,item.type,encrypted.ciphertext,encrypted.encryptedItemKey,item.agentPolicy]); } });
+      this.requireGeneration(prepared.generation);
+      await this.auditHumanAction(this.db,prepared.keys.userId,'human_bitwarden_import');
+      return {...prepared.preview,imported:prepared.items.length};
     });
   }
 

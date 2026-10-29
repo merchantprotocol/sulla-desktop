@@ -156,6 +156,7 @@ interface HistoryRecord {
   created_at:     string;
   last_active_at: string;
   pinned:         boolean;
+  archived:       boolean;
   message_count:  number;
 }
 
@@ -443,7 +444,12 @@ const allThreads = computed<Thread[]>(() => {
     out.push(t);
   }
 
-  return out;
+  // The app-wide history query already excludes archived/deleted rows. Keep
+  // its conversation pins at the top even after merging live and persisted
+  // controller threads, then retain the normal newest-first inbox order.
+  const pinnedIds = new Set(recentHistory.value.filter(h => h.pinned).map(h => historyToThread(h).id));
+
+  return out.sort((a, b) => Number(pinnedIds.has(b.id)) - Number(pinnedIds.has(a.id)) || b.updatedAt - a.updatedAt);
 });
 
 const suggestions = Object.freeze([
