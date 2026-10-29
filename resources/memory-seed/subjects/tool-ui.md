@@ -11,6 +11,7 @@ UI tools open or focus built-in Desktop sections such as Files, vault, agents, b
 
 ## Facts
 - The source manifest registers `open_tab` in this tool set.
+- `open_tab` focuses a section (for example `document` or `files`) but cannot open a specific file; use `files/open` with a path for that.
 
 ## Rules
 - DO: Use the exact CLI category and parameter names from the paired skill. Why: registry names are strict.

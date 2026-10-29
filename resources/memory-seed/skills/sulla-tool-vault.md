@@ -27,6 +27,8 @@ For a staging login, use `sulla-test-a-web-app`. For a hosting integration, use 
 - `sulla vault/update_password '{"item_id":"<item-id>","generate":true}'` rotates an item the calling agent created. Agents cannot update human-created items or delete items.
 - `sulla vault/set_credential '{"account_type":"custom","property":"site_password","value":"<new-password>"}'` supports custom account types absent from the catalog.
 
+Prefer `vault/generate_password` for any new password: the value never appears in a command, log or transcript. A password typed into `create_password` or `set_credential` is redacted from tool cards but stays visible in the shell command that sent it.
+
 These authenticated ingress-only writes preserve the NIST SP 800-171 boundary: secrets remain in the isolated Vault, and agent read/export/delete protections stay closed.
 
 **Tools:**
