@@ -259,6 +259,7 @@ function assertAdvertisedHost(raw: string): string {
 }
 
 function sendError(response: http.ServerResponse, status: number, code: string): void {
+  console.warn(`[ProviderCliBridge] denied ${ status } ${ code }`);
   if (response.headersSent) {
     response.destroy();
     return;
