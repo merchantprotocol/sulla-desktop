@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createDecipheriv, createHmac, hkdfSync, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
+import { createDecipheriv, createHmac, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { argon2id } from 'hash-wasm';
 
@@ -42,8 +42,10 @@ function decryptEncString(value: unknown, masterKey: Buffer): string {
   if (typeof value !== 'string') throw new BitwardenImportError('invalid_export', 'The encrypted export is missing its data.');
   const match = /^2\.([^|]+)\|([^|]+)\|([^|]+)$/.exec(value);
   if (!match) throw new BitwardenImportError('invalid_export', 'The encrypted export has an unsupported cipher format.');
-  const encKey = Buffer.from(hkdfSync('sha256', masterKey, Buffer.alloc(0), 'enc', 32));
-  const macKey = Buffer.from(hkdfSync('sha256', masterKey, Buffer.alloc(0), 'mac', 32));
+  // Bitwarden treats the derived master key as an HKDF PRK and performs Expand
+  // directly (one SHA-256 block), rather than running HKDF-Extract again.
+  const expand = (info:string) => createHmac('sha256',masterKey).update(info).update(Buffer.from([1])).digest();
+  const encKey = expand('enc'), macKey = expand('mac');
   const iv = b64(match[1]), ciphertext = b64(match[2]), expected = b64(match[3]);
   const actual = createHmac('sha256', macKey).update(iv).update(ciphertext).digest();
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw new BitwardenImportError('wrong_password', 'The export password is incorrect.');
