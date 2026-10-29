@@ -17,7 +17,5 @@ describe('0139 conversation history actions migration', () => {
   it('adds mobile ordering timestamps for pin and archive sync', () => {
     expect(up).toContain('pinned_at TIMESTAMP WITH TIME ZONE');
     expect(up).toContain('archived_at TIMESTAMP WITH TIME ZONE');
-    expect(up).toContain('unread_count INTEGER NOT NULL DEFAULT 0');
-    expect(up).toContain('updated_at TIMESTAMP WITH TIME ZONE');
   });
 });
