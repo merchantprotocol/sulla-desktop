@@ -20,6 +20,8 @@ import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { routeChatAgent, type ReflexRouteResult } from '../reflex/ReflexService';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
+import { cleanVoiceTurnId } from '../utils/voiceTurn';
+import { isModelRoutingAlias } from '../languagemodels/modelSlotRouting';
 import { abortJob, getJobsForParentThread, markCompletionDelivered } from '../tools/agents/jobRegistry';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
@@ -158,7 +160,10 @@ export class BackendGraphWebSocketService {
     // or model switch inside that turn must reuse it: recreating it removed the container under the
     // running turn ("No such container"). Both providers' homes are mounted in every container.
     const inUse = this.hasActiveRun(channelId, threadId);
-    if (existing && !existing.lifecycle.closed && ((existing.provider === provider && existing.model === model) || inUse)) {
+    // Slot/tier aliases ('primary', 'fast', …) pin nothing in the container, so
+    // switching between them (typed turn → voice agent) keeps the warm container.
+    const pinned = (value: string | undefined) => (isModelRoutingAlias(value) ? undefined : value);
+    if (existing && !existing.lifecycle.closed && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
       clearTimeout(existing.idleTimer);
       return existing.lifecycle;
     }
@@ -578,6 +583,9 @@ export class BackendGraphWebSocketService {
       // Track input modality so downstream nodes can adapt (e.g. voice → TTS).
       // Reset each dispatch so keyboard messages don't inherit a prior voice flag.
       (state.metadata as any).inputSource = inputSource || 'keyboard';
+      // Content-free trace id of a spoken turn; BaseNode/SpeakExtractor stamp
+      // their [VoiceTrace] spans with it. Reset per dispatch like inputSource.
+      (state.metadata as any).voiceTurnId = cleanVoiceTurnId(metadata?.voiceTurnId);
 
       // Inter-agent wake: propagate replyToThread so ChannelTagExtractor on this
       // agent can include toThreadId when routing responses back to the caller.

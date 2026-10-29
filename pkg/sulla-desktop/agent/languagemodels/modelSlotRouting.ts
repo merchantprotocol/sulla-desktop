@@ -25,3 +25,14 @@ export function resolveModelSlot(metadata: Record<string, unknown> | null | unde
 
   return (metadata as any)?.isSubAgent ? 'subconscious' : 'primary';
 }
+
+const MODEL_ROUTING_ALIASES = new Set(['primary', 'secondary', 'subconscious', 'fast', 'balanced', 'powerful']);
+
+/**
+ * Slot names ('primary', 'subconscious', …) and tier names ('fast', …) are
+ * what agent definitions store in place of a model id. They resolve to a real
+ * model at run time, so they must never be pinned as a provider model id.
+ */
+export function isModelRoutingAlias(model: string | null | undefined): boolean {
+  return !!model && MODEL_ROUTING_ALIASES.has(model.trim().toLowerCase());
+}

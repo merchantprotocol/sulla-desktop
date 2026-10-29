@@ -45,6 +45,7 @@ import {
   type ProviderName,
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
+import { isModelRoutingAlias } from '../languagemodels/modelSlotRouting';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -1196,7 +1197,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           provider,
           accountId,
           authMode,
-          models:         run.provider === provider && run.model && run.model !== provider ? [run.model] : undefined,
+          // A slot/tier alias ('primary', 'fast', …) is not a model id; pinning
+          // it denied every real request the CLI made through this bridge.
+          models:         run.provider === provider && run.model && run.model !== provider && !isModelRoutingAlias(run.model) ? [run.model] : undefined,
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
           signal:         lifecycleAbort.signal,

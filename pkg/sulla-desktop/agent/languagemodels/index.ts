@@ -19,7 +19,7 @@
 
 import { BaseLanguageModel } from './BaseLanguageModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
-import { isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
+import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
@@ -303,7 +303,7 @@ class LLMRegistryImpl {
 
       const modelOverride = model
         ? (isTierName(model)
-          ? await resolveTierToModelId(effectiveProvider, model)
+          ? (await resolveTierToModelId(effectiveProvider, model)) ?? cliTierModelId(effectiveProvider, model)
           : model)
         : undefined;
 

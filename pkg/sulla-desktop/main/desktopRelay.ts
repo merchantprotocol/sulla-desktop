@@ -52,6 +52,7 @@ import {
 } from '@pkg/main/mobileRelayContent';
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import { validateChatSelection } from '@pkg/main/chatSelection';
+import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 
@@ -104,6 +105,8 @@ interface IncomingMessage {
   modelId?:        string;
   agentId?:        string;
   voiceMode?:      boolean;
+  /** Content-free trace id of a spoken turn (`vt_…`), for [VoiceTrace] spans. */
+  voiceTurnId?:    string;
   /**
    * When the mobile picks a specific desktop to route to (AI Assistant →
    * Which Desktop), the chat payload carries that device's id. The relay
@@ -884,11 +887,12 @@ export class DesktopRelayClient {
 
     this.ensureMobileChannelBridge();
 
+    // Spoken turns (voice mode, push-to-talk) run on the voice agent and its
+    // own fast model; only typed turns honour the phone's agent/model picker.
+    const voiceRoute = voiceTurnRoute(msg);
+    logVoiceSpan(voiceRoute?.voiceTurnId, 'desktop.relay_received');
     const savedPaths = await this.saveMobileAttachments(conversationId, msg.userMessageId, turn);
-    const selection = await validateChatSelection(msg);
-    const voiceSelection = msg.voiceMode
-      ? { ...selection, agentId: 'conversationalist' }
-      : selection;
+    const selection = voiceRoute ?? await validateChatSelection(msg);
 
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
@@ -908,9 +912,9 @@ export class DesktopRelayClient {
         threadId: conversationId,
         metadata: {
           source:         'mobile-relay',
-          inputSource:    msg.voiceMode ? 'voice' : 'keyboard',
+          inputSource:    voiceRoute ? 'voice' : 'keyboard',
           conversationId,
-          ...voiceSelection,
+          ...selection,
           ...(turn.images.length ? { attachments: turn.images } : {}),
         },
       },
@@ -982,8 +986,10 @@ export class DesktopRelayClient {
     // before the WS send: committed turns must survive even if the phone is
     // asleep and the frame is never delivered. The id is derived here (not
     // awaited from the scribe) so mobile persists under this SAME id and the
-    // two copies dedup to one row after sync.
-    const commitAssistantText = async(threadId: string, text: string) => {
+    // two copies dedup to one row after sync. `spoken` marks a <speak>
+    // sentence: mobile reads it aloud on arrival, queued behind the previous
+    // sentence, instead of waiting for its DB reload and interrupting.
+    const commitAssistantText = async(threadId: string, text: string, spoken = false) => {
       lastActivityByThread.delete(threadId);
       finalTextByThread.set(threadId, text);
       streamedByThread.delete(threadId);
@@ -991,7 +997,7 @@ export class DesktopRelayClient {
       const id = deriveMessageId(threadId, 'assistant', text, ts);
       lastCommittedIdByThread.set(threadId, id);
       await this.scribeTurn(threadId, 'assistant', text, { id, ts });
-      this.sendChatFrame(threadId, { type: 'message', content: text, id });
+      this.sendChatFrame(threadId, { type: 'message', content: text, id, ...(spoken ? { spoken: true } : {}) });
     };
 
     const handleMessage = async(msg: WebSocketMessage) => {
@@ -999,7 +1005,10 @@ export class DesktopRelayClient {
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
         const text = typeof data.text === 'string' ? data.text.trim() : '';
-        if (threadId && text) await commitAssistantText(threadId, text);
+        if (threadId && text) {
+          await commitAssistantText(threadId, text, true);
+          logVoiceSpan(data.voiceTurnId, 'desktop.speak_relayed', { size: text.length });
+        }
         return;
       }
       if (msg.type === 'progress') {

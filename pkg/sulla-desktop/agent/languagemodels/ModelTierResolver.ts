@@ -90,6 +90,25 @@ async function getApiKeyForProvider(providerId: string): Promise<string> {
   }
 }
 
+// CLI providers pick their own default model, which is their heaviest one.
+// An agent that explicitly declares the 'fast' tier (the voice agent) gets the
+// provider's light model instead. Same ids the built-in Haiku and Codex Luna
+// workers already run on.
+const CLI_FAST_MODELS: Record<string, string> = {
+  'claude-code': 'claude-haiku-5-5',
+  codex:         'gpt-5.6-luna',
+};
+
+/**
+ * Light model for a CLI provider when an agent asks for the 'fast' tier by
+ * name. Undefined for other tiers and providers (the CLI picks its default).
+ * Deliberately NOT applied inside resolveTierToModelId: the subconscious and
+ * heartbeat slots default to 'fast' too, and they keep their current model.
+ */
+export function cliTierModelId(providerId: string, tier: ModelTier): string | undefined {
+  return tier === 'fast' ? CLI_FAST_MODELS[providerId] : undefined;
+}
+
 /**
  * Resolves a tier name to the best available model ID for a provider.
  *
