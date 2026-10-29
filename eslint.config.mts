@@ -15,6 +15,8 @@ import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescri
 import pluginVue from 'eslint-plugin-vue';
 import globals from 'globals';
 
+import { agentCorePortableRules } from './packages/agent-core/eslint-rules.mjs';
+
 export default defineConfigWithVueTs(
   eslint.configs.recommended,
   pluginVue.configs['flat/recommended'],
@@ -89,6 +91,12 @@ export default defineConfigWithVueTs(
       'no-global-assign':                                  ['error', { exceptions: ['console'] }],
       'vue/comma-dangle':                                  ['error', 'always-multiline'],
     },
+  },
+  {
+    // The portable agent loop must run unchanged on Node, Workers and Hermes.
+    name:  'agent-core-portable',
+    files: ['packages/agent-core/src/**/*.ts'],
+    rules: agentCorePortableRules,
   },
   {
     name:            'sulla-desktop-vue',
