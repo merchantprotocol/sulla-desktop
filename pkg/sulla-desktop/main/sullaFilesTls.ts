@@ -9,10 +9,12 @@ import path from 'node:path';
 import Electron from 'electron';
 
 import { verifyVaultCertificate } from './vaultTlsVerifier';
+import { serviceOrigin } from './serviceDirectory';
 
 import paths from '@pkg/utils/paths';
 
-export const FILES_HTTPS_ORIGIN = 'https://127.0.0.1:30124';
+/** Resolve at use time so conflict-driven reassignment is observed everywhere. */
+export const filesHttpsOrigin = (): string => serviceOrigin('files', 'https');
 const SESSION_PARTITION = 'sulla-files-service';
 
 let pinnedFingerprint:Promise<string> | undefined;
@@ -63,6 +65,6 @@ async function getSession():Promise<Electron.Session> {
 /** Dedicated pinned Electron transport for local Files requests. */
 export async function desktopFilesFetch(input:string | URL, init?:RequestInit):Promise<Response> {
   const url = new URL(input);
-  if (url.origin !== FILES_HTTPS_ORIGIN) throw new Error('Pinned Files transport rejected a nonlocal destination');
+  if (url.origin !== filesHttpsOrigin()) throw new Error('Pinned Files transport rejected a nonlocal destination');
   return (await getSession()).fetch(url.toString(), init);
 }

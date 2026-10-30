@@ -18,6 +18,7 @@ import { app } from 'electron';
 
 import { getDesktopVaultClient } from './DesktopVaultClient';
 
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 import paths from '@pkg/utils/paths';
 
 export const VAULT_PREFIX = '$VAULT$';
@@ -100,6 +101,9 @@ export class VaultKeyService {
           SULLA_VAULT_MASTER_KEY_PATH:         this.masterKeyPath,
           SULLA_VAULT_LEGACY_VMK_PATH:         this.legacyVmkPath,
           SULLA_VAULT_TLS_FINGERPRINT_PATH:    this.tlsFingerprintPath,
+          // Child Electron processes do not share the main process's module
+          // state. Hand them the already-resolved origin explicitly.
+          SULLA_VAULT_BOOTSTRAP_ORIGIN:         serviceOrigin('vault', 'https'),
         },
       });
       let output = '';

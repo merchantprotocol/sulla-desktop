@@ -27,6 +27,7 @@ import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { sullaLog } from '@pkg/utils/sullaLog';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
+import { resolveServicePort, servicePort } from '@pkg/main/serviceDirectory';
 
 /**
  * Represents the current or desired state of the backend/main process.
@@ -50,7 +51,6 @@ type DispatchFunctionType = (request: express.Request, response: express.Respons
 type HttpMethod = 'get' | 'put' | 'post';
 
 const console = Logging.server;
-const SERVER_PORT = 6107;
 const SERVER_FILE_BASENAME = 'rd-engine.json';
 const MAX_REQUEST_BODY_LENGTH = 4194304; // 4MiB
 
@@ -60,14 +60,14 @@ export class HttpCommandServer {
   protected readonly externalState: ServerState = {
     user:     'user',
     password: serverHelper.randomStr(),
-    port:     SERVER_PORT,
+    port:     servicePort('command'),
     pid:      process.pid,
   };
 
   protected readonly interactiveState: ServerState = {
     user:     'interactive-user',
     password: serverHelper.randomStr(),
-    port:     SERVER_PORT,
+    port:     servicePort('command'),
     pid:      process.pid,
   };
 
@@ -122,6 +122,9 @@ export class HttpCommandServer {
 
   async init() {
     const localHost = '127.0.0.1';
+    const port = await resolveServicePort('command');
+    this.externalState.port = port;
+    this.interactiveState.port = port;
     const statePath = path.join(paths.appHome, SERVER_FILE_BASENAME);
 
     await fs.promises.mkdir(paths.appHome, { recursive: true });
@@ -134,7 +137,7 @@ export class HttpCommandServer {
       .disable('x-powered-by')
       .use(this.handleCORS)
       .use(this.checkAuth)
-      .listen(SERVER_PORT, localHost)
+      .listen(port, localHost)
       .on('error', (err) => {
         console.log(`Error: ${ err }`);
       });

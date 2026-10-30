@@ -6,8 +6,8 @@
 /** Local service clients for Files sync v1. Main only relays metadata and signatures. */
 import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broker/desktopTransport';
 import { getSullaFilesClient, FilesApiError } from '@pkg/main/sullaFilesClient';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
-const VAULT = 'https://127.0.0.1:30135';
 const files = getSullaFilesClient();
 
 export interface FilesSyncCollectionStatus {
@@ -32,7 +32,7 @@ async function filesJson<T>(path:string, init:RequestInit={}):Promise<T> {
 }
 async function vaultJson<T>(path:string, body:Record<string,unknown>):Promise<T> {
   const identity=await loadDesktopApprovalIdentity();
-  const response=await desktopVaultFetch(`${VAULT}${path}`,{method:'POST',headers:{authorization:`Bearer ${identity.serviceToken}`,'content-type':'application/json','x-sulla-service-id':identity.serviceId},body:JSON.stringify(body)});
+  const response=await desktopVaultFetch(`${serviceOrigin('vault', 'https')}${path}`,{method:'POST',headers:{authorization:`Bearer ${identity.serviceToken}`,'content-type':'application/json','x-sulla-service-id':identity.serviceId},body:JSON.stringify(body)});
   const payload=await response.json().catch(()=>({})) as Record<string,any>;
   if(!response.ok) throw new FilesSyncClientError(String(payload.error||`http_${response.status}`),response.status,payload.message);
   return payload as T;

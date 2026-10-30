@@ -9,12 +9,14 @@ import path from 'node:path';
 import Electron from 'electron';
 
 import { verifyVaultCertificate } from './vaultTlsVerifier';
+import { serviceOrigin } from './serviceDirectory';
 
 import paths from '@pkg/utils/paths';
 
 export { vaultCertificateMetadataMatches, verifyVaultCertificate } from './vaultTlsVerifier';
 
-export const VAULT_HTTPS_ORIGIN = 'https://127.0.0.1:30135';
+/** Resolve at use time so conflict-driven reassignment is observed everywhere. */
+export const vaultHttpsOrigin = (): string => serviceOrigin('vault', 'https');
 
 let pinnedFingerprint: Promise<string> | undefined;
 const pinnedSessions = new Set<WeakRef<Electron.Session>>();

@@ -22,12 +22,13 @@ import {
 import { SullaFilesKeychain } from './sullaFilesKeychain';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 
-const API = 'https://127.0.0.1:30124';
 const CALLER_ID = 'sulla-desktop-files-bootstrap';
 
 function requiredEnv(name:string):string {
   const value = process.env[name]; if (!value) throw new Error(`${ name } is required`); return value;
 }
+
+const API = requiredEnv('SULLA_FILES_BOOTSTRAP_ORIGIN');
 function requiredAbsolutePath(name:string):string {
   const value = requiredEnv(name);
   if (!path.isAbsolute(value) || value.includes('\0')) throw new Error(`${ name } is invalid`);

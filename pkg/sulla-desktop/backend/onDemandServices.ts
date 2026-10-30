@@ -19,10 +19,11 @@
 
 import { THREAT_PROXY_CONTAINER } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
+import { composeFilePath, composeProjectName, serviceContainerName } from '@pkg/utils/serviceNamespace';
 
 const console = Logging.sullaRuntime;
 
-export const SULLA_COMPOSE_COMMAND = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'] as const;
+export const SULLA_COMPOSE_COMMAND = ['docker', 'compose', '-f', composeFilePath, '-p', composeProjectName] as const;
 
 /** Runs argv in the guest as root and resolves with stdout. */
 export type OnDemandGuestRunner = (args: string[]) => Promise<string>;
@@ -34,9 +35,9 @@ const START_TIMEOUT_MS = 90_000;
 const REAPER_INTERVAL_MS = 60_000;
 
 export const ON_DEMAND_SERVICES: Readonly<Record<OnDemandServiceName, string>> = {
-  python_runtime: 'sulla_python_runtime',
-  shell_runtime:  'sulla_shell_runtime',
-  node_runtime:   'sulla_node_runtime',
+  python_runtime: serviceContainerName('python_runtime'),
+  shell_runtime:  serviceContainerName('shell_runtime'),
+  node_runtime:   serviceContainerName('node_runtime'),
   threat_proxy:   THREAT_PROXY_CONTAINER,
 };
 

@@ -7,10 +7,9 @@ import { randomUUID } from 'node:crypto';
 
 import Electron, { WebContentsView } from 'electron';
 
-import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
+import { configureVaultPinnedSession, vaultHttpsOrigin } from '@pkg/main/vaultTls';
 import { getWindow } from '@pkg/window';
 
-const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
 const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
 // The guided connect screen navigates here after saving a new integration account.
@@ -130,12 +129,12 @@ export class VaultViewManager {
     isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     isolatedSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       try {
-        callback({ cancel: new URL(details.url).origin !== VAULT_ORIGIN });
+        callback({ cancel: new URL(details.url).origin !== vaultHttpsOrigin() });
       } catch {
         callback({ cancel: true });
       }
     });
-    isolatedSession.webRequest.onHeadersReceived({ urls: [`${ VAULT_ORIGIN }/*`] }, (details, callback) => {
+    isolatedSession.webRequest.onHeadersReceived({ urls: [`${ vaultHttpsOrigin() }/*`] }, (details, callback) => {
       const headers = { ...details.responseHeaders };
       headers['Content-Security-Policy'] = [
         "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
@@ -158,17 +157,17 @@ export class VaultViewManager {
     view.webContents.on('will-navigate', (event, url) => {
       try {
         const target = new URL(url);
-        if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
+        if (target.origin === vaultHttpsOrigin() && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
           event.preventDefault();
           getWindow('main-agent')?.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
-        } else if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_CONNECTED_PATH) {
+        } else if (target.origin === vaultHttpsOrigin() && target.pathname === DESKTOP_CONNECTED_PATH) {
           event.preventDefault();
           const integrationId = target.searchParams.get('integration') ?? '';
           const accountId = target.searchParams.get('account') ?? '';
           if (SAFE_ID.test(integrationId) && SAFE_ID.test(accountId)) {
             getWindow('main-agent')?.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
           }
-        } else if (target.origin !== VAULT_ORIGIN) {
+        } else if (target.origin !== vaultHttpsOrigin()) {
           event.preventDefault();
         }
       } catch { event.preventDefault() }
@@ -184,7 +183,7 @@ export class VaultViewManager {
 
   private validateUrl(raw: string): URL {
     const url = new URL(raw);
-    if (url.origin !== VAULT_ORIGIN || !url.pathname.startsWith('/vault/')) throw new Error('Invalid vault UI URL');
+    if (url.origin !== vaultHttpsOrigin() || !url.pathname.startsWith('/vault/')) throw new Error('Invalid vault UI URL');
     return url;
   }
 

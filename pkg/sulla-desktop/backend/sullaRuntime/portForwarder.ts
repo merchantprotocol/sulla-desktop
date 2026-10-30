@@ -7,6 +7,7 @@ import http from 'http';
 import net from 'net';
 
 import Logging from '@pkg/utils/logging';
+import { resolveServicePort } from '@pkg/main/serviceDirectory';
 
 const console = Logging.sullaRuntime;
 
@@ -23,6 +24,8 @@ interface ContainerPort {
   Type:        string;
 }
 
+interface ContainerSummary { Names?: string[]; Ports?: ContainerPort[]; Labels?: Record<string, string> }
+
 /**
  * Makes published container ports reachable on the Mac. It follows Docker
  * over the runtime's docker.sock (one container listing, then the event
@@ -32,6 +35,8 @@ interface ContainerPort {
  */
 export class SullaRuntimePortForwarder {
   readonly #listeners = new Map<number, net.Server>();
+  readonly #servicePorts = new Map<string, number>();
+  readonly #guestPorts = new Map<number, number>();
   // Ports another Mac process owns; retried once no container publishes them.
   readonly #unavailable = new Set<number>();
   #events: http.ClientRequest | undefined;
@@ -39,7 +44,11 @@ export class SullaRuntimePortForwarder {
   #reconnectTimer: NodeJS.Timeout | undefined;
   #syncing: Promise<void> = Promise.resolve();
 
-  constructor(private readonly dockerSocket: string, private readonly guestSocket: string) {}
+  constructor(
+    private readonly dockerSocket: string,
+    private readonly guestSocket: string,
+    private readonly onReassigned?: (service: string) => void,
+  ) {}
 
   start(): void {
     this.#stopped = false;
@@ -56,6 +65,8 @@ export class SullaRuntimePortForwarder {
       this.#listeners.delete(port);
     }
     this.#unavailable.clear();
+    this.#servicePorts.clear();
+    this.#guestPorts.clear();
   }
 
   get forwardedPorts(): number[] {
@@ -108,29 +119,41 @@ export class SullaRuntimePortForwarder {
   protected async sync(): Promise<void> {
     if (this.#stopped) return;
     const containers = await this.listContainers();
-    const wanted = new Set<number>();
+    const wanted = new Map<number, { guestPort: number; service: string }>();
 
     for (const container of containers) {
       for (const port of container.Ports ?? []) {
-        if (port.Type === 'tcp' && port.PublicPort) wanted.add(port.PublicPort);
+        if (port.Type === 'tcp' && port.PublicPort) {
+          const service = this.serviceName(container.Labels?.['com.docker.compose.service'] ?? container.Names?.[0] ?? '', port.PrivatePort);
+          const hostPort = await resolveServicePort(service, this.#servicePorts.get(service));
+          wanted.set(hostPort, { guestPort: port.PublicPort, service });
+        }
       }
     }
     for (const [port, server] of this.#listeners) {
       if (!wanted.has(port)) {
         server.close();
         this.#listeners.delete(port);
+        this.#guestPorts.delete(port);
+        for (const [service, servicePort] of this.#servicePorts) if (servicePort === port) this.#servicePorts.delete(service);
         console.log(`[sulla-runtime] stopped forwarding 127.0.0.1:${ port }`);
       }
     }
     for (const port of this.#unavailable) {
       if (!wanted.has(port)) this.#unavailable.delete(port);
     }
-    for (const port of wanted) {
-      if (!this.#listeners.has(port) && !this.#unavailable.has(port)) this.listen(port);
+    for (const [port, target] of wanted) {
+      if (this.#listeners.has(port) && this.#guestPorts.get(port) !== target.guestPort) {
+        const existing = this.#listeners.get(port);
+        if (existing) await new Promise<void>(resolve => existing.close(() => resolve()));
+        this.#listeners.delete(port);
+        this.#guestPorts.delete(port);
+      }
+      if (!this.#listeners.has(port) && !this.#unavailable.has(port)) this.listen(port, target.guestPort, target.service);
     }
   }
 
-  protected listContainers(): Promise<Array<{ Ports?: ContainerPort[] }>> {
+  protected listContainers(): Promise<ContainerSummary[]> {
     return new Promise((resolve, reject) => {
       const request = http.get({ socketPath: this.dockerSocket, path: '/containers/json' }, (response) => {
         let body = '';
@@ -157,19 +180,48 @@ export class SullaRuntimePortForwarder {
     });
   }
 
-  protected listen(port: number): void {
-    const server = net.createServer({ allowHalfOpen: true }, client => this.relay(client, port));
+  protected serviceName(containerName: string, privatePort: number): string {
+    const clean = containerName.replace(/^\//, '').replace(/^sulla_/, '');
+    const aliases: Record<string, string> = {
+      accounts: 'accounts',
+      vault: 'vault',
+      relay: 'relay',
+      tools: 'tools',
+      files: 'files',
+      sulla_accounts: 'accounts',
+      sulla_vault: 'vault',
+      sulla_relay: 'relay',
+      sulla_files: 'files',
+      workflow_manager: 'workflows',
+      python_runtime: 'runtime-python',
+      shell_runtime: 'runtime-shell',
+      node_runtime: 'runtime-node',
+    };
+    return (aliases[clean] ?? clean) || `container-${ privatePort }`;
+  }
+
+  protected listen(port: number, guestPort: number, service: string): void {
+    const server = net.createServer({ allowHalfOpen: true }, client => this.relay(client, guestPort));
 
     this.#listeners.set(port, server);
+    this.#guestPorts.set(port, guestPort);
+    this.#servicePorts.set(service, port);
     server.on('error', (error: NodeJS.ErrnoException) => {
       // Something else on the Mac owns the port; carry on without it.
       console.warn(`[sulla-runtime] cannot forward 127.0.0.1:${ port }: ${ error.code ?? error.message }`);
       if (this.#listeners.get(port) === server) {
         this.#listeners.delete(port);
+        this.#guestPorts.delete(port);
+        this.#servicePorts.delete(service);
         this.#unavailable.add(port);
+        void resolveServicePort(service).then((reassignedPort) => {
+          this.#unavailable.delete(port);
+          if (reassignedPort !== port) this.onReassigned?.(service);
+          this.scheduleSync();
+        }).catch(resolveError => console.warn(`[ports] could not reassign ${ service }:`, resolveError));
       }
     });
-    server.listen(port, '127.0.0.1', () => console.log(`[sulla-runtime] forwarding 127.0.0.1:${ port }`));
+    server.listen(port, '127.0.0.1', () => console.log(`[sulla-runtime] forwarding ${ service } on 127.0.0.1:${ port } -> guest:${ guestPort }`));
   }
 
   protected relay(client: net.Socket, port: number): void {

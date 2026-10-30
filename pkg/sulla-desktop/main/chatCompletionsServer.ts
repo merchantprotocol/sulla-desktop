@@ -21,10 +21,10 @@ import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeItemExecution
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
 import paths from '@pkg/utils/paths';
+import { resolveServicePort, serviceOrigin, servicePort } from './serviceDirectory';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
 
@@ -196,7 +196,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  CHAT_COMPLETIONS_PORT,
+      port:  servicePort('chat'),
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -1289,7 +1289,7 @@ export class ChatCompletionsServer {
         // stopped/unhealthy container falls through to today's in-process path.
         if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
           try {
-            const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
+            const health = await fetch(`${ serviceOrigin('tools') }/healthz`, { signal: AbortSignal.timeout(300) });
             if (health.ok) {
               const now = Math.floor(Date.now() / 1000);
               const capability = issueCapabilityToken(executionContext ? {
@@ -1304,7 +1304,7 @@ export class ChatCompletionsServer {
                 sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
                 scopes: [`${ canonicalCategory }/*`], expiresInSeconds: 60,
               }, deriveCapabilitySigningKey(this.apiToken!));
-              const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
+              const upstream = await fetch(`${ serviceOrigin('tools') }/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
                 method:  'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1874,7 +1874,8 @@ export class ChatCompletionsServer {
     }
   }
 
-  async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
+  async start(port?: number): Promise<void> {
+    port ??= await resolveServicePort('chat');
     await this.loadApiToken();
     return new Promise((resolve, reject) => {
       try {

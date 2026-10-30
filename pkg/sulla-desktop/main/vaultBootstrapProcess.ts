@@ -34,7 +34,6 @@ import { bootstrapUnlockProofInputForSealed } from '../../../services/sulla-vaul
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 import { openVaultCacheEnvelope, sealLegacyVaultKey } from './vaultCacheEnvelope';
 
-const API = 'https://127.0.0.1:30135';
 const CALLER_ID = 'sulla-desktop-bootstrap';
 
 function requiredEnv(name: string): string {
@@ -42,6 +41,8 @@ function requiredEnv(name: string): string {
   if (!value) throw new Error(`${ name } is required for the vault bootstrap helper`);
   return value;
 }
+
+const API = requiredEnv('SULLA_VAULT_BOOTSTRAP_ORIGIN');
 
 function hmac(key: Buffer, value: string): string {
   return createHmac('sha256', key).update(value, 'utf8').digest('base64url');

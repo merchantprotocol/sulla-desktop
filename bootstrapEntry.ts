@@ -4,6 +4,12 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { app } from 'electron';
+import { isDefaultServiceNamespace, namespacedAppPath } from '@pkg/utils/serviceNamespace';
+
+// Namespace must be applied before importing the normal main graph: Electron's
+// single-instance lock, Cookies, Local Storage and fallback settings all derive
+// from userData. Production keeps its historical path byte-for-byte.
+if (!isDefaultServiceNamespace) app.setPath('userData', namespacedAppPath(app.getPath('userData')));
 
 // The bootstrap helper branch executes before importing any normal Desktop
 // modules, IPC handlers, browser registries, agent services, or logging.

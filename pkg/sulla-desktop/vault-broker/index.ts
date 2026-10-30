@@ -59,9 +59,9 @@ export {
   type ProviderCliName,
   type ProviderCliOpaqueConfig,
 } from './providerCliBridge';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
-const DESKTOP_VAULT_ENDPOINT = 'https://127.0.0.1:30135';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // Sulla Cloud relay events carry a <=1 MiB frame as an escaped JSON string.
 const MAX_RELAY_EVENT_LINE_BYTES = 4 * 1024 * 1024;
@@ -573,7 +573,7 @@ export function getConfiguredCredentialBroker(): LocalVaultBrokerClient | null {
     );
   } else if (isElectronMainProcess()) {
     configuredBroker = new LocalVaultBrokerClient(
-      DESKTOP_VAULT_ENDPOINT,
+      serviceOrigin('vault', 'https'),
       desktopBrokerIdentity,
       desktopVaultFetch,
     );
@@ -593,7 +593,7 @@ export function requireConfiguredCredentialBroker(): LocalVaultBrokerClient {
 export function getConfiguredApprovalClient(): LocalVaultApprovalClient | null {
   if (configuredApproval !== undefined) return configuredApproval;
   configuredApproval = isElectronMainProcess()
-    ? new LocalVaultApprovalClient(DESKTOP_VAULT_ENDPOINT, desktopApprovalIdentity, desktopVaultFetch)
+    ? new LocalVaultApprovalClient(serviceOrigin('vault', 'https'), desktopApprovalIdentity, desktopVaultFetch)
     : null;
   return configuredApproval;
 }

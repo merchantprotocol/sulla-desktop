@@ -35,6 +35,8 @@ import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/a
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
+import { resolveServicePort, SERVICE_CONTAINER_PORTS, serviceOrigin, servicePort } from '@pkg/main/serviceDirectory';
+import { composeFilePath, composeNetworkName, composeProjectName, serviceContainerName } from '@pkg/utils/serviceNamespace';
 import { assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaRuntimeActive, SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest } from './sullaRuntime/state';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -406,7 +408,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenFile, JSON.stringify({
       token: sullaApiToken,
-      port:  3000,
+      port:  servicePort('chat'),
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     const sullaEnv = `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.sulla.internal\n`;
@@ -564,7 +566,16 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#containerEngineClient = new MobyClient(this, `unix://${ dockerSocket }`);
     await this.progressTracker.action('Setting docker context', 50,
       dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
-    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest);
+    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest, (service) => {
+      if (service !== 'vault') return;
+      // The vault allow-list contains its exact human UI origin. Recreate the
+      // Compose service after a late Mac-port collision so the container and
+      // every Desktop caller move together. An unlocked in-memory vault is
+      // intentionally locked by that restart and must be unlocked again.
+      void this.reconcileManagedServicesWithRetries(generation, config).catch(error => {
+        console.warn('[ports] could not recreate vault after origin reassignment:', error);
+      });
+    });
     this.#sullaRuntimeForwarder.start();
 
     await this.progressTracker.action('Writing sulla environment', 50, this.writeGuestSullaEnv());
@@ -1042,7 +1053,16 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   private async prepareSullaComposeFile(): Promise<void> {
+    // Resolve before rendering origins into container configuration. This is
+    // deliberately independent of the vault: first-run can always progress.
+    for (const service of [
+      'postgres', 'redis', 'runtime-python', 'runtime-shell', 'runtime-node',
+      'accounts', 'vault', 'workflows', 'relay', 'tools', 'files',
+    ]) await resolveServicePort(service);
     const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+    for (const [service, definition] of Object.entries(compose.services) as Array<[string, any]>) {
+      definition.container_name = serviceContainerName(service);
+    }
 
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
@@ -1101,13 +1121,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       compose.services.sulla_accounts = {
         ...composeImageFields(accountsImage),
         image:          resolvedAccountsImage,
-        container_name: 'sulla_accounts',
+        container_name: serviceContainerName('accounts'),
         depends_on:     { postgres: { condition: 'service_healthy' } },
         environment:    {
           NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
-          SULLA_ACCOUNTS_PORT:                         '3020',
-          SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
+          SULLA_ACCOUNTS_PORT:                         String(SERVICE_CONTAINER_PORTS.accounts),
+          SULLA_ACCOUNTS_PUBLIC_URL:                   serviceOrigin('accounts'),
           SULLA_ACCOUNTS_DATABASE_HOST:                'postgres',
           SULLA_ACCOUNTS_DATABASE_PORT:                '5432',
           SULLA_ACCOUNTS_DATABASE_NAME:                'sulla_accounts',
@@ -1117,13 +1137,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE:   '/run/sulla-accounts-source/session.secret',
           SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
         },
-        ports:   ['127.0.0.1:3020:3020'],
+        ports:   [`127.0.0.1::${ SERVICE_CONTAINER_PORTS.accounts }`],
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
         mem_limit:    '256m',
         healthcheck: {
-          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
+          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', `http://127.0.0.1:${ SERVICE_CONTAINER_PORTS.accounts }/readyz`],
           interval: '5s',
           timeout:  '3s',
           retries:  10,
@@ -1159,7 +1179,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       compose.services.sulla_vault = {
         ...composeImageFields(vaultImage),
         image,
-        container_name: 'sulla_vault',
+        container_name: serviceContainerName('vault'),
         labels: { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint },
         depends_on: { postgres: { condition: 'service_healthy' } },
         environment: {
@@ -1179,12 +1199,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_VAULT_AUDIT_SPOOL_DIR: '/var/lib/sulla-vault',
           SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
           NODE_EXTRA_CA_CERTS: '/run/sulla-files-ca/tls.crt',
-          SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
+          SULLA_VAULT_HUMAN_UI_ORIGIN: serviceOrigin('vault', 'https'),
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
-        ports: ['127.0.0.1:30135:8787'],
+        ports: ['127.0.0.1::8787'],
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
@@ -1214,7 +1234,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // Source checkouts retain their Dockerfile build; published images are
       // refreshed by the common managed-image reconciliation path.
       ...(workflowImage.build ? { pull_policy: 'build' } : {}),
-      container_name: 'sulla_workflow_manager',
+      container_name: serviceContainerName('workflow_manager'),
       // The manager alone needs Docker socket access to launch short-lived
       // runners. Runners retain the image's unprivileged `node` user and are
       // granted only the socket GID discovered by the manager.
@@ -1234,12 +1254,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
-        SULLA_TOOL_API_URL: 'http://host.docker.internal:3000',
+        SULLA_TOOL_API_URL: `http://host.docker.internal:${ servicePort('chat') }`,
         SULLA_WORKFLOW_IMAGE: image,
-        SULLA_DOCKER_NETWORK: 'sulla_default',
+        SULLA_DOCKER_NETWORK: composeNetworkName,
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
-      ports: ['127.0.0.1:30122:8788'],
+      ports: ['127.0.0.1::8788'],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
@@ -1264,7 +1284,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     compose.services.sulla_relay = {
       ...composeImageFields(relayImage),
       image: resolvedRelayImage,
-      container_name: 'sulla_relay',
+      container_name: serviceContainerName('relay'),
       depends_on: { redis: { condition: 'service_healthy' } },
       environment: {
         NODE_OPTIONS: serviceNodeOptions(128),
@@ -1273,7 +1293,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
         SULLA_RELAY_REPLICA_ID: 'desktop-local',
       },
-      ports: ['127.0.0.1:30126:8790'],
+      ports: ['127.0.0.1::8790'],
       restart: 'unless-stopped',
       mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1296,7 +1316,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     compose.services.tools = {
       ...composeImageFields(toolsImage),
       image: resolvedToolsImage,
-      container_name: 'sulla_tools',
+      container_name: serviceContainerName('tools'),
       labels: {
         'sulla.files-tls-fingerprint': filesTlsFingerprint,
         ...(vaultTlsFingerprint ? { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint } : {}),
@@ -1331,7 +1351,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
-      ports: ['127.0.0.1:30123:3000'],
+      ports: ['127.0.0.1::3000'],
       volumes: [
         ...(vaultIdentities ? [vaultTlsBind(true)] : []),
         filesTlsBind(true),
@@ -1354,7 +1374,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     compose.services.sulla_files = {
       ...composeImageFields(filesImage),
       image: resolvedFilesImage,
-      container_name: 'sulla_files',
+      container_name: serviceContainerName('files'),
       labels: {
         'sulla.files-tls-fingerprint': filesTlsFingerprint,
         ...(vaultTlsFingerprint ? { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint } : {}),
@@ -1405,7 +1425,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
-      ports: ['127.0.0.1:30124:8792'],
+      ports: ['127.0.0.1::8792'],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         '/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave',
@@ -1446,7 +1466,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       compose.services.sulla_files_fuse = {
         ...composeImageFields(fuseImage),
         image:          resolvedFuseImage,
-        container_name: 'sulla_files_fuse',
+        container_name: serviceContainerName('files_fuse'),
         environment: {
           SULLA_FILES_FUSE_URL:             'https://sulla_files:8792',
           SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
@@ -1528,7 +1548,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
-    await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
+    await this.writeFile(composeFilePath, composeYaml, 0o644);
   }
 
   /**
@@ -1603,7 +1623,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
     }
     await reconcileComposeService({
-      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
+      composeCommand: ['docker', 'compose', '-f', composeFilePath, '-p', composeProjectName],
       service:        'workflow_manager',
       run:            (...command) => this.execCommand({ root: true }, ...command),
       checkpoint:     () => this.assertManagedServicesGeneration(generation),
@@ -1631,10 +1651,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.assertManagedServicesGeneration(generation);
     await this.progressTracker.action('Verifying compose file', 62.5, async() => {
       try {
-        await this.execCommand({ root: true }, 'test', '-f', '/tmp/sulla-docker-compose.yml');
-        console.log('[Sulla] Compose file verified at /tmp/sulla-docker-compose.yml');
+        await this.execCommand({ root: true }, 'test', '-f', composeFilePath);
+        console.log(`[Sulla] Compose file verified at ${ composeFilePath }`);
       } catch {
-        console.warn('[Sulla] Compose file not found at /tmp/sulla-docker-compose.yml');
+        console.warn(`[Sulla] Compose file not found at ${ composeFilePath }`);
         throw new Error('Compose file verification failed');
       }
     });
@@ -1664,7 +1684,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     });
 
     await this.progressTracker.action('Deploying new containers', 63, async() => {
-      const composeCommand = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+      const composeCommand = ['docker', 'compose', '-f', composeFilePath, '-p', composeProjectName];
       const reconcileOptionalService = (service: string): Promise<void> => reconcileComposeService({
         composeCommand,
         service,
@@ -1698,7 +1718,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       };
 
       // Retire the old Desktop board container; preserve all database data.
-      await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);
+      await this.execCommand({ root: true }, 'docker', 'rm', '-f', serviceContainerName('projects')).catch(() => undefined);
 
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
@@ -1733,39 +1753,39 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       if (configuredServices.split(/\s+/).includes('sulla_accounts')) {
         try {
           const accountsDatabaseExists = await this.execCommand(
-            { capture: true, root: true }, 'docker', 'exec', 'sulla_postgres',
+            { capture: true, root: true }, 'docker', 'exec', serviceContainerName('postgres'),
             'psql', '-U', 'sulla', '-d', 'postgres', '-tAc', "SELECT 1 FROM pg_database WHERE datname='sulla_accounts'",
           );
           if (accountsDatabaseExists.trim() !== '1') {
             await this.execCommand(
-              { root: true }, 'docker', 'exec', 'sulla_postgres',
+              { root: true }, 'docker', 'exec', serviceContainerName('postgres'),
               'createdb', '-U', 'sulla', '--encoding=UTF8', '--template=template0', 'sulla_accounts',
             );
           }
-          optionalServices.push({ service: 'sulla_accounts', container: 'sulla_accounts' });
+          optionalServices.push({ service: 'sulla_accounts', container: serviceContainerName('accounts') });
         } catch (error) {
           console.warn('[Sulla] Accounts database provisioning failed; continuing without the optional service:', error);
         }
       }
 
       if (configuredServices.split(/\s+/).includes('sulla_files_fuse')) {
-        optionalServices.push({ service: 'sulla_files_fuse', container: 'sulla_files_fuse' });
+        optionalServices.push({ service: 'sulla_files_fuse', container: serviceContainerName('files_fuse') });
       }
 
       // Attempt dependencies before their consumers. Optional failure remains
       // isolated; a failed Vault explicitly suppresses Files for this generation.
       if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
-        optionalServices.push({ service: 'sulla_vault', container: 'sulla_vault' });
+        optionalServices.push({ service: 'sulla_vault', container: serviceContainerName('vault') });
         expectVaultContainer();
       }
       // The threat proxy is on demand too: the agent launcher starts it (and
       // waits for it) before any agent runs; until then the egress rules
       // refuse agent web traffic rather than let it out unscanned.
       optionalServices.push(
-        { service: 'sulla_relay', container: 'sulla_relay' },
-        { service: 'sulla_files', container: 'sulla_files' },
-        { service: 'workflow_manager', container: 'sulla_workflow_manager' },
-        { service: 'tools', container: 'sulla_tools' },
+        { service: 'sulla_relay', container: serviceContainerName('relay') },
+        { service: 'sulla_files', container: serviceContainerName('files') },
+        { service: 'workflow_manager', container: serviceContainerName('workflow_manager') },
+        { service: 'tools', container: serviceContainerName('tools') },
       );
       const orderedOptionalServices = optionalServices.sort((left, right) => {
         const order = ['sulla_vault', 'sulla_accounts', 'sulla_relay', 'sulla_files',

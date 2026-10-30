@@ -60,6 +60,8 @@ import {
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
+import { composeNetworkName } from '@pkg/utils/serviceNamespace';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
@@ -90,7 +92,7 @@ async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+    const healthy = await fetch(`${ serviceOrigin('tools') }/healthz`, { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
 
     if (healthy) return true;
@@ -1091,7 +1093,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       phase('filesActor', () => registerSullaFilesActor(containerId!, agentId, run.jobId)),
       // `docker network connect` is not safe to replay after a lost response:
       // Docker rejects a second connect, so leave this one-shot and visible.
-      phase('network', () => guestExec(connectServiceNetworkCommand('sulla_default', containerName))),
+      phase('network', () => guestExec(connectServiceNetworkCommand(composeNetworkName, containerName))),
     ]);
     await phase('start', () => retryIdempotent(
       () => runtime.start(containerId!), STARTUP_RETRY_DELAYS_MS, 'agent container start', message => log.warn(`[AgentContainer] ${ message }`),
@@ -1428,7 +1430,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     });
     await registerSullaFilesActor(containerId, metadata.agentId ?? run.state.metadata.wsChannel, run.jobId);
     // Not retried: unlike `docker start`, network connect rejects a replay.
-    await guestExec(connectServiceNetworkCommand('sulla_default', containerName));
+    await guestExec(connectServiceNetworkCommand(composeNetworkName, containerName));
     unregisterRuntime = registerAgentContainerRuntime({
       podId:         containerName,
       subject,

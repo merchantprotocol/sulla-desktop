@@ -8,15 +8,15 @@ import path from 'node:path';
 
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
 const console = Logging.background;
-const DEFAULT_URL = 'http://127.0.0.1:30122';
 
 export class WorkflowManagerClient {
   private lastHealth: { healthy: boolean; checkedAt: number } | null = null;
   private localToken: string | null = null;
 
-  constructor(private readonly baseUrl = process.env.SULLA_WORKFLOW_MANAGER_URL ?? DEFAULT_URL) {}
+  constructor(private readonly baseUrl = process.env.SULLA_WORKFLOW_MANAGER_URL ?? serviceOrigin('workflows')) {}
 
   private async authorizationHeaders(): Promise<Record<string, string>> {
     if (!this.localToken) {

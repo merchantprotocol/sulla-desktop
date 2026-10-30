@@ -18,7 +18,7 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { FINDER_BADGE_ATTRIBUTE, FINDER_BADGE_MIN_INTERVAL_MS, FinderBadgeSync } from './sullaFinderBadges';
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
-import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
+import { desktopFilesFetch, filesHttpsOrigin } from './sullaFilesTls';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -31,7 +31,6 @@ import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
 const console = Logging.background;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/'];
-const API = FILES_HTTPS_ORIGIN;
 const NATIVE_POLL_ACTIVE_MS = 250;
 const NATIVE_POLL_IDLE_MAX_MS = 2_000;
 const NATIVE_SOURCE_PAGE_SIZE = 500;
@@ -314,7 +313,7 @@ class SullaFilesWatcher {
     const token = await SullaSettingsModel.getServicePassword();
     const headers = requestHeaders(init.headers, { 'x-sulla-files-token': token }, { 'content-type': 'application/json' });
 
-    return desktopFilesFetch(`${ API }${ endpoint }`, { ...init, headers, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+    return desktopFilesFetch(`${ filesHttpsOrigin() }${ endpoint }`, { ...init, headers, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
   }
 
   private async isLockedResponse(response: Response): Promise<boolean> {
@@ -525,10 +524,10 @@ class SullaFilesWatcher {
   }
 
   async requestFiles(endpoint:string, init:RequestInit = {}, server = false, capability: SullaFilesCapabilityContext = {}):Promise<Response> {
-    const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : API;
+    const base = server && process.env.SULLA_FILES_SERVER_URL ? process.env.SULLA_FILES_SERVER_URL : filesHttpsOrigin();
     const url = new URL(endpoint, base);
     if (url.origin !== new URL(base).origin) throw new Error('Files endpoint must use the configured service');
-    if (base !== API) {
+    if (base !== filesHttpsOrigin()) {
       const token = await this.capabilityToken(undefined, capability);
       const headers = requestHeaders(init.headers, { authorization: `Bearer ${ token }` });
 
@@ -560,8 +559,8 @@ class SullaFilesWatcher {
    * requestFiles(): ordinary Files calls must never gain native-main custody.
    */
   async requestNativeFiles(endpoint:string, init:RequestInit = {}):Promise<Response> {
-    const url = new URL(endpoint, API);
-    if (url.origin !== new URL(API).origin) throw new Error('Native Files endpoints must use the local service');
+    const url = new URL(endpoint, filesHttpsOrigin());
+    if (url.origin !== new URL(filesHttpsOrigin()).origin) throw new Error('Native Files endpoints must use the local service');
     await this.ensureUnlocked();
     let principalId = await this.localPrincipalId();
     const send = async() => {
@@ -589,8 +588,8 @@ class SullaFilesWatcher {
   }
 
   async requestFilesStream(endpoint:string, init:RequestInit = {}, signal?:AbortSignal):Promise<Response> {
-    const url = new URL(endpoint, API);
-    if (url.origin !== new URL(API).origin) throw new Error('Files endpoint must use the local service');
+    const url = new URL(endpoint, filesHttpsOrigin());
+    if (url.origin !== new URL(filesHttpsOrigin()).origin) throw new Error('Files endpoint must use the local service');
     await this.ensureUnlocked();
     let principalId = await this.localPrincipalId();
     const send = async() => {
