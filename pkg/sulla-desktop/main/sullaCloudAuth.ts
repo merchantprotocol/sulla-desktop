@@ -475,6 +475,13 @@ async function emailRegister(email: string, password: string, name?: string): Pr
   return { ok: true, data };
 }
 
+async function emailCodeAvailability(): Promise<boolean> {
+  const res = await fetch(`${ API_BASE }/auth/email-code/availability`);
+  if (!res.ok) return false;
+  const body = await res.json().catch(() => ({})) as { available?: boolean };
+  return body.available === true;
+}
+
 /** Passwordless: email a 6-digit code that signs in or creates the account. */
 async function emailCodeStart(email: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${ API_BASE }/auth/email-code/start`, {
@@ -787,6 +794,10 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
     return completeSignIn(result.data);
+  });
+
+  ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => {
+    try { return { available: await emailCodeAvailability() }; } catch { return { available: false }; }
   });
 
   ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, email: string) => {

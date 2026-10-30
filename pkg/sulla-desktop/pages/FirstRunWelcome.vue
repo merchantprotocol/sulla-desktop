@@ -36,7 +36,7 @@
         <label for="cloudPassword" class="block text-sm font-medium mb-1 label-text">Account password</label>
         <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="At least 8 characters">
         <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
-        <button v-if="cloudAccountExists" type="button" class="link-btn mt-2" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
+        <button v-if="cloudAccountExists && emailRecoveryAvailable" type="button" class="link-btn mt-2" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
       </div>
       <div v-if="cloudCodeSent" class="mb-4">
         <label for="cloudCode" class="block text-sm font-medium mb-1 label-text">Email code</label>
@@ -75,6 +75,7 @@ const cloudPassword = ref('');
 const cloudError = ref('');
 const cloudSubmitting = ref(false);
 const cloudAccountExists = ref(false);
+const emailRecoveryAvailable = ref(false);
 const cloudCode = ref('');
 const cloudCodeSent = ref(false);
 let cloudAttempt = 0;
@@ -141,7 +142,14 @@ async function handleCloudSubmit() {
   try {
     const res = await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
     if (attempt !== cloudAttempt) return;
-    if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
+    if (!res.ok) {
+      cloudAccountExists.value = !!res.accountExists;
+      if (cloudAccountExists.value) {
+        const availability = await ipcRenderer.invoke('sulla-cloud:email-code-availability');
+        emailRecoveryAvailable.value = availability?.available === true;
+      }
+      cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return;
+    }
     cloudPassword.value = '';
     await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
     step.value = 'sync';
