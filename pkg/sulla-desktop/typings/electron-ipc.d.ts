@@ -370,7 +370,7 @@ export interface IpcMainInvokeEvents {
   'system-prompt-edits:deny':         (id: string) => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord | null;
 
   /** Claude Code OAuth flow */
-  'claude-oauth:start':  () => { token?: string; error?: string };
+  'claude-oauth:start':  (options?: { firstRun?: boolean }) => { success?: boolean; token?: string; error?: string };
   'claude-oauth:cancel': () => void;
 
   /** OpenAI OAuth flow */
@@ -384,6 +384,7 @@ export interface IpcMainInvokeEvents {
     clientSecret?: string;
     accountId?:    string;
     extraScopes?:  string[];
+    firstRun?:     boolean;
   }) => { success: boolean; error?: string };
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */

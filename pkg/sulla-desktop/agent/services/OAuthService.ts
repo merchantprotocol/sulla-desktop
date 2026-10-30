@@ -157,6 +157,7 @@ export class OAuthService {
     clientSecret: string,
     accountId = 'default',
     extraScopes: string[] = [],
+    persist = true,
   ): Promise<OAuthTokenSet> {
     const provider = getOAuthProvider(providerId);
     if (!provider) {
@@ -241,13 +242,20 @@ export class OAuthService {
       // Exchange code for tokens
       const tokens = normalizeTokenExpiry(
         await this.exchangeCode(
-          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId,
+          cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier, integrationId, accountId, persist,
         ),
       );
       if (cfg.registrationEndpoint) {
         tokens.oauth_client_id = effectiveClientId;
       }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
+
+      if (!persist) {
+        // First run may happen before the vault, Postgres, or Redis exists.
+        // Return the token set to the main-process caller for memory-only
+        // custody; never run provider persistence hooks on this path.
+        return tokens;
+      }
 
       if (usesContainerVaultAuthority()) {
         // The authority persisted the token response before returning this
@@ -452,6 +460,7 @@ export class OAuthService {
     codeVerifier?: string,
     integrationId?: string,
     accountId?: string,
+    useVault = true,
   ): Promise<OAuthTokenSet> {
     const body: Record<string, string> = {
       grant_type:   'authorization_code',
@@ -471,7 +480,7 @@ export class OAuthService {
       'User-Agent':   'Sulla-Desktop/1.0',
     };
 
-    if (usesContainerVaultAuthority()) {
+    if (usesContainerVaultAuthority() && useVault) {
       if (!integrationId || !accountId) throw new Error(`${ LOG_PREFIX } OAuth exchange is missing its vault scope`);
       const injections = cfg.clientAuthMethod === 'header'
         ? [{ field: 'client_secret', target: 'header' as const, name: 'authorization', scheme: 'BasicClient' as const }]

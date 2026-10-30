@@ -19,13 +19,23 @@
  * YAML/OAuth-manifest provider.
  */
 
+import { BrowserWindow } from 'electron';
+
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import * as window from '@pkg/window';
 
 const console = Logging.background;
 
 const LOG_PREFIX = '[IntegrationOAuth]';
+function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+    throw new Error('AI connection is only available from a trusted Sulla window');
+  }
+}
 
 export function initIntegrationOAuthEvents(): void {
   const ipcMainProxy = getIpcMainProxy(console);
@@ -37,7 +47,7 @@ export function initIntegrationOAuthEvents(): void {
    * integration connected.
    */
   ipcMainProxy.handle('integration-oauth:start', async(
-    _event: unknown,
+    event: Electron.IpcMainInvokeEvent,
     payload: {
       integrationId: string;
       providerId:    string;
@@ -45,19 +55,32 @@ export function initIntegrationOAuthEvents(): void {
       clientSecret?: string;
       accountId?:    string;
       extraScopes?:  string[];
+      firstRun?:     boolean;
     },
   ): Promise<{ success: boolean; error?: string }> => {
     try {
+      if (payload.firstRun) assertFirstRunOrMainSender(event);
       const integrationService = getIntegrationService();
 
-      await integrationService.startOAuthFlow(
+      const tokens = await integrationService.startOAuthFlow(
         payload.integrationId,
         payload.providerId,
         payload.clientId || '',
         payload.clientSecret || '',
         payload.accountId,
         payload.extraScopes,
+        !payload.firstRun,
       );
+
+      if (payload.firstRun) {
+        const values = Object.fromEntries(Object.entries(tokens)
+          .filter(([, value]) => value !== undefined && value !== null)
+          .map(([key, value]) => [key, typeof value === 'string' ? value : String(value)]));
+        values.provider_id = payload.providerId;
+        queuePendingCredential({
+          integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
+        });
+      }
 
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
 
@@ -67,6 +90,19 @@ export function initIntegrationOAuthEvents(): void {
       console.error(`${ LOG_PREFIX } OAuth failed for ${ payload?.integrationId }:`, errMsg);
 
       return { success: false, error: errMsg };
+    }
+  });
+
+  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
+    assertFirstRunOrMainSender(event);
+    const pending = pendingIntegrationIds();
+    try {
+      const service = getIntegrationService();
+      const providerIds = ['claude-code', 'codex', 'grok', 'anthropic', 'openai'];
+      const accounts = await Promise.all(providerIds.map(id => service.getAccounts(id)));
+      return { pending, connected: pending.length > 0 || accounts.flat().some(account => account.connected), loading: false };
+    } catch {
+      return { pending, connected: pending.length > 0, loading: true };
     }
   });
 }
