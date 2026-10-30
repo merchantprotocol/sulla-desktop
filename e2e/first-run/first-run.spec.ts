@@ -10,13 +10,47 @@ import { startFakeServer, type FakeMode } from './fakes';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 type Install = { app: ElectronApplication; page: Page; home: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>> };
+function diagnosticText(lines: string[], urls: string[]): string {
+  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Electron output:', ...lines.slice(-80)].join('\n');
+}
 async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string,string> = {}): Promise<Install> {
   home ||= await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-first-run-'));
   const fake = await startFakeServer(mode);
+  const output: string[] = [];
+  const urls: string[] = [];
+  const append = (chunk: Buffer | string) => output.push(...String(chunk).split(/\r?\n/).filter(Boolean));
   const app = await electron.launch({ args: ['.'], cwd: path.resolve(__dirname, '../..'), env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_CLOUD_URL: fake.url, SULLA_E2E_OAUTH_URL: `${fake.url}/oauth`, SULLA_E2E_VAULT_URL: `${fake.url}/vault/write`, ...extra } });
-  const page = await app.waitForEvent('window', { predicate: p => p.url().includes('FirstRun') });
-  const statePath = process.platform === 'darwin' ? path.join(home, 'Library/Application Support/sulla-desktop/electron/first-run-state.json') : path.join(home, '.local/share/sulla-desktop/electron/first-run-state.json');
-  return { app, page, home, statePath, fake };
+  app.process().stdout?.on('data', append);
+  app.process().stderr?.on('data', append);
+  const remember = (candidate: Page) => {
+    const url = candidate.url();
+    if (!urls.includes(url)) urls.push(url);
+    candidate.on('framenavigated', frame => {
+      if (frame === candidate.mainFrame() && !urls.includes(frame.url())) urls.push(frame.url());
+    });
+  };
+  app.windows().forEach(remember);
+  app.on('window', remember);
+  try {
+    // BrowserWindow is emitted while its URL is still about:blank, so a window
+    // event predicate sees the pre-navigation URL once and never matches. Poll
+    // the live windows until the renderer has navigated to the FirstRun route.
+    const deadline = Date.now() + 30_000;
+    let page: Page | undefined;
+    while (!page && Date.now() < deadline) {
+      page = app.windows().find(candidate => candidate.url().includes('FirstRun'));
+      if (!page) await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (!page) throw new Error('Timed out after 30000ms waiting for the FirstRun route');
+    const statePath = process.platform === 'darwin' ? path.join(home, 'Library/Application Support/sulla-desktop/electron/first-run-state.json') : path.join(home, '.local/share/sulla-desktop/electron/first-run-state.json');
+    return { app, page, home, statePath, fake };
+  } catch (error) {
+    const detail = diagnosticText(output, urls);
+    console.error(`::error title=Electron first-run window did not open::${ detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A') }`);
+    await app.close().catch(() => {});
+    await fake.close().catch(() => {});
+    throw new Error(`${ error instanceof Error ? error.message : String(error) }\n${ detail }`);
+  }
 }
 async function state(i: Install) { return JSON.parse(await fs.readFile(i.statePath, 'utf8')); }
 async function welcome(i: Install) { await i.page.getByRole('button', { name: /Get started/ }).click(); await expect(i.page.getByText('Create your Sulla account')).toBeVisible(); expect((await state(i)).step).toBe(1); }
