@@ -22,7 +22,7 @@ export function createEditor(parent:HTMLElement, content:string, readOnly:boolea
         collab ? yCollab(collab.ytext, null, { undoManager: collab.undoManager }) : history(), drawSelection(), highlightActiveLine(),
         keymap.of([...(collab ? yUndoManagerKeymap : []), ...defaultKeymap, ...(collab ? [] : historyKeymap), indentWithTab]),
         EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly),
-        markdownMode ? markdown() : [], ...extra,
+        markdownMode ? [markdown(), EditorView.lineWrapping] : [], ...extra,
         EditorView.updateListener.of(update => { if (update.docChanged) onChange(update.state.doc.toString()) }),
         EditorView.theme({
           '&': { color: '#1a2332', backgroundColor: 'transparent', height: '100%' },
