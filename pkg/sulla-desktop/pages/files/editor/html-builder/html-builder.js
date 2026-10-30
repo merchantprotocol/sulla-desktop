@@ -274,11 +274,30 @@
     const frame = $('frame');
     let src = String(options.source ?? '');
     // Source editors (the textarea, CodeMirror) hand text back with "\n" line
-    // endings. Keep the file's own style so a source edit never rewrites every
-    // line ending of a CRLF file.
-    const eolOf = text => /\r\n/.test(text) && !/(^|[^\r])\n/.test(text) ? '\r\n' : '\n';
-    let eol = eolOf(src);
-    const fromSourceEditor = text => eol === '\r\n' ? String(text).replace(/\r?\n/g, '\r\n') : String(text);
+    // endings. Patch only the span that actually changed back into the
+    // original bytes, so CRLF (or mixed) line endings elsewhere are untouched.
+    const fromSourceEditor = value => {
+      if (!src.includes('\r')) return String(value);
+      const text = String(value).replace(/\r\n/g, '\n');
+      const before = src.replace(/\r\n/g, '\n');
+      if (before === text) return src;
+      const max = Math.min(before.length, text.length);
+      let head = 0;
+      while (head < max && before[head] === text[head]) head++;
+      let tail = 0;
+      while (tail < max - head && before[before.length - 1 - tail] === text[text.length - 1 - tail]) tail++;
+      // Map an offset in the normalized text to the same position in src.
+      const toRaw = offset => {
+        let raw = 0;
+        for (let seen = 0; seen < offset; seen++) raw += src[raw] === '\r' && src[raw + 1] === '\n' ? 2 : 1;
+        return raw;
+      };
+      const from = toRaw(head);
+      const to = toRaw(before.length - tail);
+      const nextBreak = src.indexOf('\n', from);
+      const lineEnding = nextBreak > 0 && src[nextBreak - 1] === '\r' ? '\r\n' : '\n';
+      return src.slice(0, from) + text.slice(head, text.length - tail).replace(/\n/g, lineEnding) + src.slice(to);
+    };
     let hov = null;
     let sel = null;
     let runKeep = 0;
@@ -2112,7 +2131,6 @@
     const api = {
       setSource(value) {
         src = String(value ?? '');
-        eol = eolOf(src);
         $('ta').value = src;
         if (externalSourceEditor && fromSourceEditor(externalSourceEditor.getValue()) !== src) externalSourceEditor.setValue(src);
         renderCode();
