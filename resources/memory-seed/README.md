@@ -56,7 +56,7 @@ This is the subject's front page.
 global
 └── sulla                (major)  Sulla: the harness you run in
     ├── sulla-desktop    (system) the app, windows, tabs, settings
-    ├── sulla-vm         (system) the VM, exec vs exechost, paths, RAM-backed dirs
+    ├── sulla-vm         (system) the VM, exec vs exechost, paths, disk vs restart-lost dirs
     ├── sulla-files      (system) Files, the FUSE mount, versioning, folder metadata
     ├── sulla-memory     (system) v7 subject memory, observations, what recall gives you
     ├── sulla-tools      (system) the `sulla <category>/<tool>` CLI, browse_tools, integrations proxy, MCP
