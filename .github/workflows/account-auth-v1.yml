@@ -67,4 +67,12 @@ jobs:
       - name: Install focused vault service dependencies
         run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-vault
       - name: Build and run vault envelope security tests
-        run: yarn --cwd services/sulla-vault test:envelope
+        shell: bash
+        run: |
+          set +e
+          yarn --cwd services/sulla-vault test:envelope 2>&1 | tee /tmp/vault-envelope-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -40 /tmp/vault-envelope-test.log | while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          exit "$status"
