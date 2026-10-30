@@ -121,6 +121,30 @@ async function injectTokenIntoVM(token: string): Promise<void> {
   }
 }
 
+/**
+ * The guest image ships Node and npm but not the Claude CLI, so a fresh
+ * install has no `claude` for `setup-token`. Install the pinned version
+ * (global npm installs land on the persistent data disk) when it's missing.
+ */
+const CLAUDE_CLI_PACKAGE = '@anthropic-ai/claude-code@2.1.312';
+
+async function ensureClaudeCliInVM(): Promise<void> {
+  const script = `command -v claude >/dev/null 2>&1 && exit 0; sudo npm install --global --no-fund --no-audit ${ CLAUDE_CLI_PACKAGE } && command -v claude`;
+  await new Promise<void>((resolve, reject) => {
+    const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
+    let output = '';
+    const timer = setTimeout(() => { try { proc.kill() } catch { /* dead */ } reject(new Error('installing the Claude CLI timed out after 5 minutes')) }, 5 * 60 * 1000);
+    proc.stdout.on('data', (d) => { output += d.toString() });
+    proc.stderr.on('data', (d) => { output += d.toString() });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`npm exited ${ code }: ${ output.trim().split('\n').slice(-3).join(' ') }`));
+    });
+    proc.on('error', (err) => { clearTimeout(timer); reject(err) });
+  });
+}
+
 async function injectTokenIntoVMWhenReady(token: string): Promise<void> {
   for (;;) {
     if (await isVMRunning()) {
@@ -310,6 +334,13 @@ export function initClaudeOAuthEvents(): void {
       return { error: 'The Sulla VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
     }
 
+    try {
+      await ensureClaudeCliInVM();
+    } catch (err) {
+      console.warn('[ClaudeOAuth] Could not install the Claude CLI in the VM:', err);
+      return { error: `Couldn't install Claude in the Sulla VM (${ (err as Error).message }). Check your internet connection, then try again.` };
+    }
+
     return await new Promise((resolve) => {
       const runtimePath = paths.sullaRuntime;
 
@@ -449,8 +480,12 @@ export function initClaudeOAuthEvents(): void {
           if (tokenMatch) {
             doResolve({ token: tokenMatch[1] });
           } else {
+            const tail = session.stdoutBuffer.replace(/https?:\/\/\S+/g, '[link]').replace(/\s+/g, ' ').trim().slice(-240);
+            console.warn(`[ClaudeOAuth] setup-token output tail: ${ tail }`);
             doResolve({
-              error: `Claude setup-token exited without producing a token (code=${ exitCode })`,
+              error: exitCode === 127
+                ? 'Claude isn\'t installed in the Sulla VM yet. Try again in a moment.'
+                : `Claude setup-token exited without producing a token (code=${ exitCode })${ tail ? `: ${ tail }` : '' }`,
             });
           }
         }
