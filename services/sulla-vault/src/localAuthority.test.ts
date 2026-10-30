@@ -146,6 +146,58 @@ test('Sulla Cloud session mutation rejects non-Desktop service principals', asyn
   );
 });
 
+test('vault reset device approval never wraps a user key without the explicit tap', async() => {
+  assert.equal(localAuthorityTestHooks.allowsSullaCloudDesktopRequest('GET', '/auth/password/device-approval/requests'), true);
+  assert.equal(localAuthorityTestHooks.allowsSullaCloudDesktopRequest('POST', '/auth/password/device-approval/requests/11111111-1111-4111-8111-111111111111/respond'), true);
+  assert.equal(localAuthorityTestHooks.allowsSullaCloudDesktopRequest('POST', '/auth/password/device-approval/requests/11111111-1111-4111-8111-111111111111/consume'), false);
+  const authority = new LocalVaultAuthority({ query: async() => ({ rowCount: 0, rows: [] }) } as any, config('postgresql://synthetic/unused'));
+  const request = {
+    requestId: '11111111-1111-4111-8111-111111111111',
+    vaultId: '22222222-2222-4222-8222-222222222222',
+    vaultEpoch: 1,
+    publicKey: 'B'.repeat(87),
+    approved: false,
+  };
+  await assert.rejects(
+    authority.wrapUserKeyForApprovedDevice('sulla-desktop-approval', TOKEN.approval, request),
+    (error: any) => error.code === 'approval_required',
+  );
+  await assert.rejects(
+    authority.wrapUserKeyForApprovedDevice('sulla-tools', TOKEN.broker, { ...request, approved: true }),
+    (error: any) => error.code === 'invalid_service_identity',
+  );
+});
+
+test('making a new recovery key preserves the old wrap and replaces the active wrap', async() => {
+  const events: string[] = [];
+  let active: unknown[] | undefined;
+  const client = {
+    async query(sql: string, params?: unknown[]) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') { events.push(sql); return { rowCount: 0, rows: [] }; }
+      if (sql.includes('INSERT INTO local_vault_recovery_history')) {
+        events.push('history');
+        return { rowCount: active ? 1 : 0, rows: active ? [{ id: 'history' }] : [] };
+      }
+      if (sql.includes('INSERT INTO local_vault_recovery(')) { events.push('active'); active = params; return { rowCount: 1, rows: [] }; }
+      if (sql.includes('INSERT INTO audit_log')) { events.push('audit'); return { rowCount: 1, rows: [] }; }
+      throw new Error(`Unexpected query: ${ sql }`);
+    }, release() {},
+  };
+  const db = { query: client.query.bind(client), connect: async() => client } as any;
+  const authority = new LocalVaultAuthority(db, config('postgresql://synthetic/unused'));
+  (authority as any).keys = {
+    userId: '11111111-1111-4111-8111-111111111111', publicKey: '', userKey: randomBytes(32), privateKey: randomBytes(32),
+  };
+  (authority as any).migrationState = 'unlocked';
+  const first = await authority.rotateAccountRecoveryKey('sulla-desktop-approval', TOKEN.approval);
+  const second = await authority.rotateAccountRecoveryKey('sulla-desktop-approval', TOKEN.approval);
+  assert.equal(first.replacedExisting, false);
+  assert.equal(second.replacedExisting, true);
+  assert.notEqual(first.recoveryKey, second.recoveryKey);
+  assert.deepEqual(events.slice(-5), ['BEGIN', 'history', 'active', 'audit', 'COMMIT']);
+  assert.equal(events.indexOf('history') < events.indexOf('active'), true);
+});
+
 test('agent password ingress returns only a reference, audits identity, and keeps policy gates closed', async() => {
   const actorId = '11111111-1111-4111-8111-111111111111';
   const secret = 'synthetic-agent-ingress-secret';

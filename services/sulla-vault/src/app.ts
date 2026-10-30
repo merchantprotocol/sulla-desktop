@@ -554,6 +554,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       const identity = serviceIdentity(request);
       response.json(await localAuthority.clearSullaCloudSession(identity.serviceId, identity.token));
     });
+    app.post('/v1/broker/sulla-cloud/account-wrap', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.rewrapForAccountPassword(identity.serviceId, identity.token, request.body));
+    });
+    app.post('/v1/broker/sulla-cloud/device-approval-wrap', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.wrapUserKeyForApprovedDevice(identity.serviceId, identity.token, request.body));
+    });
+    app.post('/v1/broker/sulla-cloud/recovery-key/rotate', async(request, response) => {
+      const identity = serviceIdentity(request);
+      response.json(await localAuthority.rotateAccountRecoveryKey(identity.serviceId, identity.token));
+    });
     app.post('/v1/broker/sulla-cloud/request', async(request, response) => {
       const identity = serviceIdentity(request);
       response.json(await localAuthority.executeDesktopSullaCloudRequest(identity.serviceId, identity.token, request.body));
