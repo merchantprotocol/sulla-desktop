@@ -122,6 +122,10 @@ interface IncomingMessage {
   userMessageId?:  string;
   role?:           Role;
   reason?:         string;
+  code?:           string;
+  expiresAt?:      string;
+  requestingDeviceId?: string;
+  requestingDeviceName?: string;
 }
 
 interface Status {
@@ -531,6 +535,21 @@ export class DesktopRelayClient {
       msg = JSON.parse(raw);
     } catch {
       console.warn('[DesktopRelay] Non-JSON message received');
+      return;
+    }
+
+    if (msg.type === 'other_device_signin_code') {
+      if (!msg.requestId || !/^\d{6}$/.test(msg.code ?? '') || !msg.expiresAt || !msg.requestingDeviceId) return;
+      if (msg.requestingDeviceId === await getDesktopDeviceId()) return;
+      const payload = { requestId: msg.requestId, code: msg.code!, expiresAt: msg.expiresAt, requestingDeviceId: msg.requestingDeviceId, requestingDeviceName: msg.requestingDeviceName ?? 'another device' };
+      try {
+        const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
+        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: `Code ${payload.code} for ${payload.requestingDeviceName}` }).show();
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
+        }
+      } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
+      console.info(`[DesktopRelay] Received other-device sign-in approval ${msg.requestId}`);
       return;
     }
 
