@@ -41,6 +41,8 @@ export interface LightweightCheckResult {
   releaseNotes?:   string;
   /** The feed file that was read (for debugging). */
   feedUrl:         string;
+  /** Whether the feed has not been published yet. */
+  feedMissing?:    boolean;
 }
 
 interface UpdateYaml {
@@ -100,6 +102,17 @@ export async function performLightweightCheck(): Promise<LightweightCheckResult>
   const base = await resolveFeedBaseUrl();
   const feedUrl = new URL(FEED_FILE, base.endsWith('/') ? base : `${ base }/`).toString();
   const response = await net.fetch(feedUrl, { cache: 'no-store' });
+
+  // A missing feed is expected before the first release is published. Treat
+  // it as an empty release channel rather than surfacing a noisy 404 error.
+  if (response.status === 404) {
+    return {
+      updateAvailable: false,
+      currentVersion,
+      feedUrl,
+      feedMissing: true,
+    };
+  }
 
   if (!response.ok) {
     throw new Error(`Update feed ${ feedUrl } returned HTTP ${ response.status }`);

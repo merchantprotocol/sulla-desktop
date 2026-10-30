@@ -69,6 +69,31 @@ export interface RichUpdateState {
   updateAvailable: boolean;
 }
 
+function formatUpdateError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = (error as { status?: number; statusCode?: number } | null)?.status
+    ?? (error as { statusCode?: number } | null)?.statusCode;
+
+  if ((status && status >= 500) || /HTTP 5\d\d\b/.test(message)) {
+    return 'The update server is unavailable right now. Try again later.';
+  }
+  if (/network|fetch failed|timed out|timeout|enotfound|econn|offline/i.test(message)) {
+    return 'Couldn’t reach the update server. Check your connection and try again.';
+  }
+
+  // Keep provider internals, headers, and stack traces out of Preferences.
+  return message.split('\n', 1)[0].replace(/https?:\/\/\S+/g, '').trim().slice(0, 240)
+    || 'The update check failed. Try again later.';
+}
+
+function isMissingFeedError(error: unknown): boolean {
+  const status = (error as { status?: number; statusCode?: number } | null)?.status
+    ?? (error as { statusCode?: number } | null)?.statusCode;
+  const message = error instanceof Error ? error.message : String(error);
+
+  return status === 404 || (/404/.test(message) && /latest-mac\.yml|update feed/i.test(message));
+}
+
 /**
  * Shared event bus between index.ts (the low-level driver) and UpdateManager.
  * index.ts emits `raw-state` whenever its broadcast state mutates, and
@@ -89,6 +114,7 @@ class UpdateManager extends EventEmitter {
 
   /** The currently-requested trigger, carried through until the next terminal phase. */
   private pendingTrigger: UpdateTrigger | undefined;
+  private missingFeedLogged = false;
 
   constructor() {
     super();
@@ -232,6 +258,10 @@ class UpdateManager extends EventEmitter {
       const result = await performLightweightCheck();
 
       lightweightSucceeded = true;
+      if (result.feedMissing && !this.missingFeedLogged) {
+        this.missingFeedLogged = true;
+        console.info('[UpdateManager] update feed is not published yet; treating it as up to date');
+      }
       this.setState({
         updateAvailable:  result.updateAvailable,
         availableVersion: result.latestVersion,
@@ -265,7 +295,7 @@ class UpdateManager extends EventEmitter {
       if (!this.state.isPackaged) {
         this.setState({
           phase: 'error',
-          error: err?.message ?? String(err),
+          error: formatUpdateError(err),
         });
         this.pendingTrigger = undefined;
 
@@ -289,7 +319,7 @@ class UpdateManager extends EventEmitter {
       console.error('[UpdateManager] electron-updater stage failed:', err);
       this.setState({
         phase: 'error',
-        error: err?.message ?? String(err),
+        error: formatUpdateError(err),
       });
     }
   }
@@ -341,9 +371,21 @@ class UpdateManager extends EventEmitter {
       };
     }
 
+    if (raw.error && isMissingFeedError(raw.error)) {
+      if (!this.missingFeedLogged) {
+        this.missingFeedLogged = true;
+        console.info('[UpdateManager] update feed is not published yet; treating it as up to date');
+      }
+      patch.phase = 'not-available';
+      patch.error = undefined;
+      this.setState(patch);
+
+      return;
+    }
+
     if (raw.error) {
       patch.phase = 'error';
-      patch.error = raw.error.message ?? String(raw.error);
+      patch.error = formatUpdateError(raw.error);
       this.setState(patch);
 
       return;
