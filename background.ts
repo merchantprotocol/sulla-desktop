@@ -77,6 +77,7 @@ import { isDevEnv } from '@pkg/utils/environment';
 import Logging, { clearLoggingDirectory, setLogLevel } from '@pkg/utils/logging';
 import { fetchMacOsVersion, getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
+import { configureInstancePorts, isFirstRunTestInstance, requestedInstance, TEST_INSTANCE_FLAG } from '@pkg/utils/instance';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { handleDeepLink, findDeepLinkInArgv } from '@pkg/main/deepLink';
 import { executable } from '@pkg/utils/resources';
@@ -97,12 +98,19 @@ if (process.platform === 'linux') {
 // Browser tabs use WebContentsView (first-party context) — no iframe
 // workarounds needed.  No Chromium feature flags to disable.
 
+const requestedTestInstance = requestedInstance();
+if (requestedTestInstance && !isFirstRunTestInstance()) {
+  process.stderr.write(`[Instance] Refusing ${ requestedTestInstance }: isolated instances require SULLA_INSTANCE=firstrun-test and ${ TEST_INSTANCE_FLAG }\n`);
+  process.exit(202);
+}
+configureInstancePorts();
+
 Electron.app.setPath('userData', path.join(paths.appHome, 'electron'));
 Electron.app.setPath('cache', paths.cache);
 Electron.app.setAppLogsPath(paths.logs);
 
 // Set the app name for macOS menu bar (shows next to Apple icon)
-Electron.app.setName('Sulla Desktop');
+Electron.app.setName(isFirstRunTestInstance() ? 'Sulla (first-run test)' : 'Sulla Desktop');
 
 const console = Logging.background;
 
@@ -126,7 +134,7 @@ if (!Electron.app.requestSingleInstanceLock()) {
 //
 // MUST be called before 'will-finish-launching' / the first 'open-url'
 // event can fire, otherwise cold-launch deep links on macOS are lost.
-Electron.app.setAsDefaultProtocolClient('sulla');
+if (!isFirstRunTestInstance()) Electron.app.setAsDefaultProtocolClient('sulla');
 
 // macOS: cold-launch deep links arrive via 'open-url' (NOT argv).
 // Registering before app-ready is required to catch the earliest one.
@@ -448,6 +456,7 @@ function writeSullaWebRequestEvent(event: SullaWebRequestLogEvent): void {
 }
 
 Electron.app.whenReady().then(() => {
+  if (isFirstRunTestInstance()) Electron.app.dock?.setBadge('TEST');
   const session = Electron.session.defaultSession;
 
   const fixer = new SullaWebRequestFixer(writeSullaWebRequestEvent);
@@ -805,7 +814,10 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
 
   // Match the welcome screen's recommendation before it mounts. The renderer
   // persists this same value; keeping it in main means the first VM boot uses it.
-  if (cfg.virtualMachine.memoryInGB < 5) {
+  const isolatedTestMemory = isFirstRunTestInstance() ? Number(process.env.SULLA_TEST_VM_MEMORY_GB) : NaN;
+  if (Number.isFinite(isolatedTestMemory) && isolatedTestMemory >= 5) {
+    cfg.virtualMachine.memoryInGB = Math.floor(isolatedTestMemory);
+  } else if (cfg.virtualMachine.memoryInGB < 5) {
     cfg.virtualMachine.memoryInGB = Math.min(Math.max(5, Math.floor(Math.ceil(os.totalmem() / 2 ** 30) / 2)), 16);
   }
   if (cfg.virtualMachine.numberCPUs < 3) {

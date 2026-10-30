@@ -68,6 +68,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 
 const log = Logging.background;
 const perf = Logging.perf;
@@ -90,7 +91,7 @@ async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+    const healthy = await fetch(`${ loopbackOrigin('http', 30123) }/healthz`, { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
 
     if (healthy) return true;
@@ -103,7 +104,7 @@ const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
 const TRANSPORT_IMAGE_VERSION = '1';
 const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
 const HOST_RELAY_NAME = 'sulla-host-relay';
-const HOST_RELAY_PORT = 30124;
+const HOST_RELAY_PORT = hostPort(30124);
 const HOST_RELAY_SOCKET = '/run/sulla-host-relay/relay.sock';
 const HOST_RELAY_VERSION_LABEL = 'com.sulla.host-relay.version';
 // The Mac's loopback as seen from containers on the Sulla runtime.

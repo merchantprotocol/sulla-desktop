@@ -28,6 +28,7 @@ import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
+import { loopbackOrigin } from '@pkg/utils/instance';
 import * as path from 'path';
 import { app, shell, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -528,7 +529,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
     await getTerminalServer().start();
-    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+    console.log(`[Background] Terminal WebSocket server started on ${ loopbackOrigin('ws', 6108) }`);
   } catch (error) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }
