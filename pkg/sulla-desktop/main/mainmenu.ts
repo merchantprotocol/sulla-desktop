@@ -11,6 +11,7 @@ import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, ip
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import {
@@ -198,7 +199,7 @@ async function refreshExtensions(): Promise<void> {
     }
 
     const authHeader = `Basic ${ Buffer.from(`${ credentials.user }:${ credentials.password }`).toString('base64') }`;
-    const response = await fetch('http://127.0.0.1:6107/v1/extensions', {
+    const response = await fetch(`${ serviceOrigin('command') }/v1/extensions`, {
       headers: { Authorization: authHeader },
     });
 

@@ -426,7 +426,7 @@ onMounted(async() => {
         off
       >
         <template #subtitle>
-          Open sulla-vault.sulla.local instead of localhost:30135. <span class="soon">Coming soon</span>
+          A name-based local gateway is planned for phase two. <span class="soon">Coming soon</span>
         </template>
         <PrefToggle
           :model-value="false"

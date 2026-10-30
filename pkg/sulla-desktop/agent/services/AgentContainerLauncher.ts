@@ -60,6 +60,7 @@ import {
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
@@ -90,7 +91,7 @@ async function waitForToolsService(timeoutMs = TOOLS_READY_TIMEOUT_MS): Promise<
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    const healthy = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(1_000) })
+    const healthy = await fetch(`${ serviceOrigin('tools') }/healthz`, { signal: AbortSignal.timeout(1_000) })
       .then(response => response.ok).catch(() => false);
 
     if (healthy) return true;

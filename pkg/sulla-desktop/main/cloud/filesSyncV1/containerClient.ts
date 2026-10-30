@@ -6,8 +6,9 @@
 /** Local service clients for Files sync v1. Main only relays metadata and signatures. */
 import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broker/desktopTransport';
 import { getSullaFilesClient, FilesApiError } from '@pkg/main/sullaFilesClient';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
-const VAULT = 'https://127.0.0.1:30135';
+const VAULT = serviceOrigin('vault', 'https');
 const files = getSullaFilesClient();
 
 export interface FilesSyncCollectionStatus {

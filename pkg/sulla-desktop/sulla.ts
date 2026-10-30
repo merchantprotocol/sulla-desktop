@@ -516,6 +516,12 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
  * @see sulla-desktop/background.ts
  */
 export async function onMainProxyLoad(ipcMainProxy: any) {
+  const { listServices, onServiceChange, serviceOrigin, servicePort } = await import('@pkg/main/serviceDirectory');
+  ipcMainProxy.handle('services:where', async(_event: Electron.IpcMainInvokeEvent, service: string, protocol = 'http') => ({ service, port: servicePort(service), origin: serviceOrigin(service, protocol) }));
+  ipcMainProxy.handle('services:list', async() => listServices());
+  onServiceChange(change => {
+    for (const window of Electron.BrowserWindow.getAllWindows()) window.webContents.send('services:changed', change);
+  });
   // Assume main process
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
@@ -528,7 +534,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const { getTerminalServer } = await import('@pkg/main/terminalServer');
 
     await getTerminalServer().start();
-    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+    console.log(`[Background] Terminal WebSocket server started on ${ serviceOrigin('terminal', 'ws') }`);
   } catch (error) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }

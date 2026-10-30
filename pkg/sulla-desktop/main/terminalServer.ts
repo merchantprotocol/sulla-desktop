@@ -9,8 +9,9 @@ import * as pty from 'node-pty';
 import { WebSocketServer, WebSocket } from 'ws';
 
 import paths from '@pkg/utils/paths';
+import { resolveServicePort, servicePort } from './serviceDirectory';
 
-const TERMINAL_PORT = 6108;
+const TERMINAL_PORT = servicePort('terminal');
 const PTY_RETRY_INTERVAL_MS = 3000;
 const PTY_MAX_RETRIES = 20;
 
@@ -183,6 +184,7 @@ export class WebSocketTerminalServer {
   }
 
   async start(port: number = TERMINAL_PORT): Promise<void> {
+    if (port === TERMINAL_PORT) port = await resolveServicePort('terminal');
     return new Promise((resolve, reject) => {
       try {
         this.server = http.createServer();

@@ -34,6 +34,7 @@ import { redisToolManifests } from './redis/manifests';
 import { reflexToolManifests } from './reflex/manifests';
 import { rulesToolManifests } from './rules/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
+import { serviceToolManifests } from './services/manifests';
 import { settingsToolManifests } from './settings/manifests';
 import { skillsToolManifests } from './skills/manifests';
 import { slackToolManifests } from './slack/manifests';
@@ -71,6 +72,7 @@ export const allToolManifests: ToolManifest[] = [
   ...reflexToolManifests,
   ...ledgerToolManifests,
   ...secretaryToolManifests,
+  ...serviceToolManifests,
   ...settingsToolManifests,
   ...skillsToolManifests,
   ...slackToolManifests,

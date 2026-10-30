@@ -21,8 +21,9 @@ import {
 } from '../../../services/sulla-files/src/bootstrapProtocol';
 import { SullaFilesKeychain } from './sullaFilesKeychain';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
+import { serviceOrigin } from './serviceDirectory';
 
-const API = 'https://127.0.0.1:30124';
+const API = serviceOrigin('files', 'https');
 const CALLER_ID = 'sulla-desktop-files-bootstrap';
 
 function requiredEnv(name:string):string {

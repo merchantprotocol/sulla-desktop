@@ -8,9 +8,10 @@ import path from 'node:path';
 
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
 const console = Logging.background;
-const DEFAULT_URL = 'http://127.0.0.1:30122';
+const DEFAULT_URL = serviceOrigin('workflows');
 
 export class WorkflowManagerClient {
   private lastHealth: { healthy: boolean; checkedAt: number } | null = null;

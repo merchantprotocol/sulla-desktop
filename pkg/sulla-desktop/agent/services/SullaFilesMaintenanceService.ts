@@ -20,7 +20,7 @@ export class SullaFilesMaintenanceService {
       try {
         const token = await SullaSettingsModel.getServicePassword();
         const init = { method: 'POST', headers: { 'x-sulla-files-token': token }, signal: AbortSignal.timeout(30_000) };
-        // Local Files only listens on pinned TLS; plain HTTP to 30124 always failed.
+        // Local Files only listens on pinned TLS; plain HTTP to the Files service always failed.
         const response = FILES_API ? await fetch(`${ FILES_API }/v1/local/maintenance`, init) : await desktopFilesFetch(`${ FILES_HTTPS_ORIGIN }/v1/local/maintenance`, init);
         if (!response.ok) throw new Error(`Files maintenance returned ${ response.status }`);
         const result = await response.json() as { expiredFiles:number; deletedChunks:number };

@@ -33,8 +33,9 @@ import {
 import { bootstrapUnlockProofInputForSealed } from '../../../services/sulla-vault/src/bootstrapProof';
 import { verifyVaultCertificate } from './vaultTlsVerifier';
 import { openVaultCacheEnvelope, sealLegacyVaultKey } from './vaultCacheEnvelope';
+import { serviceOrigin } from './serviceDirectory';
 
-const API = 'https://127.0.0.1:30135';
+const API = serviceOrigin('vault', 'https');
 const CALLER_ID = 'sulla-desktop-bootstrap';
 
 function requiredEnv(name: string): string {

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { workflowTerminalResult } from '../services/WorkflowTerminalResult';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 /**
  * PlaybookController — workflow/playbook orchestration extracted from Graph.ts.
  *
@@ -1509,9 +1510,9 @@ export class PlaybookController<TState = any> {
           }
 
           const RUNTIME_URLS: Record<string, string> = {
-            python: 'http://127.0.0.1:30118',
-            shell:  'http://127.0.0.1:30119',
-            node:   'http://127.0.0.1:30120',
+            python: serviceOrigin('runtime-python'),
+            shell:  serviceOrigin('runtime-shell'),
+            node:   serviceOrigin('runtime-node'),
           };
           const SECRETS_HOST_URL = 'http://host.sulla.internal:30121';
 

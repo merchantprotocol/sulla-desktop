@@ -12,10 +12,11 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import { issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import { sullaFilesCapabilityKey } from '@pkg/runtime/sullaFilesKey';
+import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
 import type { ToolExecutionContext } from '../tools/executionContext';
 
-const DESKTOP_FILES_ORIGIN = 'https://127.0.0.1:30124';
+const DESKTOP_FILES_ORIGIN = serviceOrigin('files', 'https');
 const CONTAINER_FILES_ORIGIN = 'https://sulla_files:8792';
 const MAX_CA_BYTES = 64 * 1_024;
 

@@ -15,6 +15,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
+import ipcRenderer from '@pkg/utils/ipcRenderer';
 import '@xterm/xterm/css/xterm.css';
 
 export default defineComponent({
@@ -27,7 +28,7 @@ export default defineComponent({
     },
     wsUrl: {
       type:    String,
-      default: 'ws://127.0.0.1:6108',
+      default: '',
     },
     sessionId: {
       type:    String,
@@ -102,10 +103,11 @@ export default defineComponent({
       }, 30);
     };
 
-    const connectWebSocket = () => {
+    const connectWebSocket = async() => {
       if (!terminal || !fitAddon) return;
 
-      socket = new WebSocket(props.wsUrl);
+      const resolved = props.wsUrl || (await ipcRenderer.invoke('services:where' as any, 'terminal', 'ws') as { origin: string }).origin;
+      socket = new WebSocket(resolved);
 
       socket.onopen = () => {
         // Send start message to create/join a PTY session in the Sulla VM
