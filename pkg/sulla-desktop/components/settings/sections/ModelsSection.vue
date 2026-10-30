@@ -6,7 +6,7 @@
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 
 import PrefCard from '../PrefCard.vue';
 import PrefChoice from '../PrefChoice.vue';
@@ -29,6 +29,8 @@ const m = useModelSettings();
 const fallbackEnabled = useSullaSetting('fallbackEnabled', true, 'boolean', { refreshOnFocus: true });
 const retries = useSullaSetting('remoteRetryCount', 3, 'number');
 const timeout = useSullaSetting('remoteTimeoutSeconds', 60, 'number');
+const settingSaved = ref(false);
+let settingSavedTimer: ReturnType<typeof setTimeout> | undefined;
 
 const where = computed(() => m.runsLocally.value ? 'local' : 'online');
 const whereOptions = computed(() => [
@@ -48,10 +50,6 @@ const whereOptions = computed(() => [
   },
 ]);
 
-function providerLabel(p: { name: string, connected: boolean }) {
-  return p.connected ? p.name : `${ p.name } (not connected)`;
-}
-
 /** The model list for a select, keeping the saved value visible even if the provider didn't return it. */
 function modelOptions(slot: ModelSlot, current: string) {
   const list = m.models[slot];
@@ -67,15 +65,31 @@ function activeAccount(slot: ModelSlot) {
   return m.accounts[slot].find(a => a.active)?.accountId ?? '';
 }
 
-function saveNumber(setting: typeof retries, raw: string, min: number, max: number) {
+function confirmSettingSaved() {
+  settingSaved.value = true;
+  if (settingSavedTimer) clearTimeout(settingSavedTimer);
+  settingSavedTimer = setTimeout(() => { settingSaved.value = false }, 2_000);
+}
+
+async function saveSetting<T>(setting: { error: { value: string }; save: (next: T) => Promise<void> }, next: T) {
+  await setting.save(next);
+  if (!setting.error.value) confirmSettingSaved();
+}
+
+async function saveNumber(setting: typeof retries, raw: string, min: number, max: number) {
   const n = Math.round(Number(raw));
 
   if (Number.isFinite(n) && n >= min && n <= max) {
-    void setting.save(n);
+    await setting.save(n);
+    if (!setting.error.value) confirmSettingSaved();
   } else {
-    void setting.reload();
+    await setting.reload();
   }
 }
+
+onBeforeUnmount(() => {
+  if (settingSavedTimer) clearTimeout(settingSavedTimer);
+});
 
 function value(event: Event) {
   return (event.target as HTMLSelectElement | HTMLInputElement).value;
@@ -89,9 +103,17 @@ function value(event: Event) {
         <h1>AI models</h1>
         <p>Which models answer, which back them up, and which think in the background.</p>
       </div>
+      <span
+        v-if="m.saved.value || settingSaved"
+        class="saved-confirmation"
+        role="status"
+      >Saved</span>
     </div>
 
-    <PrefCard title="Where models run">
+    <PrefCard
+      v-if="m.providers.value.length > 0"
+      title="Where models run"
+    >
       <PrefRow layout="col">
         <PrefChoice
           :model-value="where"
@@ -103,16 +125,17 @@ function value(event: Event) {
     </PrefCard>
 
     <PrefCard
+      v-if="m.providers.value.length > 0"
       title="Models"
-      subtitle="Keys for each provider live in Passwords."
+      subtitle="Only connected providers and their models are shown."
     >
       <template #actions>
         <button
           type="button"
           class="link"
-          @click="openMainTab('vault')"
+          @click="openMainTab('integrations')"
         >
-          Open Passwords
+          Open Integrations
         </button>
       </template>
       <PrefRow
@@ -130,7 +153,7 @@ function value(event: Event) {
             :key="p.id"
             :value="p.id"
           >
-            {{ providerLabel(p) }}
+            {{ p.name }}
           </option>
         </select>
         <select
@@ -161,7 +184,7 @@ function value(event: Event) {
         <PrefToggle
           :model-value="fallbackEnabled.value.value"
           label="Use a backup model"
-          @update:model-value="fallbackEnabled.save($event)"
+          @update:model-value="saveSetting(fallbackEnabled, $event)"
         />
         <select
           class="sel"
@@ -175,7 +198,7 @@ function value(event: Event) {
             :key="p.id"
             :value="p.id"
           >
-            {{ providerLabel(p) }}
+            {{ p.name }}
           </option>
         </select>
         <select
@@ -222,7 +245,7 @@ function value(event: Event) {
             :key="p.id"
             :value="p.id"
           >
-            {{ providerLabel(p) }}
+            {{ p.name }}
           </option>
         </select>
         <select
@@ -269,13 +292,13 @@ function value(event: Event) {
               :key="acct.accountId"
               :value="acct.accountId"
             >
-              {{ acct.label }}{{ acct.connected ? '' : ' (not connected)' }}
+              {{ acct.label }}
             </option>
           </select>
           <span
             v-else-if="m.accounts[slot].length === 1"
             class="dimc"
-          >{{ m.accounts[slot][0].label }}{{ m.accounts[slot][0].connected ? '' : ' (not connected)' }}</span>
+          >{{ m.accounts[slot][0].label }}</span>
           <span
             v-else
             class="dimc"
@@ -283,7 +306,7 @@ function value(event: Event) {
         </PrefRow>
         <PrefRow
           title="Provider list"
-          subtitle="Only connected providers are listed. Reload after adding a key in Passwords."
+          subtitle="Only connected providers are listed. Reload after connecting one in Integrations."
         >
           <button
             type="button"
@@ -300,6 +323,22 @@ function value(event: Event) {
       >
         {{ m.error.value || fallbackEnabled.error.value }}
       </p>
+    </PrefCard>
+
+    <PrefCard
+      v-else-if="!m.loading.value"
+      title="No AI providers connected"
+      subtitle="Connect an AI provider to choose the models Sulla uses."
+    >
+      <PrefRow layout="col">
+        <button
+          type="button"
+          class="btn"
+          @click="openMainTab('integrations')"
+        >
+          Open Integrations
+        </button>
+      </PrefRow>
     </PrefCard>
 
     <PrefCard title="Requests">
@@ -334,3 +373,11 @@ function value(event: Event) {
     </PrefCard>
   </div>
 </template>
+
+<style scoped>
+.saved-confirmation {
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 650;
+}
+</style>
