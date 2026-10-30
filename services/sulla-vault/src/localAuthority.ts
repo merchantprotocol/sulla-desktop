@@ -39,7 +39,7 @@ import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
 import { isNativeOAuthIntegration, validateOAuthDestination } from './oauthPolicy.js';
-import { pinnedLookup } from './pinnedLookup.js';
+import { pinnedAddressesLookup, pinnedLookup, type PinnedAddress } from './pinnedLookup.js';
 import { createRelayId, DefaultVaultRelayManager } from './relays.js';
 import {
   parseSullaCloudRefresh,
@@ -256,7 +256,7 @@ interface LegacyIntegrationRow {
 }
 
 interface PreparedBrokerRequest {
-  target:     URL & { pinnedAddress: string; pinnedFamily: 4 | 6 };
+  target:     URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] };
   headers:    Record<string, string>;
   body:       unknown;
   secrets:    string[];
@@ -2799,7 +2799,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
   }
 
-  private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6 }> {
+  private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
     let url: URL;
     try { url = new URL(raw); } catch { throw new LocalVaultError('invalid_destination', 400, 'Destination URL is invalid'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
@@ -2809,7 +2809,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     if (!addresses.length || addresses.some(candidate => privateAddress(candidate.address))) {
       throw new LocalVaultError('destination_denied', 403, 'Destination resolved to a private, local, or invalid address');
     }
-    return Object.assign(url, { pinnedAddress: addresses[0].address, pinnedFamily: addresses[0].family as 4 | 6 });
+    const pinnedAddresses = addresses.map(candidate => ({ address: candidate.address, family: candidate.family as 4 | 6 }));
+    return Object.assign(url, {
+      pinnedAddress: pinnedAddresses[0].address,
+      pinnedFamily: pinnedAddresses[0].family,
+      pinnedAddresses,
+    });
   }
 
   private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy = false): Promise<ItemRow> {
@@ -2896,7 +2901,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         method,
         headers,
         timeout: 120_000,
-        lookup: pinnedLookup(prepared.target.pinnedAddress, prepared.target.pinnedFamily),
+        lookup: prepared.target.pinnedAddresses?.length
+          ? pinnedAddressesLookup(prepared.target.pinnedAddresses)
+          : pinnedLookup(prepared.target.pinnedAddress, prepared.target.pinnedFamily),
       }, response => {
         if (prepared.generation !== this.generation) {
           response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
@@ -2971,7 +2978,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   private async send(
-    url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6 },
+    url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] },
     methodInput: string,
     headersInput: Record<string, string>,
     bodyInput: unknown,
@@ -3013,7 +3020,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         method,
         headers,
         timeout: 30_000,
-        lookup: pinnedLookup(url.pinnedAddress, url.pinnedFamily),
+        lookup: url.pinnedAddresses?.length
+          ? pinnedAddressesLookup(url.pinnedAddresses)
+          : pinnedLookup(url.pinnedAddress, url.pinnedFamily),
       }, response => {
         if (generation !== this.generation) {
           response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import net from 'node:net';
 import test from 'node:test';
 
-import { pinnedLookup } from './pinnedLookup.js';
+import { pinnedAddressesLookup, pinnedLookup } from './pinnedLookup.js';
 
 test('pinned lookup supports Node address-family autoselection', async() => {
   const server = net.createServer(socket => socket.end('ok'));
@@ -29,4 +29,18 @@ test('pinned lookup supports Node address-family autoselection', async() => {
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
+});
+
+test('multi-address pinned lookup preserves validated failover addresses', async() => {
+  const lookup = pinnedAddressesLookup([
+    { address: '192.0.2.10', family: 4 },
+    { address: '2001:db8::10', family: 6 },
+  ]);
+  const addresses = await new Promise((resolve, reject) => {
+    lookup('synthetic.invalid', { all: true }, (error, result) => error ? reject(error) : resolve(result));
+  });
+  assert.deepEqual(addresses, [
+    { address: '192.0.2.10', family: 4 },
+    { address: '2001:db8::10', family: 6 },
+  ]);
 });
