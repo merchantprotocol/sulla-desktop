@@ -4,7 +4,10 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import fs from 'node:fs/promises'; import os from 'node:os'; import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startFakeServer, type FakeMode } from './fakes';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 type Install = { app: ElectronApplication; page: Page; home: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>> };
 async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string,string> = {}): Promise<Install> {
