@@ -31,8 +31,38 @@ jobs:
     - name: Install JavaScript dependencies
       run: |
         corepack enable yarn
-        yarn install --immutable --ignore-platform --ignore-scripts
+        set -o pipefail
+        yarn install --immutable --ignore-platform --ignore-scripts 2>&1 | tee "${RUNNER_TEMP}/install.log" || {
+          tail -n 15 "${RUNNER_TEMP}/install.log" | sed 's/%/%25/g' | tr '\n' '\r' | sed 's/\r/%0A/g;s/^/::error title=yarn install failed::/'
+          echo
+          exit 1
+        }
     - name: Syntax-check the dependency-free core
       run: node --check pkg/sulla-desktop/pages/files/editor/html-builder/html-builder.js
     - name: HTML editor invariants
-      run: yarn test:unit:jest --runInBand pkg/sulla-desktop/pages/files/editor/__tests__/htmlBuilder.test.ts
+      run: |
+        set +e
+        yarn test:unit:jest --runInBand --json --outputFile="${RUNNER_TEMP}/results.json" \
+          pkg/sulla-desktop/pages/files/editor/__tests__/htmlBuilder.test.ts 2>&1 | tee "${RUNNER_TEMP}/jest.log"
+        rc=${PIPESTATUS[0]}
+        if [ "$rc" -ne 0 ]; then
+          node <<'NODE'
+        const fs = require('fs');
+        const escape = value => String(value).slice(0, 3000).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+        const file = `${process.env.RUNNER_TEMP}/results.json`;
+        let reported = false;
+        if (fs.existsSync(file)) {
+          for (const suite of JSON.parse(fs.readFileSync(file, 'utf8')).testResults) {
+            if (suite.status !== 'failed') continue;
+            const failures = suite.assertionResults.filter(test => test.status === 'failed');
+            const messages = failures.length ? failures.map(test => `${test.fullName}\n${test.failureMessages.join('\n')}`) : [suite.message];
+            for (const message of messages) { console.log(`::error title=HTML editor test failure::${escape(message)}`); reported = true; }
+          }
+        }
+        if (!reported) {
+          const log = fs.readFileSync(`${process.env.RUNNER_TEMP}/jest.log`, 'utf8').split('\n').slice(-40).join('\n');
+          console.log(`::error title=HTML editor tests did not run::${escape(log)}`);
+        }
+        NODE
+          exit "$rc"
+        fi
