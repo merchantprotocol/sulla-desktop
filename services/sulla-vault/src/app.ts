@@ -366,15 +366,18 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
       response.setHeader('Vary', 'Origin');
       next();
     });
-    app.post('/v1/human/session/exchange', (request, response) => {
+    app.post('/v1/human/session/exchange', async(request, response) => {
       const session = localAuthority.exchangeHumanGrant(
         requiredString(request.body.grant, 'grant'), requiredString(request.body.csrf, 'csrf'),
       );
       setHumanCookie(response, session.sessionId, session.expiresAt);
-      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase, targetOrigin: session.browserTarget?.origin });
+      const setupRequired = session.phase === 'pre-unlock' && await localAuthority.isSetupRequired();
+      response.json({ csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase, targetOrigin: session.browserTarget?.origin, setupRequired });
     });
-    app.get('/v1/human/session', (request, response) => {
-      response.json(localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token')));
+    app.get('/v1/human/session', async(request, response) => {
+      const status = localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token'));
+      const setupRequired = status.phase === 'pre-unlock' && await localAuthority.isSetupRequired();
+      response.json({ ...status, setupRequired });
     });
     app.post('/v1/human/unlock', async(request, response) => {
       const result = await localAuthority.unlockHumanSession(

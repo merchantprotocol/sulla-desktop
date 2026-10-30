@@ -1007,6 +1007,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return this.issueHumanSession(session.browserTarget);
   }
 
+  /**
+   * True while no vault user exists yet. The first password submitted to
+   * /v1/human/unlock then creates the vault, so the page asks the person to
+   * create a password (with confirmation) instead of unlocking one.
+   */
+  async isSetupRequired(): Promise<boolean> {
+    const existing = await this.db.query('SELECT 1 FROM users WHERE disabled_at IS NULL LIMIT 1');
+    return !existing.rowCount;
+  }
+
   humanSessionStatus(sessionId: string | undefined, csrf: string | undefined): {
     csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked';
   } {

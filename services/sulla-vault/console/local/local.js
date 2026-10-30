@@ -71,7 +71,14 @@
     const headers = new Headers(options.headers);
     headers.set('x-csrf-token', csrf);
     if (options.body && !(options.body instanceof FormData)) headers.set('content-type', 'application/json');
-    const response = await fetch(path, { credentials: 'same-origin', redirect: 'error', ...options, headers });
+    let response;
+    try {
+      response = await fetch(path, { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(30_000), ...options, headers });
+    } catch (error) {
+      throw new Error(error?.name === 'TimeoutError'
+        ? 'The vault did not respond within 30 seconds. Make sure Sulla finished starting, then try again.'
+        : 'Could not reach the vault. Make sure Sulla finished starting, then try again.');
+    }
     const body = response.status === 204 ? null : responseType === 'blob' ? await response.blob() : await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body?.message || body?.error || `Vault request failed (${response.status})`);
     return body;
@@ -566,7 +573,13 @@
       byId('onboarding-recovery-retry').hidden = false;
     }
   };
-  byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; try {
+  const busy = (form, label) => {
+    const button = form.querySelector('button[type="submit"], button:not([type])');
+    const original = button?.textContent;
+    if (button) { button.disabled = true; button.textContent = label; }
+    return () => { if (button) { button.disabled = false; button.textContent = original; } };
+  };
+  byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, setupCreatesVault ? 'Creating vault…' : 'Unlocking…'); try {
     const password = byId('password').value;
     if (setupCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
     const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password }) });
@@ -578,13 +591,13 @@
       byId('unlock-title').textContent = 'Vault created'; byId('unlock-help').textContent = 'Your vault is encrypted and its unlock cache is protected by this Mac.';
       await configureOnboardingRecovery();
     } else { await load(); await openIntegrationHint(); }
-  } catch (error) { byId('unlock-error').textContent = error.message; } };
+  } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock the vault. Try again.'; } finally { done(); } };
   byId('onboarding-recovery-retry').onclick = () => { void configureOnboardingRecovery(); };
   byId('onboarding-recovery-saved').onchange = event => { byId('onboarding-recovery-continue').disabled = !event.target.checked; };
   byId('onboarding-recovery-copy').onclick = async() => { try { await navigator.clipboard.writeText(byId('onboarding-recovery-code').textContent); message('Recovery key copied.'); } catch { byId('onboarding-recovery-error').textContent = 'Could not copy. Select the key and copy it manually.'; } };
   byId('onboarding-recovery-download').onclick = () => { const blob = new Blob([byId('onboarding-recovery-code').textContent + '\n'], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'sulla-vault-recovery-key.txt'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); };
   byId('onboarding-recovery-continue').onclick = () => { if (byId('onboarding-recovery-saved').checked) { byId('unlock').hidden = true; byId('vault').hidden = false; void load(); } };
-  byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message; } };
+  byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, 'Unlocking…'); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock with that recovery key.'; } finally { done(); } };
   byId('new-item').onclick = () => { void openEditor(null).catch(error => message(error.message, true)); };
   byId('nav-audit').onclick = showAudit;
   // Desktop intercepts this path and opens its Integrations tab; nothing is served here.
