@@ -1403,6 +1403,43 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return { wrappedUserKey: await transportWrap(keys.userKey, input.publicKey, input.requestId, input.vaultId, input.vaultEpoch) };
   }
 
+  /** Replace the account recovery wrap while retaining the previous encrypted wrap as a restore point. */
+  async rotateAccountRecoveryKey(
+    serviceId: string, token: string,
+  ): Promise<{ recoveryKey: string; replacedExisting: boolean }> {
+    this.requireApprovalIdentity(serviceId, token);
+    const keys = this.requireKeys();
+    const generation = this.generation;
+    const recoveryKey = randomBytes(32);
+    const recovery = await deriveMasterKey(recoveryKey.toString('base64url'));
+    try {
+      const verifier = makeLoginVerifier(await deriveLoginHash(recovery.key));
+      const wrapped = await encryptWithKey(keys.userKey, recovery.key, 'sulla:recovery-user-key:v1');
+      let replacedExisting = false;
+      await this.runTransaction(async client => {
+        const prior = await client.query(
+          `INSERT INTO local_vault_recovery_history(user_id,recovery_salt,recovery_verifier,encrypted_user_key,reason)
+           SELECT user_id,recovery_salt,recovery_verifier,encrypted_user_key,'rotation'
+           FROM local_vault_recovery WHERE user_id=$1 RETURNING id`, [keys.userId],
+        );
+        replacedExisting = Boolean(prior.rowCount);
+        await client.query(
+          `INSERT INTO local_vault_recovery(user_id,recovery_salt,recovery_verifier,encrypted_user_key)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT(user_id) DO UPDATE SET recovery_salt=$2,recovery_verifier=$3,encrypted_user_key=$4,updated_at=now()`,
+          [keys.userId, JSON.stringify({ kdf: recovery.salt, verifier: verifier.salt.toString('base64url'), parameters: recovery.parameters }),
+            verifier.verifier.toString('base64url'), wrapped],
+        );
+        this.requireGeneration(generation);
+        await this.auditHumanAction(client, keys.userId, 'account_recovery_key_rotated');
+      });
+      return { recoveryKey: recoveryKey.toString('base64url'), replacedExisting };
+    } finally {
+      recovery.key.fill(0);
+      recoveryKey.fill(0);
+    }
+  }
+
   async configureHumanRecovery(
     sessionId: string | undefined, csrf: string | undefined, recoveryCode: string,
   ): Promise<void> {

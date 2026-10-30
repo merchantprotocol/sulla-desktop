@@ -28,6 +28,7 @@ import type {
   AccountPasswordRewrapRequest,
   AccountPasswordRewrapResponse,
   VaultDeviceApprovalWrapRequest,
+  RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
 
 export type {
@@ -529,6 +530,18 @@ export class LocalVaultApprovalClient {
       throw new VaultBrokerError(error.error, error.message, response.status);
     }
     return response.json() as Promise<{ wrappedUserKey: unknown }>;
+  }
+
+  async rotateRecoveryKey(): Promise<RecoveryKeyRotateResponse> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/recovery-key/rotate`, {
+      method: 'POST', headers: {
+        authorization: `Bearer ${ identity.serviceToken }`,
+        'content-type': 'application/json', 'x-sulla-service-id': identity.serviceId,
+      }, body: '{}',
+    });
+    if (!response.ok) { const error = await errorBody(response); throw new VaultBrokerError(error.error, error.message, response.status) }
+    return response.json() as Promise<RecoveryKeyRotateResponse>;
   }
 
   async sullaCloudRequest(request: SullaCloudDesktopRequest): Promise<BrokerExecuteResponse> {

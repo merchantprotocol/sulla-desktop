@@ -25,6 +25,9 @@
  *   - Sign in with Apple ...... sulla-cloud:apple-sign-in (takes identity token)
  */
 
+import fs from 'node:fs';
+import { BrowserWindow, clipboard, dialog } from 'electron';
+
 import { IntegrationValueModel } from '@pkg/agent/database/models/IntegrationValueModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
@@ -39,7 +42,7 @@ import { deriveAccountAuthHash, deriveMasterKey } from '../../../packages/vault-
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
-import { saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
+import { readRecoveryKeyFromMacKeychain, recoveryKeyStorageStatus, saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
 import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
@@ -111,7 +114,12 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
     const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(key).toString('base64url'), kdf });
-    if (result.recoveryKey) await saveRecoveryKeyToMacKeychain(userId, result.recoveryKey);
+    if (result.recoveryKey) {
+      const storage = await saveRecoveryKeyToMacKeychain(userId, result.recoveryKey);
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send('sulla-cloud:recovery-key-created', { recoveryKey: result.recoveryKey, storage, madeAt: new Date().toISOString() });
+      }
+    }
     return { recoveryKey: result.recoveryKey };
   } finally {
     key.fill(0);
@@ -824,6 +832,50 @@ export function initSullaCloudAuthEvents(): void {
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
     return buildStatus();
+  });
+
+  ipcMainProxy.handle('sulla-cloud:recovery-key-status', async() => {
+    const status = recoveryKeyStorageStatus();
+    if (status.location !== 'unavailable' && !await readRecoveryKeyFromMacKeychain()) {
+      return { location: 'unavailable', label: 'Recovery key is not saved', checkedAt: new Date().toISOString() };
+    }
+    return { ...status, checkedAt: new Date().toISOString() };
+  });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-rotate', async() => {
+    const status = await buildStatus();
+    if (!status.signedIn || !status.userId) throw new Error('Sign in to Sulla Cloud before making a recovery key.');
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault recovery service is unavailable.');
+    const result = await client.rotateRecoveryKey();
+    const storage = await saveRecoveryKeyToMacKeychain(status.userId, result.recoveryKey);
+    return { ...result, storage, madeAt: new Date().toISOString() };
+  });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-copy', async(_event: unknown, recoveryKey: string) => {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(recoveryKey)) throw new Error('Recovery key is invalid.');
+    clipboard.writeText(recoveryKey);
+  });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-print', async(_event: unknown, recoveryKey: string) => {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(recoveryKey)) throw new Error('Recovery key is invalid.');
+    const owner = BrowserWindow.getFocusedWindow();
+    const print = new BrowserWindow({ show: false, parent: owner ?? undefined, webPreferences: { sandbox: true } });
+    try {
+      await print.loadURL(`data:text/html,${ encodeURIComponent(`<title>Sulla recovery key</title><h1>Sulla recovery key</h1><p>Keep this somewhere safe.</p><pre>${ recoveryKey }</pre>`) }`);
+      await new Promise<void>((resolve, reject) => print.webContents.print({}, (ok, reason) => ok ? resolve() : reject(new Error(reason))));
+    } finally { print.destroy() }
+  });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-save', async(_event: unknown, recoveryKey: string) => {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(recoveryKey)) throw new Error('Recovery key is invalid.');
+    const owner = BrowserWindow.getFocusedWindow();
+    const options = { defaultPath: 'Sulla recovery key.pdf', filters: [{ name: 'PDF', extensions: ['pdf'] }] };
+    const output = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+    if (output.canceled || !output.filePath) return { saved: false };
+    const page = new BrowserWindow({ show: false, parent: owner ?? undefined, webPreferences: { sandbox: true } });
+    try {
+      await page.loadURL(`data:text/html,${ encodeURIComponent(`<title>Sulla recovery key</title><style>body{font:18px system-ui;padding:48px}pre{font:22px monospace}</style><h1>Sulla recovery key</h1><p>Keep this somewhere safe.</p><pre>${ recoveryKey }</pre>`) }`);
+      const pdf = await page.webContents.printToPDF({});
+      await fs.promises.writeFile(output.filePath, pdf, { mode: 0o600 });
+    } finally { page.destroy() }
+    return { saved: true };
   });
 
   ipcMainProxy.handle('sulla-cloud:send-otp', async(_event: unknown, phone: string): Promise<AuthResult> => {
