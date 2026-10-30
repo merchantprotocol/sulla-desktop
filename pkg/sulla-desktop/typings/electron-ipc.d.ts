@@ -389,7 +389,7 @@ export interface IpcMainInvokeEvents {
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
   'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
-  'sulla-cloud:recovery-key-status': () => { location: 'icloud-keychain' | 'local-keychain' | 'unavailable'; label: string; checkedAt: string };
+  'sulla-cloud:recovery-key-status': () => { location: string; label: string; checkedAt: string };
   'sulla-cloud:recovery-key-rotate': () => { recoveryKey: string; storage: unknown; madeAt: string; [key: string]: unknown };
   'sulla-cloud:recovery-key-copy':   (recoveryKey: string) => void;
   'sulla-cloud:recovery-key-print':  (recoveryKey: string) => void;
