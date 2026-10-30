@@ -61,6 +61,6 @@ jobs:
         with:
           node-version-file: package.json
           cache: yarn
-      - run: yarn install --immutable
+      - run: yarn install --frozen-lockfile --ignore-scripts
       - name: Build and run vault envelope security tests
         run: yarn --cwd services/sulla-vault test:envelope
