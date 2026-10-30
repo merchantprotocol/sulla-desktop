@@ -9,6 +9,7 @@ const VERSION = 1 as const;
 const KEY_BYTES = 32;
 const SALT_BYTES = 16;
 const NONCE_BYTES = 24;
+const CLOUD_AUTH_DOMAIN = 'sulla-cloud-auth-v1';
 
 export type Base64 = string;
 
@@ -108,6 +109,12 @@ export async function deriveMasterKey(
     sodium.crypto_pwhash_ALG_ARGON2ID13,
   );
   return { key, salt: b64(saltBytes), parameters };
+}
+
+export async function deriveAccountAuthHash(masterKey: Uint8Array): Promise<Base64> {
+  await ready();
+  assertKey(masterKey, 'Master key');
+  return b64(sodium.crypto_generichash(KEY_BYTES, textEncoder.encode(CLOUD_AUTH_DOMAIN), masterKey));
 }
 
 export async function deriveLoginHash(masterKey: Uint8Array): Promise<Base64> {
