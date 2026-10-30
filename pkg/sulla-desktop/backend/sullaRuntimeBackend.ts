@@ -122,6 +122,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   readonly executor = this;
+  readonly managesSullaServices = true;
   #containerEngineClient: ContainerEngineClient | undefined;
   #activeOptionalSullaServices = new Set<string>();
   /** Settles when the background start of the optional services finishes. */
@@ -139,43 +140,23 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #containerRecreates = new Map<string, number>();
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
-  #sullaCredentialsReady = false;
-  #sullaCredentialsWaiters = new Set<() => void>();
   /** The native Sulla runtime VM. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
 
-  /** Opened by the first-run coordinator after credential setup is complete. */
-  setSullaCredentialsReady(): void {
-    this.#sullaCredentialsReady = true;
-    for (const wake of this.#sullaCredentialsWaiters) wake();
-    this.#sullaCredentialsWaiters.clear();
-  }
-
   private beginManagedServicesGeneration(): number {
     this.#managedServicesGeneration += 1;
-    for (const wake of this.#sullaCredentialsWaiters) wake();
-    this.#sullaCredentialsWaiters.clear();
 
     return this.#managedServicesGeneration;
   }
 
   private invalidateManagedServicesGeneration(): void {
     this.#managedServicesGeneration += 1;
-    for (const wake of this.#sullaCredentialsWaiters) wake();
-    this.#sullaCredentialsWaiters.clear();
   }
 
   private assertManagedServicesGeneration(generation: number): void {
     if (generation !== this.#managedServicesGeneration) {
       throw new ManagedServicesReconciliationCancelled();
-    }
-  }
-
-  private async waitForSullaCredentials(generation: number): Promise<void> {
-    while (!this.#sullaCredentialsReady) {
-      await new Promise<void>((resolve) => this.#sullaCredentialsWaiters.add(resolve));
-      this.assertManagedServicesGeneration(generation);
     }
   }
 
@@ -674,9 +655,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const reconciliation = (async() => {
       if (previous) await previous.catch(() => undefined);
       this.assertManagedServicesGeneration(generation);
-      await this.waitForSullaCredentials(generation);
-      this.assertManagedServicesGeneration(generation);
-
       const { resetAgentContainerImageResolution, keepThreatProxyForRunningAgents } = await import('@pkg/agent/services/AgentContainerLauncher');
 
       resetAgentContainerImageResolution();
@@ -1733,6 +1711,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         this.waitForDockerServiceHealthy('sulla_postgres', 300, generation),
         this.waitForDockerServiceHealthy('sulla_redis', 300, generation),
       ]);
+      mainEvents.emit('first-run-ai-runtime-ready');
 
       this.#activeOptionalSullaServices.clear();
       // The function runtimes start on first use (backend/onDemandServices.ts)
