@@ -16,6 +16,7 @@
     }"
   >
     <the-title ref="title" />
+    <NoAiConnectedBanner />
     <main
       ref="body"
       class="body"
@@ -34,6 +35,7 @@ import { mapState } from 'vuex';
 
 import '../entry/agent-tailwind.css';
 import ActionMenu from '@pkg/components/ActionMenu.vue';
+import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import StatusBar from '@pkg/components/StatusBar.vue';
 import TheTitle from '@pkg/components/TheTitle.vue';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -45,6 +47,7 @@ export default {
     StatusBar,
     ActionMenu,
     TheTitle,
+    NoAiConnectedBanner,
   },
 
   setup() {
@@ -140,6 +143,7 @@ export default {
   display: grid;
   grid-template:
     "title"
+    "no-ai"
     "body"    1fr
     "status-bar";
   background-color: var(--body-bg);
