@@ -1230,6 +1230,7 @@ export interface IpcRendererEvents {
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;
   'claude-oauth:url':               (url: string) => void;
+  'claude-oauth:stage':             (text: string) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
   'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;

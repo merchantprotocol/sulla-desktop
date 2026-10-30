@@ -344,6 +344,8 @@ export function initClaudeOAuthEvents(): void {
       return { error: 'The Sulla VM is not running yet. Wait for Sulla Desktop to finish starting up, then try again.' };
     }
 
+    const stage = (text: string) => { try { event.sender.send('claude-oauth:stage' as any, text) } catch { /* window closed */ } };
+    stage('Setting up Claude in your private workspace…');
     try {
       await ensureClaudeCliInVM();
     } catch (err) {
@@ -405,6 +407,7 @@ export function initClaudeOAuthEvents(): void {
       }, 5 * 60 * 1000);
 
       console.log('[ClaudeOAuth] Starting OAuth flow');
+      stage('Starting Claude sign-in…');
 
       ptyProcess.onData((data: string) => {
         const clean = stripAnsi(data);
@@ -434,6 +437,7 @@ export function initClaudeOAuthEvents(): void {
             try {
               event.sender.send('claude-oauth:url', url);
             } catch { /* window closed */ }
+            stage('Finish signing in to Claude in the window that just opened.');
 
             const { window, codePromise } = openAuthWindow(url);
             session.authWindow = window;
