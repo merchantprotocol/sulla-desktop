@@ -1489,29 +1489,22 @@ ipcMainProxy.handle('first-run-ai:status', (event) => {
 // sign-in the active account and the primary model, then let the wizard close.
 ipcMainProxy.handle('first-run-ai:connected', async(event, providerId: string) => {
   assertFirstRunOrMainSender(event);
-  const { GROK_SUBSCRIPTION_DEFAULT_MODEL } = await import('@pkg/agent/languagemodels/GrokService');
-  const defaultModels: Record<string, string> = {
-    'claude-code': 'claude-code', // CLI default
-    codex:         'codex', // CLI default
-    grok:          GROK_SUBSCRIPTION_DEFAULT_MODEL,
-  };
-  const modelId = defaultModels[providerId];
-
-  if (!modelId) {
+  if (!['claude-code', 'codex', 'grok'].includes(providerId)) {
     throw new Error(`Unknown first-run AI provider: ${ providerId }`);
   }
   console.log(`[FirstRunCoordinator] AI provider connected: ${ providerId }`);
-  const { hasPendingCredential } = await import('@pkg/main/firstRun/pendingCredentials');
-  if (!hasPendingCredential(providerId)) {
-    try {
-      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+  try {
+    const { hasPendingCredential } = await import('@pkg/main/firstRun/pendingCredentials');
+    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
 
-      await getIntegrationService().setActiveAccount(providerId, 'oauth');
-      await getModelProviderService().selectModel(providerId, modelId);
-    } catch (err) {
-      console.warn('[FirstRunCoordinator] Could not make the new sign-in primary:', err);
-    }
+    if (!hasPendingCredential(providerId)) await getIntegrationService().setActiveAccount(providerId, 'oauth');
+    await getModelProviderService().reconcilePrimaryProvider(true);
+  } catch (err) {
+    // Postgres is normally unavailable during first run. applyFirstRunChoices
+    // repeats this selection once it is ready, while pending credentials remain
+    // the source of truth until the vault can accept them.
+    console.warn('[FirstRunCoordinator] Could not make the new sign-in primary yet:', err);
   }
   await firstRunCoordinator.setCondition('aiConnected');
 });

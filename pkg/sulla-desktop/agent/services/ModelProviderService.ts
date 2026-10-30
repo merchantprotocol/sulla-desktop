@@ -21,6 +21,9 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
 import { getSelectBoxProvider } from '../integrations/select_box';
 import { getCliStatus } from '../tools/models/shared';
+import { GROK_SUBSCRIPTION_DEFAULT_MODEL } from '../languagemodels/GrokService';
+
+import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -67,7 +70,7 @@ type ChangeListener = (state: ModelProviderState) => void;
 
 class ModelProviderService {
   private state: ModelProviderState = {
-    primaryProvider:      'grok',
+    primaryProvider:      '',
     secondaryProvider:    'grok',
     heartbeatProvider:    'default',
     subconsciousProvider: 'claude-code',
@@ -106,6 +109,7 @@ class ModelProviderService {
     // IPC with sensible defaults from the initial state object.
     try {
       await this.loadStateFromDB();
+      await this.reconcilePrimaryProvider();
     } catch (err) {
       console.warn('[ModelProviderService] loadStateFromDB failed — using defaults:', err);
     }
@@ -177,7 +181,7 @@ class ModelProviderService {
     const results = await Promise.allSettled(candidates.map(async(integration) => {
       let connected = false;
       try {
-        connected = await integrationService.isAnyAccountConnected(integration.id);
+        connected = hasPendingCredential(integration.id) || await integrationService.isAnyAccountConnected(integration.id);
       } catch (err) {
         console.warn(`[ModelProviderService] connection check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
       }
@@ -291,6 +295,42 @@ class ModelProviderService {
     // Notify everyone
     await this.broadcastChange();
 
+    return this.getState();
+  }
+
+  /**
+   * Pick a usable primary provider from the accounts that actually exist.
+   * During first run credentials may still be waiting in memory for the vault,
+   * so pending credentials count as connected here and in the model picker.
+   */
+  async reconcilePrimaryProvider(preferPriority = false): Promise<ModelProviderState> {
+    const integrationService = getIntegrationService();
+    const priority = [
+      { providerId: 'claude-code', modelId: 'claude-code' },
+      { providerId: 'codex', modelId: 'codex' },
+      { providerId: 'grok', modelId: GROK_SUBSCRIPTION_DEFAULT_MODEL },
+    ];
+    const connected = new Set<string>();
+
+    for (const { providerId } of priority) {
+      if (hasPendingCredential(providerId)) {
+        connected.add(providerId);
+        continue;
+      }
+      try {
+        if (await integrationService.isAnyAccountConnected(providerId)) connected.add(providerId);
+      } catch { /* the integration database may still be starting */ }
+    }
+
+    if (!preferPriority && connected.has(this.state.primaryProvider)) return this.getState();
+
+    const selected = priority.find(({ providerId }) => connected.has(providerId));
+    if (selected) return this.selectModel(selected.providerId, selected.modelId);
+
+    this.state.primaryProvider = '';
+    this.state.activeModelId = '';
+    await this.persistState('', '');
+    await this.broadcastChange();
     return this.getState();
   }
 
@@ -427,7 +467,7 @@ class ModelProviderService {
   // ── Internal ───────────────────────────────────────────────────
 
   private async loadStateFromDB(): Promise<void> {
-    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
+    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', '');
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
@@ -447,7 +487,7 @@ class ModelProviderService {
       const integrationService = getIntegrationService();
       const formValues = await integrationService.getFormValues(this.state.primaryProvider);
       const modelVal = formValues.find(v => v.property === 'model');
-      this.state.activeModelId = modelVal?.value || '';
+      this.state.activeModelId = modelVal?.value || await SullaSettingsModel.get('remoteModel', '');
     } catch {
       this.state.activeModelId = await SullaSettingsModel.get('remoteModel', '');
     }
