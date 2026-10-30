@@ -59,7 +59,7 @@ test('shared account-auth-v1 KAT recovery wrap unwraps bundle v2 byte-for-byte',
   try {
     assert.equal(
       sodium.to_base64(
-        sodium.crypto_generichash(32, new TextEncoder().encode('sulla-account-auth-kat-user-key-fingerprint-v1'), userKey),
+        sodium.crypto_generichash(32, new TextEncoder().encode('sulla-vault-user-key-kat-fingerprint-v1'), userKey),
         sodium.base64_variants.URLSAFE_NO_PADDING,
       ),
       accountKat.userKeyFingerprint,
