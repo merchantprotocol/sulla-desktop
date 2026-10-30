@@ -86,6 +86,7 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
+import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
 if (process.platform === 'linux') {
@@ -359,7 +360,9 @@ firstRunCoordinator.registerStep(
 
     if (firstRunWindow && !firstRunWindow.isDestroyed()) {
       firstRunWindow.setClosable(true);
-      firstRunWindow.close();
+      // This is the coordinator's intentional completion close; destroy()
+      // bypasses the unfinished-setup confirmation installed by the window.
+      firstRunWindow.destroy();
     }
     window.openMain();
   },
@@ -821,22 +824,32 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
 }
 
 async function doFirstRunDialog() {
-  const firstRunCredentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
+  let { onboardingComplete } = getFirstRunState();
+  // settings.json is not evidence of a prior install: settingsImpl.load()
+  // writes it at startup before this runs. firstRunDialogNeeded() covers it.
+  const existingFiles = [
+    path.join(paths.appHome, 'vault-control-token.enc'),
+    path.join(paths.appHome, 'vault-bootstrap-identity.enc'),
+    path.join(paths.appHome, 'vault-v2-key.enc'),
+    path.join(paths.sullaConfig, 'vault-key.enc'),
+  ].some(candidate => fs.existsSync(candidate));
+  let credentialsWereSaved = false;
 
-  // Defense-in-depth: if vault files already exist in ~/.sulla/, credentials
-  // were set in a prior install. An upgrade (or manual tampering) may have
-  // wiped the settings flag, but the vault proves setup already happened.
-  // Don't allow re-triggering credential setup — that would orphan the vault.
-  const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-  const vaultAlreadySetUp = getVaultKeyService().isSetUp();
+  try {
+    const fallback = JSON.parse(fs.readFileSync(path.join(Electron.app.getPath('userData'), 'sulla-settings-fallback.json'), 'utf8'));
 
-  if (firstRunCredentialsNeeded && vaultAlreadySetUp) {
-    console.log('[FirstRun] Vault already exists — restoring firstRunCredentialsNeeded=false (upgrade detected)');
-    await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
+    credentialsWereSaved = fallback?.firstRunCredentialsNeeded === false || fallback?.firstRunCredentialsNeeded === 'false';
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') console.warn('[FirstRun] Could not inspect legacy first-run settings:', err);
   }
 
-  const credentialsNeeded = firstRunCredentialsNeeded && !vaultAlreadySetUp;
-  const needsFirstRun = !noModalDialogs && (settingsImpl.firstRunDialogNeeded() || credentialsNeeded);
+  if (!onboardingComplete && (!settingsImpl.firstRunDialogNeeded() || credentialsWereSaved || existingFiles)) {
+    onboardingComplete = true;
+    updateFirstRunState({ onboardingComplete: true });
+    console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
+  }
+
+  const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
 
   if (needsFirstRun) {
     await window.openFirstRunDialog();
@@ -1362,6 +1375,64 @@ ipcMainProxy.handle('start-backend' as any, async() => {
   }
 });
 
+// Check the two things most likely to make the first VM boot fail before the
+// user starts it. The 10 GB disk floor is the installer's existing minimum.
+ipcMainProxy.handle('first-run-preflight' as any, async() => {
+  const MIN_DISK_GB = 10;
+  let availableDiskGB: number | null = null;
+
+  try {
+    const stats = fs.statfsSync(Electron.app.getPath('userData'));
+
+    availableDiskGB = stats.bavail * stats.bsize / (1024 ** 3);
+  } catch (err) {
+    console.warn('[FirstRun] Could not read free disk space:', err);
+  }
+  if (availableDiskGB !== null && availableDiskGB < MIN_DISK_GB) {
+    return {
+      ok:      false,
+      kind:    'disk',
+      message: `Sulla needs at least ${ MIN_DISK_GB } GB of free disk space to install its private workspace. Free some space, then retry.`,
+    };
+  }
+
+  try {
+    const response = await Electron.net.fetch('https://sulladesktop.com/', {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${ response.status }`);
+  } catch (err) {
+    console.warn('[FirstRun] Network preflight failed:', err);
+
+    return {
+      ok:      false,
+      kind:    'network',
+      message: 'Sulla could not reach the internet. Check your connection, then retry.',
+    };
+  }
+
+  return { ok: true, availableDiskGB };
+});
+
+ipcMainProxy.handle('startup/retry' as any, (event) => {
+  const errorWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+
+  if (!errorWindow || errorWindow !== window.getWindow('KubernetesError')) {
+    throw new Error('Startup retry is only available from the startup error window');
+  }
+
+  if (k8smanager.state === State.STARTING) return { started: false };
+
+  setImmediate(() => {
+    errorWindow?.close();
+    void startBackend();
+  });
+
+  return { started: true };
+});
+
 // Finishing screen asks whether the VM + database are up so it can sign in.
 ipcMainProxy.handle('first-run-ai:status', () => ({ ready: firstRunAiSignInReady }));
 
@@ -1436,8 +1507,32 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
 ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
   console.log('[FirstRunCoordinator] Wizard reached step:', step);
   if (step >= 4) {
+    // Reaching Finishing means every user-driven screen is complete. AI may
+    // be connected now or deferred; either way the wizard must not recur.
+    updateFirstRunState({ onboardingComplete: true, step: 0 });
     await firstRunCoordinator.setCondition('wizardFinished');
   }
+});
+
+function requireFirstRunStateSender(event: Electron.IpcMainInvokeEvent) {
+  const senderWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+
+  if (!senderWindow || ![window.getWindow('first-run'), window.getWindow('main-agent')].includes(senderWindow)) {
+    throw new Error('First-run state is only available to trusted setup windows');
+  }
+}
+
+ipcMainProxy.handle('first-run-state:get' as any, (event) => {
+  requireFirstRunStateSender(event);
+
+  return getFirstRunState();
+});
+
+ipcMainProxy.handle('first-run-state:set' as any, (event, patch) => {
+  requireFirstRunStateSender(event);
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch) || 'version' in patch) throw new Error('Invalid first-run state patch');
+
+  return updateFirstRunState(patch);
 });
 
 /// /////////////////////////////////////////////////////////////////////////////
