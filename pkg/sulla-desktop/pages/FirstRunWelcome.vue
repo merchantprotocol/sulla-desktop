@@ -118,6 +118,7 @@ async function continueWithoutAccount() {
   cloudPassword.value = '';
   await saveChoices({
     accountLinked: false,
+    accountChoice: 'mac-only',
     primaryUserName: primaryUserName.value.trim(),
     sullaEmail: '',
     sullaSubscribeToUpdates: false,
@@ -134,7 +135,7 @@ async function handleCloudSubmit() {
     if (attempt !== cloudAttempt) return;
     if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
     cloudPassword.value = '';
-    await saveChoices({ accountLinked: true });
+    await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
     step.value = 'sync';
   } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
   finally { if (attempt === cloudAttempt) cloudSubmitting.value = false; }
