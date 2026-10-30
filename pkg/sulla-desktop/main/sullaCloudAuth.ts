@@ -35,6 +35,7 @@ import { getPendingCredential, queuePendingCredential, startPendingCredentialFlu
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
+import { deriveAccountAuthHash, deriveMasterKey } from '../../../packages/vault-crypto/src/index';
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
@@ -44,6 +45,79 @@ const console = Logging.background;
 
 const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 const INTEGRATION_ID = 'sulla-cloud';
+
+interface AccountKdf {
+  alg:         'argon2id13';
+  salt:        string;
+  memoryBytes: number;
+  ops:         number;
+}
+
+interface DerivedAccountCredential {
+  authHash: string;
+  kdf:      AccountKdf;
+  masterKey: Uint8Array;
+}
+
+let pendingCloudMasterKey: Uint8Array | undefined;
+let quitCleanupInstalled = false;
+
+function zeroPendingCloudMasterKey(): void {
+  pendingCloudMasterKey?.fill(0);
+  pendingCloudMasterKey = undefined;
+}
+
+/**
+ * D2 consumes this key when the vault is ready. Ownership transfers to the
+ * caller, which must zero it after wrapping/flush. Nothing is persisted.
+ */
+export function takePendingCloudMasterKey(): Uint8Array | undefined {
+  const key = pendingCloudMasterKey;
+  pendingCloudMasterKey = undefined;
+  return key;
+}
+
+export function clearPendingCloudMasterKey(): void {
+  zeroPendingCloudMasterKey();
+}
+
+function retainCloudMasterKey(key: Uint8Array): void {
+  zeroPendingCloudMasterKey();
+  pendingCloudMasterKey = key;
+  if (!quitCleanupInstalled) {
+    quitCleanupInstalled = true;
+    process.once('exit', zeroPendingCloudMasterKey);
+  }
+}
+
+function parseAccountKdf(value: unknown): AccountKdf {
+  const kdf = value as Partial<AccountKdf> | null;
+  if (kdf?.alg !== 'argon2id13' || typeof kdf.salt !== 'string' || !kdf.salt ||
+      kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
+    throw new Error('Sulla Cloud returned an unsupported account KDF.');
+  }
+  return kdf as AccountKdf;
+}
+
+async function deriveAccountCredential(password: string, accountKdf?: AccountKdf): Promise<DerivedAccountCredential> {
+  const derived = await deriveMasterKey(
+    password,
+    accountKdf?.salt,
+    accountKdf ? { memoryBytes: accountKdf.memoryBytes, operations: accountKdf.ops } : undefined,
+  );
+  const kdf: AccountKdf = {
+    alg:         'argon2id13',
+    salt:        derived.salt,
+    memoryBytes: derived.parameters.memoryBytes,
+    ops:         derived.parameters.operations,
+  };
+  try {
+    return { authHash: await deriveAccountAuthHash(derived.key), kdf, masterKey: derived.key };
+  } catch (error) {
+    derived.key.fill(0);
+    throw error;
+  }
+}
 
 // Legacy setting keys — cleared on first migration pass.
 const LEGACY_ENCRYPTED_TOKENS = 'sullaCloudTokensEncrypted';
@@ -445,32 +519,78 @@ async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; er
   return { ok: true, data };
 }
 
-async function emailLogin(email: string, password: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
-  const res = await fetch(`${ API_BASE }/auth/email/login`, {
+async function prelogin(email: string): Promise<{ kdf: AccountKdf; authVersion: 1 | 2 }> {
+  const res = await fetch(`${ API_BASE }/auth/prelogin`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email, password }),
+    body:    JSON.stringify({ email }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
+    throw new Error(body.error || `HTTP ${ res.status }`);
   }
-  const data = await res.json() as VerifyResponse;
-  return { ok: true, data };
+  const data = await res.json() as { kdf?: unknown; authVersion?: unknown };
+  if (data.authVersion !== 1 && data.authVersion !== 2) throw new Error('Sulla Cloud returned an unsupported authentication version.');
+  return { kdf: parseAccountKdf(data.kdf), authVersion: data.authVersion };
 }
 
-async function emailRegister(email: string, password: string, name?: string): Promise<{ ok: boolean; error?: string; httpStatus?: number; data?: VerifyResponse }> {
-  const res = await fetch(`${ API_BASE }/auth/email/register`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ email, password, name, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status };
+interface PasswordAuthResponse {
+  ok:          boolean;
+  error?:      string;
+  httpStatus?: number;
+  data?:       VerifyResponse;
+  masterKey?:  Uint8Array;
+}
+
+async function emailLogin(email: string, password: string): Promise<PasswordAuthResponse> {
+  const account = await prelogin(email);
+  const credential = await deriveAccountCredential(password, account.kdf);
+  const endpoint = account.authVersion === 1 ? '/auth/upgrade' : '/auth/email/login';
+  const body = account.authVersion === 1
+    ? { email, password, authHash: credential.authHash, kdf: credential.kdf }
+    : { email, authHash: credential.authHash };
+  try {
+    const res = await fetch(`${ API_BASE }${ endpoint }`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    if (!res.ok) {
+      credential.masterKey.fill(0);
+      const response = await res.json().catch(() => ({})) as { error?: string };
+      return { ok: false, error: response.error || `HTTP ${ res.status }`, httpStatus: res.status };
+    }
+    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey };
+  } catch (error) {
+    credential.masterKey.fill(0);
+    throw error;
   }
-  const data = await res.json() as VerifyResponse;
-  return { ok: true, data };
+}
+
+async function emailRegister(email: string, password: string, name?: string): Promise<PasswordAuthResponse> {
+  const credential = await deriveAccountCredential(password);
+  try {
+    const res = await fetch(`${ API_BASE }/auth/email/register`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        email,
+        authHash: credential.authHash,
+        kdf: credential.kdf,
+        name,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
+    });
+    if (!res.ok) {
+      credential.masterKey.fill(0);
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status };
+    }
+    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey };
+  } catch (error) {
+    credential.masterKey.fill(0);
+    throw error;
+  }
 }
 
 /** Passwordless: email a 6-digit code that signs in or creates the account. */
@@ -781,9 +901,10 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: 'Email and password are required.', status: await buildStatus() };
     }
     const result = await emailLogin(e, password);
-    if (!result.ok || !result.data) {
+    if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
+    retainCloudMasterKey(result.masterKey);
     return completeSignIn(result.data);
   });
 
@@ -834,11 +955,13 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: 'Password must be at least 8 characters.', status: await buildStatus().catch(() => ({} as any)) };
     }
     let data: VerifyResponse;
+    let masterKey: Uint8Array;
     let isNewUser: boolean;
     try {
       const created = await emailRegister(e, password, name?.trim() || undefined);
       if (created.ok && created.data) {
         data = created.data;
+        masterKey = created.masterKey!;
         isNewUser = true;
       } else if (created.httpStatus === 409) {
         const login = await emailLogin(e, password);
@@ -846,6 +969,7 @@ export function initSullaCloudAuthEvents(): void {
           return { ok: false, accountExists: true, error: 'This email already has a Sulla Cloud account, and that password doesn\'t match it.', status: await buildStatus().catch(() => ({} as any)) };
         }
         data = login.data;
+        masterKey = login.masterKey!;
         isNewUser = false;
       } else {
         return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
@@ -853,6 +977,7 @@ export function initSullaCloudAuthEvents(): void {
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }
+    retainCloudMasterKey(masterKey!);
     const signedIn = shouldKeepSessionInMemory()
       ? await completeFirstRunSignIn(data)
       : await completeSignInWhenReady(data, 'Sulla is still starting up. Wait a minute, then try again.');
@@ -865,9 +990,10 @@ export function initSullaCloudAuthEvents(): void {
       return { ok: false, error: 'Password must be at least 8 characters.', status: await buildStatus() };
     }
     const result = await emailRegister(e, password, name?.trim());
-    if (!result.ok || !result.data) {
+    if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
+    retainCloudMasterKey(result.masterKey);
     return completeSignIn(result.data);
   });
 
@@ -941,6 +1067,7 @@ export function initSullaCloudAuthEvents(): void {
   });
 
   ipcMainProxy.handle('sulla-cloud:logout', async(): Promise<AuthStatus> => {
+    clearPendingCloudMasterKey();
     try {
       await clearSession();
     } catch (err) {
