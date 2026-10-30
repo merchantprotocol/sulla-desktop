@@ -30,6 +30,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
+import { getFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -550,9 +551,10 @@ function warnRefreshFailure(message: string): void {
  * caller should surface a re-auth prompt at that point.
  */
 async function refreshAccessToken(): Promise<string> {
+  const pendingSession = getPendingCredential(INTEGRATION_ID);
   // In container-vault mode refresh and token rotation happen within the
   // vault broker. Secret token egress into Electron is intentionally blocked.
-  if (usesContainerVaultAuthority()) return '';
+  if (usesContainerVaultAuthority() && !pendingSession) return '';
   const session = await loadSession();
   if (!session?.tokens.refreshToken) return '';
 
@@ -574,7 +576,22 @@ async function refreshAccessToken(): Promise<string> {
         refreshToken: data.refreshToken ?? session.tokens.refreshToken,
       },
     };
-    await saveSession(refreshed);
+    if (pendingSession) {
+      queuePendingCredential({
+        integrationId: INTEGRATION_ID,
+        accountId:     refreshed.userId,
+        activate:      true,
+        values: {
+          access_token:         refreshed.tokens.accessToken,
+          refresh_token:        refreshed.tokens.refreshToken,
+          user_id:              refreshed.userId,
+          active_contractor_id: refreshed.activeContractorId,
+          contractors_json:     JSON.stringify(refreshed.contractors),
+        },
+      });
+    } else {
+      await saveSession(refreshed);
+    }
     if (refreshFailCount > 1) {
       console.log(`[sullaCloudAuth] Refresh recovered after ${ refreshFailCount } consecutive failures`);
     }
@@ -733,6 +750,13 @@ export function initSullaCloudAuthEvents(): void {
     }
   };
 
+  const shouldKeepSessionInMemory = (): boolean => {
+    if (!getFirstRunState().onboardingComplete) return true;
+    const lifecycle = getServiceLifecycleManager();
+    return !lifecycle.isVaultUnlocked() ||
+      !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
+  };
+
   ipcMainProxy.handle('sulla-cloud:verify-otp', async(_event: unknown, phone: string, code: string): Promise<AuthResult> => {
     const normalizedPhone = phone.trim();
     const normalizedCode = code.trim();
@@ -829,7 +853,9 @@ export function initSullaCloudAuthEvents(): void {
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    const signedIn = await completeFirstRunSignIn(data);
+    const signedIn = shouldKeepSessionInMemory()
+      ? await completeFirstRunSignIn(data)
+      : await completeSignInWhenReady(data, 'Sulla is still starting up. Wait a minute, then try again.');
     return { ...signedIn, isNewUser };
   });
 

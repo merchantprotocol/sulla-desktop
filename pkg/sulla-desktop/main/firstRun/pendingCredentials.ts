@@ -19,6 +19,8 @@ let flushRun: Promise<{ flushed: string[]; failed: string[] }> | undefined;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let hooksStarted = false;
 let vaultUnlocked = false;
+let vaultReady = false;
+let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
 
 function keyFor(entry: Pick<PendingCredential, 'integrationId' | 'accountId'>): string {
@@ -42,7 +44,7 @@ export function queuePendingCredential(entry: PendingCredential): void {
     values:        { ...entry.values },
     activate:      entry.activate,
   });
-  if (vaultUnlocked) scheduleFlush?.();
+  if (vaultUnlocked && vaultReady) scheduleFlush?.();
 }
 
 export function hasPendingCredential(integrationId: string): boolean {
@@ -107,19 +109,35 @@ export function startPendingCredentialFlush(): void {
   if (hooksStarted) return;
   hooksStarted = true;
   const lifecycle = getServiceLifecycleManager();
+  vaultUnlocked = lifecycle.isVaultUnlocked();
+  vaultReady = lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready');
   const schedule = () => {
-    if (!pending.size || retryTimer) return;
+    if (!pending.size || !vaultUnlocked || !vaultReady || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       void flushPendingCredentials().then(result => {
-        if (result.failed.length) schedule();
+        if (result.failed.length) {
+          retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
+          schedule();
+        } else {
+          retryDelayMs = 1_000;
+        }
       });
-    }, 1_000);
+    }, retryDelayMs);
   };
   scheduleFlush = schedule;
   lifecycle.on('vault:state', (unlocked: boolean) => {
     vaultUnlocked = unlocked;
+    if (!unlocked && retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
     if (unlocked) schedule();
   });
-  lifecycle.on('service:ready', (name: string) => { if (name === 'vault' && vaultUnlocked) schedule() });
+  lifecycle.on('service:ready', (name: string) => {
+    if (name !== 'vault') return;
+    vaultReady = true;
+    if (vaultUnlocked) schedule();
+  });
+  if (vaultUnlocked && vaultReady) schedule();
 }
