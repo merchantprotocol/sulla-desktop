@@ -825,8 +825,9 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
 
 async function doFirstRunDialog() {
   let { onboardingComplete } = getFirstRunState();
+  // settings.json is not evidence of a prior install: settingsImpl.load()
+  // writes it at startup before this runs. firstRunDialogNeeded() covers it.
   const existingFiles = [
-    path.join(paths.config, 'settings.json'),
     path.join(paths.appHome, 'vault-control-token.enc'),
     path.join(paths.appHome, 'vault-bootstrap-identity.enc'),
     path.join(paths.appHome, 'vault-v2-key.enc'),
