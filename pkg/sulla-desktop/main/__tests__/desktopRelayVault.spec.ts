@@ -115,6 +115,7 @@ describe('DesktopRelayClient via the vault relay broker', () => {
     broker.unlocked = true;
     broker.createError = null;
     broker.streams = [];
+    broker.relaySend.mockResolvedValue(undefined);
     client = new DesktopRelayClient();
   });
 
@@ -151,10 +152,30 @@ describe('DesktopRelayClient via the vault relay broker', () => {
 
     // An upstream close ends the session; the client reconnects promptly.
     broker.streams[0].push('relay.closed', { code: 1006 });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(client.getStatus().lastError).toContain('WebSocket close code 1006');
     await jest.advanceTimersByTimeAsync(1_100);
     expect(broker.closeRelay).toHaveBeenCalledWith('relay-1');
     expect(broker.createRelay).toHaveBeenCalledTimes(2);
     expect(client.getStatus().connected).toBe(true);
+  });
+
+  it('requeues a durable frame when the asynchronous vault send fails', async() => {
+    await client.setPairedUserId(ROOM);
+    await jest.advanceTimersByTimeAsync(0);
+
+    broker.relaySend.mockRejectedValueOnce(new FakeVaultBrokerError('upstream_failed', 'Broker upstream request failed', 502));
+    (client as any).send({ type: 'message', conversationId: 'conversation-1', content: 'durable reply' });
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(client.getStatus().lastError).toContain('HTTP 502');
+    await jest.advanceTimersByTimeAsync(1_100);
+    const durable = JSON.stringify({ type: 'message', conversationId: 'conversation-1', content: 'durable reply' });
+    expect(broker.relaySend).toHaveBeenCalledWith(
+      'relay-2',
+      { type: 'sulla-cloud.frame', payload: { data: durable } },
+      expect.anything(),
+    );
   });
 
   it('waits on a locked vault with a short fixed poll and connects after unlock', async() => {

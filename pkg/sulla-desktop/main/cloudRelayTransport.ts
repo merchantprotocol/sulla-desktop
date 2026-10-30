@@ -87,6 +87,8 @@ export class VaultRelaySocket implements RelaySocketLike {
   bufferedAmount = 0;
   /** Set when the session fails; read by the relay client to pick a backoff. */
   failure: RelayFailureKind | null = null;
+  /** Sanitized upstream detail (HTTP status or WebSocket close code). */
+  failureDetail: string | null = null;
 
   private relayId:           string | null = null;
   private readonly abort = new AbortController();
@@ -121,8 +123,6 @@ export class VaultRelaySocket implements RelaySocketLike {
     if (this.readyState === VaultRelaySocket.CLOSED) return;
     this.readyState = VaultRelaySocket.CLOSED;
     this.abort.abort();
-    this.outbound.length = 0;
-    this.bufferedAmount = 0;
     const relayId = this.relayId;
     this.relayId = null;
     if (relayId) {
@@ -131,6 +131,17 @@ export class VaultRelaySocket implements RelaySocketLike {
       } catch { /* broker gone; session expires in the vault */ }
     }
     Promise.resolve().then(() => this.emitClose()).catch(() => undefined);
+  }
+
+  /**
+   * Return frames the vault had not accepted before this socket failed.
+   * Desktop can move critical frames to its reconnect queue instead of losing
+   * them when the opaque vault transport fails asynchronously after send().
+   */
+  takePendingOutbound(): string[] {
+    const pending = this.outbound.splice(0);
+    this.bufferedAmount = 0;
+    return pending;
   }
 
   private async run(): Promise<void> {
@@ -167,12 +178,23 @@ export class VaultRelaySocket implements RelaySocketLike {
           if (typeof data === 'string') this.emit('message', { data });
           continue;
         }
-        if (event.type === 'relay.closed' || event.type === 'relay.gap' || event.type === 'relay.error') break;
+        if (event.type === 'relay.closed') {
+          const code = Number((event.payload as { code?: unknown } | null)?.code);
+          this.failureDetail = Number.isSafeInteger(code) ? `WebSocket close code ${ code }` : 'WebSocket closed';
+          break;
+        }
+        if (event.type === 'relay.gap' || event.type === 'relay.error') {
+          this.failureDetail = event.type;
+          break;
+        }
       }
-      if (!signal.aborted) this.fail('unavailable', 'Relay session ended');
+      if (!signal.aborted) this.fail('unavailable', this.failureDetail ?? 'Relay session ended');
     } catch (error) {
       if (signal.aborted) return;
-      this.fail(classifyRelayFailure(error), error instanceof Error ? error.message : 'Relay session failed');
+      const status = error instanceof VaultBrokerError ? error.status : undefined;
+      const message = error instanceof Error ? error.message : 'Relay session failed';
+      this.failureDetail = status ? `HTTP ${ status }: ${ message }` : message;
+      this.fail(classifyRelayFailure(error), this.failureDetail);
     }
   }
 
@@ -187,7 +209,12 @@ export class VaultRelaySocket implements RelaySocketLike {
         this.bufferedAmount = Math.max(0, this.bufferedAmount - Buffer.byteLength(frame));
       }
     } catch (error) {
-      if (!this.abort.signal.aborted) this.fail(classifyRelayFailure(error), 'Relay send failed');
+      if (!this.abort.signal.aborted) {
+        const status = error instanceof VaultBrokerError ? error.status : undefined;
+        const message = error instanceof Error ? error.message : 'Relay send failed';
+        this.failureDetail = status ? `HTTP ${ status }: ${ message }` : message;
+        this.fail(classifyRelayFailure(error), this.failureDetail);
+      }
     } finally {
       this.pumping = false;
     }
