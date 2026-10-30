@@ -1377,7 +1377,7 @@ ipcMainProxy.on('settings-read', (event) => {
 ipcMainProxy.handle('settings-read' as any, () => cfg);
 
 ipcMainProxy.handle('start-backend' as any, async() => {
-  if (!Electron.app.isPackaged && process.env.SULLA_E2E === '1') {
+  if (!(Electron.app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
     firstRunAiSignInReady = true;
     window.send('first-run-ai:ready');
     return;
@@ -1408,7 +1408,7 @@ ipcMainProxy.handle('start-backend' as any, async() => {
 // Check the two things most likely to make the first VM boot fail before the
 // user starts it. The 10 GB disk floor is the installer's existing minimum.
 ipcMainProxy.handle('first-run-preflight' as any, async() => {
-  if (!Electron.app.isPackaged && process.env.SULLA_E2E === '1') {
+  if (!(Electron.app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
     const forced = process.env.SULLA_E2E_PREFLIGHT;
     if (forced === 'offline') return { ok: false, kind: 'network', message: 'Sulla could not reach the internet. Check your connection, then retry.' };
     if (forced === 'low-disk') return { ok: false, kind: 'disk', message: 'Sulla needs at least 10 GB of free disk space to install its private workspace. Free some space, then retry.' };

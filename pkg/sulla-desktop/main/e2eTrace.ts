@@ -11,7 +11,7 @@ import fs from 'fs';
 
 import { app } from 'electron';
 
-const tracePath = !app.isPackaged && process.env.SULLA_E2E === '1' ? process.env.SULLA_E2E_MAIN_LOG || '' : '';
+const tracePath = !(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1' ? process.env.SULLA_E2E_MAIN_LOG || '' : '';
 
 /** Append one line to stderr and the harness trace file, synchronously. */
 export function e2eTrace(message: string): void {

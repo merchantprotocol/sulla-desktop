@@ -63,7 +63,7 @@ export function getPendingCredential(integrationId: string): PendingCredential |
 }
 
 async function writeEntry(entry: PendingCredential): Promise<void> {
-  if (!Electron.app.isPackaged && process.env.SULLA_E2E === '1' && process.env.SULLA_E2E_VAULT_URL) {
+  if (!(Electron.app?.isPackaged ?? true) && process.env.SULLA_E2E === '1' && process.env.SULLA_E2E_VAULT_URL) {
     if (process.env.SULLA_E2E_VAULT === 'absent') throw new Error('Fake vault is absent');
     const response = await fetch(process.env.SULLA_E2E_VAULT_URL, {
       method: 'POST', headers: { 'content-type': 'application/json' },

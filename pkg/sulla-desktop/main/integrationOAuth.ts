@@ -58,7 +58,7 @@ export function initIntegrationOAuthEvents(): void {
       firstRun?:     boolean;
     },
   ): Promise<{ success: boolean; error?: string }> => {
-    if (!app.isPackaged && process.env.SULLA_E2E === '1') {
+    if (!(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1') {
       if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'The sign-in window was closed' };
       const endpoint = process.env.SULLA_E2E_OAUTH_URL;
       if (!endpoint) return { success: false, error: 'Missing fake OAuth endpoint' };
