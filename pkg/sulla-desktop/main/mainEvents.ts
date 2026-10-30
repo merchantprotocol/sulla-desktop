@@ -143,6 +143,8 @@ interface MainEventNames {
    * The FirstRunCoordinator uses this to gate Sulla service deployment.
    */
   'first-run-backend-booted'(): void;
+  /** Postgres and Redis are healthy, so first-run AI sign-in can persist state. */
+  'first-run-ai-runtime-ready'(): void;
 
   /** Emitted after the current backend generation reconciles managed services. */
   'sulla-managed-services-ready'(): void;
