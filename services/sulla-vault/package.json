@@ -14,7 +14,7 @@
     "test:security": "npm run build && node --test dist/rbac.test.js",
     "test:sync": "npm run build && node --test dist/sync.test.js",
     "test:local-authority": "npm run build && node --test dist/localAuthority.test.js",
-    "test:envelope": "npm run build && node --test dist/browserEnvelope/envelope.security.test.js"
+    "test:envelope": "npm run build && tsc -p tsconfig.envelope-test.json && node --test dist-test/browserEnvelope/envelope.security.test.js"
   },
   "dependencies": {
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
