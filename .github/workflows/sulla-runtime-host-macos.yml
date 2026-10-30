@@ -16,7 +16,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          # macos-14 is being retired by GitHub (brownouts until 2026-11-02 cancel the job).
+          - runner: macos-15
             architecture: arm64
           # macos-13 was retired by GitHub; this is the current standard Intel runner.
           # Package.swift keeps the produced binary's deployment target at macOS 13.
