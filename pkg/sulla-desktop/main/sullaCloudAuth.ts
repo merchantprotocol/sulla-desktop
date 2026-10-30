@@ -1074,8 +1074,8 @@ export function initSullaCloudAuthEvents(): void {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
       return { ok: false, error: 'Enter a valid email address.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    if (!password || password.length < 8) {
-      return { ok: false, error: 'Password must be at least 8 characters.', status: await buildStatus().catch(() => ({} as any)) };
+    if (!password) {
+      return { ok: false, error: 'Enter a password.', status: await buildStatus().catch(() => ({} as any)) };
     }
     let data: VerifyResponse;
     let masterKey: Uint8Array;
@@ -1118,8 +1118,8 @@ export function initSullaCloudAuthEvents(): void {
 
   ipcMainProxy.handle('sulla-cloud:email-register', async(_event: unknown, email: string, password: string, name?: string): Promise<AuthResult> => {
     const e = email.trim().toLowerCase();
-    if (!e || !password || password.length < 8) {
-      return { ok: false, error: 'Password must be at least 8 characters.', status: await buildStatus() };
+    if (!e || !password) {
+      return { ok: false, error: 'Enter your email and a password.', status: await buildStatus() };
     }
     const result = await emailRegister(e, password, name?.trim());
     if (!result.ok || !result.data || !result.masterKey) {

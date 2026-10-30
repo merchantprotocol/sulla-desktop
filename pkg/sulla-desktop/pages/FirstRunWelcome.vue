@@ -37,7 +37,7 @@
       <p class="mb-6 secondary-text"><template v-if="cloudAccountExists"><strong>{{ sullaEmail }}</strong> already has an account. Enter its password to connect this Mac.</template><template v-else>This password signs you in on Desktop, Mobile, and Cloud. You'll create your isolated local vault after setup.</template></p>
       <div class="mb-4">
         <label for="cloudPassword" class="block text-sm font-medium mb-1 label-text">Account password</label>
-        <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="At least 8 characters">
+        <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="Your password">
         <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
         <button v-if="cloudAccountExists && emailRecoveryAvailable" type="button" class="link-btn mt-2" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
       </div>
@@ -145,7 +145,7 @@ async function continueWithoutAccount() {
 }
 
 async function handleCloudSubmit() {
-  if (cloudPassword.value.length < 8) { cloudError.value = 'Password must be at least 8 characters.'; return; }
+  if (!cloudPassword.value) { cloudError.value = 'Enter a password.'; return; }
   const attempt = ++cloudAttempt;
   cloudSubmitting.value = true; cloudError.value = '';
   try {
