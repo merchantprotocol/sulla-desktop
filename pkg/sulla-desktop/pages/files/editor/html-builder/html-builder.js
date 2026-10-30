@@ -32,6 +32,7 @@
     const all = [];
     const stack = [];
     const diagnostics = [];
+    const seenIds = new Map();
     let i = 0;
     const attach = node => {
       const parent = stack.at(-1);
@@ -101,6 +102,13 @@
       const openText = source.slice(i, end);
       const ids = [...openText.matchAll(/\bid\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi)];
       if (ids.length > 1) diagnostics.push({ type: 'duplicate-id-attribute', message: `<${name}> has duplicate id attributes`, start: i, end });
+      for (const id of ids) {
+        const value = id[0].replace(/^\s*id\s*=\s*/i, '').replace(/^(["'])(.*)\1$/, '$2');
+        if (value && seenIds.has(value)) diagnostics.push({
+          type: 'duplicate-id', message: `Duplicate id="${value}"`, start: i, end
+        });
+        else if (value) seenIds.set(value, i)
+      }
       if (name === 'img' && !/\balt\s*=/i.test(openText)) diagnostics.push({ type: 'img-missing-alt', message: '<img> is missing an alt attribute', start: i, end });
       if (!VOID.has(name) && !/\/\s*>$/.test(openText)) {
         stack.push(node);
@@ -162,7 +170,7 @@
     host.innerHTML = `<div class="shb-root v-builder" tabindex="0">
 <div class="shb-wb-hot" id="hot"></div>
 <header class="shb-wb-bar" id="bar">
-  <button class="shb-wb-back" id="back" title="Back to Files"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Files</button>
+  ${options.onBack ? '<button class="shb-wb-back" id="back" title="Back to Files"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Files</button>' : ''}
   ${options.onRename ? '<input class="shb-wb-name" id="fname" value="" title="Click to rename">' : '<span class="shb-wb-name shb-wb-name-static" id="fname"></span>'}
   <span class="shb-wb-save" id="save"><i></i><span>Saved</span></span>
   <nav class="shb-wb-menus" id="menus"></nav>
@@ -180,7 +188,7 @@
   <div class="shb-wb-div"></div>
   <button class="shb-wb-ib" id="bUndo" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
   <button class="shb-wb-ib" id="bRedo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
-  <button class="shb-wb-ib" id="bHist" title="History"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>
+  ${options.onHistory ? '<button class="shb-wb-ib" id="bHist" title="History"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>' : ''}
   <div class="shb-wb-pres"></div>
   <button class="shb-wb-ib" id="bFocus" title="Focus mode (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 </header>
@@ -199,7 +207,7 @@
       <button class="shb-wb-ib" disabled title="Forward"><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
       <button class="shb-wb-ib" id="pReload" title="Reload (⌘R)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
       <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl"></span><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
-      <button class="shb-wb-ib" id="pOpen" title="Open in a Sulla browser tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+      ${options.onOpenInBrowser ? '<button class="shb-wb-ib" id="pOpen" title="Open in a Sulla browser tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>' : ''}
     </div>
     <iframe class="shb-dv-frame" id="frame" title="Page"></iframe>
     <div class="shb-dv-wire" id="wire"></div>
@@ -349,8 +357,8 @@
     addEventListener('message', e => {
       if (e.data && e.data.sullaPreviewLink != null) {
         const h = e.data.sullaPreviewLink;
-        toast(h === '#' || !h ? 'That link goes nowhere (href="#")' : 'Would open ' + h +
-          ' · it isn’t a file in this folder yet')
+        toast(h === '#' || !h ? 'Link intercepted: href="#" goes nowhere' : 'Link intercepted: ' + h +
+          ' is not a file in this folder')
       }
     });
 
@@ -383,8 +391,7 @@
       render();
       toast('Reloaded')
     };
-    $('pOpen').hidden = !options.onOpenInBrowser;
-    $('pOpen').onclick = () => options.onOpenInBrowser?.();
+    if ($('pOpen')) $('pOpen').onclick = () => options.onOpenInBrowser();
     frame.addEventListener('load', () => {
       if (!editing) return;
       const d = doc();
@@ -1022,7 +1029,7 @@
     $('mX').onclick = () => closeModal(true);
     $('fOk').onclick = () => {
       closeModal(true);
-      toast('Saved into ' + fileName())
+      toast('Settings applied to ' + fileName())
     };
     $('fX').onclick = () => {
       closeModal(false);
@@ -1364,7 +1371,7 @@
     });
     $('bUndo').onclick = doUndo;
     $('bRedo').onclick = doRedo;
-    $('bHist').onclick = e => {
+    if ($('bHist')) $('bHist').onclick = e => {
       e.stopPropagation();
       const h = $('hist');
       if (h.classList.contains('on')) {
@@ -1988,11 +1995,9 @@
     // init
     if (options.onRename) $('fname').value = fileName();
     else $('fname').textContent = fileName();
-    $('back').hidden = !options.onBack;
-    $('bHist').hidden = !options.onHistory;
     $('pUrl').textContent = fileName();
     $('codeTitle').textContent = 'Source · ' + fileName();
-    $('bHist').addEventListener('click', () => setTimeout(() => {
+    if ($('bHist')) $('bHist').addEventListener('click', () => setTimeout(() => {
       const all = host.querySelector('#histAll');
       if (all) all.onclick = () => {
         $('hist').classList.remove('on');
@@ -2057,7 +2062,7 @@
     } catch (_) {}
 
     if (options.onRename) $('fname').addEventListener('change', event => options.onRename(event.target.value));
-    if (options.onBack) $('back').onclick = () => options.onBack();
+    if ($('back')) $('back').onclick = () => options.onBack();
 
     if (!options.onAskSulla) {
       host.querySelectorAll('[data-a=ai], #askGo').forEach(el => {

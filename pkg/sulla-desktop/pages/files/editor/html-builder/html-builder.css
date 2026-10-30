@@ -1300,6 +1300,10 @@
   background: var(--acs)
 }
 
+.shb-wb-name-static:hover {
+  background: none
+}
+
 .shb-wb-save {
   display: flex;
   align-items: center;
@@ -1831,11 +1835,120 @@
 }
 
 @media (max-width: 700px) {
+  .shb-root {
+    max-width: 100%;
+    overflow-x: hidden
+  }
+
+  .shb-wb-bar {
+    gap: 2px;
+    padding: 0 5px
+  }
+
   .shb-wb-menuall {
     display: grid;
   }
 
   .shb-root .shb-wb-menus {
     display: none;
+  }
+
+  .shb-wb-drop {
+    left: 6px !important;
+    right: 6px;
+    top: 44px !important;
+    max-height: calc(100vh - 52px);
+    overflow-y: auto
+  }
+
+  .shb-wb-back,
+  .shb-wb-save,
+  .shb-wb-pres,
+  .shb-wb-seg.sm,
+  .shb-wb-seg.sm + .shb-wb-div,
+  #bUndo,
+  #bRedo,
+  #bHist,
+  #bFocus {
+    display: none !important
+  }
+
+  .shb-wb-name {
+    min-width: 0;
+    width: min(28vw, 118px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+  }
+
+  .shb-wb-tog {
+    padding: 5px 4px
+  }
+
+  .shb-wb-div {
+    margin: 0 1px
+  }
+
+  .shb-wb-seg button {
+    padding: 5px 6px
+  }
+
+  .shb-dv-work {
+    flex-direction: column;
+    overflow: hidden
+  }
+
+  .shb-dv-stage {
+    order: 1;
+    width: 100%;
+    min-height: 0
+  }
+
+  .shb-dv-code {
+    order: 2;
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 42%;
+    border-right: 0;
+    border-top: 1px solid var(--ln2)
+  }
+
+  .shb-root.v-source .shb-dv-code {
+    flex: 1 1 auto
+  }
+
+  .shb-root.v-workbench .shb-wb-drag {
+    display: none
+  }
+
+  .shb-dv-modal,
+  .shb-dv-modal.docked {
+    position: fixed;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0;
+    width: 100%;
+    height: auto;
+    max-height: min(78vh, 680px);
+    border-radius: 16px 16px 0 0
+  }
+
+  .shb-dv-frame,
+  .shb-dv-scroll,
+  .shb-dv-cw {
+    max-width: 100%
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1050px) {
+  .shb-wb-pres,
+  .shb-wb-seg.sm,
+  .shb-wb-seg.sm + .shb-wb-div {
+    display: none
+  }
+
+  .shb-wb-menus>button {
+    padding-inline: 5px
   }
 }
