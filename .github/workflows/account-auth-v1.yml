@@ -62,9 +62,11 @@ jobs:
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version-file: package.json
-          cache: yarn
-      - run: yarn install --frozen-lockfile --ignore-scripts
+          cache: npm
+          cache-dependency-path: packages/vault-crypto/package-lock.json
       - name: Build shared vault crypto types
         run: npm ci --ignore-scripts --prefix packages/vault-crypto && npm run build --prefix packages/vault-crypto
+      - name: Install focused vault service dependencies
+        run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-vault
       - name: Build and run vault envelope security tests
         run: yarn --cwd services/sulla-vault test:envelope
