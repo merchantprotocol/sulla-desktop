@@ -1813,3 +1813,29 @@
   margin-left: 10px;
   padding: 0
 }
+
+/* Narrow screens: the menu row collapses into one menu button. */
+.shb-wb-menuall {
+  display: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--mu);
+}
+
+.shb-wb-menuall:hover {
+  background: var(--ln2);
+}
+
+@media (max-width: 700px) {
+  .shb-wb-menuall {
+    display: grid;
+  }
+
+  .shb-root .shb-wb-menus {
+    display: none;
+  }
+}

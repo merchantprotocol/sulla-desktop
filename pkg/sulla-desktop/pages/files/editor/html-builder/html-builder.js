@@ -7,7 +7,7 @@
  */
 (function(root) {
   'use strict';
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source',
     'track', 'wbr'
   ]);
@@ -31,6 +31,7 @@
     const roots = [];
     const all = [];
     const stack = [];
+    const diagnostics = [];
     let i = 0;
     const attach = node => {
       const parent = stack.at(-1);
@@ -62,7 +63,16 @@
         const name = close[1].toLowerCase();
         let at = stack.length - 1;
         while (at >= 0 && stack[at].name !== name) at -= 1;
-        if (at >= 0) {
+        if (at < 0) {
+          diagnostics.push({ type: 'stray-closing-tag', message: `Stray closing tag </${name}>`, start: i, end });
+        } else {
+          if (at !== stack.length - 1) {
+            const expected = stack.at(-1).name;
+            diagnostics.push({ type: 'mismatched-closing-tag', message: `Expected </${expected}> before </${name}>`, start: i, end });
+            for (let n = stack.length - 1; n > at; n -= 1) {
+              diagnostics.push({ type: 'unclosed-tag', message: `Unclosed <${stack[n].name}> tag`, start: stack[n].start, end: stack[n].openEnd });
+            }
+          }
           const node = stack[at];
           node.closeStart = i;
           node.end = end;
@@ -89,6 +99,9 @@
       };
       attach(node);
       const openText = source.slice(i, end);
+      const ids = [...openText.matchAll(/\bid\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi)];
+      if (ids.length > 1) diagnostics.push({ type: 'duplicate-id-attribute', message: `<${name}> has duplicate id attributes`, start: i, end });
+      if (name === 'img' && !/\balt\s*=/i.test(openText)) diagnostics.push({ type: 'img-missing-alt', message: '<img> is missing an alt attribute', start: i, end });
       if (!VOID.has(name) && !/\/\s*>$/.test(openText)) {
         stack.push(node);
         if (RAW.has(name)) {
@@ -109,10 +122,12 @@
     for (const node of stack) {
       node.closeStart = source.length;
       node.end = source.length;
+      diagnostics.push({ type: 'unclosed-tag', message: `Unclosed <${node.name}> tag`, start: node.start, end: node.openEnd });
     }
     return {
       roots,
-      all
+      all,
+      diagnostics
     };
   }
 
@@ -143,11 +158,12 @@
 
   function mount(host, options = {}) {
     if (!host || host.nodeType !== 1) throw new TypeError('SullaHtmlBuilder.mount needs a host element');
+    const fileName = () => options.fileName || 'untitled.html';
     host.innerHTML = `<div class="shb-root v-builder" tabindex="0">
 <div class="shb-wb-hot" id="hot"></div>
 <header class="shb-wb-bar" id="bar">
-  <button class="shb-wb-back" title="Back to Files"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Files</button>
-  <input class="shb-wb-name" id="fname" value="landing.html" title="Click to rename">
+  <button class="shb-wb-back" id="back" title="Back to Files"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Files</button>
+  ${options.onRename ? '<input class="shb-wb-name" id="fname" value="" title="Click to rename">' : '<span class="shb-wb-name shb-wb-name-static" id="fname"></span>'}
   <span class="shb-wb-save" id="save"><i></i><span>Saved</span></span>
   <nav class="shb-wb-menus" id="menus"></nav>
   <div class="shb-wb-sp"></div>
@@ -165,7 +181,7 @@
   <button class="shb-wb-ib" id="bUndo" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
   <button class="shb-wb-ib" id="bRedo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
   <button class="shb-wb-ib" id="bHist" title="History"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></button>
-  <div class="shb-wb-pres"><span style="background:#3a7fa0">J</span><span style="background:#8a6bc2" title="Coding Manager is here">C</span></div>
+  <div class="shb-wb-pres"></div>
   <button class="shb-wb-ib" id="bFocus" title="Focus mode (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 </header>
 <div class="shb-wb-drop" id="drop"></div>
@@ -173,7 +189,7 @@
 <div class="shb-dv-work" id="work">
   <aside class="shb-wb-fly" id="fly"><div class="shb-wb-flyh">LAYERS<span class="shb-wb-sp"></span><button class="shb-wb-ib" id="flyX" title="Close (Esc)">×</button></div><div class="shb-wb-tree" id="tree"></div></aside>
   <section class="shb-dv-code" id="code">
-    <div class="shb-dv-ch"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3"/></svg><span id="codeTitle">Source · landing.html</span><button id="codeX" title="Hide source">×</button></div>
+    <div class="shb-dv-ch"><svg viewBox="0 0 24 24"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3"/></svg><span id="codeTitle">Source</span><button id="codeX" title="Hide source">×</button></div>
     <div class="shb-dv-scroll" id="scroll"><div class="shb-dv-cw"><div class="shb-dv-gut" id="gut"></div><div class="shb-dv-ed"><div class="shb-dv-band" id="band" style="display:none"></div><pre class="shb-dv-hl" id="hl"></pre><textarea class="shb-dv-ta" id="ta" spellcheck="false"></textarea></div></div></div>
   </section>
   <div class="shb-wb-drag" id="drag"></div>
@@ -182,7 +198,7 @@
       <button class="shb-wb-ib" disabled title="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
       <button class="shb-wb-ib" disabled title="Forward"><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
       <button class="shb-wb-ib" id="pReload" title="Reload (⌘R)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
-      <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl">Files / Projects / sulla-desktop / landing.html</span><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
+      <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl"></span><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
       <button class="shb-wb-ib" id="pOpen" title="Open in a Sulla browser tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
     </div>
     <iframe class="shb-dv-frame" id="frame" title="Page"></iframe>
@@ -853,7 +869,7 @@
           `<div class="shb-dv-f"><label>Inline style on this element</label><textarea class="mono" id="aStyle" rows="4">${esc(getAttr(k,'style')||'')}</textarea></div>`
           );
         h += grp('Source',
-          `<p style="margin:0 0 8px;font-size:12.5px;color:var(--mu)">Lines ${lineAt(r.start)}–${lineAt(r.end)} of landing.html. Every change here is written straight into the file.</p><button id="aCode" style="border:1px solid var(--ln);background:var(--card);border-radius:8px;padding:6px 12px;font-size:12.5px">Show in code</button>`
+          `<p style="margin:0 0 8px;font-size:12.5px;color:var(--mu)">Lines ${lineAt(r.start)}–${lineAt(r.end)} of ${esc(fileName())}. Every change here is written straight into the file.</p><button id="aCode" style="border:1px solid var(--ln);background:var(--card);border-radius:8px;padding:6px 12px;font-size:12.5px">Show in code</button>`
           );
       }
       $('mBody').innerHTML = h;
@@ -1006,7 +1022,7 @@
     $('mX').onclick = () => closeModal(true);
     $('fOk').onclick = () => {
       closeModal(true);
-      toast('Saved into landing.html')
+      toast('Saved into ' + fileName())
     };
     $('fX').onclick = () => {
       closeModal(false);
@@ -1046,7 +1062,7 @@
     // ---------- library ----------
     const LAYOUTS = [
       ['Hero', 'Big headline, line and button',
-        `<section class="hero">\n    <h1>A headline that says what you do</h1>\n    <p>One sentence on why it matters to the customer.</p>\n    <a class="cta" href="/estimate">Get started</a>\n  </section>`,
+        `<section class="hero">\n    <h1>A headline that says what you do</h1>\n    <p>One sentence on why it matters to the customer.</p>\n    <a class="cta" href="#">Get started</a>\n  </section>`,
         [60, 90, 40]
       ],
       ['Three features', 'Cards in a row',
@@ -1054,15 +1070,15 @@
         [30, 30, 30]
       ],
       ['Testimonial', 'One quote, centred',
-        `<section style="padding: 56px 40px; text-align: center">\n    <blockquote style="font-size: 24px; margin: 0 auto 12px; max-width: 640px">“They fixed our leak in two days and left the yard spotless.”</blockquote>\n    <p style="color: #8a7f70">Dana R., Southeast Portland</p>\n  </section>`,
+        `<section style="padding: 56px 40px; text-align: center">\n    <blockquote style="font-size: 24px; margin: 0 auto 12px; max-width: 640px">“A short quote from a happy customer.”</blockquote>\n    <p style="color: #8a7f70">Customer name, City</p>\n  </section>`,
         [80, 50]
       ],
       ['Call to action', 'Dark band with a button',
-        `<section style="padding: 48px 40px; background: #1f2a37; color: #fff; text-align: center">\n    <h2 style="margin: 0 0 18px">Ready for a dry roof?</h2>\n    <a class="cta" href="/estimate">Get a free estimate</a>\n  </section>`,
+        `<section style="padding: 48px 40px; background: #1f2a37; color: #fff; text-align: center">\n    <h2 style="margin: 0 0 18px">Ready to get started?</h2>\n    <a class="cta" href="#">Get started</a>\n  </section>`,
         [70, 35]
       ],
       ['FAQ', 'Questions that open',
-        `<section style="padding: 40px">\n    <h2>Questions</h2>\n    <details>\n      <summary>How fast can you come out?</summary>\n      <p>Usually within two business days.</p>\n    </details>\n    <details>\n      <summary>Do you work with insurance?</summary>\n      <p>Yes, we document damage for your adjuster.</p>\n    </details>\n  </section>`,
+        `<section style="padding: 40px">\n    <h2>Questions</h2>\n    <details>\n      <summary>A common question?</summary>\n      <p>A short, clear answer.</p>\n    </details>\n    <details>\n      <summary>Another question?</summary>\n      <p>Another short answer.</p>\n    </details>\n  </section>`,
         [40, 90, 90, 90]
       ],
       ['Blank section', 'Start from nothing',
@@ -1349,7 +1365,6 @@
     $('bUndo').onclick = doUndo;
     $('bRedo').onclick = doRedo;
     $('bHist').onclick = e => {
-      options.onHistory?.();
       e.stopPropagation();
       const h = $('hist');
       if (h.classList.contains('on')) {
@@ -1377,7 +1392,7 @@
       h.innerHTML = '<h4>THIS SESSION</h4>' + (undo.length || redo.length ? rows.map((r, j) =>
           `<button data-j="${j}" class="${r.kind==='cur'?'cur':r.kind==='fut'?'fut':''}">${esc(r.l)}<small>${fmt(r.at)}</small></button>`
           ).join('') : '<p style="margin:4px 10px 10px;font-size:12.5px;color:var(--dim)">No edits yet.</p>') +
-        '<h4 style="margin-top:10px">SAVED VERSIONS</h4><button>v14 · Jonathon<small>10:42 AM</small></button><button>v13 · Coding Manager<small>Yesterday</small></button>';
+        (options.onHistory ? '<h4 style="margin-top:10px">SAVED VERSIONS</h4><button id="histAll">Open version history…</button>' : '');
       h.querySelectorAll('[data-j]').forEach(b => b.onclick = () => {
         const r = rows[+b.dataset.j];
         if (r.kind === 'past') {
@@ -1401,12 +1416,8 @@
     function dirty() {
       const s = $('save');
       s.classList.add('dirty');
-      s.lastElementChild.textContent = 'Saving…';
-      clearTimeout(dirty.t);
-      dirty.t = setTimeout(() => {
-        s.classList.remove('dirty');
-        s.lastElementChild.textContent = 'Saved'
-      }, 900)
+      // The host owns the real save state (setSaveState); only mark unsaved here.
+      s.lastElementChild.textContent = 'Not saved';
     }
 
     function toast(m, u) {
@@ -1500,7 +1511,7 @@
         .v === 'workbench' && false)));
       $('code').classList.toggle('on', v !== 'builder');
       $('bSource').classList.toggle('on', v === 'source');
-      $('codeTitle').textContent = (v === 'source' ? 'Source code' : 'Source') + ' · landing.html';
+      $('codeTitle').textContent = (v === 'source' ? 'Source code' : 'Source') + ' · ' + fileName();
       hov = null;
       setTimeout(() => {
         draw();
@@ -1742,9 +1753,9 @@
       closeMenu();
       const d = doc(),
         out = [];
-      [...d.images].forEach(im => {
-        if (!im.hasAttribute('alt')) out.push(['warn', 'Image has no alt text',
-          'Screen readers and search engines can’t describe it', im
+      tokenize(src).diagnostics.forEach(problem => {
+        out.push(['warn', problem.message, `HTML source · line ${lineAt(problem.start)}`, null, 'source', problem.start,
+          problem.end
         ])
       });
       [...d.links].forEach(a => {
@@ -1780,6 +1791,16 @@
           pageSettings();
           return
         }
+        if (o[4] === 'source') {
+          if (view === 'builder') setView('workbench');
+          if (externalSourceEditor) externalSourceEditor.revealRange(o[5], o[6]);
+          else {
+            $('ta').focus();
+            $('ta').setSelectionRange(o[5], o[6]);
+            $('scroll').scrollTop = Math.max(0, (lineAt(o[5]) - 2) * 20)
+          }
+          return
+        }
         if (o[3]) {
           o[3].scrollIntoView({
             block: 'center',
@@ -1803,28 +1824,25 @@
     const devBtn = w => () => host.querySelector(`.dev[data-w="${w}"]`).click();
     const MENUS = {
       File: [
-        ['New HTML file', '⌘N', () => toast('Creates untitled.html next to this file in Files')],
-        ['Open…', '⌘O', () => toast('Opens the Files picker')],
-        ['Open recent ▸', '', () => toast('Recent: pricing.html, about.html, report.html')], null,
-        ['Save', '⌘S', () => options.onSave?.()],
-        ['Save a copy…', '⇧⌘S', () => toast('Saves landing-copy.html beside this file')],
-        ['Rename…', '', () => {
+        ...(options.onSave ? [['Save', '⌘S', () => options.onSave()]] : []),
+        ...(options.onRename ? [['Rename…', '', () => {
           $('fname').focus();
           $('fname').select()
-        }],
-        ['Version history', '', () => $('bHist').click()], null,
-        ['Page settings…', '', pageSettings], null, ['Open in Sulla browser', '', () => options.onOpenInBrowser?.
-        ()],
+        }]] : []),
+        ...(options.onHistory ? [['Version history', '', () => options.onHistory()]] : []), null,
+        ['Page settings…', '', pageSettings], null,
+        ...(options.onOpenInBrowser ? [['Open in Sulla browser', '', () => options.onOpenInBrowser()]] : []),
         ['Download .html', '', () => {
           const a = document.createElement('a');
           a.href = URL.createObjectURL(new Blob([src], {
             type: 'text/html'
           }));
-          a.download = $('fname').value;
+          a.download = fileName();
           a.click()
         }],
         ['Print / Save as PDF…', '⌘P', () => frame.contentWindow.print()],
-        ['Share…', '', () => options.onShare?.()], null, ['Close', '⌘W', () => options.onBack?.()]
+        ...(options.onShare ? [['Share…', '', () => options.onShare()]] : []),
+        ...(options.onBack ? [null, ['Close', '⌘W', () => options.onBack()]] : [])
       ],
       Edit: [
         ['Undo', '⌘Z', doUndo, () => undo.length],
@@ -1892,17 +1910,14 @@
         ['Show selection in source', '', () => withSel(showInSource), target], null, [
           'Check page (accessibility, links, SEO)', '', checkPage
         ],
-        ['Validate HTML', '', () => toast('HTML parses cleanly · 0 errors')],
-        ['Run page scripts in preview', '', () => toast('Scripts run sandboxed, with no app access')], null, [
+        ['Validate HTML', '', checkPage],
+        ['Run page scripts in preview', '', () => setEditing(false)], null, [
           'Layers', 'O', () => toggleFly(true)
         ],
         ['Wireframe', 'W', () => toggleWire(true)]
       ],
       Sulla: options.onAskSulla ? [
-        ['Ask Sulla about the selection…', '', () => withSel(el => act('ai', el)), target],
-        ['Review this page', '', () => toast(
-          'Sulla reviews copy, layout and accessibility and lists suggested changes')],
-        ['Make it mobile-friendly', '', () => toast('Sulla proposes changes as a diff for you to apply')]
+        ['Ask Sulla about the selection…', '', () => withSel(el => act('ai', el)), target]
       ] : [],
       Help: [
         ['Keyboard shortcuts', '?', showKeys],
@@ -1914,11 +1929,15 @@
     let openM = null;
     $('menus').innerHTML = Object.keys(MENUS).filter(name => name !== 'Sulla' || options.onAskSulla).map(m => `<button data-m="${m}">${m}</button>`).join('');
 
-    function showMenu(m) {
+    // Drop separators left dangling when host-dependent items are hidden.
+    const tidy = list => list.filter((it, i, a) => it || (i > 0 && i < a.length - 1 && a[i - 1] && a[i + 1]));
+
+    function showMenu(m, anchor) {
       openM = m;
       [...$('menus').children].forEach(b => b.classList.toggle('on', b.dataset.m === m));
-      const items = MENUS[m],
-        dr = $('drop');
+      const items = tidy(MENUS[m]),
+        dr = $('drop'),
+        anchorRect = () => (anchor || host.querySelector(`[data-m="${m}"]`)).getBoundingClientRect();
       if (!editing && LOCKED.includes(m)) {
         dr.innerHTML =
           '<div class="sub">EDITING IS OFF</div><button id="mOn"><i></i>Turn editing on<kbd>E</kbd></button>';
@@ -1927,7 +1946,7 @@
           closeMenu();
           setEditing(true)
         };
-        const r = host.querySelector(`[data-m="${m}"]`).getBoundingClientRect();
+        const r = anchorRect();
         dr.style.left = r.left + 'px';
         dr.style.top = (r.bottom + 4) + 'px';
         dr.classList.add('on');
@@ -1942,7 +1961,7 @@
         closeMenu();
         it[2]()
       });
-      const r = host.querySelector(`[data-m="${m}"]`).getBoundingClientRect();
+      const r = anchorRect();
       dr.style.left = r.left + 'px';
       dr.style.top = (r.bottom + 4) + 'px';
       dr.classList.add('on')
@@ -1967,7 +1986,50 @@
       if (!e.target.closest('#drop')) closeMenu()
     });
     // init
-    $('fname').value = options.fileName || 'untitled.html';
+    if (options.onRename) $('fname').value = fileName();
+    else $('fname').textContent = fileName();
+    $('back').hidden = !options.onBack;
+    $('bHist').hidden = !options.onHistory;
+    $('pUrl').textContent = fileName();
+    $('codeTitle').textContent = 'Source · ' + fileName();
+    $('bHist').addEventListener('click', () => setTimeout(() => {
+      const all = host.querySelector('#histAll');
+      if (all) all.onclick = () => {
+        $('hist').classList.remove('on');
+        options.onHistory();
+      };
+    }, 0));
+    // Narrow screens: one dropdown exposes every visible menu as a section.
+    $('menus').insertAdjacentHTML('beforebegin', '<button class="shb-wb-menuall" id="menuAll" title="Menu" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>');
+    $('menuAll').onclick = e => {
+      e.stopPropagation();
+      const dr = $('drop');
+      if (dr.classList.contains('on')) {
+        closeMenu();
+        return;
+      }
+      const sections = Object.keys(MENUS).filter(m => MENUS[m].length);
+      dr.innerHTML = sections.map(m => {
+        const items = !editing && LOCKED.includes(m) ? [
+          ['Turn editing on', 'E', () => setEditing(true)]
+        ] : tidy(MENUS[m]);
+        return `<div class="sub">${m}</div>` + items.map((it, i) => it ?
+          `<button data-section="${m}" data-item="${i}" ${it[3]&&!it[3]()?'disabled':''}><i></i>${it[0]}<kbd>${it[1]||''}</kbd></button>` : '<hr>').join('')
+      }).join('');
+      dr.querySelectorAll('[data-section]').forEach(b => b.onclick = ev => {
+        ev.stopPropagation();
+        const m = b.dataset.section;
+        const items = !editing && LOCKED.includes(m) ? [
+          ['Turn editing on', 'E', () => setEditing(true)]
+        ] : tidy(MENUS[m]);
+        closeMenu();
+        items[Number(b.dataset.item)][2]();
+      });
+      const r = $('menuAll').getBoundingClientRect();
+      dr.style.left = r.left + 'px';
+      dr.style.top = (r.bottom + 4) + 'px';
+      dr.classList.add('on');
+    };
     $('editTog').disabled = Boolean(options.readOnly);
     $('ta').value = src;
     renderCode();
@@ -1994,8 +2056,8 @@
       if (!options.readOnly && localStorage.getItem('sulla.htmlEditor.editing') === '0') setEditing(false)
     } catch (_) {}
 
-    $('fname').addEventListener('change', event => options.onRename?.(event.target.value));
-    host.querySelector('.shb-wb-back').onclick = () => options.onBack?.();
+    if (options.onRename) $('fname').addEventListener('change', event => options.onRename(event.target.value));
+    if (options.onBack) $('back').onclick = () => options.onBack();
 
     if (!options.onAskSulla) {
       host.querySelectorAll('[data-a=ai], #askGo').forEach(el => {
@@ -2003,7 +2065,7 @@
       });
     }
 
-    return {
+    const api = {
       setSource(value) {
         src = String(value ?? '');
         $('ta').value = src;
@@ -2037,6 +2099,9 @@
         host.innerHTML = '';
       },
     };
+    api.setPeers(options.peers || []);
+    api.setSaveState(options.saveState || 'saved');
+    return api;
   }
   root.SullaHtmlBuilder = {
     mount,
