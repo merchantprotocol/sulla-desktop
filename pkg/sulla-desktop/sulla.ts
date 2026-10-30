@@ -1019,10 +1019,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   ipcMainProxy.handle('vault:view-open', async(
     event: Electron.IpcMainInvokeEvent,
     bounds: Electron.Rectangle,
-    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown; parentWindow?: 'main-agent' | 'first-run'; onboarding?: boolean },
+    hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown },
   ) => {
-    const requestedParent = hint?.parentWindow === 'first-run' && hint?.onboarding === true ? 'first-run' : 'main-agent';
-    const parentWindow = window.getWindow(requestedParent);
+    const parentWindow = window.getWindow('main-agent');
     if (!parentWindow || event.sender !== parentWindow.webContents || event.senderFrame !== parentWindow.webContents.mainFrame) throw new Error('Untrusted vault view caller');
     const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
     const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
@@ -1056,7 +1055,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     if (integrationId) target.searchParams.set('integration', integrationId);
     if (accountId) target.searchParams.set('account', accountId);
     if (hint?.restoreFiles === true) target.searchParams.set('restoreFiles', '1');
-    if (requestedParent === 'first-run') target.searchParams.set('onboarding', '1');
     // Public form layout for the vault's guided "Connect" screen (labels, hints, setup notes; no values).
     const connect = integrationId && !accountId ? sanitizeVaultConnectSpec(hint?.connect) : undefined;
     if (connect) {
@@ -1068,20 +1066,20 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       target.pathname = '/vault/popup.html';
       if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
     }
-    const opened = await vaultViewManager.show(reservation, target.toString(), bounds, requestedParent);
+    const opened = await vaultViewManager.show(reservation, target.toString(), bounds);
     if (!opened) return { state: 'cancelled' };
     startVaultStatusPoll();
     return { state: 'opened', expiresAt: humanSession.expiresAt };
   });
 
   ipcMainProxy.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, ownerId: string, bounds: Electron.Rectangle) => {
-    const trusted = ['main-agent', 'first-run'].some(name => window.getWindow(name)?.webContents === event.sender);
+    const trusted = window.getWindow('main-agent')?.webContents === event.sender;
     if (!trusted) throw new Error('Untrusted vault view caller');
     vaultViewManager.setBounds(ownerId, bounds);
   });
 
   ipcMainProxy.handle('vault:view-hide', async(event: Electron.IpcMainInvokeEvent, ownerId: string) => {
-    const trusted = ['main-agent', 'first-run'].some(name => window.getWindow(name)?.webContents === event.sender);
+    const trusted = window.getWindow('main-agent')?.webContents === event.sender;
     if (!trusted) throw new Error('Untrusted vault view caller');
     vaultViewManager.hide(ownerId);
     if (!vaultViewManager.hasActiveOwner()) {

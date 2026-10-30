@@ -186,6 +186,10 @@ export class ServiceLifecycleManager extends EventEmitter {
     return this.serviceStatuses().filter(s => s.status === 'waiting-on-unlock').map(s => s.name);
   }
 
+  isVaultUnlocked(): boolean {
+    return this.vaultUnlocked;
+  }
+
   async retryService(name: string): Promise<boolean> {
     this.cancelRetry(name);
 

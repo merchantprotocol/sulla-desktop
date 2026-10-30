@@ -87,6 +87,7 @@ import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
 if (process.platform === 'linux') {
@@ -584,6 +585,7 @@ Electron.app.whenReady().then(async() => {
 
     // Register Sulla IPC handlers before the UI opens so renderers
     // never invoke a handler that hasn't been registered yet.
+    startPendingCredentialFlush();
     initSullaEvents();
     initSecretaryModeStateIpc();
     initChromeApiIpc();
