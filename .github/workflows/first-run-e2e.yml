@@ -24,6 +24,8 @@ on:
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
       - 'pkg/sulla-desktop/main/*OAuth.ts'
       - 'background.ts'
+      - 'bootstrapEntry.ts'
+      - 'pkg/sulla-desktop/main/e2eTrace.ts'
       - 'e2e/first-run/**'
       - 'scripts/e2e-first-run.mjs'
       - '.github/workflows/first-run-e2e.yml'
@@ -49,6 +51,12 @@ jobs:
       - run: corepack enable yarn
       - run: yarn install --immutable --ignore-platform --ignore-scripts
       - run: node node_modules/electron/install.js
+      # --ignore-scripts also skips the postinstall `install-app-deps`, so native
+      # addons have no Electron binary. node-pty ships no Linux prebuild, and the
+      # main bundle imports it at load time (sullaEvents -> claudeOAuth), so the
+      # app dies before any window opens. Build the ones the app loads.
+      - name: Build native modules for Electron
+        run: node node_modules/@electron/rebuild/lib/cli.js --force --only node-pty,better-sqlite3
       # Electron's Linux setuid sandbox helper must be root-owned with mode 4755,
       # or every launch aborts before the app starts. Keep the sandbox on.
       - name: Configure Electron sandbox helper (Linux)

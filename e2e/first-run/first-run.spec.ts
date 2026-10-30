@@ -10,6 +10,7 @@ import { startFakeServer, type FakeMode } from './fakes';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 type Install = { app: ElectronApplication; page: Page; home: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>> };
+const mainTracePath = (home: string) => path.join(home, 'sulla-e2e-main.log');
 async function diagnosticText(home: string, lines: string[], urls: string[]): Promise<string> {
   const logRoot = process.platform === 'darwin' ? path.join(home, 'Library/Logs/sulla-desktop') : path.join(home, '.local/share/sulla-desktop/logs');
   const fileLines: string[] = [];
@@ -24,7 +25,10 @@ async function diagnosticText(home: string, lines: string[], urls: string[]): Pr
     }
   };
   await visit(logRoot);
-  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Electron stdout/stderr:', ...lines.slice(-80), 'Electron log files:', ...fileLines.slice(-80)].join('\n');
+  // Written synchronously by bootstrapEntry, so it survives crashes that happen
+  // before Playwright attaches its stdout/stderr listeners.
+  const trace = (await fs.readFile(mainTracePath(home), 'utf8').catch(() => '')).split(/\r?\n/).filter(Boolean);
+  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Main-process startup trace:', ...(trace.length ? trace.slice(-40) : ['(none: main bundle never reached bootstrapEntry)']), 'Electron stdout/stderr:', ...lines.slice(-80), 'Electron log files:', ...fileLines.slice(-80)].join('\n');
 }
 async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string,string> = {}): Promise<Install> {
   home ||= await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-first-run-'));
@@ -32,7 +36,7 @@ async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<
   const output: string[] = [];
   const urls: string[] = [];
   const append = (chunk: Buffer | string) => output.push(...String(chunk).split(/\r?\n/).filter(Boolean));
-  const app = await electron.launch({ args: ['.'], cwd: path.resolve(__dirname, '../..'), env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_CLOUD_URL: fake.url, SULLA_E2E_OAUTH_URL: `${fake.url}/oauth`, SULLA_E2E_VAULT_URL: `${fake.url}/vault/write`, ...extra } });
+  const app = await electron.launch({ args: ['.'], cwd: path.resolve(__dirname, '../..'), env: { ...process.env, HOME: home, SULLA_E2E: '1', SULLA_MOCK_BACKEND: '1', SULLA_E2E_CLOUD_URL: fake.url, SULLA_E2E_OAUTH_URL: `${fake.url}/oauth`, SULLA_E2E_VAULT_URL: `${fake.url}/vault/write`, SULLA_E2E_MAIN_LOG: mainTracePath(home), ...extra } });
   app.process().stdout?.on('data', append);
   app.process().stderr?.on('data', append);
   const remember = (candidate: Page) => {
@@ -82,4 +86,4 @@ test('OAuth close retries once then leaves usable error',async()=>{const i=await
 test('vault absent during setup does not block completion',async()=>{const i=await launch(undefined,'new-user',{SULLA_E2E_VAULT:'absent'});try{await finishLater(i);expect((await state(i)).onboardingComplete).toBe(true);}finally{await close(i);}});
 test('API intent persists for post-setup vault Connect',async()=>{const i=await launch();try{await macOnly(i);await i.page.getByRole('button',{name:'Connect through API instead'}).click();await i.page.getByRole('button',{name:'Use Claude API'}).click();expect((await state(i)).choices.aiApiProvider).toBe('anthropic');}finally{await close(i);}});
 for(const [name,value,copy] of [['offline preflight','offline','could not reach the internet'],['low-disk preflight','low-disk','needs at least 10 GB']] as const)test(name,async()=>{const i=await launch(undefined,'new-user',{SULLA_E2E_PREFLIGHT:value});try{await i.page.getByRole('button',{name:/Get started/}).click();await expect(i.page.getByText(new RegExp(copy,'i'))).toBeVisible();expect((await state(i)).step).toBe(0);}finally{await close(i);}});
-test('upgrade with existing vault files skips wizard',async()=>{const home=await fs.mkdtemp(path.join(os.tmpdir(),'sulla-upgrade-'));const vault=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/vault-control-token.enc'):path.join(home,'.local/share/sulla-desktop/vault-control-token.enc');await fs.mkdir(path.dirname(vault),{recursive:true});await fs.writeFile(vault,'existing');const fake=await startFakeServer();const app=await electron.launch({args:['.'],cwd:path.resolve(__dirname,'../..'),env:{...process.env,HOME:home,SULLA_E2E:'1',SULLA_MOCK_BACKEND:'1',SULLA_E2E_CLOUD_URL:fake.url}});try{await new Promise(resolve=>setTimeout(resolve,2000));expect(app.windows().some(page=>page.url().includes('FirstRun'))).toBe(false);const statePath=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/electron/first-run-state.json'):path.join(home,'.local/share/sulla-desktop/electron/first-run-state.json');expect(JSON.parse(await fs.readFile(statePath,'utf8')).onboardingComplete).toBe(true);}finally{await app.close().catch(()=>{});await fake.close();await fs.rm(home,{recursive:true,force:true});}});
+test('upgrade with existing vault files skips wizard',async()=>{const home=await fs.mkdtemp(path.join(os.tmpdir(),'sulla-upgrade-'));const vault=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/vault-control-token.enc'):path.join(home,'.local/share/sulla-desktop/vault-control-token.enc');await fs.mkdir(path.dirname(vault),{recursive:true});await fs.writeFile(vault,'existing');const fake=await startFakeServer();const app=await electron.launch({args:['.'],cwd:path.resolve(__dirname,'../..'),env:{...process.env,HOME:home,SULLA_E2E:'1',SULLA_MOCK_BACKEND:'1',SULLA_E2E_CLOUD_URL:fake.url,SULLA_E2E_MAIN_LOG:mainTracePath(home)}});try{await new Promise(resolve=>setTimeout(resolve,2000));expect(app.windows().some(page=>page.url().includes('FirstRun'))).toBe(false);const statePath=process.platform==='darwin'?path.join(home,'Library/Application Support/sulla-desktop/electron/first-run-state.json'):path.join(home,'.local/share/sulla-desktop/electron/first-run-state.json');expect(JSON.parse(await fs.readFile(statePath,'utf8')).onboardingComplete).toBe(true);}finally{await app.close().catch(()=>{});await fake.close();await fs.rm(home,{recursive:true,force:true});}});

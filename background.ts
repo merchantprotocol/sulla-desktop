@@ -89,6 +89,7 @@ import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
+import { e2eTrace } from '@pkg/main/e2eTrace';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
 if (process.platform === 'linux') {
@@ -496,6 +497,7 @@ Electron.app.whenReady().then(() => {
 /// /////////////////////////////////////////////////////////////////////////////
 
 Electron.app.whenReady().then(async() => {
+  e2eTrace('app ready; starting main startup');
   try {
     const commandLineArgs = getCommandLineArgs();
 
@@ -615,6 +617,7 @@ Electron.app.whenReady().then(async() => {
     // Install secrets are machine credentials, not wizard input. Generate them
     // before boot so the VM and managed services can start alongside onboarding.
     await ensureFirstLaunchInstallSecrets();
+    e2eTrace('opening UI');
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -666,6 +669,7 @@ Electron.app.whenReady().then(async() => {
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
+    e2eTrace(`startup failed: ${ ex?.stack || ex }`);
     gone = true;
     Electron.app.quit();
   }
@@ -765,6 +769,7 @@ async function initUI() {
     if (!cfg.application.startInBackground) window.openMain();
   }).catch((error) => {
     console.error('[FirstRun] Could not open onboarding:', error);
+    e2eTrace(`first-run dialog failed: ${ error?.stack || error }`);
   });
 
   buildApplicationMenu();
@@ -868,6 +873,8 @@ async function doFirstRunDialog() {
   }
 
   const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
+
+  e2eTrace(`first-run dialog needed=${ needsFirstRun }`);
 
   if (needsFirstRun) {
     await window.openFirstRunDialog();
