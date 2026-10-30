@@ -40,7 +40,13 @@ const modelProviders = {
   selectModel,
 };
 const realLoopback = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(url);
+const redisStore = new Map<string, string>();
+const redisClient = {
+  get: jest.fn(async(key: string) => redisStore.get(key) ?? null),
+  set: jest.fn(async(key: string, value: string) => { redisStore.set(key, value); return 'OK'; }),
+};
 mockModules({
+  '@pkg/agent/database/RedisClient': { redisClient },
   '@pkg/agent/services/DecisionService': { decisionService: { list: jest.fn<() => Promise<any>>().mockResolvedValue([]), resolve: decisionResolve } },
   '@pkg/agent/database/models/SullaSettingsModel': { SullaSettingsModel: { set, get: jest.fn<() => Promise<any>>().mockResolvedValue(false) } },
   '@pkg/agent/services/ModelProviderService': { getModelProviderService: () => modelProviders },
@@ -240,4 +246,37 @@ test('models select switches the primary model only to a listed model', async() 
   await expect(request('models.select', { providerId: 'grok', modelId: 42 })).rejects.toThrow('not available');
   await expect(request('models.select', { providerId: 'openai', modelId: 'gpt-5' })).rejects.toThrow('not connected');
   expect(selectModel).not.toHaveBeenCalled();
+});
+
+describe('voice.trace.store', () => {
+  test('keeps diagnostic voice events in Redis and drops any text', async() => {
+    redisStore.clear();
+    const result = await request('voice.trace.store', {
+      version: 2,
+      entries: [
+        { tag: '[VoiceTrace]', level: 'info', timestamp: 't1', data: { turnId: 'vt_a_1', stage: 'tts.stop', reason: 'barge_in:speaking' } },
+        { tag: 'audio_session.route', level: 'info', timestamp: 't2', data: { reason: 'categoryChange', route: { outputs: [{ type: 'Speaker' }] } } },
+        { tag: 'voiceloop.barge_rejected_echo', level: 'info', timestamp: 't3', data: { len: 12, transcript: 'secret words', text: 'secret', message: 'secret' } },
+        { tag: 'chat.message', level: 'info', timestamp: 't4', data: { content: 'private chat' } },
+      ],
+    }) as { stored: number };
+    expect(result.stored).toBe(3);
+    const stored = redisStore.get('sulla:mobile:voicetrace') ?? '';
+    expect(JSON.parse(stored).map((e: any) => e.tag)).toEqual(['[VoiceTrace]', 'audio_session.route', 'voiceloop.barge_rejected_echo']);
+    expect(stored).not.toContain('secret');
+    expect(stored).not.toContain('private chat');
+  });
+
+  test('appends batches and keeps only the newest 4000 events', async() => {
+    redisStore.clear();
+    const batch = Array.from({ length: 500 }, (_, i) => ({ tag: 'tts.stop', data: { n: i } }));
+    for (let i = 0; i < 9; i++) await request('voice.trace.store', { version: 2, entries: batch });
+    const list = JSON.parse(redisStore.get('sulla:mobile:voicetrace') ?? '[]');
+    expect(list).toHaveLength(4000);
+  });
+
+  test('rejects oversized or unversioned payloads', async() => {
+    await expect(request('voice.trace.store', { version: 3, entries: [] })).rejects.toThrow('Invalid voice trace payload');
+    await expect(request('voice.trace.store', { version: 2, entries: new Array(501).fill({}) })).rejects.toThrow('Invalid voice trace payload');
+  });
 });

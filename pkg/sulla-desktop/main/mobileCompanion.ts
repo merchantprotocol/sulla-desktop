@@ -6,6 +6,7 @@
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import type { DecisionResponse } from '@pkg/shared/decisions';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { redisClient } from '@pkg/agent/database/RedisClient';
 import { ApprovalService, type UserQuestion } from '@pkg/agent/services/ApprovalService';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { AgentJobMessagingModel } from '@pkg/agent/database/models/AgentJobMessagingModel';
@@ -134,24 +135,78 @@ function companionHeartbeatState(conversationId: string) {
 
 const voiceTraceLog = Logging.background;
 
-function storeMobileVoiceTraces(params: Record<string, unknown>) {
-  if (params.version !== 1 || !Array.isArray(params.entries) || params.entries.length > 500) {
+// Agents read the phone's recent voice timeline with
+// `sulla redis/get '{"key":"sulla:mobile:voicetrace"}'`.
+export const MOBILE_VOICE_TRACE_KEY = 'sulla:mobile:voicetrace';
+const MOBILE_VOICE_TRACE_CAP = 4000;
+const MOBILE_VOICE_TRACE_TTL_SECONDS = 7 * 24 * 60 * 60;
+// Diagnostic tags only. Chat text never travels under these.
+const VOICE_TAG = /^(\[VoiceTrace\]|audio_session\.[a-z_]+|voicetrace\.[a-z_]+|voiceloop\.[a-z_]+|mic\.[a-z_]+|tts\.[a-z_]+)$/;
+// Only short, known-safe keys survive; free text and transcripts are dropped.
+const V1_KEYS = ['turnId', 'stage', 'ts', 'durationMs', 'elapsedMs', 'size', 'state', 'reason', 'error', 'segment', 'speaking'];
+
+function safeValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') return value.length <= 160 ? value : `${ value.slice(0, 160) }…`;
+  if (depth >= 3) return undefined;
+  if (Array.isArray(value)) return value.slice(0, 8).map(v => safeValue(v, depth + 1));
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+      if (/text|transcript|content|message/i.test(key)) continue;
+      const safe = safeValue(v, depth + 1);
+      if (safe !== undefined) out[key] = safe;
+    }
+    return out;
+  }
+  return undefined;
+}
+
+export function sanitizeMobileVoiceTraces(params: Record<string, unknown>): Record<string, unknown>[] {
+  if ((params.version !== 1 && params.version !== 2) || !Array.isArray(params.entries) || params.entries.length > 500) {
     throw new Error('Invalid voice trace payload');
   }
-  const allowed = ['turnId', 'stage', 'ts', 'durationMs', 'elapsedMs', 'size', 'state', 'reason', 'error', 'segment', 'speaking'];
-  let stored = 0;
+  const out: Record<string, unknown>[] = [];
   for (const raw of params.entries) {
     if (!raw || typeof raw !== 'object') continue;
     const entry = raw as Record<string, unknown>;
-    if (entry.tag !== '[VoiceTrace]' || !entry.data || typeof entry.data !== 'object') continue;
+    if (typeof entry.tag !== 'string' || !VOICE_TAG.test(entry.tag)) continue;
+    if (!entry.data || typeof entry.data !== 'object') continue;
     const data = entry.data as Record<string, unknown>;
-    if (typeof data.turnId !== 'string' || !/^vt_[a-z0-9_]{3,80}$/i.test(data.turnId)) continue;
-    if (typeof data.stage !== 'string' || data.stage.length > 100) continue;
-    const safe = Object.fromEntries(allowed.filter(key => data[key] !== undefined).map(key => [key, data[key]]));
-    voiceTraceLog.log(`[VoiceTrace] ${ JSON.stringify(safe) }`);
-    stored++;
+    if (params.version === 1) {
+      if (entry.tag !== '[VoiceTrace]') continue;
+      if (typeof data.turnId !== 'string' || !/^vt_[a-z0-9_]{3,80}$/i.test(data.turnId)) continue;
+      if (typeof data.stage !== 'string' || data.stage.length > 100) continue;
+      out.push(Object.fromEntries(V1_KEYS.filter(key => data[key] !== undefined).map(key => [key, data[key]])));
+      continue;
+    }
+    out.push({
+      tag:       entry.tag,
+      level:     typeof entry.level === 'string' ? entry.level.slice(0, 8) : 'info',
+      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp.slice(0, 40) : null,
+      data:      safeValue(data),
+    });
   }
-  return { stored };
+  return out;
+}
+
+async function storeMobileVoiceTraces(params: Record<string, unknown>) {
+  const entries = sanitizeMobileVoiceTraces(params);
+  for (const entry of entries) voiceTraceLog.log(`[VoiceTrace] ${ JSON.stringify(entry) }`);
+  if (entries.length) {
+    try {
+      const previous = await redisClient.get(MOBILE_VOICE_TRACE_KEY);
+      let list: unknown[] = [];
+      try { list = previous ? JSON.parse(previous) : []; } catch { list = []; }
+      if (!Array.isArray(list)) list = [];
+      const next = [...list, ...entries.map(e => ({ ...e, receivedAt: new Date().toISOString() }))].slice(-MOBILE_VOICE_TRACE_CAP);
+      await redisClient.set(MOBILE_VOICE_TRACE_KEY, JSON.stringify(next), MOBILE_VOICE_TRACE_TTL_SECONDS);
+    } catch (err) {
+      voiceTraceLog.log(`[VoiceTrace] redis store failed: ${ err instanceof Error ? err.message : String(err) }`);
+    }
+  }
+  return { stored: entries.length };
 }
 
 // A narrow, authenticated owner surface. Never dispatch arbitrary tool names.
