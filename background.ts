@@ -86,6 +86,7 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
+import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
 if (process.platform === 'linux') {
@@ -150,6 +151,7 @@ let firstRunDialogComplete = false;
 let gone = false; // when true indicates app is shutting down
 let shuttingDown = false; // re-entrancy guard for before-quit handler
 let backendStarted = false;
+let launchedVmResources: { memoryInGB: number; numberCPUs: number } | undefined;
 let imageEventHandler: ImageEventHandler | null = null;
 let currentContainerEngine = settings.ContainerEngine.NONE;
 let currentImageProcessor: ImageProcessor | null = null;
@@ -304,6 +306,7 @@ hookSullaEnd(Electron, mainEvents, window);
 // required conditions are met, regardless of ordering.
 
 firstRunCoordinator.addCondition('backendBooted');
+firstRunCoordinator.addCondition('aiRuntimeReady');
 firstRunCoordinator.addCondition('credentialsSet');
 firstRunCoordinator.addCondition('deployCompleted');
 firstRunCoordinator.addCondition('wizardFinished');
@@ -315,30 +318,20 @@ firstRunCoordinator.addCondition('aiConnected');
 let firstRunAiSignInReady = false;
 
 firstRunCoordinator.registerStep(
-  'credentialsReady',
-  ['credentialsSet'],
-  () => {
-    // The backend owns deployment for every start generation.  The coordinator
-    // only opens the fresh-install gate once the wizard has stored credentials.
-    (k8smanager as any).setSullaCredentialsReady?.();
-  },
-);
-
-firstRunCoordinator.registerStep(
   'mockDeploy',
-  ['backendBooted', 'credentialsSet'],
+  ['backendBooted'],
   async() => {
     // The Sulla runtime backend signals deployCompleted itself through
     // 'sulla-managed-services-ready'. Backends without that lifecycle hook
     // (the mock backend used for tests) have nothing to deploy.
-    if (typeof (k8smanager as any).setSullaCredentialsReady === 'function') return;
+    if ((k8smanager as any).managesSullaServices) return;
     await firstRunCoordinator.setCondition('deployCompleted');
   },
 );
 
 firstRunCoordinator.registerStep(
   'aiSignInReady',
-  ['deployCompleted'],
+  ['aiRuntimeReady'],
   async() => {
     // OAuth handlers persist tokens through IntegrationService, which needs
     // migrations to have run. initialize() is idempotent.
@@ -378,13 +371,13 @@ firstRunCoordinator.registerStep(
 // Backend boot event from the Sulla runtime backend
 mainEvents.on('first-run-backend-booted', async() => {
   console.log('[FirstRunCoordinator] first-run-backend-booted event received');
-  // Check if credentials were already set before backend finished
-  const credentialsNeeded = await SullaSettingsModel.get('firstRunCredentialsNeeded', true);
-
-  if (credentialsNeeded === false) {
-    await firstRunCoordinator.setCondition('credentialsSet');
-  }
   await firstRunCoordinator.setCondition('backendBooted');
+});
+
+// Postgres is the first managed dependency AI OAuth persistence needs. This
+// deliberately arrives before the remainder of the container fleet is ready.
+mainEvents.on('first-run-ai-runtime-ready', async() => {
+  await firstRunCoordinator.setCondition('aiRuntimeReady');
 });
 
 mainEvents.on('sulla-managed-services-ready', async() => {
@@ -604,6 +597,9 @@ Electron.app.whenReady().then(async() => {
       console.warn('[Sulla] Failed to start secrets server:', err);
     }
 
+    // Install secrets are machine credentials, not wizard input. Generate them
+    // before boot so the VM and managed services can start alongside onboarding.
+    await ensureFirstLaunchInstallSecrets();
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -747,13 +743,14 @@ async function checkForBackendLock() {
 }
 
 async function initUI() {
-  await doFirstRunDialog();
-
-  if (gone) {
-    console.log('User triggered quit during first-run');
-
-    return;
-  }
+  // Opening onboarding must not serialize the rest of app startup. In
+  // particular, backend boot continues while the user works through the wizard.
+  void doFirstRunDialog().then(() => {
+    if (gone) return;
+    if (!cfg.application.startInBackground) window.openMain();
+  }).catch((error) => {
+    console.error('[FirstRun] Could not open onboarding:', error);
+  });
 
   buildApplicationMenu();
 
@@ -795,46 +792,60 @@ async function initUI() {
     console.error('[Threat Proxy] Failed to initialize:', err);
   }
 
-  if (!cfg.application.startInBackground) {
-    window.openMain();
-  } else if (Electron.app.dock) {
+  if (cfg.application.startInBackground && Electron.app.dock) {
     Electron.app.dock.hide();
   }
 }
 
+/** Persist fresh-install machine credentials before the runtime consumes them. */
+async function ensureFirstLaunchInstallSecrets(): Promise<void> {
+  if (!settingsImpl.firstRunDialogNeeded()) return;
+
+  // Match the welcome screen's recommendation before it mounts. The renderer
+  // persists this same value; keeping it in main means the first VM boot uses it.
+  if (cfg.virtualMachine.memoryInGB < 5) {
+    cfg.virtualMachine.memoryInGB = Math.min(Math.max(5, Math.floor(Math.ceil(os.totalmem() / 2 ** 30) / 2)), 16);
+  }
+  if (cfg.virtualMachine.numberCPUs < 3) {
+    cfg.virtualMachine.numberCPUs = Math.min(Math.max(3, Math.floor(os.cpus().length / 2)), 8);
+  }
+
+  const ensure = async(key: string, create: () => string) => {
+    const existing = await SullaSettingsModel.get(key);
+
+    if (typeof existing === 'string' && existing.length > 0) return;
+    await SullaSettingsModel.set(key, create(), 'string');
+    console.log(`[FirstRun] Generated install secret: ${ key }`);
+  };
+
+  await ensure('sullaServicePassword', () => SullaSettingsModel.generatePassword());
+  await ensure('sullaN8nEncryptionKey', () => SullaSettingsModel.generateEncryptionKey());
+  await ensure('sullaApiToken', () => SullaSettingsModel.generateEncryptionKey(48));
+}
+
 async function doFirstRunDialog() {
-  let onboardingComplete = await SullaSettingsModel.get('onboardingComplete', null);
+  let { onboardingComplete } = getFirstRunState();
+  const existingFiles = [
+    path.join(paths.config, 'settings.json'),
+    path.join(paths.appHome, 'vault-control-token.enc'),
+    path.join(paths.appHome, 'vault-bootstrap-identity.enc'),
+    path.join(paths.appHome, 'vault-v2-key.enc'),
+    path.join(paths.sullaConfig, 'vault-key.enc'),
+  ].some(candidate => fs.existsSync(candidate));
+  let credentialsWereSaved = false;
 
-  // Upgrade migration: onboardingComplete did not exist before the resumable
-  // wizard. Preserve settingsImpl's genuine-fresh-install decision, while
-  // recognizing each of the old signals that setup already happened.
-  if (onboardingComplete === null && !settingsImpl.firstRunDialogNeeded()) {
-    const credentialsWereSaved = await SullaSettingsModel.get('firstRunCredentialsNeeded', true) === false;
-    let legacyVaultSetUp = false;
-    let isolatedVaultSetUp = false;
+  try {
+    const fallback = JSON.parse(fs.readFileSync(path.join(Electron.app.getPath('userData'), 'sulla-settings-fallback.json'), 'utf8'));
 
-    try {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+    credentialsWereSaved = fallback?.firstRunCredentialsNeeded === false || fallback?.firstRunCredentialsNeeded === 'false';
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') console.warn('[FirstRun] Could not inspect legacy first-run settings:', err);
+  }
 
-      legacyVaultSetUp = getVaultKeyService().isSetUp();
-    } catch (err) {
-      console.warn('[FirstRun] Could not inspect the legacy vault during onboarding migration:', err);
-    }
-    try {
-      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-      const client = getDesktopVaultClient();
-
-      await client.status();
-      isolatedVaultSetUp = client.isSetUp() === true;
-    } catch (err) {
-      console.warn('[FirstRun] Isolated vault was unavailable during onboarding migration:', err);
-    }
-
-    if (credentialsWereSaved || legacyVaultSetUp || isolatedVaultSetUp) {
-      onboardingComplete = true;
-      await SullaSettingsModel.set('onboardingComplete', true, 'boolean');
-      console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
-    }
+  if (!onboardingComplete && (!settingsImpl.firstRunDialogNeeded() || credentialsWereSaved || existingFiles)) {
+    onboardingComplete = true;
+    updateFirstRunState({ onboardingComplete: true });
+    console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
   }
 
   const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
@@ -1000,6 +1011,10 @@ async function startBackend() {
     return;
   }
   try {
+    launchedVmResources = {
+      memoryInGB: cfg.virtualMachine.memoryInGB,
+      numberCPUs: cfg.virtualMachine.numberCPUs,
+    };
     await startK8sManager();
   } catch (err) {
     handleFailure(err);
@@ -1335,10 +1350,27 @@ ipcMainProxy.on('settings-read', (event) => {
 
 ipcMainProxy.handle('settings-read' as any, () => cfg);
 
-ipcMainProxy.handle('start-backend' as any, () => {
+ipcMainProxy.handle('start-backend' as any, async() => {
   if (!backendStarted) {
-    startBackend();
+    await startBackend();
     backendStarted = true;
+
+    return;
+  }
+
+  const resourcesChanged = launchedVmResources && (
+    launchedVmResources.memoryInGB !== cfg.virtualMachine.memoryInGB ||
+    launchedVmResources.numberCPUs !== cfg.virtualMachine.numberCPUs
+  );
+
+  if (resourcesChanged) {
+    const context = { interactive: false };
+
+    if (backendIsBusy()) {
+      pendingRestartContext = context;
+    } else {
+      await doK8sReset('fullRestart', context);
+    }
   }
 });
 
@@ -1386,6 +1418,12 @@ ipcMainProxy.handle('first-run-preflight' as any, async() => {
 ipcMainProxy.handle('startup/retry' as any, (event) => {
   const errorWindow = Electron.BrowserWindow.fromWebContents(event.sender);
 
+  if (!errorWindow || errorWindow !== window.getWindow('KubernetesError')) {
+    throw new Error('Startup retry is only available from the startup error window');
+  }
+
+  if (k8smanager.state === State.STARTING) return { started: false };
+
   setImmediate(() => {
     errorWindow?.close();
     void startBackend();
@@ -1422,8 +1460,6 @@ ipcMainProxy.handle('first-run-ai:connected', async(_event, providerId: string) 
     console.warn('[FirstRunCoordinator] Could not make the new sign-in primary:', err);
   }
   await firstRunCoordinator.setCondition('aiConnected');
-  await SullaSettingsModel.set('onboardingComplete', true, 'boolean');
-  await SullaSettingsModel.set('firstRunWizardStep', 0, 'number');
 });
 
 /// /////////////////////////////////////////////////////////////////////////////
@@ -1472,10 +1508,30 @@ ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any
   if (step >= 4) {
     // Reaching Finishing means every user-driven screen is complete. AI may
     // be connected now or deferred; either way the wizard must not recur.
-    await SullaSettingsModel.set('onboardingComplete', true, 'boolean');
-    await SullaSettingsModel.set('firstRunWizardStep', 0, 'number');
+    updateFirstRunState({ onboardingComplete: true, step: 0 });
     await firstRunCoordinator.setCondition('wizardFinished');
   }
+});
+
+function requireFirstRunStateSender(event: Electron.IpcMainInvokeEvent) {
+  const senderWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+
+  if (!senderWindow || ![window.getWindow('first-run'), window.getWindow('main-agent')].includes(senderWindow)) {
+    throw new Error('First-run state is only available to trusted setup windows');
+  }
+}
+
+ipcMainProxy.handle('first-run-state:get' as any, (event) => {
+  requireFirstRunStateSender(event);
+
+  return getFirstRunState();
+});
+
+ipcMainProxy.handle('first-run-state:set' as any, (event, patch) => {
+  requireFirstRunStateSender(event);
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch) || 'version' in patch) throw new Error('Invalid first-run state patch');
+
+  return updateFirstRunState(patch);
 });
 
 /// /////////////////////////////////////////////////////////////////////////////
@@ -1953,6 +2009,16 @@ function showErrorDialog(title: string, message: string, fatal?: boolean) {
 
 async function handleFailure(payload: any) {
   if (shuttingDown || gone) {
+    return;
+  }
+
+  // First launch intentionally boots in parallel with onboarding. Container
+  // locks and transient boot failures stay in the progress UI/logs instead of
+  // interrupting the wizard with a native error dialog.
+  if (!firstRunDialogComplete && k8smanager.state === State.STARTING) {
+    console.warn('[FirstRun] Backend is still booting; suppressing startup dialog:', payload);
+    mainEvents.emit('sulla-managed-services-failed');
+
     return;
   }
 

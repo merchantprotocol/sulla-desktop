@@ -93,7 +93,6 @@ import FirstRunWelcome from './FirstRunWelcome.vue';
 import SimpleHeader from './agent/SimpleHeader.vue';
 import { StartupProgressController } from './agent/StartupProgressController';
 
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { useTheme } from '@pkg/composables/useTheme';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -147,22 +146,15 @@ const progressPercent = computed(() => {
 provide('settings', settings);
 
 onMounted(async() => {
-  let savedStep = await SullaSettingsModel.get('firstRunWizardStep', 0);
+  const state = await ipcRenderer.invoke('first-run-state:get');
+  let savedStep = state?.step ?? 0;
 
-  // Progress is only a convenience. Never let it bypass the account/vault
-  // prerequisites after a partial setup or a restored settings file.
+  // Never skip the account screen when its non-secret choice was not saved.
+  // Secret sessions deliberately live only in main-process memory.
   if (typeof savedStep === 'number' && savedStep > 1) {
-    const credentialsReady = await SullaSettingsModel.get('firstRunCredentialsNeeded', true) === false;
-    let vaultReady = false;
-
-    try {
-      vaultReady = await ipcRenderer.invoke('vault:is-setup') === true;
-    } catch (err) {
-      console.warn('[FirstRun] Could not verify vault setup while restoring progress:', err);
-    }
-    if (!credentialsReady || !vaultReady) {
+    if (!state?.choices?.accountChoice) {
       savedStep = 1;
-      await SullaSettingsModel.set('firstRunWizardStep', savedStep, 'number');
+      await ipcRenderer.invoke('first-run-state:set', { step: savedStep });
     }
   }
   if (typeof savedStep === 'number' && savedStep >= 0 && savedStep < steps.length) {
@@ -172,7 +164,7 @@ onMounted(async() => {
 });
 
 const saveStep = async() => {
-  await SullaSettingsModel.set('firstRunWizardStep', currentStep.value, 'number');
+  await ipcRenderer.invoke('first-run-state:set', { step: currentStep.value });
 };
 
 const next = async() => {
