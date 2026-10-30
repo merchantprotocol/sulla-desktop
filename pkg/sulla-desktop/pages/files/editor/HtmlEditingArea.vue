@@ -21,11 +21,11 @@ const props=defineProps<{modelValue:string;readOnly:boolean;live?:EditorCollabor
 const emit=defineEmits<{'update:modelValue':[value:string]}>();
 const host=ref<HTMLElement>();let builder:Builder|undefined;
 function sourceEditorFactory(parent:HTMLElement,{value,readOnly,onChange}:{value:string;readOnly:boolean;onChange:(value:string)=>void}){
-  const view=createEditor(parent,value,readOnly,false,onChange,[html()],props.live);
-  return{setValue(next:string){const before=view.state.doc.toString();if(before!==next)view.dispatch({changes:textPatch(before,next)})},getValue(){return view.state.doc.toString()},revealRange(from:number,to:number){view.dispatch({selection:{anchor:from,head:to},effects:EditorView.scrollIntoView(from,{y:'center'})});view.focus()},focus(){view.focus()},destroy(){view.destroy()}};
+  let applying=false;const view=createEditor(parent,value,readOnly,false,next=>{if(!applying)onChange(next)},[html()],props.live);
+  return{setValue(next:string){const before=view.state.doc.toString();if(before!==next){applying=true;view.dispatch({changes:textPatch(before,next)});applying=false}},getValue(){return view.state.doc.toString()},revealRange(from:number,to:number){view.dispatch({selection:{anchor:from,head:to},effects:EditorView.scrollIntoView(from,{y:'center'})});view.focus()},focus(){view.focus()},destroy(){view.destroy()}};
 }
 function mount(){if(!host.value)return;builder=globalThis.SullaHtmlBuilder.mount(host.value,{source:props.modelValue,fileName:props.fileName,readOnly:props.readOnly,saveState:props.saveState,peers:props.peers,sourceEditorFactory,onChange:(value:string)=>emit('update:modelValue',value),onBack:props.onBack,onRename:props.onRename,onHistory:props.onHistory,onShare:props.onShare,onSave:props.onSave,assetBaseUrl:props.assetBaseUrl,onOpenInBrowser:props.onOpenInBrowser})}
 onMounted(mount);onBeforeUnmount(()=>builder?.destroy());
-watch(()=>props.modelValue,value=>builder?.setSource(value));watch(()=>props.readOnly,value=>builder?.setReadOnly(value));watch(()=>props.saveState,value=>builder?.setSaveState(value||'saved'));watch(()=>props.peers,value=>builder?.setPeers(value||[]));
+watch(()=>props.modelValue,value=>builder?.setSource(value));watch(()=>props.readOnly,value=>builder?.setReadOnly(value));watch(()=>props.saveState,value=>builder?.setSaveState(value==='merged'?'saved':value||'saved'));watch(()=>props.peers,value=>builder?.setPeers(value||[]));
 </script>
 <style scoped>.html-builder-host{position:absolute;inset:0;min-height:0}</style>
