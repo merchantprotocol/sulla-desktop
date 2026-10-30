@@ -2130,6 +2130,9 @@
 
     const api = {
       setSource(value) {
+        // Hosts echo every onChange back through setSource; an echo of the
+        // current text must not reload the preview or reset the selection.
+        if (String(value ?? '') === src) return;
         src = String(value ?? '');
         $('ta').value = src;
         if (externalSourceEditor && fromSourceEditor(externalSourceEditor.getValue()) !== src) externalSourceEditor.setValue(src);
