@@ -344,6 +344,7 @@ export class DesktopRelayClient {
     this.teardownLiveness();
     this.abortShareRequests();
     if (this.ws) {
+      this.recoverVaultOutbound(this.ws);
       try { this.ws.close(); } catch { /* already closed */ }
       this.ws = null;
     }
@@ -459,11 +460,13 @@ export class DesktopRelayClient {
       // A replaced socket's late close must not tear down the live one's
       // liveness timers or schedule another socket.
       if (this.ws !== ws) return;
+      this.recoverVaultOutbound(ws);
       this.ws = null;
       this.connected = false;
       this.teardownLiveness();
       this.recordFailure(ws);
-      this.noteState('closed', this.lastFailure ? describeFailure(this.lastFailure) : 'Socket closed');
+      const detail = ws instanceof VaultRelaySocket && ws.failureDetail ? ` (${ ws.failureDetail })` : '';
+      this.noteState('closed', this.lastFailure ? `${ describeFailure(this.lastFailure) }${ detail }` : `Socket closed${ detail }`);
       this.broadcastStatus();
       if (!this.intentionallyClosed) this.scheduleReconnect();
     });
@@ -471,7 +474,8 @@ export class DesktopRelayClient {
     ws.addEventListener('error', (e: any) => {
       if (this.ws !== ws) return;
       this.recordFailure(ws);
-      this.lastError = this.lastFailure ? describeFailure(this.lastFailure) : (e?.message || 'WebSocket error');
+      const detail = ws instanceof VaultRelaySocket && ws.failureDetail ? ` (${ ws.failureDetail })` : '';
+      this.lastError = this.lastFailure ? `${ describeFailure(this.lastFailure) }${ detail }` : (e?.message || 'WebSocket error');
       this.noteState(this.lastFailure ?? 'error', this.lastError);
       this.broadcastStatus();
       // Some runtimes don't fire `close` after `error`, especially on
@@ -484,6 +488,19 @@ export class DesktopRelayClient {
   /** Capture a vault relay failure kind (if any) for status and backoff. */
   private recordFailure(ws: RelaySocketLike): void {
     if (ws instanceof VaultRelaySocket && ws.failure) this.lastFailure = ws.failure;
+  }
+
+  /** Preserve only durable chat frames from an asynchronously failing vault send queue. */
+  private recoverVaultOutbound(ws: RelaySocketLike): void {
+    if (!(ws instanceof VaultRelaySocket)) return;
+    for (const frame of ws.takePendingOutbound()) {
+      try {
+        const type = JSON.parse(frame)?.type;
+        if (type === 'done' || type === 'stopped' || type === 'error' || type === 'message' || type === 'ack') {
+          if (!this.pendingFrames.includes(frame)) this.pendingFrames.push(frame);
+        }
+      } catch { /* malformed frames were never durable */ }
+    }
   }
 
   private scheduleReconnect() {
