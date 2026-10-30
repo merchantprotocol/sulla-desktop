@@ -38,6 +38,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
 
+import { registerOrSignIn } from './cloudEmailContinueDecision';
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
 import { runOAuthFlow } from './sullaOAuthService';
@@ -449,7 +450,7 @@ async function verifyOtp(phone: string, code: string): Promise<{ ok: boolean; er
   return { ok: true, data };
 }
 
-async function emailLogin(email: string, password: string): Promise<{ ok: boolean; error?: string; data?: VerifyResponse }> {
+async function emailLogin(email: string, password: string): Promise<{ ok: boolean; error?: string; httpStatus?: number; retryAfter?: number; data?: VerifyResponse }> {
   const res = await fetch(`${ API_BASE }/auth/email/login`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -457,7 +458,8 @@ async function emailLogin(email: string, password: string): Promise<{ ok: boolea
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
-    return { ok: false, error: body.error || `HTTP ${ res.status }` };
+    const retryAfter = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
+    return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status, retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined };
   }
   const data = await res.json() as VerifyResponse;
   return { ok: true, data };
@@ -475,6 +477,13 @@ async function emailRegister(email: string, password: string, name?: string): Pr
   }
   const data = await res.json() as VerifyResponse;
   return { ok: true, data };
+}
+
+async function emailCodeAvailability(): Promise<boolean> {
+  const res = await fetch(`${ API_BASE }/auth/email-code/availability`);
+  if (!res.ok) return false;
+  const body = await res.json().catch(() => ({})) as { available?: boolean };
+  return body.available === true;
 }
 
 /** Passwordless: email a 6-digit code that signs in or creates the account. */
@@ -791,6 +800,10 @@ export function initSullaCloudAuthEvents(): void {
     return completeSignIn(result.data);
   });
 
+  ipcMainProxy.handle('sulla-cloud:email-code-availability', async() => {
+    try { return { available: await emailCodeAvailability() }; } catch { return { available: false }; }
+  });
+
   ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, email: string) => {
     const e = String(email ?? '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
@@ -840,20 +853,22 @@ export function initSullaCloudAuthEvents(): void {
     let data: VerifyResponse;
     let isNewUser: boolean;
     try {
-      const created = await emailRegister(e, password, name?.trim() || undefined);
-      if (created.ok && created.data) {
-        data = created.data;
-        isNewUser = true;
-      } else if (created.httpStatus === 409) {
-        const login = await emailLogin(e, password);
-        if (!login.ok || !login.data) {
-          return { ok: false, accountExists: true, error: 'This email already has a Sulla Cloud account, and that password doesn\'t match it.', status: await buildStatus().catch(() => ({} as any)) };
+      const result = await registerOrSignIn(
+        () => emailRegister(e, password, name?.trim() || undefined),
+        () => emailLogin(e, password),
+      );
+      if (!result.ok || !result.data) {
+        if (result.httpStatus === 429) {
+          const wait = result.retryAfter ?? 60;
+          return { ok: false, accountExists: true, retryAfter: wait, error: `Too many tries. Wait ${ wait } seconds and try again, or reset your password.`, status: await buildStatus().catch(() => ({} as any)) };
         }
-        data = login.data;
-        isNewUser = false;
-      } else {
-        return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
+        if (result.accountExists) {
+          return { ok: false, accountExists: true, error: 'This email already exists on Sulla Cloud. That password doesn\'t match it.', status: await buildStatus().catch(() => ({} as any)) };
+        }
+        return { ok: false, error: result.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
       }
+      data = result.data;
+      isNewUser = !!result.isNewUser;
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }

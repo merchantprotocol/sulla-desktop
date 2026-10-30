@@ -36,6 +36,12 @@
         <label for="cloudPassword" class="block text-sm font-medium mb-1 label-text">Account password</label>
         <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="At least 8 characters">
         <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
+        <button v-if="cloudAccountExists && emailRecoveryAvailable" type="button" class="link-btn mt-2" @click="sendRecoveryCode">Forgot password? Sign in with an email code</button>
+      </div>
+      <div v-if="cloudCodeSent" class="mb-4">
+        <label for="cloudCode" class="block text-sm font-medium mb-1 label-text">Email code</label>
+        <input id="cloudCode" v-model="cloudCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" class="w-full p-2 border rounded-md form-input" placeholder="6-digit code">
+        <button type="button" class="link-btn mt-2" :disabled="cloudSubmitting" @click="verifyRecoveryCode">Verify code and continue</button>
       </div>
       <div class="flex items-center justify-between mt-5">
         <button type="button" class="link-btn" @click="continueWithoutAccount">This Mac only, for now</button>
@@ -69,6 +75,9 @@ const cloudPassword = ref('');
 const cloudError = ref('');
 const cloudSubmitting = ref(false);
 const cloudAccountExists = ref(false);
+const emailRecoveryAvailable = ref(false);
+const cloudCode = ref('');
+const cloudCodeSent = ref(false);
 let cloudAttempt = 0;
 const sullaEmail = ref('');
 const primaryUserName = ref('');
@@ -137,12 +146,42 @@ async function handleCloudSubmit() {
       ? await ipcRenderer.invoke('first-run-test-autopilot:cloud-fake' as any)
       : await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
     if (attempt !== cloudAttempt) return;
-    if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
+    if (!res.ok) {
+      cloudAccountExists.value = !!res.accountExists;
+      if (cloudAccountExists.value) {
+        const availability = await ipcRenderer.invoke('sulla-cloud:email-code-availability');
+        emailRecoveryAvailable.value = availability?.available === true;
+      }
+      cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return;
+    }
     cloudPassword.value = '';
     await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
     step.value = 'sync';
   } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
   finally { if (attempt === cloudAttempt) cloudSubmitting.value = false; }
+}
+
+async function sendRecoveryCode() {
+  cloudSubmitting.value = true; cloudError.value = '';
+  try {
+    const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', sullaEmail.value.trim());
+    if (!res.ok) { cloudError.value = res.error || 'Could not send a sign-in code.'; return; }
+    cloudCodeSent.value = true;
+  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  finally { cloudSubmitting.value = false; }
+}
+
+async function verifyRecoveryCode() {
+  if (!/^\d{6}$/.test(cloudCode.value.trim())) { cloudError.value = 'Enter the 6-digit code from the email.'; return; }
+  cloudSubmitting.value = true; cloudError.value = '';
+  try {
+    const res = await ipcRenderer.invoke('sulla-cloud:email-code-verify', sullaEmail.value.trim(), cloudCode.value.trim(), primaryUserName.value.trim() || undefined);
+    if (!res.ok) { cloudError.value = res.error || 'That code could not be verified.'; return; }
+    cloudPassword.value = ''; cloudCode.value = '';
+    await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
+    step.value = 'sync';
+  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  finally { cloudSubmitting.value = false; }
 }
 
 async function saveChoices(patch: Record<string, unknown>) {
