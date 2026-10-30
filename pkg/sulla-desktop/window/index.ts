@@ -18,6 +18,7 @@ import { getSettings } from '@pkg/config/settingsImpl';
 import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { isFirstRunTestInstance } from '@pkg/utils/instance';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
@@ -552,7 +553,7 @@ export async function openFirstRunDialog() {
     'first-run',
     `${ firstRunUrl }#FirstRun`,
     {
-      title:          'Sulla Desktop - First Run',
+      title:          isFirstRunTestInstance() ? 'Sulla (first-run test) - First Run' : 'Sulla Desktop - First Run',
       width:          defaultWidth,
       height:         defaultHeight,
       resizable:      !process.env.SULLA_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots

@@ -59,6 +59,7 @@ import dockerDirManager from '@pkg/utils/dockerDirManager';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
+import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import paths from '@pkg/utils/paths';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
@@ -1042,7 +1043,16 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   private async prepareSullaComposeFile(): Promise<void> {
-    const compose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+    const parsedCompose = typeof SULLA_DOCKER_COMPOSE === 'string' ? yaml.parse(SULLA_DOCKER_COMPOSE) : SULLA_DOCKER_COMPOSE;
+    const compose = clone(parsedCompose);
+    // Resolve host ports here, before the compose file crosses into the guest.
+    // Guest Docker must never depend on inheriting the host Electron environment.
+    for (const service of Object.values(compose.services ?? {}) as any[]) {
+      if (!Array.isArray(service?.ports)) continue;
+      service.ports = service.ports.map((entry: unknown) => typeof entry === 'string'
+        ? entry.replace(/\$\{SULLA_PORT_(\d+):-\d+\}/g, (_match, base) => String(hostPort(Number(base))))
+        : entry);
+    }
 
     this.#optionalSullaFallbackImages.clear();
     this.#managedSullaRefreshImages.clear();
@@ -1107,7 +1117,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_OPTIONS:                                serviceNodeOptions(128),
           SULLA_ACCOUNTS_MODE:                         'desktop',
           SULLA_ACCOUNTS_PORT:                         '3020',
-          SULLA_ACCOUNTS_PUBLIC_URL:                   'http://127.0.0.1:3020',
+          SULLA_ACCOUNTS_PUBLIC_URL:                   loopbackOrigin('http', 3020),
           SULLA_ACCOUNTS_DATABASE_HOST:                'postgres',
           SULLA_ACCOUNTS_DATABASE_PORT:                '5432',
           SULLA_ACCOUNTS_DATABASE_NAME:                'sulla_accounts',
@@ -1117,13 +1127,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_ACCOUNTS_SESSION_SECRET_SOURCE_FILE:   '/run/sulla-accounts-source/session.secret',
           SULLA_ACCOUNTS_ENCRYPTION_KEY_SOURCE_FILE:   '/run/sulla-accounts-source/encryption.key',
         },
-        ports:   ['127.0.0.1:3020:3020'],
+        ports:   [`127.0.0.1:${ hostPort(3020) }:3020`],
         volumes:     accountsSecretBinds(),
         tmpfs:       ['/run/sulla-accounts-private:rw,noexec,nosuid,nodev,mode=0700,uid=10001,gid=10001'],
         restart:     'unless-stopped',
         mem_limit:    '256m',
         healthcheck: {
-          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://127.0.0.1:3020/readyz'],
+          test:     ['CMD', 'curl', '--fail', '--silent', '--show-error', 'http://localhost:3020/readyz'],
           interval: '5s',
           timeout:  '3s',
           retries:  10,
@@ -1179,12 +1189,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           SULLA_VAULT_AUDIT_SPOOL_DIR: '/var/lib/sulla-vault',
           SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
           NODE_EXTRA_CA_CERTS: '/run/sulla-files-ca/tls.crt',
-          SULLA_VAULT_HUMAN_UI_ORIGIN: 'https://127.0.0.1:30135',
+          SULLA_VAULT_HUMAN_UI_ORIGIN: loopbackOrigin('https', 30135),
           SULLA_VAULT_TLS_CERTIFICATE_PATH: '/run/sulla-vault-tls/tls.crt',
           SULLA_VAULT_TLS_PRIVATE_KEY_PATH: '/run/sulla-vault-tls/tls.key',
         },
         // 30121 on the host belongs to sullaSecretsServer; the vault must not share it.
-        ports: ['127.0.0.1:30135:8787'],
+        ports: [`127.0.0.1:${ hostPort(30135) }:8787`],
         volumes: [vaultTlsBind(), filesTlsBind(true), 'sulla-vault-data:/var/lib/sulla-vault'],
         restart: 'unless-stopped',
         mem_limit: '768m',
@@ -1239,7 +1249,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_DOCKER_NETWORK: 'sulla_default',
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
-      ports: ['127.0.0.1:30122:8788'],
+      ports: [`127.0.0.1:${ hostPort(30122) }:8788`],
       volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
@@ -1273,7 +1283,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_RELAY_INTERNAL_TOKEN: sullaApiToken,
         SULLA_RELAY_REPLICA_ID: 'desktop-local',
       },
-      ports: ['127.0.0.1:30126:8790'],
+      ports: [`127.0.0.1:${ hostPort(30126) }:8790`],
       restart: 'unless-stopped',
       mem_limit: '256m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8790/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1331,7 +1341,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           NODE_EXTRA_CA_CERTS:           '/run/sulla-vault-ca/tls.crt',
         } : {}),
       },
-      ports: ['127.0.0.1:30123:3000'],
+      ports: [`127.0.0.1:${ hostPort(30123) }:3000`],
       volumes: [
         ...(vaultIdentities ? [vaultTlsBind(true)] : []),
         filesTlsBind(true),
@@ -1405,7 +1415,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...(process.env.SULLA_FILES_USER_ID ? { SULLA_FILES_USER_ID: process.env.SULLA_FILES_USER_ID } : {}),
         ...(process.env.SULLA_FILES_ORG_ID ? { SULLA_FILES_ORG_ID: process.env.SULLA_FILES_ORG_ID } : {}),
       },
-      ports: ['127.0.0.1:30124:8792'],
+      ports: [`127.0.0.1:${ hostPort(30124) }:8792`],
       volumes: [
         'sulla-files-data:/var/lib/sulla-files',
         '/mnt/sulla-backups:/var/lib/sulla-files-backups:rslave',

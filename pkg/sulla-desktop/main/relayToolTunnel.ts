@@ -15,6 +15,7 @@ import type { RelayToolExecutionContext, RelayToolResult } from '@pkg/runtime/re
 import { RelayToolTunnel } from '@pkg/runtime/relayTunnelClient';
 import Logging from '@pkg/utils/logging';
 import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.background;
 async function executeThroughRegistry(
@@ -113,7 +114,7 @@ export async function startLocalToolTunnel(): Promise<RelayToolTunnel> {
     : await getRelayUserId();
   if (!userId) throw new Error('Local tool relay requires an authenticated owner identity');
   localTunnel = new RelayToolTunnel({
-    relayUrl: 'http://127.0.0.1:30126',
+    relayUrl: loopbackOrigin('http', 30126),
     // Mint on every connection. A long-lived Desktop process can reconnect
     // after the previous relay credential expires without a restart.
     deviceToken: () => jwt.sign({

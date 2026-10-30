@@ -25,6 +25,8 @@
  *   - Sign in with Apple ...... sulla-cloud:apple-sign-in (takes identity token)
  */
 
+import Electron from 'electron';
+
 import { IntegrationValueModel } from '@pkg/agent/database/models/IntegrationValueModel';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
@@ -42,7 +44,9 @@ import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+const API_BASE = !Electron.app.isPackaged && process.env.SULLA_E2E === '1' && process.env.SULLA_E2E_CLOUD_URL
+  ? process.env.SULLA_E2E_CLOUD_URL.replace(/\/$/, '')
+  : 'https://sulla-workers.merchantprotocol.workers.dev';
 const INTEGRATION_ID = 'sulla-cloud';
 
 // Legacy setting keys — cleared on first migration pass.

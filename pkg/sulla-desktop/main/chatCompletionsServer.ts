@@ -23,6 +23,7 @@ import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken
 import paths from '@pkg/utils/paths';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+import { loopbackOrigin } from '@pkg/utils/instance';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
@@ -1289,7 +1290,7 @@ export class ChatCompletionsServer {
         // stopped/unhealthy container falls through to today's in-process path.
         if (toolRegistry.getExecutionTarget(String(tool.name || prefixed)) === 'catalog') {
           try {
-            const health = await fetch('http://127.0.0.1:30123/healthz', { signal: AbortSignal.timeout(300) });
+            const health = await fetch(`${ loopbackOrigin('http', 30123) }/healthz`, { signal: AbortSignal.timeout(300) });
             if (health.ok) {
               const now = Math.floor(Date.now() / 1000);
               const capability = issueCapabilityToken(executionContext ? {
@@ -1304,7 +1305,7 @@ export class ChatCompletionsServer {
                 sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
                 scopes: [`${ canonicalCategory }/*`], expiresInSeconds: 60,
               }, deriveCapabilitySigningKey(this.apiToken!));
-              const upstream = await fetch(`http://127.0.0.1:30123/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
+              const upstream = await fetch(`${ loopbackOrigin('http', 30123) }/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
                 method:  'POST',
                 headers: {
                   'Content-Type': 'application/json',

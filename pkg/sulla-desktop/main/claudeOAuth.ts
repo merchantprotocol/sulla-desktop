@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
@@ -293,6 +293,16 @@ export function initClaudeOAuthEvents(): void {
    */
   ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<{ success?: boolean; token?: string; error?: string }> => {
     assertFirstRunOrMainSender(event);
+    if (!app.isPackaged && process.env.SULLA_E2E === '1') {
+      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'The sign-in window was closed' };
+      const endpoint = process.env.SULLA_E2E_OAUTH_URL;
+      if (!endpoint) return { success: false, error: 'Missing fake OAuth endpoint' };
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: CLAUDE_INTEGRATION_ID }) });
+      if (!response.ok) return { success: false, error: `Fake OAuth returned ${ response.status }` };
+      const tokens = await response.json() as Record<string, string>;
+      queuePendingCredential({ integrationId: CLAUDE_INTEGRATION_ID, accountId: CLAUDE_OAUTH_ACCOUNT_ID, values: tokens, activate: true });
+      return { success: true };
+    }
     if (activeSession) killActiveSession();
 
     // Bail out early with a clear message if the VM isn't ready.
