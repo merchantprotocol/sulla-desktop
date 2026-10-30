@@ -50,7 +50,14 @@ jobs:
       - run: yarn install --immutable --ignore-platform --ignore-scripts
       - run: node node_modules/electron/install.js
       - name: Build unpackaged app
-        run: yarn build
+        shell: bash
+        run: |
+          set -o pipefail
+          yarn build 2>&1 | tee build.log || {
+            detail=$(tail -n 80 build.log | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=Unpackaged app build failed::${detail}"
+            exit 1
+          }
       - name: Run first-run simulator (Linux)
         if: runner.os == 'Linux'
         shell: bash
