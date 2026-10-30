@@ -1,0 +1,68 @@
+name: First-run Electron E2E
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: Number of complete suite repetitions
+        required: true
+        default: '5'
+      os:
+        description: Runner image (ubuntu-latest or macos-14)
+        required: true
+        default: ubuntu-latest
+        type: choice
+        options: [ubuntu-latest, macos-14]
+      grep:
+        description: Optional Playwright grep expression
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      - 'pkg/sulla-desktop/pages/FirstRun*'
+      - 'pkg/sulla-desktop/main/firstRun/**'
+      - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/*OAuth.ts'
+      - 'background.ts'
+      - 'e2e/first-run/**'
+      - 'scripts/e2e-first-run.mjs'
+      - '.github/workflows/first-run-e2e.yml'
+permissions:
+  contents: read
+jobs:
+  first-run:
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.os || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    env:
+      REPEAT: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat || '1' }}
+      GREP: ${{ github.event_name == 'workflow_dispatch' && inputs.grep || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Build unpackaged app
+        run: yarn build
+      - name: Run first-run simulator (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          args=(--repeat "$REPEAT")
+          [[ -n "$GREP" ]] && args+=(--grep "$GREP")
+          xvfb-run --auto-servernum yarn e2e:first-run "${args[@]}"
+      - name: Run first-run simulator (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          args=(--repeat "$REPEAT")
+          [[ -n "$GREP" ]] && args+=(--grep "$GREP")
+          yarn e2e:first-run "${args[@]}"
+      - name: Upload traces, screenshots, and repeat summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-e2e-${{ runner.os }}-${{ github.run_attempt }}
+          path: test-results/first-run
+          if-no-files-found: warn
+          retention-days: 14

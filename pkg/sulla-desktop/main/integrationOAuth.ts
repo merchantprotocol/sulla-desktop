@@ -19,7 +19,7 @@
  * YAML/OAuth-manifest provider.
  */
 
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
@@ -58,6 +58,16 @@ export function initIntegrationOAuthEvents(): void {
       firstRun?:     boolean;
     },
   ): Promise<{ success: boolean; error?: string }> => {
+    if (!app.isPackaged && process.env.SULLA_E2E === '1') {
+      if (process.env.SULLA_E2E_OAUTH_RESULT === 'closed') return { success: false, error: 'The sign-in window was closed' };
+      const endpoint = process.env.SULLA_E2E_OAUTH_URL;
+      if (!endpoint) return { success: false, error: 'Missing fake OAuth endpoint' };
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ integrationId: payload.integrationId }) });
+      if (!response.ok) return { success: false, error: `Fake OAuth returned ${ response.status }` };
+      const tokens = await response.json() as Record<string, string>;
+      queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
+      return { success: true };
+    }
     try {
       if (payload.firstRun) assertFirstRunOrMainSender(event);
       const integrationService = getIntegrationService();

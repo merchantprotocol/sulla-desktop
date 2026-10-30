@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import Electron from 'electron';
+
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
@@ -61,6 +63,15 @@ export function getPendingCredential(integrationId: string): PendingCredential |
 }
 
 async function writeEntry(entry: PendingCredential): Promise<void> {
+  if (!Electron.app.isPackaged && process.env.SULLA_E2E === '1' && process.env.SULLA_E2E_VAULT_URL) {
+    if (process.env.SULLA_E2E_VAULT === 'absent') throw new Error('Fake vault is absent');
+    const response = await fetch(process.env.SULLA_E2E_VAULT_URL, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ integrationId: entry.integrationId, accountId: entry.accountId, values: entry.values }),
+    });
+    if (!response.ok) throw new Error(`Fake vault returned ${ response.status }`);
+    return;
+  }
   if (usesContainerVaultAuthority() && entry.integrationId === 'sulla-cloud') {
     const client = getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
