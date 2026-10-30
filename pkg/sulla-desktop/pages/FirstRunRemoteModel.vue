@@ -1,6 +1,7 @@
 <!-- Sulla Desktop · https://sulladesktop.com | Copyright (c) 2025-2026 Merchant Protocol LLC. | SPDX-License-Identifier: GPL-2.0-or-later | "Sulla" is a trademark. See TRADEMARK.md. -->
 <template>
   <div class="max-w-lg mx-0 p-6 frm-page">
+    <div class="fr-step-body">
     <h2 class="text-2xl font-bold mt-5 mb-2 frm-heading">Connect the AI you already use.</h2>
     <p class="mb-6 frm-subtext">Sign in to the account you already pay for. Each provider opens its own sign-in window. Sulla picks the default; you can change it later.</p>
     <div v-if="notice" class="frm-notice" :class="{ 'is-error': noticeKind === 'error' }" role="status">{{ notice }}</div>
@@ -14,6 +15,7 @@
     <div v-if="showApiChoices" class="frm-api">
       <p class="frm-notice">Choose a provider now. You'll paste your key in your vault right after setup.</p>
       <button v-for="provider in providers" :key="provider.id" type="button" class="frm-api-choice" @click="chooseApiProvider(provider.id)">Use {{ provider.name }} API</button>
+    </div>
     </div>
     <div class="frm-actions">
       <button v-if="hasConnection" type="button" class="frm-btn-accent" @click="$emit('next')">Continue</button>
@@ -57,5 +59,6 @@ async function chooseApiProvider(id: FirstRunAiProviderId) {
 onBeforeUnmount(() => { disposed = true; if (claudeWaitTimer) clearTimeout(claudeWaitTimer); });
 </script>
 <style lang="scss" scoped>
+.frm-page{display:flex;flex-direction:column;height:100%;min-height:0}.fr-step-body{min-height:0;overflow-y:auto}
 .frm-page{color:var(--text-primary)}.frm-heading{font-family:"Playfair Display",Georgia,serif;font-size:34px;line-height:1.08}.frm-subtext,.frm-option-plan{color:var(--text-muted)}.frm-options,.frm-api{display:flex;flex-direction:column;gap:9px}.frm-option{display:flex;align-items:center;gap:13px;min-height:66px;padding:12px 14px;border:1px solid var(--border-default);border-radius:14px;background:var(--bg-input)}.frm-option-icon{width:30px;height:30px}.frm-option-text{display:flex;flex:1;flex-direction:column;gap:2px}.frm-option-name{font-weight:650}.frm-option-plan{font-size:13px}.frm-connect,.frm-api-choice{padding:8px 15px;border-radius:9px;background:var(--accent-primary);color:var(--text-on-accent);font-weight:650}.frm-connect.is-connected{background:var(--bg-surface-hover);color:var(--text-secondary)}button:disabled{cursor:wait;opacity:.65}.frm-notice{margin-bottom:12px;padding:11px 13px;border:1px solid var(--border-default);border-radius:10px;color:var(--text-secondary);background:var(--bg-surface-alt);font-size:13px;line-height:1.45}.frm-notice.is-error{border-color:var(--border-error);color:var(--text-error);background:var(--bg-error)}.frm-api-row{display:flex;flex-direction:column;gap:6px;font-weight:600}.frm-api-input{display:flex;gap:8px}.frm-api-input input{min-width:0;flex:1;padding:9px 11px;border:1px solid var(--border-default);border-radius:9px;background:var(--bg-input);color:var(--text-primary);font-weight:400}.frm-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:20px}.frm-actions button{padding:9px 14px;border-radius:9px;font-weight:600}.frm-btn-accent{background:var(--accent-primary);color:var(--text-on-accent)}.frm-btn-secondary{background:var(--bg-surface-hover);color:var(--text-primary)}.frm-btn-later{color:var(--text-muted)}.theme-noir .frm-option{border-color:transparent;background:rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2)/.4);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--nx-accent-2) 12%,transparent)}.theme-noir .frm-connect,.theme-noir .frm-api-choice,.theme-noir .frm-btn-accent{background:var(--nx-accent);color:var(--nx-ink)}
 </style>

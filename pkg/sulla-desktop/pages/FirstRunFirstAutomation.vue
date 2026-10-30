@@ -7,6 +7,7 @@
 <template>
   <div class="ffa p-6">
     <form @submit.prevent="handleNext">
+      <div class="fr-step-body">
       <h2 class="ffa-title">
         What should Sulla take off your plate first?
       </h2>
@@ -57,6 +58,7 @@
         {{ error }}
       </p>
 
+      </div>
       <div class="ffa-actions">
         <button
           type="button"
@@ -203,6 +205,10 @@ async function skip() {
 </script>
 
 <style lang="scss" scoped>
+.ffa, .ffa form { height: 100%; min-height: 0; }
+.ffa form { display: flex; flex-direction: column; }
+.fr-step-body { min-height: 0; overflow-y: auto; }
+
 .ffa-title {
   font-size: 28px;
   line-height: 1.15;

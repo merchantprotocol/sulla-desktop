@@ -543,10 +543,7 @@ export function openDialog(id: string, opts?: Electron.BrowserWindowConstructorO
 export async function openFirstRunDialog() {
   console.log('[openFirstRunDialog] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.min(Math.trunc(width * 0.8), 1280);
-  const defaultHeight = Math.min(Math.trunc(height * 0.8), 900);
+  const { x, y, width, height } = screen.getPrimaryDisplay().workArea;
 
   console.log('[openFirstRunDialog] Creating window with name: first-run, url:', `${ firstRunUrl }#FirstRun`);
   const window = createWindow(
@@ -554,9 +551,11 @@ export async function openFirstRunDialog() {
     `${ firstRunUrl }#FirstRun`,
     {
       title:          isFirstRunTestInstance() ? 'Sulla (first-run test) - First Run' : 'Sulla Desktop - First Run',
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      !process.env.SULLA_MOCK_FOR_SCREENSHOTS, // remove window's shadows while taking screenshots
+      x,
+      y,
+      width,
+      height,
+      resizable:      true,
       icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       closable:       true,
       webPreferences: {
@@ -568,7 +567,9 @@ export async function openFirstRunDialog() {
       },
     });
 
-  window.center();
+  window.once('ready-to-show', () => {
+    window.maximize();
+  });
 
   let appIsQuitting = false;
   const allowCloseForQuit = () => {

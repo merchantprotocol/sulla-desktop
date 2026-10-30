@@ -54,7 +54,7 @@
       <div
         id="chat-scroll-container"
         ref="chatScrollContainer"
-        class="flex min-h-0 flex-1 overflow-y-auto"
+        class="flex min-h-0 flex-1 overflow-hidden"
       >
         <div class="fr-stage">
           <div
@@ -256,6 +256,8 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 </script>
 <style lang="scss" scoped>
 .page-root {
+  height: 100vh;
+  min-height: 0;
   background: var(--bg-page, var(--body-bg, #f7f8fa));
   color: var(--text-primary, var(--body-text, #0f172a));
 }
@@ -350,15 +352,22 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 /* ---- stage + card ---- */
 .fr-stage {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
-  padding: 32px 24px 64px;
+  align-items: stretch;
+  padding: clamp(12px, 3vh, 32px) 24px clamp(12px, 3vh, 32px);
 }
 
 .fr-card {
   width: 100%;
+  height: 100%;
+  min-height: 0;
   max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg-surface, #fff);
   border: 1px solid var(--border-default, #e2e8f0);
   border-radius: 18px;
@@ -372,11 +381,35 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   box-shadow: 0 16px 40px -18px rgba(0, 0, 0, .7);
 }
 
-.fr-card :deep(> div) { max-width: none; }
+.fr-card :deep(> div) {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-width: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Step components use a flex column: only .fr-step-body scrolls while the
+ * action footer remains visible at every work-area height. */
+.fr-card :deep(.ffa-actions),
+.fr-card :deep(.frw-actions),
+.fr-card :deep(.frm-actions),
+.fr-card :deep(.fr-account-actions) {
+  flex: none;
+}
+@media (max-height: 760px) {
+  .fr-steps { padding-block: 8px; }
+  .fr-setup { padding-block: 5px; }
+  .fr-card { padding-block: 8px 12px; }
+  .fr-card :deep(> div) { padding-block: 12px; }
+}
 
 /* Noir is opt-in: the first-run window uses the saved theme when one exists,
  * while a fresh install keeps useTheme's existing Protocol Dark fallback. */
 .theme-noir .page-root {
+  height: 100vh;
+  min-height: 0;
   --fr-spring: linear(0,.0258,.09,.1763,.2732,.3724,.4683,.5573,.6376,.7082,.7689,.8202,.8628,.8976,.9256,.9476,.9648,.9778,.9875,.9945,.9994,1.0026,1.0047,1.0058,1.0062,1.0062,1.0059,1.0055,1.0049,1.0043,1.0036,1.0031,1.0025,1.002,1.0016,1.0013,1);
   background:
     radial-gradient(90% 64% at 50% -8%, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 60%),

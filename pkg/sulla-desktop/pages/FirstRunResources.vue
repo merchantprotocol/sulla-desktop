@@ -17,6 +17,7 @@
         <p class="frw-muted">Nothing has been changed. You can quit safely.</p>
       </template>
       <template v-else>
+      <div class="fr-step-body">
       <div class="frw-eyebrow">
         Welcome to Sulla
       </div>
@@ -100,6 +101,7 @@
         {{ resourceError }}
       </div>
 
+      </div>
       <div class="frw-actions">
         <button
           type="submit"
@@ -262,6 +264,10 @@ const handleNext = async() => {
 </script>
 
 <style lang="scss" scoped>
+.frw, .frw form { height: 100%; min-height: 0; }
+.frw form { display: flex; flex-direction: column; }
+.fr-step-body { min-height: 0; overflow-y: auto; }
+
 .model-disabled {
   color: var(--disabled);
 }

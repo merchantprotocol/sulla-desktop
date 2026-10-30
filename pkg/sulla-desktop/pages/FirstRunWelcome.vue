@@ -6,7 +6,8 @@
 -->
 <template>
   <div class="max-w-lg mx-0 p-6">
-    <form v-if="step === 'account'" @submit.prevent="handleAccountSubmit">
+    <form v-if="step === 'account'" class="fr-account-step" @submit.prevent="handleAccountSubmit">
+      <div class="fr-step-body">
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Create your Sulla account</h2>
       <p class="mb-6 secondary-text">This is the one account you use for Desktop, Mobile, and Sulla Cloud.</p>
       <rd-fieldset legend-text="About you" class="mb-6 heading-text">
@@ -23,13 +24,15 @@
       <rd-fieldset legend-text="Updates" class="mb-6 heading-text">
         <label class="flex items-center"><input v-model="sullaSubscribeToUpdates" type="checkbox" class="mr-2"><span class="text-sm label-text">Email me product updates and new automation ideas</span></label>
       </rd-fieldset>
-      <div class="flex items-center justify-between mt-5">
+      </div>
+      <div class="flex items-center justify-between mt-5 fr-account-actions">
         <button type="button" class="link-btn" @click="continueWithoutAccount">Continue without an account</button>
         <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary">Continue</button>
       </div>
     </form>
 
-    <form v-if="step === 'cloud'" @submit.prevent="handleCloudSubmit">
+    <form v-if="step === 'cloud'" class="fr-account-step" @submit.prevent="handleCloudSubmit">
+      <div class="fr-step-body">
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">{{ cloudAccountExists ? 'Sign in to Sulla Cloud' : 'Choose your account password' }}</h2>
       <p class="mb-6 secondary-text"><template v-if="cloudAccountExists"><strong>{{ sullaEmail }}</strong> already has an account. Enter its password to connect this Mac.</template><template v-else>This password signs you in on Desktop, Mobile, and Cloud. You'll create your isolated local vault after setup.</template></p>
       <div class="mb-4">
@@ -43,13 +46,15 @@
         <input id="cloudCode" v-model="cloudCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" class="w-full p-2 border rounded-md form-input" placeholder="6-digit code">
         <button type="button" class="link-btn mt-2" :disabled="cloudSubmitting" @click="verifyRecoveryCode">Verify code and continue</button>
       </div>
-      <div class="flex items-center justify-between mt-5">
+      </div>
+      <div class="flex items-center justify-between mt-5 fr-account-actions">
         <button type="button" class="link-btn" @click="continueWithoutAccount">This Mac only, for now</button>
         <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }" :disabled="cloudSubmitting">{{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Create account and continue') }}</button>
       </div>
     </form>
 
-    <div v-if="step === 'sync'">
+    <div v-if="step === 'sync'" class="fr-account-step">
+      <div class="fr-step-body">
       <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Choose what syncs</h2>
       <p class="mb-6 secondary-text">Synced data becomes available on your phone, your other desktops and Sulla Cloud. Turn any of it off here or later in Settings.</p>
       <rd-fieldset legend-text="Sync" class="mb-6 heading-text">
@@ -57,7 +62,8 @@
         <label v-for="category in syncCategories" :key="category.key" class="sync-row" :class="{ disabled: !syncEnabled }"><input v-model="category.enabled" type="checkbox" :disabled="!syncEnabled"><span><strong>{{ category.label }}</strong> — {{ category.description }}</span></label>
       </rd-fieldset>
       <p v-if="syncError" class="text-sm mt-1 error-text">{{ syncError }}</p>
-      <div class="flex items-center justify-end gap-4 mt-5"><button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway (change later in Settings)</button><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :disabled="syncSubmitting" @click="handleSyncChoices">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Continue') }}</button></div>
+      </div>
+      <div class="flex items-center justify-end gap-4 mt-5 fr-account-actions"><button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway (change later in Settings)</button><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :disabled="syncSubmitting" @click="handleSyncChoices">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Continue') }}</button></div>
     </div>
   </div>
 </template>
@@ -214,6 +220,11 @@ async function finishSetup(allowMarketing: boolean) {
 </script>
 
 <style lang="scss" scoped>
+.max-w-lg.mx-0.p-6, .fr-account-step { height: 100%; min-height: 0; }
+.fr-account-step { display: flex; flex-direction: column; }
+.fr-step-body { min-height: 0; overflow-y: auto; }
+.fr-account-actions { flex: none; }
+
 .button-area {
   align-self: flex-end;
   margin-top: 1.5rem;
