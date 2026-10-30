@@ -128,8 +128,18 @@ async function injectTokenIntoVM(token: string): Promise<void> {
  */
 const CLAUDE_CLI_PACKAGE = '@anthropic-ai/claude-code@2.1.312';
 
+/**
+ * The guest's init does not mount devpts, so the VM has no pseudo-terminals,
+ * and `sulla-runtime exec` streams plain stdin/stdout without a terminal.
+ * `claude setup-token` is an interactive terminal app: with no terminal it
+ * prints nothing and waits forever. Mount devpts when missing, and run the
+ * CLI inside this pseudo-terminal relay (python3 ships in the guest image).
+ */
+const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t devpts devpts /dev/pts -o newinstance,ptmxmode=0666,mode=0620,gid=5; }';
+const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 120, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            os.write(fd, data)\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
+
 async function ensureClaudeCliInVM(): Promise<void> {
-  const script = `command -v claude >/dev/null 2>&1 && exit 0; sudo npm install --global --no-fund --no-audit ${ CLAUDE_CLI_PACKAGE } && command -v claude`;
+  const script = `${ MOUNT_DEVPTS }; command -v claude >/dev/null 2>&1 && exit 0; sudo npm install --global --no-fund --no-audit ${ CLAUDE_CLI_PACKAGE } && command -v claude`;
   await new Promise<void>((resolve, reject) => {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-lc', script], { env: { ...process.env } });
     let output = '';
@@ -344,7 +354,7 @@ export function initClaudeOAuthEvents(): void {
     return await new Promise((resolve) => {
       const runtimePath = paths.sullaRuntime;
 
-      const ptyProcess = pty.spawn(runtimePath, ['exec', '--', 'claude', 'setup-token'], {
+      const ptyProcess = pty.spawn(runtimePath, ['exec', '--', 'python3', '-c', GUEST_PTY_RELAY, 'claude', 'setup-token'], {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
