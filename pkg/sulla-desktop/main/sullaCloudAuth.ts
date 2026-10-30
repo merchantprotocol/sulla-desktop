@@ -29,6 +29,8 @@ import { IntegrationValueModel } from '@pkg/agent/database/models/IntegrationVal
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
+import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
+import { getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
@@ -142,6 +144,15 @@ async function saveSession(session: CloudSession): Promise<void> {
 }
 
 async function loadSession(): Promise<CloudSession | null> {
+  const queued = getPendingCredential(INTEGRATION_ID);
+  if (queued) {
+    return {
+      userId: queued.values.user_id,
+      activeContractorId: queued.values.active_contractor_id,
+      contractors: JSON.parse(queued.values.contractors_json || '[]'),
+      tokens: { accessToken: queued.values.access_token, refreshToken: queued.values.refresh_token },
+    };
+  }
   const svc = getIntegrationService();
   const accounts = await svc.getAccounts(INTEGRATION_ID);
   if (accounts.length === 0) return null;
@@ -190,6 +201,14 @@ function activeConnectedAccountId(metadata: Awaited<ReturnType<ReturnType<typeof
  * from the account id, which saveSession keys by userId.
  */
 async function loadSessionIdentity(): Promise<SessionIdentity | null> {
+  const queued = getPendingCredential(INTEGRATION_ID);
+  if (queued) {
+    return {
+      userId:             queued.values.user_id,
+      activeContractorId: queued.values.active_contractor_id,
+      contractors:        JSON.parse(queued.values.contractors_json || '[]'),
+    };
+  }
   if (!usesContainerVaultAuthority()) {
     const session = await loadSession();
     return session ? { userId: session.userId, activeContractorId: session.activeContractorId, contractors: session.contractors } : null;
@@ -618,6 +637,8 @@ export async function getCurrentUserId(): Promise<string> {
 // ── IPC handlers ───────────────────────────────────────────
 
 export function initSullaCloudAuthEvents(): void {
+  applyFirstRunChoicesWhenReady();
+  startPendingCredentialFlush();
   const ipcMainProxy = getIpcMainProxy(console);
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
@@ -668,6 +689,31 @@ export function initSullaCloudAuthEvents(): void {
     }
     console.log(`[SullaCloudAuth] Signed in — user=${ session.userId }, active contractor=${ session.activeContractorId }`);
     return { ok: true, status: await buildStatus() };
+  };
+
+  // First run cannot assume the vault, Postgres, or Redis exists. Keep the
+  // authenticated session only in main-process memory and let the vault
+  // lifecycle flush it after the owner creates and unlocks their vault.
+  const completeFirstRunSignIn = async(data: VerifyResponse): Promise<AuthResult> => {
+    const session = responseToSession(data);
+    queuePendingCredential({
+      integrationId: INTEGRATION_ID,
+      accountId:     session.userId,
+      activate:      true,
+      values: {
+        access_token:        session.tokens.accessToken,
+        refresh_token:       session.tokens.refreshToken,
+        user_id:             session.userId,
+        active_contractor_id: session.activeContractorId,
+        contractors_json:    JSON.stringify(session.contractors),
+      },
+    });
+    try { await getDesktopRelayClient().setPairedUserId(session.userId) } catch (err) { console.warn('[SullaCloudAuth] Auto-pair failed:', err) }
+    try {
+      const { startCloudServices } = await import('./cloud/cloudLifecycle');
+      await startCloudServices();
+    } catch (err) { console.warn('[SullaCloudAuth] Failed to start cloud services:', err) }
+    return { ok: true, status: await buildStatus().catch(() => signedOutStatus()) };
   };
 
   // On first run the VM's Postgres may still be booting, so saving the session
@@ -783,7 +829,7 @@ export function initSullaCloudAuthEvents(): void {
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    const signedIn = await completeSignInWhenReady(data, 'Your Sulla Cloud account is ready, but Sulla is still starting up. Wait a minute, then try again.');
+    const signedIn = await completeFirstRunSignIn(data);
     return { ...signedIn, isNewUser };
   });
 

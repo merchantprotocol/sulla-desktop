@@ -7,7 +7,7 @@
   'use strict';
 
   let csrf = '';
-  let onboardingCreatesVault = false;
+  let setupCreatesVault = false;
   let pendingRecoveryCode = '';
   let items = [];
   let selectedId = '';
@@ -25,7 +25,6 @@
   const integrationHint = initialUrl.searchParams.get('integration');
   const accountHint = initialUrl.searchParams.get('account');
   const filesRestore = initialUrl.searchParams.get('restoreFiles') === '1';
-  const onboarding = initialUrl.searchParams.get('onboarding') === '1';
   // Desktop passes the integration's public form (field labels, hints, setup notes) in the
   // fragment so a new connection gets a guided screen. It holds no secrets.
   const connectSpec = (() => {
@@ -533,15 +532,14 @@
       return;
     }
     setPhase(session.phase);
-    onboardingCreatesVault = onboarding && session.setupRequired === true;
+    setupCreatesVault = session.setupRequired === true;
     if (session.phase === 'unlocked') {
-      if (onboarding && !onboardingCreatesVault) { location.href = '/vault/desktop/onboarding-complete'; return; }
       await load(); await openIntegrationHint();
     } else {
       byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault';
       byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password';
-      byId('password-confirm-label').hidden = !onboardingCreatesVault;
-      byId('password-confirm').required = onboardingCreatesVault;
+      byId('password-confirm-label').hidden = !setupCreatesVault;
+      byId('password-confirm').required = setupCreatesVault;
     }
   };
 
@@ -570,23 +568,22 @@
   };
   byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; try {
     const password = byId('password').value;
-    if (onboardingCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
+    if (setupCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
     const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password }) });
     csrf = result.csrf; byId('password').value = ''; byId('password-confirm').value = ''; setPhase('unlocked');
-    if (onboardingCreatesVault) {
+    if (setupCreatesVault) {
       const bytes = crypto.getRandomValues(new Uint8Array(32));
       pendingRecoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0);
       byId('vault').hidden = true; byId('unlock').hidden = false; byId('unlock-form').hidden = true;
       byId('unlock-title').textContent = 'Vault created'; byId('unlock-help').textContent = 'Your vault is encrypted and its unlock cache is protected by this Mac.';
       await configureOnboardingRecovery();
-    } else if (onboarding) { location.href = '/vault/desktop/onboarding-complete'; }
-    else { await load(); await openIntegrationHint(); }
+    } else { await load(); await openIntegrationHint(); }
   } catch (error) { byId('unlock-error').textContent = error.message; } };
   byId('onboarding-recovery-retry').onclick = () => { void configureOnboardingRecovery(); };
   byId('onboarding-recovery-saved').onchange = event => { byId('onboarding-recovery-continue').disabled = !event.target.checked; };
   byId('onboarding-recovery-copy').onclick = async() => { try { await navigator.clipboard.writeText(byId('onboarding-recovery-code').textContent); message('Recovery key copied.'); } catch { byId('onboarding-recovery-error').textContent = 'Could not copy. Select the key and copy it manually.'; } };
   byId('onboarding-recovery-download').onclick = () => { const blob = new Blob([byId('onboarding-recovery-code').textContent + '\n'], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'sulla-vault-recovery-key.txt'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); };
-  byId('onboarding-recovery-continue').onclick = () => { if (byId('onboarding-recovery-saved').checked) location.href = '/vault/desktop/onboarding-complete'; };
+  byId('onboarding-recovery-continue').onclick = () => { if (byId('onboarding-recovery-saved').checked) { byId('unlock').hidden = true; byId('vault').hidden = false; void load(); } };
   byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message; } };
   byId('new-item').onclick = () => { void openEditor(null).catch(error => message(error.message, true)); };
   byId('nav-audit').onclick = showAudit;
