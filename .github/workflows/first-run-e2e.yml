@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 name: First-run Electron E2E
 on:
   workflow_dispatch:
@@ -36,12 +37,10 @@ jobs:
       REPEAT: ${{ github.event_name == 'workflow_dispatch' && inputs.repeat || '1' }}
       GREP: ${{ github.event_name == 'workflow_dispatch' && inputs.grep || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          node-version: 22
-          cache: yarn
-      - run: yarn install --frozen-lockfile
+          persist-credentials: false
+      - uses: ./.github/actions/yarn-install
       - name: Build unpackaged app
         run: yarn build
       - name: Run first-run simulator (Linux)
@@ -60,7 +59,7 @@ jobs:
           yarn e2e:first-run "${args[@]}"
       - name: Upload traces, screenshots, and repeat summary
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: first-run-e2e-${{ runner.os }}-${{ github.run_attempt }}
           path: test-results/first-run

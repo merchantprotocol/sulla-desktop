@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 const args=process.argv.slice(2);let repeat=1;const forwarded=[];

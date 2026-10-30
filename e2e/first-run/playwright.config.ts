@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: '.', testMatch: /first-run\.spec\.ts/,
