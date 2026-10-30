@@ -11,28 +11,27 @@
         Welcome to Sulla
       </div>
       <h1 class="frw-title">
-        Let's get your first automation running.
+        One account. Three places.
       </h1>
       <p class="frw-lead">
-        Sulla is your executive assistant. You describe a job in plain English, and Sulla builds the automation,
-        runs it on schedule, and keeps it working. Setup takes a few minutes.
+        Before you create an account, here's how Sulla fits together. We'll get this Mac ready while you read.
       </p>
 
       <div class="frw-how">
         <div>
           <span class="frw-num">1</span>
-          <b>Create your account</b>
-          <span>A master password keeps your saved logins encrypted on this computer.</span>
+          <b>Desktop</b>
+          <span>Sulla on this Mac. Your files, vault, and agents live here.</span>
         </div>
         <div>
           <span class="frw-num">2</span>
-          <b>Choose your AI</b>
-          <span>Sign in with your Claude, ChatGPT or Grok subscription. No API keys.</span>
+          <b>Mobile</b>
+          <span>The same Sulla in your pocket, connected to this machine.</span>
         </div>
         <div>
           <span class="frw-num">3</span>
-          <b>Pick your first job</b>
-          <span>Choose a starter automation and Sulla sets it up for you.</span>
+          <b>Cloud</b>
+          <span>The account that connects your phone, desktops, and Cloud.</span>
         </div>
       </div>
 
@@ -74,19 +73,15 @@
             />
           </rd-fieldset>
 
-          <div class="mb-3">
-            <label class="flex items-center">
-              <input
-                v-model="enableTelemetry"
-                type="checkbox"
-                class="mr-2"
-                @change="onTelemetryChange"
-              >
-              <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
-            </label>
-          </div>
         </div>
       </Transition>
+
+      <div class="mb-3 mt-4">
+        <label class="flex items-center">
+          <input v-model="enableTelemetry" type="checkbox" class="mr-2" @change="onTelemetryChange">
+          <span class="text-sm fr-muted">Share anonymous usage statistics to help improve Sulla Desktop</span>
+        </label>
+      </div>
 
       <div
         v-if="resourceError"
@@ -102,7 +97,7 @@
         >
           Get started →
         </button>
-        <span class="frw-trust">🔒 Your data, memory and passwords stay on this computer.</span>
+        <span class="frw-trust">You choose what syncs on the next screens and can change it later.</span>
       </div>
     </form>
   </div>

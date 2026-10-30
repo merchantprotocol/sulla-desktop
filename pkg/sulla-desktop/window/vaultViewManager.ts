@@ -15,6 +15,7 @@ const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
 // The guided connect screen navigates here after saving a new integration account.
 const DESKTOP_CONNECTED_PATH = '/vault/desktop/connected';
+const DESKTOP_ONBOARDING_COMPLETE_PATH = '/vault/desktop/onboarding-complete';
 const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 export interface VaultViewReservation {
@@ -35,6 +36,7 @@ export class VaultViewManager {
   private ownerId: string | null = null;
   private attachedOwnerId: string | null = null;
   private generation = 0;
+  private parentWindowName: 'main-agent' | 'first-run' = 'main-agent';
 
   reserve(ownerId: string): VaultViewReservation {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(ownerId)) throw new Error('Invalid vault view owner');
@@ -52,11 +54,12 @@ export class VaultViewManager {
     return this.ownerId !== null;
   }
 
-  async show(reservation: VaultViewReservation, url: string, bounds: Electron.Rectangle): Promise<boolean> {
+  async show(reservation: VaultViewReservation, url: string, bounds: Electron.Rectangle, parentWindowName: 'main-agent' | 'first-run' = 'main-agent'): Promise<boolean> {
     if (!this.isCurrent(reservation)) return false;
     const target = this.validateUrl(url);
-    const mainWindow = getWindow('main-agent');
-    if (!mainWindow) throw new Error('Main window is unavailable');
+    const mainWindow = getWindow(parentWindowName);
+    if (!mainWindow) throw new Error('Vault parent window is unavailable');
+    this.parentWindowName = parentWindowName;
     const created = await this.createView();
     if (!this.isCurrent(reservation)) {
       this.discardCreatedView(created);
@@ -102,7 +105,7 @@ export class VaultViewManager {
   }
 
   private releaseAttachedView(): void {
-    const mainWindow = getWindow('main-agent');
+    const mainWindow = getWindow(this.parentWindowName);
     if (mainWindow && this.view && this.attached) mainWindow.contentView.removeChildView(this.view);
     this.attached = false;
     mainWindow?.setContentProtection(false);
@@ -168,6 +171,9 @@ export class VaultViewManager {
           if (SAFE_ID.test(integrationId) && SAFE_ID.test(accountId)) {
             getWindow('main-agent')?.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
           }
+        } else if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_ONBOARDING_COMPLETE_PATH) {
+          event.preventDefault();
+          getWindow(this.parentWindowName)?.webContents.send('vault:onboarding-complete');
         } else if (target.origin !== VAULT_ORIGIN) {
           event.preventDefault();
         }

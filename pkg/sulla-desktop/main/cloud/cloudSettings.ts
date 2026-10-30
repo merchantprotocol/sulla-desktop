@@ -28,12 +28,14 @@ async function ensureInitialized(){
   const oldConversations=asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.conversations,false),false);
   const oldVault=asBool(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.vault,false),false);
   const cursor=parseInt(String(await SullaSettingsModel.get(LEGACY_CURSOR_KEY,'0')??'0'),10);
-  const conversations=oldConversations||(Number.isFinite(cursor)&&cursor>0);
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.enabled,conversations||oldVault,'boolean');
+  const hadLegacyPreferences=oldConversations||oldVault||(Number.isFinite(cursor)&&cursor>0);
+  const conversations=hadLegacyPreferences ? oldConversations||(Number.isFinite(cursor)&&cursor>0) : true;
+  // A genuinely fresh install syncs by default. Existing installs keep their prior explicit state.
+  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.enabled,hadLegacyPreferences ? conversations||oldVault : true,'boolean');
   for(const key of ['workflows','skills','customAgents','recipes','useCases','liveAgents','usage','memory','files'] as const)
     await SullaSettingsModel.set(CLOUD_SETTING_KEYS[key],true,'boolean');
   await SullaSettingsModel.set(CLOUD_SETTING_KEYS.conversations,conversations,'boolean');
-  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.vault,oldVault,'boolean');
+  await SullaSettingsModel.set(CLOUD_SETTING_KEYS.vault,hadLegacyPreferences ? oldVault : true,'boolean');
   if(await SullaSettingsModel.get(CLOUD_SETTING_KEYS.remoteAccess,null)===null) await SullaSettingsModel.set(CLOUD_SETTING_KEYS.remoteAccess,true,'boolean');
   await SullaSettingsModel.set(INITIALIZED_KEY,true,'boolean');
 }
