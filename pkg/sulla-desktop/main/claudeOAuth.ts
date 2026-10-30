@@ -456,6 +456,15 @@ export function initClaudeOAuthEvents(): void {
               try {
                 ptyProcess.write(code);
                 codeSent = true;
+                // Newer CLIs echo the pasted code as plain text, not asterisks,
+                // so the echo check below never fires. Submit shortly after the
+                // write either way; whichever path runs first sends Enter once.
+                setTimeout(() => {
+                  if (enterSent || resolved) return;
+                  enterSent = true;
+                  console.log('[ClaudeOAuth] Submitting code');
+                  try { ptyProcess.write('\r') } catch (err) { console.warn('[ClaudeOAuth] Failed to send Enter:', err) }
+                }, 400);
               } catch (err) {
                 console.warn('[ClaudeOAuth] Failed to write code to PTY:', err);
               }
