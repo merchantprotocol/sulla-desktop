@@ -390,6 +390,27 @@ export interface ConfigureRecoveryRequest {
   recoveryCode: string;
 }
 
+export interface AccountPasswordRewrapRequest {
+  /** base64url account master key, exactly 32 bytes; accepted only from Desktop approval identity over pinned TLS. */
+  masterKey: string;
+  kdf: { alg: 'argon2id13'; salt: string; memoryBytes: number; ops: number };
+}
+
+export interface AccountPasswordRewrapResponse {
+  migrated: boolean;
+  recoveryKey?: string;
+  recoveryCreated: boolean;
+  cacheMode: 'helper-update-required';
+}
+
+export interface VaultDeviceApprovalWrapRequest {
+  requestId: string;
+  vaultId: string;
+  vaultEpoch: number;
+  publicKey: string;
+  approved: boolean;
+}
+
 export interface RecoverVaultRequest {
   callerId:      string;
   challengeId:   string;

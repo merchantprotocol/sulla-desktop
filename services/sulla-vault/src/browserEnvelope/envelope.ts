@@ -30,16 +30,19 @@ export const FORMAT = {
   head: 'sulla-vault-sync-head',
 } as const;
 
+/** Record/head protocol remains v1; bundle parsing separately accepts v1 and v2. */
 export const SUPPORTED_VERSION = 1;
 
 export interface AeadEnvelope { version: 1; algorithm: 'xchacha20-poly1305'; nonce: string; ciphertext: string }
 export interface SyncItem { version: 1; encryptedItemKey: AeadEnvelope; ciphertext: AeadEnvelope }
 export interface SyncKdf { alg: 'argon2id13'; salt: string; memoryBytes: number; ops: number }
+export interface RecoveryWrap { kdf: SyncKdf; encryptedUserKey: AeadEnvelope }
 export interface BundleFields {
   vaultId: string; vaultUserId: string; epoch: number; bundleGeneration: number; kdf: SyncKdf;
   encryptedUserKey: AeadEnvelope; publicKey: string; encryptedPrivateKey: AeadEnvelope;
+  recovery?: RecoveryWrap;
 }
-export interface SyncBundle extends BundleFields { format: typeof FORMAT.bundle; v: 1; mac: string }
+export interface SyncBundle extends BundleFields { format: typeof FORMAT.bundle; v: 1 | 2; mac: string }
 export interface RecordFields {
   vaultId: string; scope: string; kind: 'item' | 'folder'; id: string; generation: number; deleted: boolean;
   item?: SyncItem; encryptedName?: AeadEnvelope;
@@ -157,9 +160,9 @@ export function checkKdf(kdf: any): asserts kdf is SyncKdf {
 const BUNDLE_FIELDS = ['format', 'v', 'vaultId', 'vaultUserId', 'epoch', 'bundleGeneration', 'kdf', 'encryptedUserKey', 'publicKey', 'encryptedPrivateKey', 'mac'];
 
 export function checkBundleShape(bundle: any): asserts bundle is SyncBundle {
-  if (!exactKeys(bundle, BUNDLE_FIELDS)) throw new EnvelopeError('bundle_shape', 'Vault bundle has unexpected fields');
+  if (!exactKeys(bundle, BUNDLE_FIELDS, bundle?.v === 2 ? ['recovery'] : [])) throw new EnvelopeError('bundle_shape', 'Vault bundle has unexpected fields');
   if (bundle.format !== FORMAT.bundle) throw new EnvelopeError('bundle_shape', 'Not a vault sync bundle');
-  if (bundle.v !== SUPPORTED_VERSION) throw new EnvelopeError('unsupported_version', 'Vault bundle version is newer than this app');
+  if (bundle.v !== 1 && bundle.v !== 2) throw new EnvelopeError('unsupported_version', 'Vault bundle version is newer than this app');
   if (!isId(bundle.vaultId) || !isId(bundle.vaultUserId)) throw new EnvelopeError('bundle_shape', 'Vault ids are malformed');
   if (!Number.isSafeInteger(bundle.epoch) || bundle.epoch < 1 || !Number.isSafeInteger(bundle.bundleGeneration) || bundle.bundleGeneration < 1) {
     throw new EnvelopeError('bundle_shape', 'Vault bundle counters are malformed');
@@ -167,6 +170,12 @@ export function checkBundleShape(bundle: any): asserts bundle is SyncBundle {
   checkKdf(bundle.kdf);
   if (!isAeadEnvelope(bundle.encryptedUserKey) || !isAeadEnvelope(bundle.encryptedPrivateKey) || !isB64(bundle.publicKey, 43, 43) || !isB64(bundle.mac, 43, 43)) {
     throw new EnvelopeError('bundle_shape', 'Vault bundle key material is malformed');
+  }
+  if (bundle.v === 1 && bundle.recovery !== undefined) throw new EnvelopeError('bundle_shape', 'Bundle v1 cannot carry a recovery wrap');
+  if (bundle.v === 2) {
+    if (!exactKeys(bundle.recovery, ['kdf', 'encryptedUserKey'])) throw new EnvelopeError('bundle_shape', 'Recovery wrap is malformed');
+    checkKdf(bundle.recovery.kdf);
+    if (!isAeadEnvelope(bundle.recovery.encryptedUserKey)) throw new EnvelopeError('bundle_shape', 'Recovery wrap is malformed');
   }
 }
 
@@ -272,7 +281,7 @@ export function createSyncEnvelope(sodium: Sodium) {
   function buildBundle(fields: BundleFields, userKey: Uint8Array): SyncBundle {
     const macKey = deriveMacKey(userKey);
     try {
-      const body = { format: FORMAT.bundle, v: SUPPORTED_VERSION, ...fields };
+      const body = { format: FORMAT.bundle, v: fields.recovery ? 2 as const : 1 as const, ...fields };
       const bundle = { ...body, mac: mac(macKey, body) };
       checkBundleShape(bundle);
       return bundle;
@@ -313,6 +322,23 @@ export function createSyncEnvelope(sodium: Sodium) {
       userKey.fill(0);
       throw error;
     }
+    return userKey;
+  }
+
+  /** Open the bundle-v2 recovery wrap. The recovery key and user key never leave the caller. */
+  function unlockRecovery(bundle: unknown, recoveryKey: string): Uint8Array {
+    checkBundleShape(bundle);
+    if (bundle.v !== 2) throw new EnvelopeError('recovery_missing', 'This vault has no recovery wrap');
+    const recoveryMasterKey = deriveMasterKey(recoveryKey, bundle.recovery!.kdf);
+    let userKey: Uint8Array;
+    try {
+      userKey = open(bundle.recovery!.encryptedUserKey, recoveryMasterKey, 'sulla:recovery-user-key:v1');
+    } catch {
+      throw new EnvelopeError('wrong_recovery_key', 'Wrong recovery key');
+    } finally {
+      recoveryMasterKey.fill(0);
+    }
+    try { verifyBundle(bundle, userKey) } catch (error) { userKey.fill(0); throw error }
     return userKey;
   }
 
@@ -439,7 +465,7 @@ export function createSyncEnvelope(sodium: Sodium) {
   }
 
   return {
-    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle,
+    deriveMacKey, mac, macEquals, sha256, deriveMasterKey, unlockBundle, unlockRecovery,
     buildBundle, verifyBundle, buildRecord, verifyRecord, stateHash, buildHead, verifyHead,
     encryptItem, decryptItem,
     encryptFolderName: (name: string, ownerKey: Uint8Array, ownerId: string, folderId: string) => seal(enc.encode(name), ownerKey, folderAad(ownerId, folderId)),

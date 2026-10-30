@@ -6,11 +6,29 @@ on:
       - '.github/workflows/account-auth-v1.yml'
       - 'packages/vault-crypto/**'
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/recoveryKeychain.ts'
+      - 'pkg/sulla-desktop/main/cloud/vaultDeviceApproval.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudLifecycle.ts'
+      - 'pkg/sulla-desktop/vault-broker/index.ts'
+      - 'services/sulla-vault/src/browserEnvelope/**'
+      - 'services/sulla-vault/src/localAuthority.ts'
+      - 'services/sulla-vault/src/localAuthority.test.ts'
+      - 'services/sulla-vault/migrations/017_account_password_wrap.sql'
+      - 'tests/fixtures/account-auth-v1.json'
   push:
     branches: [main]
     paths:
       - 'packages/vault-crypto/**'
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/recoveryKeychain.ts'
+      - 'pkg/sulla-desktop/main/cloud/vaultDeviceApproval.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudLifecycle.ts'
+      - 'pkg/sulla-desktop/vault-broker/index.ts'
+      - 'services/sulla-vault/src/browserEnvelope/**'
+      - 'services/sulla-vault/src/localAuthority.ts'
+      - 'services/sulla-vault/src/localAuthority.test.ts'
+      - 'services/sulla-vault/migrations/017_account_password_wrap.sql'
+      - 'tests/fixtures/account-auth-v1.json'
 permissions:
   contents: read
 jobs:
@@ -32,3 +50,29 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Build and run vault crypto security tests
         run: npm run test:security
+  vault-envelope:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version-file: package.json
+          cache: npm
+          cache-dependency-path: packages/vault-crypto/package-lock.json
+      - name: Build shared vault crypto types
+        run: npm ci --ignore-scripts --prefix packages/vault-crypto && npm run build --prefix packages/vault-crypto
+      - name: Install focused vault service dependencies
+        run: npm install --ignore-scripts --no-package-lock --prefix services/sulla-vault
+      - name: Build and run vault envelope security tests
+        shell: bash
+        run: |
+          set +e
+          yarn --cwd services/sulla-vault test:envelope 2>&1 | tee /tmp/vault-envelope-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            tail -40 /tmp/vault-envelope-test.log | while IFS= read -r line; do echo "::error::$line"; done
+          fi
+          exit "$status"

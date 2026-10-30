@@ -27,6 +27,7 @@ import { getCloudPreferences, isCloudKindEnabled, onCloudPreferencesChanged, set
 import { CloudDataSync, type ProjectionKind } from './cloudDataSync';
 import { ByoUsageSync } from './byoUsageSync';
 import { VaultSyncV3 } from './vaultSyncV3';
+import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
 import { getDeviceKeyFingerprint } from './deviceKey';
 import { SecureDesktopChannel } from './secureChannel';
@@ -174,6 +175,7 @@ export async function startCloudServices(): Promise<void> {
   const prefs = await getCloudPreferences();
   const deviceId = await DevicesCloudApi.register();
   DevicesCloudApi.startHeartbeat();
+  VaultDeviceApproval.start();
   // The channel needs the key enrolled first; if registration failed it
   // retries on its own backoff.
   if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
@@ -184,6 +186,7 @@ export async function startCloudServices(): Promise<void> {
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
   channel?.stop();
+  VaultDeviceApproval.stop();
   VaultSyncV3.stop();
   FilesSyncV1.stop();
   DeviceInstallSync.stop();
