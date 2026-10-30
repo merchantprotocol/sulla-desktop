@@ -10,7 +10,6 @@ import { session } from 'electron';
 import { SullaAccountsBootstrap, type AccountsOwnerSession } from './sullaAccountsBootstrap';
 import { serviceOrigin } from './serviceDirectory';
 
-const API = serviceOrigin('accounts');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -268,7 +267,7 @@ export async function waitForSullaAccountsService(timeoutMs = 120_000):Promise<v
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const reachable = await fetch(API, { signal: AbortSignal.timeout(1_000) }).then(() => true, () => false);
+    const reachable = await fetch(serviceOrigin('accounts'), { signal: AbortSignal.timeout(1_000) }).then(() => true, () => false);
 
     if (reachable) return;
     await new Promise(resolve => setTimeout(resolve, 1_000));
@@ -299,7 +298,7 @@ export class SullaAccountsClient {
     if (token) headers.set('authorization', `Bearer ${ token }`);
     let response:Response;
     try {
-      response = await session.defaultSession.fetch(`${ API }${ requestPath }`, {
+      response = await session.defaultSession.fetch(`${ serviceOrigin('accounts') }${ requestPath }`, {
         ...init, headers, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch {
@@ -398,14 +397,14 @@ export class SullaAccountsClient {
       throw new SullaAccountsError('invalid_authority_metadata', 502);
     }
     if (!Array.isArray(metadata.nativeRedirectUris) || metadata.nativeRedirectUris.length !== 1 ||
-        metadata.nativeRedirectUris[0] !== `${ API }/v1/oidc/callback`) {
+        metadata.nativeRedirectUris[0] !== `${ serviceOrigin('accounts') }/v1/oidc/callback`) {
       throw new SullaAccountsError('invalid_authority_metadata', 502);
     }
     return {
       authorityId:        identifier(metadata.authorityId, 'authority_id'),
       issuer,
       nativeClientId:     text(metadata.nativeClientId, 'native_client_id', 300),
-      nativeRedirectUris: [`${ API }/v1/oidc/callback`],
+      nativeRedirectUris: [`${ serviceOrigin('accounts') }/v1/oidc/callback`],
       scopes:             strings(metadata.scopes, 'authority_scopes'),
       membershipAudience: membershipAudience(metadata.membershipAudience),
       resourceAudiences:  strings(metadata.resourceAudiences, 'resource_audiences'),
@@ -467,7 +466,7 @@ export class SullaAccountsClient {
       throw new SullaAccountsError('invalid_authorization_url', 502);
     }
     const redirect = authorization.searchParams.get('redirect_uri');
-    if (redirect !== `${ API }/v1/oidc/callback` || authorization.searchParams.get('client_id') !== selected.clientId ||
+    if (redirect !== `${ serviceOrigin('accounts') }/v1/oidc/callback` || authorization.searchParams.get('client_id') !== selected.clientId ||
         authorization.searchParams.get('response_type') !== 'code' || authorization.searchParams.get('code_challenge_method') !== 'S256' ||
         !authorization.searchParams.get('state') || !authorization.searchParams.get('code_challenge')) {
       throw new SullaAccountsError('invalid_authorization_url', 502);

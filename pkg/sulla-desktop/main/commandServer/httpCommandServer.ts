@@ -51,7 +51,6 @@ type DispatchFunctionType = (request: express.Request, response: express.Respons
 type HttpMethod = 'get' | 'put' | 'post';
 
 const console = Logging.server;
-const SERVER_PORT = servicePort('command');
 const SERVER_FILE_BASENAME = 'rd-engine.json';
 const MAX_REQUEST_BODY_LENGTH = 4194304; // 4MiB
 
@@ -61,14 +60,14 @@ export class HttpCommandServer {
   protected readonly externalState: ServerState = {
     user:     'user',
     password: serverHelper.randomStr(),
-    port:     SERVER_PORT,
+    port:     servicePort('command'),
     pid:      process.pid,
   };
 
   protected readonly interactiveState: ServerState = {
     user:     'interactive-user',
     password: serverHelper.randomStr(),
-    port:     SERVER_PORT,
+    port:     servicePort('command'),
     pid:      process.pid,
   };
 

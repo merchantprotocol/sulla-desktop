@@ -53,7 +53,7 @@ import {
 import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import { validateChatSelection } from '@pkg/main/chatSelection';
 import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
-import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
+import { desktopFilesFetch, filesHttpsOrigin } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 
 
@@ -630,7 +630,7 @@ export class DesktopRelayClient {
       if (!token) throw new Error('Sulla Files authentication is unavailable');
       if (!this.isActiveShareRequest(request)) return;
       // Files only listens on pinned TLS now; the old plain-HTTP URL failed every shared-file fetch.
-      const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, FILES_HTTPS_ORIGIN);
+      const url = new URL(`/v1/local/shares/${ encodeURIComponent(msg.linkId) }/content`, filesHttpsOrigin());
       if (msg.path) url.searchParams.set('path', msg.path);
       const headers = new Headers({ 'X-Sulla-Files-Token': token }); if (msg.range) headers.set('Range', msg.range);
       const response = await desktopFilesFetch(url, { headers, signal: request.controller.signal });

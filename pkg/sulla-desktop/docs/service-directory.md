@@ -39,11 +39,21 @@ they do not call back through published host ports.
 ## Compatibility boundaries
 
 - **Vault HTTPS:** the certificate is issued for loopback IP identity, not a
-  port. The sticky port preserves its normal origin. If a real conflict forces
-  reassignment, the compose environment receives the resolved origin before
-  the vault starts and Electron's pinned session is recreated by the existing
-  vault TLS lifecycle. Cookies belong to the new origin and are intentionally
-  not copied from the old one.
+  port. The sticky port preserves its normal origin. The port is resolved
+  before Compose is rendered, so `SULLA_VAULT_HUMAN_UI_ORIGIN`, Desktop URL
+  validation, cookie scope, and pinned fetches all use that resolved origin.
+  A later forwarding collision persists a replacement port and recreates the
+  Compose services so the vault receives the replacement allow-list origin.
+  Recreating the vault deliberately destroys its process-memory unlock state:
+  the old-origin cookie is not copied, the vault is locked, and the human must
+  unlock it again on the new origin. The loopback certificate and public pin
+  remain valid because neither is port-bound.
+- **Bootstrap helpers:** vault and Files bootstrap run in separate Electron
+  processes, so they cannot observe main's in-memory module state. Main passes
+  the resolved origin explicitly as `SULLA_VAULT_BOOTSTRAP_ORIGIN` or
+  `SULLA_FILES_BOOTSTRAP_ORIGIN`; each helper requires that variable and fails
+  closed instead of silently falling back to a default port. `ports.json` and
+  `ports.env` remain the durable projections for restarts and shell consumers.
 - **Persisted URLs:** settings, integrations, recipes, and extensions may hold
   user-entered external URLs. The directory changes only built-in local
   defaults; it must never rewrite an explicitly persisted URL. Built-in local

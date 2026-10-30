@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { Notification } from 'electron';
 
 import { getSullaFilesClient } from './sullaFilesClient';
-import { VAULT_HTTPS_ORIGIN } from './vaultTls';
+import { vaultHttpsOrigin } from './vaultTls';
 
 import { parseMountInfo } from '@pkg/backend/guestMountInfo';
 import { desktopVaultFetch, loadDesktopApprovalIdentity } from '@pkg/vault-broker/desktopTransport';
@@ -110,7 +110,7 @@ class SullaFilesBackups {
     }
     if(!vaultCredentialId) throw new Error('SMB Vault credential is required');
     const identity=await loadDesktopApprovalIdentity();
-    const response=await desktopVaultFetch(`${ VAULT_HTTPS_ORIGIN }/v1/desktop/backup-credentials`,{
+    const response=await desktopVaultFetch(`${ vaultHttpsOrigin() }/v1/desktop/backup-credentials`,{
       method:'POST',headers:{'content-type':'application/json','x-sulla-service-id':identity.serviceId,authorization:`Bearer ${ identity.serviceToken }`},
       body:JSON.stringify({itemId:vaultCredentialId,target:share}),signal:AbortSignal.timeout(15_000),
     });

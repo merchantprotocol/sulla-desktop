@@ -19,7 +19,7 @@ const mainWindow = {
 
 jest.unstable_mockModule('@pkg/window', () => ({ getWindow: jest.fn(() => mainWindow) }));
 jest.unstable_mockModule('@pkg/main/vaultTls', () => ({
-  VAULT_HTTPS_ORIGIN: 'https://vault.test',
+  vaultHttpsOrigin: () => 'https://vault.test',
   configureVaultPinnedSession: jest.fn(() => new Promise<void>((resolve) => {
     configureResolvers.push(resolve);
   })),

@@ -15,7 +15,8 @@ import paths from '@pkg/utils/paths';
 
 export { vaultCertificateMetadataMatches, verifyVaultCertificate } from './vaultTlsVerifier';
 
-export const VAULT_HTTPS_ORIGIN = serviceOrigin('vault', 'https');
+/** Resolve at use time so conflict-driven reassignment is observed everywhere. */
+export const vaultHttpsOrigin = (): string => serviceOrigin('vault', 'https');
 
 let pinnedFingerprint: Promise<string> | undefined;
 const pinnedSessions = new Set<WeakRef<Electron.Session>>();

@@ -16,7 +16,6 @@ import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
 import type { ToolExecutionContext } from '../tools/executionContext';
 
-const DESKTOP_FILES_ORIGIN = serviceOrigin('files', 'https');
 const CONTAINER_FILES_ORIGIN = 'https://sulla_files:8792';
 const MAX_CA_BYTES = 64 * 1_024;
 
@@ -29,11 +28,11 @@ export type FilesCallerContext = Partial<Pick<ToolExecutionContext, 'sub' | 'org
 function filesApi():{ api: URL; request: FilesFetch } {
   // Standalone SULLA_FILES_SERVER_URL traffic is owned by SullaFilesWatcher;
   // this local client must never send local identity authority to that origin.
-  const url = new URL(process.env.SULLA_FILES_API_URL || DESKTOP_FILES_ORIGIN);
+  const url = new URL(process.env.SULLA_FILES_API_URL || serviceOrigin('files', 'https'));
   if (url.pathname !== '/' || url.username || url.password || url.search || url.hash) {
     throw new Error('Sulla Files agent API must use the trusted local service origin');
   }
-  if (url.origin === DESKTOP_FILES_ORIGIN) return { api: url, request: desktopFilesFetch };
+  if (url.origin === serviceOrigin('files', 'https')) return { api: url, request: desktopFilesFetch };
   if (url.origin === CONTAINER_FILES_ORIGIN) return { api: url, request: containerFilesFetch };
   throw new Error('Sulla Files agent API must use the trusted local service origin');
 }
@@ -41,7 +40,7 @@ function filesApi():{ api: URL; request: FilesFetch } {
 const desktopFilesFetch:FilesFetch = async(input, init) => {
   // Keep Electron and Desktop-only paths out of the Node tools container.
   const transport = await import('@pkg/main/sullaFilesTls');
-  if (transport.FILES_HTTPS_ORIGIN !== DESKTOP_FILES_ORIGIN) throw new Error('Files Desktop TLS origin is inconsistent');
+  if (transport.filesHttpsOrigin() !== serviceOrigin('files', 'https')) throw new Error('Files Desktop TLS origin is inconsistent');
   return transport.desktopFilesFetch(input, init);
 };
 

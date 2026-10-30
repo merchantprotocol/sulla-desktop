@@ -566,7 +566,16 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#containerEngineClient = new MobyClient(this, `unix://${ dockerSocket }`);
     await this.progressTracker.action('Setting docker context', 50,
       dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
-    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest);
+    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest, (service) => {
+      if (service !== 'vault') return;
+      // The vault allow-list contains its exact human UI origin. Recreate the
+      // Compose service after a late Mac-port collision so the container and
+      // every Desktop caller move together. An unlocked in-memory vault is
+      // intentionally locked by that restart and must be unlocked again.
+      void this.reconcileManagedServicesWithRetries(generation, config).catch(error => {
+        console.warn('[ports] could not recreate vault after origin reassignment:', error);
+      });
+    });
     this.#sullaRuntimeForwarder.start();
 
     await this.progressTracker.action('Writing sulla environment', 50, this.writeGuestSullaEnv());

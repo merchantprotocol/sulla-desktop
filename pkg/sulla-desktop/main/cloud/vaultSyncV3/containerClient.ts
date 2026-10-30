@@ -15,8 +15,7 @@
 import { loadDesktopApprovalIdentity, desktopVaultFetch } from '@pkg/vault-broker/desktopTransport';
 import { serviceOrigin } from '@pkg/main/serviceDirectory';
 
-// Same endpoint as @pkg/vault-broker's DESKTOP_VAULT_ENDPOINT.
-const DESKTOP_VAULT_ENDPOINT = serviceOrigin('vault', 'https');
+// Same endpoint as @pkg/vault-broker's serviceOrigin('vault', 'https').
 
 export type SyncOp = 'enable' | 'replace' | 'commit' | 'rewrap' | 'pause' | 'resume' | 'delete';
 
@@ -42,7 +41,7 @@ export class ContainerSyncError extends Error {
 
 async function call<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
   const identity = await loadDesktopApprovalIdentity();
-  const response = await desktopVaultFetch(`${ DESKTOP_VAULT_ENDPOINT }/v1/desktop/cloud-sync/${ path }`, {
+  const response = await desktopVaultFetch(`${ serviceOrigin('vault', 'https') }/v1/desktop/cloud-sync/${ path }`, {
     method:  'POST',
     headers: {
       authorization:        `Bearer ${ identity.serviceToken }`,

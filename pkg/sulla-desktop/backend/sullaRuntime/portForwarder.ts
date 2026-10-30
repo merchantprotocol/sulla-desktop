@@ -44,7 +44,11 @@ export class SullaRuntimePortForwarder {
   #reconnectTimer: NodeJS.Timeout | undefined;
   #syncing: Promise<void> = Promise.resolve();
 
-  constructor(private readonly dockerSocket: string, private readonly guestSocket: string) {}
+  constructor(
+    private readonly dockerSocket: string,
+    private readonly guestSocket: string,
+    private readonly onReassigned?: (service: string) => void,
+  ) {}
 
   start(): void {
     this.#stopped = false;
@@ -210,8 +214,9 @@ export class SullaRuntimePortForwarder {
         this.#guestPorts.delete(port);
         this.#servicePorts.delete(service);
         this.#unavailable.add(port);
-        void resolveServicePort(service).then(() => {
+        void resolveServicePort(service).then((reassignedPort) => {
           this.#unavailable.delete(port);
+          if (reassignedPort !== port) this.onReassigned?.(service);
           this.scheduleSync();
         }).catch(resolveError => console.warn(`[ports] could not reassign ${ service }:`, resolveError));
       }

@@ -9,6 +9,8 @@ import path from 'node:path';
 
 import { app } from 'electron';
 
+import { serviceOrigin } from './serviceDirectory';
+
 import paths from '@pkg/utils/paths';
 import { resolveSullaFilesUserRoot } from '@pkg/utils/sullaFilesPaths';
 
@@ -70,6 +72,7 @@ export class SullaFilesBootstrapFacade {
           ...process.env,
           SULLA_FILES_BOOTSTRAP_IDENTITY_PATH:          this.identityPath,
           SULLA_FILES_TLS_FINGERPRINT_PATH:             this.fingerprintPath,
+          SULLA_FILES_BOOTSTRAP_ORIGIN:                  serviceOrigin('files', 'https'),
           SULLA_FILES_MASTER_KEY_PATH:                  this.masterPath,
           SULLA_FILES_USER_DATA_PATH:                   path.join(paths.appHome, 'electron'),
           SULLA_FILES_LEGACY_PRIMARY_PATH:              path.join(filesUserRoot.activePath, 'master.key'),

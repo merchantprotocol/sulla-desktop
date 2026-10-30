@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const appHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-ports-'));
 jest.unstable_mockModule('@pkg/utils/paths', () => ({ default: { appHome } }));
@@ -32,4 +33,24 @@ test('a conflict moves only that service and persists the reassignment', async()
   expect(reassigned).not.toBe(occupied);
   expect(directory.servicePort('vault')).toBe(vault);
   expect(JSON.parse(fs.readFileSync(path.join(appHome, 'ports.json'), 'utf8')).ports.files).toBe(reassigned);
+});
+
+test('service ports and origins are not frozen in module-scope constants', () => {
+  const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+  const offenders: string[] = [];
+  const visit = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') visit(absolute);
+      } else if (/\.[cm]?tsx?$/.test(entry.name)) {
+        const source = fs.readFileSync(absolute, 'utf8');
+        if (/^(?:export\s+)?const\s+\w+\s*=\s*service(?:Port|Origin)\s*\(/m.test(source)) {
+          offenders.push(path.relative(sourceRoot, absolute));
+        }
+      }
+    }
+  };
+  visit(sourceRoot);
+  expect(offenders).toEqual([]);
 });

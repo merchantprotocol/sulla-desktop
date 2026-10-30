@@ -53,9 +53,9 @@ jest.unstable_mockModule('@pkg/utils/paths', () => ({
 jest.unstable_mockModule('@pkg/utils/sullaFilesNativeSource', () => ({
   sullaFilesNativeSourceRolloutRequested: () => flags.fuse,
 }));
-jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ VAULT_HTTPS_ORIGIN: 'https://127.0.0.1:30135', refreshVaultPinnedSessions: () => Promise.resolve() }));
+jest.unstable_mockModule('@pkg/main/vaultTls', () => ({ vaultHttpsOrigin: () => 'https://127.0.0.1:30135', refreshVaultPinnedSessions: () => Promise.resolve() }));
 jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({
-  FILES_HTTPS_ORIGIN:           'https://127.0.0.1:30124',
+  filesHttpsOrigin:             () => 'https://127.0.0.1:30124',
   refreshFilesPinnedSessions:   () => Promise.resolve(),
   desktopFilesFetch:            () => Promise.resolve(new Response('{}')),
 }));

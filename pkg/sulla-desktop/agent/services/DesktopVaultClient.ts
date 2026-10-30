@@ -18,9 +18,8 @@ import type {
 } from '../../../../services/sulla-vault/src/contracts';
 
 import paths from '@pkg/utils/paths';
-import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
+import { configureVaultPinnedSession, vaultHttpsOrigin } from '@pkg/main/vaultTls';
 
-const DEFAULT_API = VAULT_HTTPS_ORIGIN;
 const REQUEST_TIMEOUT_MS = 15_000;
 let controlSession: Promise<Electron.Session> | undefined;
 
@@ -62,7 +61,7 @@ async function defaultControlIdentity(): Promise<VaultControlIdentity> {
 export class DesktopVaultClient {
   private lastStatus: DesktopVaultStatus = { state: 'locked', unlocked: false, cacheUpdateRequired: false, migration: { required: false } };
 
-  constructor(private readonly api = DEFAULT_API, private readonly identity: () => Promise<VaultControlIdentity> = defaultControlIdentity) {}
+  constructor(private readonly api = vaultHttpsOrigin(), private readonly identity: () => Promise<VaultControlIdentity> = defaultControlIdentity) {}
 
   private async request<T>(requestPath: string, init: RequestInit = {}, authenticated = true): Promise<T> {
     const headers = new Headers(init.headers);
@@ -153,6 +152,6 @@ export class DesktopVaultClient {
 
 let client: DesktopVaultClient | null = null;
 export function configureDesktopVaultClient(identity: () => Promise<VaultControlIdentity>): DesktopVaultClient {
-  return client = new DesktopVaultClient(DEFAULT_API, identity);
+  return client = new DesktopVaultClient(vaultHttpsOrigin(), identity);
 }
 export function getDesktopVaultClient(): DesktopVaultClient { return client ?? (client = new DesktopVaultClient()) }

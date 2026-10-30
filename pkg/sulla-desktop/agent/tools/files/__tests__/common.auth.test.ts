@@ -13,7 +13,7 @@ jest.unstable_mockModule('../../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { getServicePassword },
 }));
 jest.unstable_mockModule('@pkg/main/sullaFilesTls', () => ({
-  FILES_HTTPS_ORIGIN: 'https://127.0.0.1:30124',
+  filesHttpsOrigin: () => 'https://127.0.0.1:30124',
   desktopFilesFetch,
 }));
 const { FilesTool } = await import('../common');

@@ -25,7 +25,6 @@ import { resolveServicePort, serviceOrigin, servicePort } from './serviceDirecto
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 
-const CHAT_COMPLETIONS_PORT = servicePort('chat');
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
 
@@ -197,7 +196,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  CHAT_COMPLETIONS_PORT,
+      port:  servicePort('chat'),
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -1875,9 +1874,9 @@ export class ChatCompletionsServer {
     }
   }
 
-  async start(port: number = CHAT_COMPLETIONS_PORT): Promise<void> {
+  async start(port?: number): Promise<void> {
+    port ??= await resolveServicePort('chat');
     await this.loadApiToken();
-    if (port === CHAT_COMPLETIONS_PORT) port = await resolveServicePort('chat');
     return new Promise((resolve, reject) => {
       try {
         this.server = this.app.listen(port, '0.0.0.0', () => {
