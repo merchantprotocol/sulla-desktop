@@ -53,17 +53,18 @@
       </div>
     </form>
 
-    <div v-if="step === 'sync'" class="fr-account-step">
+    <div v-if="step === 'sync'" class="fr-account-step frs-sync">
       <div class="fr-step-body">
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Choose what syncs</h2>
-      <p class="mb-6 secondary-text">Synced data becomes available on your phone, your other desktops and Sulla Cloud. Turn any of it off here or later in Settings.</p>
-      <rd-fieldset legend-text="Sync" class="mb-6 heading-text">
-        <label class="sync-row"><input v-model="syncEnabled" type="checkbox"><span><strong>Sync this Sulla</strong> — master switch</span></label>
-        <label v-for="category in syncCategories" :key="category.key" class="sync-row" :class="{ disabled: !syncEnabled }"><input v-model="category.enabled" type="checkbox" :disabled="!syncEnabled"><span><strong>{{ category.label }}</strong> — {{ category.description }}</span></label>
-      </rd-fieldset>
-      <p v-if="syncError" class="text-sm mt-1 error-text">{{ syncError }}</p>
+        <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Use Sulla on all your devices</h2>
+        <p class="mb-8 secondary-text">Sync to Sulla Cloud and your chats, files and passwords follow you to your phone, the web and your other computers. Everything stays encrypted.</p>
+        <p v-if="syncError" class="text-sm mb-4 error-text">{{ syncError }}</p>
       </div>
-      <div class="flex items-center justify-end gap-4 mt-5 fr-account-actions"><button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway (change later in Settings)</button><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :disabled="syncSubmitting" @click="handleSyncChoices">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Continue') }}</button></div>
+      <div class="frs-actions fr-account-actions">
+        <button type="button" class="px-8 py-3 rounded-md transition-colors font-semibold hover:opacity-90 btn-primary frs-sync-all" :disabled="syncSubmitting" @click="handleSyncChoices(true)">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Sync everything') }}</button>
+        <button type="button" class="link-btn" :disabled="syncSubmitting" @click="handleSyncChoices(false)">Keep it on this Mac only</button>
+        <button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway</button>
+        <p class="text-xs secondary-text frs-note">You can turn individual things off later in Settings.</p>
+      </div>
     </div>
   </div>
 </template>
@@ -89,7 +90,6 @@ const sullaEmail = ref('');
 const primaryUserName = ref('');
 const sullaSubscribeToUpdates = ref(true);
 const emailError = ref('');
-const syncEnabled = ref(true);
 const syncError = ref('');
 const syncSubmitting = ref(false);
 const syncCategories = ref([
@@ -139,8 +139,9 @@ async function continueWithoutAccount() {
     primaryUserName: primaryUserName.value.trim(),
     sullaEmail: '',
     sullaSubscribeToUpdates: false,
+    cloudPreferences: { enabled: false },
   });
-  step.value = 'sync';
+  await finishSetup(true);
 }
 
 async function handleCloudSubmit() {
@@ -195,15 +196,17 @@ async function saveChoices(patch: Record<string, unknown>) {
   await ipcRenderer.invoke('first-run-state:set', { choices: { ...(state?.choices ?? {}), ...patch } });
 }
 
-async function handleSyncChoices() {
+async function handleSyncChoices(syncAll: boolean) {
   syncSubmitting.value = true;
   syncError.value = '';
-  const patch: Record<string, boolean> = { enabled: syncEnabled.value };
-  for (const category of syncCategories.value) patch[category.key] = category.enabled;
+  // One choice: everything syncs, or nothing does. Individual categories stay
+  // adjustable later in Settings.
+  const patch: Record<string, boolean> = { enabled: syncAll };
+  for (const category of syncCategories.value) patch[category.key] = syncAll;
   try { await saveChoices({ cloudPreferences: patch }); }
   catch (err) {
     console.warn('[FirstRunWelcome] Could not save sync choices:', err);
-    syncError.value = 'We could not save your sync choices. Retry, or continue and change them later in Settings.';
+    syncError.value = 'We could not save your sync choice. Retry, or continue and change it later in Settings.';
     syncSubmitting.value = false;
     return;
   }
@@ -508,6 +511,9 @@ input:hover, select:hover {
 
 .vault-step { width: min(780px, calc(100vw - 5rem)); }
 .vault-step :deep(.vault-host) { height: 520px; border: 1px solid var(--border-default); border-radius: .5rem; overflow: hidden; }
-.sync-row { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .75rem; }
-.sync-row.disabled { opacity: .55; }
+.frs-sync { text-align: center; }
+.frs-sync p { max-width: 34rem; margin-inline: auto; }
+.frs-actions { display: flex; flex-direction: column; align-items: center; gap: .75rem; }
+.frs-sync-all { min-width: 16rem; font-size: 1.05rem; }
+.frs-note { margin: .25rem 0 0; }
 </style>
