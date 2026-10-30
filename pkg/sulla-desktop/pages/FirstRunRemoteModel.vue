@@ -12,15 +12,15 @@
         <button type="button" class="frm-connect" :class="{ 'is-connected': connectionState[provider.id] === 'connected' }" :disabled="connectionState[provider.id] === 'connecting' || connectionState[provider.id] === 'waiting'" @click="connect(provider.id)">{{ buttonLabel(provider.id) }}</button>
       </div>
     </div>
-    <div v-if="showApiChoices" class="frm-api">
+    <div v-if="showApiChoices && !hasConnection" class="frm-api">
       <p class="frm-notice">Choose a provider now. You'll paste your key in your vault right after setup.</p>
       <button v-for="provider in providers" :key="provider.id" type="button" class="frm-api-choice" @click="chooseApiProvider(provider.id)">Use {{ provider.name }} API</button>
     </div>
     </div>
     <div class="frm-actions">
       <button v-if="hasConnection" type="button" class="frm-btn-accent" @click="$emit('next')">Continue</button>
-      <button type="button" class="frm-btn-secondary" @click="showApiChoices = !showApiChoices">{{ showApiChoices ? 'Hide API choices' : 'Connect through API instead' }}</button>
-      <button type="button" class="frm-btn-later" @click="doLater">I'll do this later</button>
+      <button v-if="!hasConnection" type="button" class="frm-btn-secondary" @click="showApiChoices = !showApiChoices">{{ showApiChoices ? 'Hide API choices' : 'Connect through API instead' }}</button>
+      <button v-if="!hasConnection" type="button" class="frm-btn-later" @click="doLater">I'll do this later</button>
     </div>
   </div>
 </template>

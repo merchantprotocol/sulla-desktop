@@ -1476,10 +1476,13 @@ function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   }
 }
 
-// Finishing screen asks whether the VM + database are up so it can sign in.
+// The AI step asks whether sign-in can start. First-run sign-in keeps tokens
+// in memory (no database, no vault), and Claude only needs the VM to run
+// `claude setup-token`, so a running runtime is enough. Waiting for Postgres
+// left Claude stuck on "Waiting for Sulla…" because Postgres waits on the vault.
 ipcMainProxy.handle('first-run-ai:status', (event) => {
   assertFirstRunOrMainSender(event);
-  return { ready: firstRunAiSignInReady };
+  return { ready: firstRunAiSignInReady || isSullaRuntimeActive() };
 });
 
 // Finishing screen signed the user in to their AI provider. Make that
