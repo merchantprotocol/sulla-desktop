@@ -223,7 +223,6 @@
         <button
           type="button"
           class="link-btn"
-          :disabled="cloudSubmitting"
           @click="finishSetup"
         >
           Skip for now

@@ -7,103 +7,121 @@
 <template>
   <div class="frw p-6">
     <form @submit.prevent="handleNext">
-      <div class="frw-eyebrow">
-        Welcome to Sulla
-      </div>
-      <h1 class="frw-title">
-        Let's get your first automation running.
-      </h1>
-      <p class="frw-lead">
-        Sulla is your executive assistant. You describe a job in plain English, and Sulla builds the automation,
-        runs it on schedule, and keeps it working. Setup takes a few minutes.
-      </p>
-
-      <div class="frw-how">
-        <div>
-          <span class="frw-num">1</span>
-          <b>Create your account</b>
-          <span>A master password keeps your saved logins encrypted on this computer.</span>
+      <template v-if="computerTooSmall">
+        <div class="frw-eyebrow">
+          Sulla can't run on this computer
         </div>
-        <div>
-          <span class="frw-num">2</span>
-          <b>Choose your AI</b>
-          <span>Sign in with your Claude, ChatGPT or Grok subscription. No API keys.</span>
+        <h1 class="frw-title">
+          This computer is too small for Sulla.
+        </h1>
+        <p class="frw-lead">
+          Sulla needs at least {{ MIN_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
+          This computer has {{ totalMemoryLabel }} GB of memory and {{ availNumCPUs }} CPUs.
+        </p>
+        <p class="frw-muted">
+          Resource settings can't add memory or CPUs that the computer doesn't have.
+        </p>
+      </template>
+      <template v-else>
+        <div class="frw-eyebrow">
+          Welcome to Sulla
         </div>
-        <div>
-          <span class="frw-num">3</span>
-          <b>Pick your first job</b>
-          <span>Choose a starter automation and Sulla sets it up for you.</span>
-        </div>
-      </div>
+        <h1 class="frw-title">
+          Let's get your first automation running.
+        </h1>
+        <p class="frw-lead">
+          Sulla is your executive assistant. You describe a job in plain English, and Sulla builds the automation,
+          runs it on schedule, and keeps it working. Setup takes a few minutes.
+        </p>
 
-      <div class="frw-resources">
-        <div>
-          <b>Sulla will use {{ settings!.virtualMachine.memoryInGB }} GB of memory and {{ settings!.virtualMachine.numberCPUs }} CPUs</b>
-          <span>Recommended for this computer. Sulla's agents work inside this private, sandboxed space.</span>
-        </div>
-        <button
-          type="button"
-          class="frw-link"
-          @click="isOptionsOpen = !isOptionsOpen"
-        >
-          {{ isOptionsOpen ? 'Done' : 'Adjust' }}
-        </button>
-      </div>
-
-      <Transition name="slide">
-        <div
-          v-show="isOptionsOpen"
-          class="mt-2 overflow-hidden"
-        >
-          <rd-fieldset
-            legend-text="Memory and CPUs"
-            legend-tooltip="Allocate CPU and memory for the AI services"
-            class="mb-4 mt-2 fr-fieldset"
-          >
-            <system-preferences
-              :memory-in-g-b="settings!.virtualMachine.memoryInGB"
-              :number-c-p-us="settings!.virtualMachine.numberCPUs"
-              :avail-memory-in-g-b="availMemoryInGB"
-              :avail-num-c-p-us="availNumCPUs"
-              :reserved-memory-in-g-b="6"
-              :reserved-num-c-p-us="1"
-              :is-locked-memory="false"
-              :is-locked-cpu="false"
-              @update:memory="onMemoryChange"
-              @update:cpu="onCpuChange"
-            />
-          </rd-fieldset>
-
-          <div class="mb-3">
-            <label class="flex items-center">
-              <input
-                v-model="enableTelemetry"
-                type="checkbox"
-                class="mr-2"
-                @change="onTelemetryChange"
-              >
-              <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
-            </label>
+        <div class="frw-how">
+          <div>
+            <span class="frw-num">1</span>
+            <b>Create your account</b>
+            <span>A master password keeps your saved logins encrypted on this computer.</span>
+          </div>
+          <div>
+            <span class="frw-num">2</span>
+            <b>Choose your AI</b>
+            <span>Sign in with your Claude, ChatGPT or Grok subscription. No API keys.</span>
+          </div>
+          <div>
+            <span class="frw-num">3</span>
+            <b>Pick your first job</b>
+            <span>Choose a starter automation and Sulla sets it up for you.</span>
           </div>
         </div>
-      </Transition>
 
-      <div
-        v-if="resourceError"
-        class="my-4 p-3 border rounded-md fr-error-box"
-      >
-        {{ resourceError }}
-      </div>
+        <div class="frw-resources">
+          <div>
+            <b>Sulla will use {{ settings!.virtualMachine.memoryInGB }} GB of memory and {{ settings!.virtualMachine.numberCPUs }} CPUs</b>
+            <span>Recommended for this computer. Sulla's agents work inside this private, sandboxed space.</span>
+          </div>
+          <button
+            type="button"
+            class="frw-link"
+            @click="isOptionsOpen = !isOptionsOpen"
+          >
+            {{ isOptionsOpen ? 'Done' : 'Adjust' }}
+          </button>
+        </div>
 
-      <div class="frw-actions">
-        <button
-          type="submit"
-          class="frw-btn"
+        <Transition name="slide">
+          <div
+            v-show="isOptionsOpen"
+            class="mt-2 overflow-hidden"
+          >
+            <rd-fieldset
+              legend-text="Memory and CPUs"
+              legend-tooltip="Allocate CPU and memory for the AI services"
+              class="mb-4 mt-2 fr-fieldset"
+            >
+              <system-preferences
+                :memory-in-g-b="settings!.virtualMachine.memoryInGB"
+                :number-c-p-us="settings!.virtualMachine.numberCPUs"
+                :avail-memory-in-g-b="availMemoryInGB"
+                :avail-num-c-p-us="availNumCPUs"
+                :reserved-memory-in-g-b="6"
+                :reserved-num-c-p-us="1"
+                :is-locked-memory="false"
+                :is-locked-cpu="false"
+                @update:memory="onMemoryChange"
+                @update:cpu="onCpuChange"
+              />
+            </rd-fieldset>
+
+            <div class="mb-3">
+              <label class="flex items-center">
+                <input
+                  v-model="enableTelemetry"
+                  type="checkbox"
+                  class="mr-2"
+                  @change="onTelemetryChange"
+                >
+                <span class="text-sm fr-muted">Allow collection of anonymous statistics to help us improve Sulla Desktop</span>
+              </label>
+            </div>
+          </div>
+        </Transition>
+
+        <div
+          v-if="resourceError"
+          class="my-4 p-3 border rounded-md fr-error-box"
         >
-          Get started →
-        </button>
-        <span class="frw-trust">🔒 Your data, memory and passwords stay on this computer.</span>
-      </div>
+          {{ resourceError }}
+        </div>
+
+        <div class="frw-actions">
+          <button
+            type="submit"
+            class="frw-btn"
+            :disabled="checkingPreflight"
+          >
+            {{ checkingPreflight ? 'Checking this computer…' : preflightAttempted ? 'Retry →' : 'Get started →' }}
+          </button>
+          <span class="frw-trust">🔒 Your data, memory and passwords stay on this computer.</span>
+        </div>
+      </template>
     </form>
   </div>
 </template>
@@ -140,6 +158,8 @@ const isOptionsOpen = ref(false);
 
 // Reactive ref for resource error
 const resourceError = ref('');
+const checkingPreflight = ref(false);
+const preflightAttempted = ref(false);
 
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
@@ -170,6 +190,9 @@ const availNumCPUs = computed(() => os.cpus().length);
 // Minimums the AI services need (enforced in handleNext).
 const MIN_MEMORY_GB = 5;
 const MIN_CPUS = 3;
+const totalMemoryInGB = computed(() => os.totalmem() / 2 ** 30);
+const totalMemoryLabel = computed(() => totalMemoryInGB.value.toFixed(1));
+const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
 
 /**
  * Pick sensible VM resources so nobody has to understand sliders before they
@@ -206,6 +229,8 @@ const onTelemetryChange = async() => {
 };
 
 const handleNext = async() => {
+  if (computerTooSmall.value || checkingPreflight.value) return;
+
   if (settings.value.virtualMachine.memoryInGB < MIN_MEMORY_GB || settings.value.virtualMachine.numberCPUs < MIN_CPUS) {
     resourceError.value = `Sulla needs at least ${ MIN_MEMORY_GB } GB of memory and ${ MIN_CPUS } CPUs. Use Adjust to raise them.`;
   } else {
@@ -214,6 +239,25 @@ const handleNext = async() => {
 
   if (resourceError.value) {
     return;
+  }
+
+  checkingPreflight.value = true;
+  preflightAttempted.value = true;
+  try {
+    const preflight = await ipcRenderer.invoke('first-run-preflight');
+
+    if (!preflight?.ok) {
+      resourceError.value = preflight?.message || 'Sulla could not check this computer. Retry to check again.';
+
+      return;
+    }
+  } catch (err) {
+    console.warn('[FirstRunResources] Preflight failed:', err);
+    resourceError.value = 'Sulla could not check disk space and internet access. Retry to check again.';
+
+    return;
+  } finally {
+    checkingPreflight.value = false;
   }
 
   // Save the VM resources

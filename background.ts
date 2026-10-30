@@ -803,9 +803,41 @@ async function initUI() {
 }
 
 async function doFirstRunDialog() {
-  const onboardingComplete = await SullaSettingsModel.get('onboardingComplete', false);
+  let onboardingComplete = await SullaSettingsModel.get('onboardingComplete', null);
 
-  const needsFirstRun = !noModalDialogs && !onboardingComplete;
+  // Upgrade migration: onboardingComplete did not exist before the resumable
+  // wizard. Preserve settingsImpl's genuine-fresh-install decision, while
+  // recognizing each of the old signals that setup already happened.
+  if (onboardingComplete === null && !settingsImpl.firstRunDialogNeeded()) {
+    const credentialsWereSaved = await SullaSettingsModel.get('firstRunCredentialsNeeded', true) === false;
+    let legacyVaultSetUp = false;
+    let isolatedVaultSetUp = false;
+
+    try {
+      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
+
+      legacyVaultSetUp = getVaultKeyService().isSetUp();
+    } catch (err) {
+      console.warn('[FirstRun] Could not inspect the legacy vault during onboarding migration:', err);
+    }
+    try {
+      const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+      const client = getDesktopVaultClient();
+
+      await client.status();
+      isolatedVaultSetUp = client.isSetUp() === true;
+    } catch (err) {
+      console.warn('[FirstRun] Isolated vault was unavailable during onboarding migration:', err);
+    }
+
+    if (credentialsWereSaved || legacyVaultSetUp || isolatedVaultSetUp) {
+      onboardingComplete = true;
+      await SullaSettingsModel.set('onboardingComplete', true, 'boolean');
+      console.log('[FirstRun] Migrated an existing install to onboardingComplete=true');
+    }
+  }
+
+  const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
 
   if (needsFirstRun) {
     await window.openFirstRunDialog();
@@ -1310,6 +1342,58 @@ ipcMainProxy.handle('start-backend' as any, () => {
   }
 });
 
+// Check the two things most likely to make the first VM boot fail before the
+// user starts it. The 10 GB disk floor is the installer's existing minimum.
+ipcMainProxy.handle('first-run-preflight' as any, async() => {
+  const MIN_DISK_GB = 10;
+  let availableDiskGB: number | null = null;
+
+  try {
+    const stats = fs.statfsSync(Electron.app.getPath('userData'));
+
+    availableDiskGB = stats.bavail * stats.bsize / (1024 ** 3);
+  } catch (err) {
+    console.warn('[FirstRun] Could not read free disk space:', err);
+  }
+  if (availableDiskGB !== null && availableDiskGB < MIN_DISK_GB) {
+    return {
+      ok:      false,
+      kind:    'disk',
+      message: `Sulla needs at least ${ MIN_DISK_GB } GB of free disk space to install its private workspace. Free some space, then retry.`,
+    };
+  }
+
+  try {
+    const response = await Electron.net.fetch('https://sulladesktop.com/', {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${ response.status }`);
+  } catch (err) {
+    console.warn('[FirstRun] Network preflight failed:', err);
+
+    return {
+      ok:      false,
+      kind:    'network',
+      message: 'Sulla could not reach the internet. Check your connection, then retry.',
+    };
+  }
+
+  return { ok: true, availableDiskGB };
+});
+
+ipcMainProxy.handle('startup/retry' as any, (event) => {
+  const errorWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+
+  setImmediate(() => {
+    errorWindow?.close();
+    void startBackend();
+  });
+
+  return { started: true };
+});
+
 // Finishing screen asks whether the VM + database are up so it can sign in.
 ipcMainProxy.handle('first-run-ai:status', () => ({ ready: firstRunAiSignInReady }));
 
@@ -1386,6 +1470,10 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
 ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
   console.log('[FirstRunCoordinator] Wizard reached step:', step);
   if (step >= 4) {
+    // Reaching Finishing means every user-driven screen is complete. AI may
+    // be connected now or deferred; either way the wizard must not recur.
+    await SullaSettingsModel.set('onboardingComplete', true, 'boolean');
+    await SullaSettingsModel.set('firstRunWizardStep', 0, 'number');
     await firstRunCoordinator.setCondition('wizardFinished');
   }
 });

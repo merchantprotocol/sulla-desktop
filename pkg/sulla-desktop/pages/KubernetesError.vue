@@ -88,6 +88,14 @@
       </div>
       <div class="action-buttons">
         <button
+          data-test="retry-btn"
+          class="role-primary"
+          :disabled="retrying"
+          @click="retry"
+        >
+          {{ retrying ? 'Retrying…' : 'Retry' }}
+        </button>
+        <button
           data-test="report-btn"
           class="role-primary"
           :disabled="reportStatus === 'sending' || reportStatus === 'success'"
@@ -128,6 +136,7 @@ export default defineComponent({
       reportStatus:       'idle' as 'idle' | 'sending' | 'success' | 'error',
       wantNotification:   false,
       notifyEmail:        '',
+      retrying:           false,
     };
   },
   computed: {
@@ -171,6 +180,11 @@ export default defineComponent({
     document.documentElement.setAttribute('data-flex', 'height');
   },
   methods: {
+    async retry() {
+      if (this.retrying) return;
+      this.retrying = true;
+      await ipcRenderer.invoke('startup/retry');
+    },
     close() {
       window.close();
     },

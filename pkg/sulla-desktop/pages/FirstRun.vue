@@ -93,11 +93,11 @@ import FirstRunWelcome from './FirstRunWelcome.vue';
 import SimpleHeader from './agent/SimpleHeader.vue';
 import { StartupProgressController } from './agent/StartupProgressController';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { useTheme } from '@pkg/composables/useTheme';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const { isDark, toggleTheme } = useTheme();
 
@@ -107,7 +107,7 @@ const currentStep = ref(0);
 // installs in the background while the user answers the rest.
 // Step indexes are part of the main-process contract: reaching the final
 // "Finishing" screen (index 4) sets the wizardFinished condition in background.ts.
-const stepNames = ['Teach', 'Account', 'Vault', 'AI', 'Chat'];
+const stepNames = ['Welcome', 'Account', 'Your AI', 'First automation', 'Finishing'];
 const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunFirstAutomation, FirstRunWaiting];
 
 const settings = ref(defaultSettings);
@@ -147,7 +147,24 @@ const progressPercent = computed(() => {
 provide('settings', settings);
 
 onMounted(async() => {
-  const savedStep = await SullaSettingsModel.get('firstRunWizardStep', 0);
+  let savedStep = await SullaSettingsModel.get('firstRunWizardStep', 0);
+
+  // Progress is only a convenience. Never let it bypass the account/vault
+  // prerequisites after a partial setup or a restored settings file.
+  if (typeof savedStep === 'number' && savedStep > 1) {
+    const credentialsReady = await SullaSettingsModel.get('firstRunCredentialsNeeded', true) === false;
+    let vaultReady = false;
+
+    try {
+      vaultReady = await ipcRenderer.invoke('vault:is-setup') === true;
+    } catch (err) {
+      console.warn('[FirstRun] Could not verify vault setup while restoring progress:', err);
+    }
+    if (!credentialsReady || !vaultReady) {
+      savedStep = 1;
+      await SullaSettingsModel.set('firstRunWizardStep', savedStep, 'number');
+    }
+  }
   if (typeof savedStep === 'number' && savedStep >= 0 && savedStep < steps.length) {
     currentStep.value = savedStep;
     if (savedStep > 0) startupController.start();
@@ -172,7 +189,7 @@ const next = async() => {
   }
 };
 
-const back = () => {
+const back = async() => {
   console.log('[FirstRun] back() called, currentStep before:', currentStep.value);
   if (currentStep.value > 0) {
     currentStep.value -= 1;
