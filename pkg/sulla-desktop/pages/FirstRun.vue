@@ -83,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, computed } from 'vue';
+import { ref, provide, computed, onMounted } from 'vue';
 
 import FirstRunFirstAutomation from './FirstRunFirstAutomation.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
@@ -97,6 +97,7 @@ import { useTheme } from '@pkg/composables/useTheme';
 import { defaultSettings, Settings } from '@pkg/config/settings';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const { isDark, toggleTheme } = useTheme();
 
@@ -106,7 +107,7 @@ const currentStep = ref(0);
 // installs in the background while the user answers the rest.
 // Step indexes are part of the main-process contract: reaching the final
 // "Finishing" screen (index 4) sets the wizardFinished condition in background.ts.
-const stepNames = ['Welcome', 'Account', 'Your AI', 'First automation', 'Finishing'];
+const stepNames = ['Teach', 'Account', 'Vault', 'AI', 'Chat'];
 const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunFirstAutomation, FirstRunWaiting];
 
 const settings = ref(defaultSettings);
@@ -145,11 +146,24 @@ const progressPercent = computed(() => {
 
 provide('settings', settings);
 
+onMounted(async() => {
+  const savedStep = await SullaSettingsModel.get('firstRunWizardStep', 0);
+  if (typeof savedStep === 'number' && savedStep >= 0 && savedStep < steps.length) {
+    currentStep.value = savedStep;
+    if (savedStep > 0) startupController.start();
+  }
+});
+
+const saveStep = async() => {
+  await SullaSettingsModel.set('firstRunWizardStep', currentStep.value, 'number');
+};
+
 const next = async() => {
   console.log('[FirstRun] next() called, currentStep before:', currentStep.value);
 
   currentStep.value += 1;
   console.log('[FirstRun] currentStep after:', currentStep.value);
+  await saveStep();
   ipcRenderer.invoke('first-run-wizard-step', currentStep.value);
   if (currentStep.value === 1) {
     console.log('[FirstRun] starting controller');
@@ -163,6 +177,7 @@ const back = () => {
   if (currentStep.value > 0) {
     currentStep.value -= 1;
     console.log('[FirstRun] currentStep after:', currentStep.value);
+    await saveStep();
   }
 };
 

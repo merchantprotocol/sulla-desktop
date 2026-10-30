@@ -569,6 +569,21 @@ export async function openFirstRunDialog() {
 
   window.center();
 
+  // Closing an unfinished wizard is resumable, but never silent. The normal
+  // coordinator close happens only after onboardingComplete is persisted.
+  window.on('close', (event) => {
+    if (window.isDestroyed()) return;
+    const result = Electron.dialog.showMessageBoxSync(window, {
+      type: 'question',
+      buttons: ['Keep setup open', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Setup isn\'t finished',
+      message: 'Setup isn\'t finished. Quit and pick up where you left off?',
+    });
+    if (result === 0) event.preventDefault();
+  });
+
   await (new Promise<void>((resolve) => {
     window.on('closed', resolve);
   }));
