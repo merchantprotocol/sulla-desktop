@@ -91,6 +91,7 @@ const syncCategories = ref([
   { key: 'usage', label: 'Usage', description: 'sync usage history', enabled: true },
 ]);
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+let testAutopilot = '';
 
 function validateEmail() {
   const email = sullaEmail.value.trim();
@@ -99,6 +100,7 @@ function validateEmail() {
 }
 
 onMounted(async() => {
+  testAutopilot = await ipcRenderer.invoke('first-run-test-autopilot:get' as any).catch(() => '');
   const state = await ipcRenderer.invoke('first-run-state:get');
   const choices = state?.choices ?? {};
   sullaEmail.value = typeof choices.sullaEmail === 'string' ? choices.sullaEmail : '';
@@ -131,7 +133,9 @@ async function handleCloudSubmit() {
   const attempt = ++cloudAttempt;
   cloudSubmitting.value = true; cloudError.value = '';
   try {
-    const res = await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
+    const res = testAutopilot === 'cloud-fake'
+      ? await ipcRenderer.invoke('first-run-test-autopilot:cloud-fake' as any)
+      : await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
     if (attempt !== cloudAttempt) return;
     if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
     cloudPassword.value = '';

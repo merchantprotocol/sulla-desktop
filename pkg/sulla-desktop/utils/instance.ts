@@ -6,6 +6,8 @@
 export const TEST_INSTANCE_NAME = 'firstrun-test';
 export const TEST_INSTANCE_FLAG = '--sulla-test-instance';
 export const TEST_PORT_OFFSET = 10_000;
+export const TEST_AUTOPILOT_MODES = ['mac-only', 'cloud-fake'] as const;
+export type TestAutopilotMode = typeof TEST_AUTOPILOT_MODES[number];
 
 export function requestedInstance(): string {
   return process.env.SULLA_INSTANCE?.trim() || '';
@@ -13,6 +15,16 @@ export function requestedInstance(): string {
 
 export function isFirstRunTestInstance(): boolean {
   return requestedInstance() === TEST_INSTANCE_NAME && process.argv.includes(TEST_INSTANCE_FLAG);
+}
+
+export function testAutopilotMode(): TestAutopilotMode | '' {
+  const requested = process.env.SULLA_TEST_AUTOPILOT?.trim() || '';
+
+  if (!requested) return '';
+  if (!isFirstRunTestInstance()) throw new Error('SULLA_TEST_AUTOPILOT is only allowed for an authenticated first-run test instance');
+  if (!TEST_AUTOPILOT_MODES.includes(requested as TestAutopilotMode)) throw new Error(`Unsupported SULLA_TEST_AUTOPILOT mode: ${ requested }`);
+
+  return requested as TestAutopilotMode;
 }
 
 export function portOffset(): number {

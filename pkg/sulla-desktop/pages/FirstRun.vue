@@ -161,7 +161,58 @@ onMounted(async() => {
     currentStep.value = savedStep;
     if (savedStep > 0) startupController.start();
   }
+  const autopilot = await ipcRenderer.invoke('first-run-test-autopilot:get' as any).catch(() => '');
+
+  if (autopilot) {
+    void runTestAutopilot(autopilot).catch(async(error) => {
+      console.error(error);
+      await ipcRenderer.invoke('first-run-test-autopilot:failed' as any, error instanceof Error ? error.message : String(error));
+    });
+  }
 });
+
+async function waitForElement<T extends Element>(find: () => T | undefined, description: string): Promise<T> {
+  const deadline = Date.now() + 60_000;
+
+  while (Date.now() < deadline) {
+    const element = find();
+
+    if (element) return element;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`[FirstRunAutopilot] Timed out waiting for ${ description }`);
+}
+
+function buttonWithText(text: string): HTMLButtonElement | undefined {
+  return [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === text && !button.disabled);
+}
+
+async function clickButton(text: string) {
+  (await waitForElement(() => buttonWithText(text), `button "${ text }"`)).click();
+}
+
+async function runTestAutopilot(mode: 'mac-only' | 'cloud-fake') {
+  console.log(`[FirstRunAutopilot] Starting ${ mode } renderer click-through`);
+  await clickButton('Get started →');
+  const email = await waitForElement(() => document.querySelector<HTMLInputElement>('#email') || undefined, 'account email');
+
+  email.value = 'first-run-autopilot@example.invalid';
+  email.dispatchEvent(new Event('input', { bubbles: true }));
+  await clickButton('Continue');
+  if (mode === 'cloud-fake') {
+    const password = await waitForElement(() => document.querySelector<HTMLInputElement>('#cloudPassword') || undefined, 'fake Cloud password');
+
+    password.value = 'not-a-real-password';
+    password.dispatchEvent(new Event('input', { bubbles: true }));
+    await clickButton('Create account and continue');
+  } else {
+    await clickButton('This Mac only, for now');
+  }
+  await clickButton('Continue');
+  await clickButton("I'll do this later");
+  await clickButton("I'll explore on my own");
+  console.log(`[FirstRunAutopilot] Finished ${ mode } renderer click-through`);
+}
 
 const saveStep = async() => {
   await ipcRenderer.invoke('first-run-state:set', { step: currentStep.value });

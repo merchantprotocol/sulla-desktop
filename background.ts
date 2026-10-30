@@ -77,7 +77,7 @@ import { isDevEnv } from '@pkg/utils/environment';
 import Logging, { clearLoggingDirectory, setLogLevel } from '@pkg/utils/logging';
 import { fetchMacOsVersion, getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
-import { configureInstancePorts, isFirstRunTestInstance, requestedInstance, TEST_INSTANCE_FLAG } from '@pkg/utils/instance';
+import { configureInstancePorts, isFirstRunTestInstance, requestedInstance, testAutopilotMode, TEST_INSTANCE_FLAG } from '@pkg/utils/instance';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
 import { handleDeepLink, findDeepLinkInArgv } from '@pkg/main/deepLink';
 import { executable } from '@pkg/utils/resources';
@@ -104,6 +104,7 @@ if (requestedTestInstance && !isFirstRunTestInstance()) {
   process.exit(202);
 }
 configureInstancePorts();
+const firstRunTestAutopilot = testAutopilotMode();
 
 Electron.app.setPath('userData', path.join(paths.appHome, 'electron'));
 Electron.app.setPath('cache', paths.cache);
@@ -386,15 +387,18 @@ mainEvents.on('first-run-backend-booted', async() => {
 // Postgres is the first managed dependency AI OAuth persistence needs. This
 // deliberately arrives before the remainder of the container fleet is ready.
 mainEvents.on('first-run-ai-runtime-ready', async() => {
+  console.log('[FirstRunCoordinator] first-run-ai-runtime-ready; aiRuntimeReady=true');
   await firstRunCoordinator.setCondition('aiRuntimeReady');
 });
 
 mainEvents.on('sulla-managed-services-ready', async() => {
+  console.log('[FirstRunCoordinator] sulla-managed-services-ready');
   await firstRunCoordinator.setCondition('deployCompleted');
 });
 
 // A failed start must not leave the boot screen up: open the app degraded.
 mainEvents.on('sulla-managed-services-failed', async() => {
+  console.error('[FirstRunCoordinator] sulla-managed-services-failed');
   await firstRunCoordinator.setCondition('deployCompleted');
 });
 
@@ -1572,6 +1576,26 @@ ipcMainProxy.handle('first-run-state:set' as any, (event, patch) => {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch) || 'version' in patch) throw new Error('Invalid first-run state patch');
 
   return updateFirstRunState(patch);
+});
+
+ipcMainProxy.handle('first-run-test-autopilot:get' as any, (event) => {
+  requireFirstRunStateSender(event);
+
+  return firstRunTestAutopilot;
+});
+
+ipcMainProxy.handle('first-run-test-autopilot:cloud-fake' as any, (event) => {
+  requireFirstRunStateSender(event);
+  if (firstRunTestAutopilot !== 'cloud-fake') throw new Error('Cloud fake is only available to the cloud-fake test autopilot');
+
+  return { ok: true, accountExists: false };
+});
+
+ipcMainProxy.handle('first-run-test-autopilot:failed' as any, (event, message) => {
+  requireFirstRunStateSender(event);
+  if (!firstRunTestAutopilot) throw new Error('Test autopilot is not active');
+  console.error(`[FirstRunAutopilot] ${ String(message) }`);
+  Electron.app.exit(203);
 });
 
 /// /////////////////////////////////////////////////////////////////////////////
