@@ -83,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide, computed } from 'vue';
+import { ref, provide, computed, onMounted } from 'vue';
 
 import FirstRunFirstAutomation from './FirstRunFirstAutomation.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
@@ -145,11 +145,34 @@ const progressPercent = computed(() => {
 
 provide('settings', settings);
 
+onMounted(async() => {
+  const state = await ipcRenderer.invoke('first-run-state:get');
+  let savedStep = state?.step ?? 0;
+
+  // Never skip the account screen when its non-secret choice was not saved.
+  // Secret sessions deliberately live only in main-process memory.
+  if (typeof savedStep === 'number' && savedStep > 1) {
+    if (!state?.choices?.accountChoice) {
+      savedStep = 1;
+      await ipcRenderer.invoke('first-run-state:set', { step: savedStep });
+    }
+  }
+  if (typeof savedStep === 'number' && savedStep >= 0 && savedStep < steps.length) {
+    currentStep.value = savedStep;
+    if (savedStep > 0) startupController.start();
+  }
+});
+
+const saveStep = async() => {
+  await ipcRenderer.invoke('first-run-state:set', { step: currentStep.value });
+};
+
 const next = async() => {
   console.log('[FirstRun] next() called, currentStep before:', currentStep.value);
 
   currentStep.value += 1;
   console.log('[FirstRun] currentStep after:', currentStep.value);
+  await saveStep();
   ipcRenderer.invoke('first-run-wizard-step', currentStep.value);
   if (currentStep.value === 1) {
     console.log('[FirstRun] starting controller');
@@ -158,11 +181,12 @@ const next = async() => {
   }
 };
 
-const back = () => {
+const back = async() => {
   console.log('[FirstRun] back() called, currentStep before:', currentStep.value);
   if (currentStep.value > 0) {
     currentStep.value -= 1;
     console.log('[FirstRun] currentStep after:', currentStep.value);
+    await saveStep();
   }
 };
 

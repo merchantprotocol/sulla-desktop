@@ -7,6 +7,16 @@
 <template>
   <div class="frw p-6">
     <form @submit.prevent="handleNext">
+      <template v-if="computerTooSmall">
+        <div class="frw-eyebrow">Sulla can't run on this computer</div>
+        <h1 class="frw-title">This computer is too small for Sulla.</h1>
+        <p class="frw-lead">
+          Sulla needs at least {{ MIN_MEMORY_GB }} GB of memory and {{ MIN_CPUS }} CPUs for its private workspace.
+          This computer has {{ totalMemoryLabel }} GB of memory and {{ availNumCPUs }} CPUs.
+        </p>
+        <p class="frw-muted">Nothing has been changed. You can quit safely.</p>
+      </template>
+      <template v-else>
       <div class="frw-eyebrow">
         Welcome to Sulla
       </div>
@@ -94,11 +104,13 @@
         <button
           type="submit"
           class="frw-btn"
+          :disabled="checkingPreflight"
         >
-          Get started →
+          {{ checkingPreflight ? 'Checking this computer…' : preflightAttempted ? 'Retry →' : 'Get started →' }}
         </button>
         <span class="frw-trust">You choose what syncs on the next screens and can change it later.</span>
       </div>
+      </template>
     </form>
   </div>
 </template>
@@ -135,6 +147,8 @@ const isOptionsOpen = ref(false);
 
 // Reactive ref for resource error
 const resourceError = ref('');
+const checkingPreflight = ref(false);
+const preflightAttempted = ref(false);
 
 // Set defaults
 settings.value.application.pathManagementStrategy = PathManagementStrategy.RcFiles;
@@ -165,6 +179,9 @@ const availNumCPUs = computed(() => os.cpus().length);
 // Minimums the AI services need (enforced in handleNext).
 const MIN_MEMORY_GB = 5;
 const MIN_CPUS = 3;
+const totalMemoryInGB = computed(() => os.totalmem() / 2 ** 30);
+const totalMemoryLabel = computed(() => totalMemoryInGB.value.toFixed(1));
+const computerTooSmall = computed(() => totalMemoryInGB.value < MIN_MEMORY_GB || availNumCPUs.value < MIN_CPUS);
 
 /**
  * Pick sensible VM resources so nobody has to understand sliders before they
@@ -201,6 +218,8 @@ const onTelemetryChange = async() => {
 };
 
 const handleNext = async() => {
+  if (computerTooSmall.value || checkingPreflight.value) return;
+
   if (settings.value.virtualMachine.memoryInGB < MIN_MEMORY_GB || settings.value.virtualMachine.numberCPUs < MIN_CPUS) {
     resourceError.value = `Sulla needs at least ${ MIN_MEMORY_GB } GB of memory and ${ MIN_CPUS } CPUs. Use Adjust to raise them.`;
   } else {
@@ -209,6 +228,25 @@ const handleNext = async() => {
 
   if (resourceError.value) {
     return;
+  }
+
+  checkingPreflight.value = true;
+  preflightAttempted.value = true;
+  try {
+    const preflight = await ipcRenderer.invoke('first-run-preflight');
+
+    if (!preflight?.ok) {
+      resourceError.value = preflight?.message || 'Sulla could not check this computer. Retry to check again.';
+
+      return;
+    }
+  } catch (err) {
+    console.warn('[FirstRunResources] Preflight failed:', err);
+    resourceError.value = 'Sulla could not check disk space and internet access. Retry to check again.';
+
+    return;
+  } finally {
+    checkingPreflight.value = false;
   }
 
   // Save the VM resources
