@@ -42,6 +42,8 @@ const props = withDefaults(defineProps<{
   restoreFiles?: boolean;
   /** Public integration form (labels, hints, setup notes) for the guided Connect screen. */
   connect?: Record<string, unknown>;
+  parentWindow?: 'main-agent' | 'first-run';
+  onboarding?: boolean;
 }>(), { surface: 'page', siteUrl: '', active: true, modal: false });
 const loading = ref(true);
 const error = ref('');
@@ -79,6 +81,8 @@ async function open(): Promise<void> {
       ownerId,
       restoreFiles: props.restoreFiles,
       connect:      props.connect ? JSON.parse(JSON.stringify(props.connect)) : undefined,
+      parentWindow: props.parentWindow,
+      onboarding:   props.onboarding,
     });
     if (!props.active || generation !== lifecycleGeneration) return;
     loading.value = false;

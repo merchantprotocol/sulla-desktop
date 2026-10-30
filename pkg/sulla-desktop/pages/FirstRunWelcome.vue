@@ -6,560 +6,174 @@
 -->
 <template>
   <div class="max-w-lg mx-0 p-6">
-    <!-- Step 1: Account setup -->
-    <form
-      v-if="step === 'account'"
-      @submit.prevent="handleAccountSubmit"
-    >
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        Create your account
-      </h2>
-      <p class="mb-6 secondary-text">
-        Your email is your Sulla Cloud account, so you can reach this computer from the web and your phone.
-        Your master password is separate: it locks Sulla and encrypts every login and API key you save, and it never leaves this computer.
-      </p>
-
-      <rd-fieldset
-        legend-text="About you"
-        class="mb-6 heading-text"
-      >
+    <form v-if="step === 'account'" @submit.prevent="handleAccountSubmit">
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Create your Sulla account</h2>
+      <p class="mb-6 secondary-text">This is the one account you use for Desktop, Mobile, and Sulla Cloud.</p>
+      <rd-fieldset legend-text="About you" class="mb-6 heading-text">
         <div class="mb-4">
-          <label
-            for="primaryUserName"
-            class="block text-sm font-medium mb-1 label-text"
-          >What should Sulla call you?</label>
-          <input
-            id="primaryUserName"
-            v-model="primaryUserName"
-            type="text"
-            class="w-full p-2 border rounded-md form-input"
-            placeholder="Your first name (optional)"
-          >
+          <label for="primaryUserName" class="block text-sm font-medium mb-1 label-text">What should Sulla call you?</label>
+          <input id="primaryUserName" v-model="primaryUserName" type="text" class="w-full p-2 border rounded-md form-input" placeholder="Your first name (optional)">
         </div>
         <div class="mb-4">
-          <label
-            for="email"
-            class="block text-sm font-medium mb-1 label-text"
-          >Email (your Sulla Cloud account)</label>
-          <input
-            id="email"
-            v-model="sullaEmail"
-            type="email"
-            class="w-full p-2 border rounded-md form-input"
-            :class="{ 'input-error': !!emailError }"
-            placeholder="you@company.com"
-          >
-          <p
-            v-if="emailError"
-            class="text-sm mt-1 error-text"
-          >
-            {{ emailError }}
-          </p>
-        </div>
-        <div class="mb-4">
-          <label
-            for="password"
-            class="block text-sm font-medium mb-1 label-text"
-          >Master password</label>
-          <input
-            id="password"
-            v-model="sullaPassword"
-            type="password"
-            class="w-full p-2 border rounded-md form-input"
-            :class="{ 'input-error': !!passwordError }"
-            placeholder="At least 8 characters"
-          >
-          <p
-            v-if="passwordError"
-            class="text-sm mt-1 error-text"
-          >
-            {{ passwordError }}
-          </p>
-        </div>
-        <div class="mb-4">
-          <label
-            for="passwordConfirm"
-            class="block text-sm font-medium mb-1 label-text"
-          >Confirm master password</label>
-          <input
-            id="passwordConfirm"
-            v-model="sullaPasswordConfirm"
-            type="password"
-            class="w-full p-2 border rounded-md form-input"
-            :class="{ 'input-error': !!passwordConfirmError }"
-            placeholder="Type it again"
-          >
-          <p
-            v-if="passwordConfirmError"
-            class="text-sm mt-1 error-text"
-          >
-            {{ passwordConfirmError }}
-          </p>
+          <label for="email" class="block text-sm font-medium mb-1 label-text">Email</label>
+          <input id="email" v-model="sullaEmail" type="email" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!emailError }" placeholder="you@company.com">
+          <p v-if="emailError" class="text-sm mt-1 error-text">{{ emailError }}</p>
         </div>
       </rd-fieldset>
-
-      <rd-fieldset
-        legend-text="Updates"
-        class="mb-6 heading-text"
-      >
-        <label class="flex items-center">
-          <input
-            v-model="sullaSubscribeToUpdates"
-            type="checkbox"
-            checked="true"
-            class="mr-2"
-          >
-          <span class="text-sm label-text">Email me product updates and new automation ideas</span>
-        </label>
+      <rd-fieldset legend-text="Updates" class="mb-6 heading-text">
+        <label class="flex items-center"><input v-model="sullaSubscribeToUpdates" type="checkbox" class="mr-2"><span class="text-sm label-text">Email me product updates and new automation ideas</span></label>
       </rd-fieldset>
-
-      <div class="flex justify-between mt-5">
-        <button
-          v-if="showBack"
-          type="button"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 cursor-pointer btn-back"
-          @click="$emit('back')"
-        >
-          Back
-        </button>
-        <button
-          type="submit"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
-        >
-          Next
-        </button>
+      <div class="flex items-center justify-between mt-5">
+        <button type="button" class="link-btn" @click="continueWithoutAccount">Continue without an account</button>
+        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary">Continue</button>
       </div>
     </form>
 
-    <!-- Step 2: Recovery key display -->
-    <div v-if="step === 'recovery'">
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        Your Recovery Key
-      </h2>
-      <p class="mb-4 secondary-text">
-        Write this recovery key down and store it somewhere safe. You will need it to restore your vault if you move to a new machine or reinstall your operating system.
-      </p>
-      <p class="mb-6 text-xs secondary-text">
-        This key is shown only once and cannot be retrieved later.
-      </p>
-
-      <div class="recovery-key-box mb-6">
-        <code class="text-lg font-mono tracking-wider">{{ recoveryKey }}</code>
+    <form v-if="step === 'cloud'" @submit.prevent="handleCloudSubmit">
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">{{ cloudAccountExists ? 'Sign in to Sulla Cloud' : 'Choose your account password' }}</h2>
+      <p class="mb-6 secondary-text"><template v-if="cloudAccountExists"><strong>{{ sullaEmail }}</strong> already has an account. Enter its password to connect this Mac.</template><template v-else>This password signs you in on Desktop, Mobile, and Cloud. Your local vault is created next and stays isolated on this Mac.</template></p>
+      <div class="mb-4">
+        <label for="cloudPassword" class="block text-sm font-medium mb-1 label-text">Account password</label>
+        <input id="cloudPassword" v-model="cloudPassword" type="password" autocomplete="current-password" class="w-full p-2 border rounded-md form-input" :class="{ 'input-error': !!cloudError }" placeholder="At least 8 characters">
+        <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
       </div>
-
-      <div class="mb-6">
-        <label class="flex items-start">
-          <input
-            v-model="recoveryKeyAcknowledged"
-            type="checkbox"
-            class="mr-2 mt-1"
-          >
-          <span class="text-sm label-text">I have written down my recovery key and stored it in a safe place</span>
-        </label>
+      <div class="flex items-center justify-between mt-5">
+        <button type="button" class="link-btn" :disabled="cloudSubmitting" @click="continueWithoutAccount">This Mac only, for now</button>
+        <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }" :disabled="cloudSubmitting">{{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Create account and continue') }}</button>
       </div>
+    </form>
 
-      <div class="flex justify-end mt-5">
-        <button
-          type="button"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
-          :class="{ 'opacity-50 cursor-not-allowed': !recoveryKeyAcknowledged }"
-          :disabled="!recoveryKeyAcknowledged"
-          @click="handleRecoveryAcknowledged"
-        >
-          Continue
-        </button>
-      </div>
+    <div v-if="step === 'vault'" class="vault-step">
+      <h2 class="text-2xl font-bold mt-5 mb-2 heading-text">Protect your vault</h2>
+      <p class="mb-4 secondary-text">Create a vault password of at least 12 characters. It stays inside the isolated vault below. Confirm it carefully, then save the one-time recovery key before continuing.</p>
+      <vault-page :active="true" :modal="true" parent-window="first-run" onboarding />
     </div>
 
-    <!-- Step 3: Sulla Cloud account — sign in if the email exists, else create it -->
-    <form
-      v-if="step === 'cloud'"
-      @submit.prevent="handleCloudSubmit"
-    >
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        {{ cloudAccountExists ? 'Sign in to Sulla Cloud' : 'Your Sulla Cloud account' }}
-      </h2>
-      <p class="mb-6 secondary-text">
-        <template v-if="cloudAccountExists">
-          <strong>{{ sullaEmail }}</strong> already has a Sulla Cloud account. Enter its password to connect this computer.
-        </template>
-        <template v-else>
-          Enter a password for <strong>{{ sullaEmail }}</strong>. If you already have a Sulla Cloud account, use its password
-          and we'll sign you in. Otherwise we'll create your account with it. This is the password you'll use on the web and
-          your phone. It isn't your master password, which never leaves this computer.
-        </template>
-      </p>
-
-      <div class="mb-4">
-        <label
-          for="cloudPassword"
-          class="block text-sm font-medium mb-1 label-text"
-        >Sulla Cloud password</label>
-        <input
-          id="cloudPassword"
-          v-model="cloudPassword"
-          type="password"
-          autocomplete="current-password"
-          class="w-full p-2 border rounded-md form-input"
-          :class="{ 'input-error': !!cloudError }"
-          placeholder="At least 8 characters"
-        >
-        <p
-          v-if="cloudError"
-          class="text-sm mt-1 error-text"
-        >
-          {{ cloudError }}
-        </p>
-      </div>
-
-      <div class="flex items-center gap-4 mb-6 text-sm">
-        <button
-          type="button"
-          class="link-btn"
-          @click="editingEmail = !editingEmail"
-        >
-          Use a different email
-        </button>
-        <button
-          type="button"
-          class="link-btn"
-          :disabled="cloudSubmitting"
-          @click="finishSetup"
-        >
-          Skip for now
-        </button>
-      </div>
-
-      <div
-        v-if="editingEmail"
-        class="mb-6"
-      >
-        <input
-          v-model="sullaEmail"
-          type="email"
-          class="w-full p-2 border rounded-md form-input mb-2"
-          placeholder="you@company.com"
-        >
-        <button
-          type="button"
-          class="px-4 py-1 rounded-md btn-back"
-          @click="changeEmail"
-        >
-          Use this email
-        </button>
-      </div>
-
-      <div class="flex justify-end mt-5">
-        <button
-          type="submit"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
-          :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }"
-          :disabled="cloudSubmitting"
-        >
-          {{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Continue') }}
-        </button>
-      </div>
-    </form>
-
-    <!-- Step 4: What this computer shares with Sulla Cloud (all off by default) -->
     <div v-if="step === 'sync'">
-      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">
-        What should sync to Sulla Cloud?
-      </h2>
-      <p class="mb-6 secondary-text">
-        You're signed in, so this computer stays connected to your Sulla Cloud account while Sulla is running.
-        Nothing below leaves this computer unless you turn it on. You can change this any time in Settings → Sulla Cloud.
-      </p>
-
-      <rd-fieldset
-        legend-text="Sync"
-        class="mb-6 heading-text"
-      >
-        <label class="flex items-start mb-3">
-          <input
-            v-model="syncConversations"
-            type="checkbox"
-            class="mr-2 mt-1"
-          >
-          <span class="text-sm label-text"><strong>Conversations</strong> — read and continue your chats from the web and your phone.</span>
-        </label>
-        <label class="flex items-start mb-3">
-          <input
-            v-model="syncVault"
-            type="checkbox"
-            class="mr-2 mt-1"
-          >
-          <span class="text-sm label-text"><strong>Password vault</strong> — an encrypted backup. It's locked with your master password; Sulla Cloud can't read it.</span>
-        </label>
+      <h2 class="text-2xl font-bold mt-5 mb-4 heading-text">Choose what syncs</h2>
+      <p class="mb-6 secondary-text">Synced data becomes available on your phone, your other desktops and Sulla Cloud. Turn any of it off here or later in Settings.</p>
+      <rd-fieldset legend-text="Sync" class="mb-6 heading-text">
+        <label class="sync-row"><input v-model="syncEnabled" type="checkbox"><span><strong>Sync this Sulla</strong> — master switch</span></label>
+        <label v-for="category in syncCategories" :key="category.key" class="sync-row" :class="{ disabled: !syncEnabled }"><input v-model="category.enabled" type="checkbox" :disabled="!syncEnabled"><span><strong>{{ category.label }}</strong> — {{ category.description }}</span></label>
       </rd-fieldset>
-
-      <p class="mb-6 text-xs secondary-text">
-        Controlling this computer from the web is separate: the first time a browser asks, Sulla shows a code here and you approve it on this screen.
-      </p>
-
-      <div class="flex justify-end mt-5">
-        <button
-          type="button"
-          class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary"
-          @click="handleSyncChoices"
-        >
-          Continue
-        </button>
-      </div>
+      <div class="flex justify-end mt-5"><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" @click="handleSyncChoices">Continue</button></div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ipcRenderer } from 'electron';
-import { ref, onMounted, computed } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import RdFieldset from '@pkg/components/form/RdFieldset.vue';
+import VaultPage from '@pkg/pages/VaultPage.vue';
 
-const emit = defineEmits<{
-  next: [];
-  back: [];
-}>();
-
-const props = defineProps<{
-  showBack?: boolean;
-}>();
-
-// Step tracking: 'account' → 'recovery' → 'cloud' (Sulla Cloud) → 'sync'
-const step = ref<'account' | 'recovery' | 'cloud' | 'sync'>('account');
-
-// Sulla Cloud account state. No email is sent: the cloud creates the account
-// for a new email, or checks the password when the email already has one.
+const emit = defineEmits<{ next: []; back: [] }>();
+defineProps<{ showBack?: boolean }>();
+const step = ref<'account' | 'cloud' | 'vault' | 'sync'>('account');
 const cloudPassword = ref('');
 const cloudError = ref('');
 const cloudSubmitting = ref(false);
 const cloudAccountExists = ref(false);
-const editingEmail = ref(false);
-
-// Sync choices — all off unless the user opts in.
-const syncConversations = ref(false);
-const syncVault = ref(false);
-
-// Reactive data
 const sullaEmail = ref('');
-const sullaPassword = ref('');
-const sullaPasswordConfirm = ref('');
 const primaryUserName = ref('');
-const sullaSubscribeToUpdates = ref(true);
-
-// Recovery key state
-const recoveryKey = ref('');
-const recoveryKeyAcknowledged = ref(false);
-
-// Reactive error states
+const sullaSubscribeToUpdates = ref(false);
 const emailError = ref('');
-const passwordError = ref('');
-const passwordConfirmError = ref('');
-
-// Email validation regex
+const accountLinked = ref(false);
+const syncEnabled = ref(true);
+const syncCategories = ref([
+  { key: 'conversations', label: 'Conversations', description: 'continue chats on your other devices', enabled: true },
+  { key: 'files', label: 'Files', description: 'make your Sulla Files available everywhere', enabled: true },
+  { key: 'memory', label: 'Memory', description: 'keep what Sulla learns consistent', enabled: true },
+  { key: 'vault', label: 'Password vault', description: 'store an encrypted backup', enabled: true },
+  { key: 'skills', label: 'Skills', description: 'reuse your installed skills', enabled: true },
+  { key: 'workflows', label: 'Workflows', description: 'keep automations available', enabled: true },
+  { key: 'customAgents', label: 'Agents', description: 'sync your custom agents', enabled: true },
+  { key: 'recipes', label: 'Recipes', description: 'sync installed recipes', enabled: true },
+  { key: 'useCases', label: 'Use cases', description: 'sync saved starter jobs', enabled: true },
+  { key: 'liveAgents', label: 'Live agents', description: 'sync agent configuration', enabled: true },
+  { key: 'usage', label: 'Usage', description: 'sync usage history', enabled: true },
+]);
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const isEmailValid = computed(() => {
-  const email = sullaEmail.value?.trim();
-  return email && emailRegex.test(email);
-});
+function validateEmail() {
+  const email = sullaEmail.value.trim();
+  emailError.value = !email ? 'Email is required.' : !emailRegex.test(email) ? 'Please enter a valid email address.' : '';
+  return !emailError.value;
+}
 
-const validateEmail = () => {
-  const email = sullaEmail.value?.trim();
-  if (!email) {
-    emailError.value = 'Email is required.';
-    return false;
-  }
-  if (!emailRegex.test(email)) {
-    emailError.value = 'Please enter a valid email address.';
-    return false;
-  }
-  emailError.value = '';
-  return true;
-};
-
-const validatePassword = () => {
-  if (!sullaPassword.value?.trim()) {
-    passwordError.value = 'Master password is required.';
-    return false;
-  }
-  if (sullaPassword.value.length < 8) {
-    passwordError.value = 'Master password must be at least 8 characters.';
-    return false;
-  }
-  passwordError.value = '';
-  return true;
-};
-
-const validatePasswordConfirm = () => {
-  if (sullaPasswordConfirm.value !== sullaPassword.value) {
-    passwordConfirmError.value = 'Passwords do not match.';
-    return false;
-  }
-  passwordConfirmError.value = '';
-  return true;
-};
-
-// Load settings on mount
 onMounted(async() => {
-  const loadedEmail = await SullaSettingsModel.get('sullaEmail');
-  sullaEmail.value = loadedEmail || '';
-
-  const loadedPassword = await SullaSettingsModel.get('sullaPassword');
-  sullaPassword.value = loadedPassword || '';
-
-  const loadedSubscribe = await SullaSettingsModel.get('sullaSubscribeToUpdates');
-  sullaSubscribeToUpdates.value = loadedSubscribe !== null ? loadedSubscribe : true;
-
-  const loadedPrimaryUserName = await SullaSettingsModel.get('primaryUserName');
-  primaryUserName.value = loadedPrimaryUserName || '';
+  sullaEmail.value = await SullaSettingsModel.get('sullaEmail') || '';
+  primaryUserName.value = await SullaSettingsModel.get('primaryUserName') || '';
+  const subscribed = await SullaSettingsModel.get('sullaSubscribeToUpdates');
+  sullaSubscribeToUpdates.value = subscribed === true;
+  ipcRenderer.on('vault:onboarding-complete', handleVaultComplete);
 });
+onBeforeUnmount(() => ipcRenderer.removeListener('vault:onboarding-complete', handleVaultComplete));
 
-const handleAccountSubmit = async() => {
-  const emailValid = validateEmail();
-  const passwordValid = validatePassword();
-  const confirmValid = validatePasswordConfirm();
-
-  if (!emailValid || !passwordValid || !confirmValid) {
-    return;
-  }
-
-  // Load and set service password and encryption key
-  console.log('[FirstRunWelcome] Loading service password and encryption key...');
-
-  const sullaServicePassword = await SullaSettingsModel.get('sullaServicePassword', SullaSettingsModel.generatePassword());
-  await SullaSettingsModel.set('sullaServicePassword', sullaServicePassword, 'string');
-
-  // Shared install secret. The name is historical (it began as n8n's key);
-  // marketplace recipes use it as their generic secret via {{sullaN8nEncryptionKey}}.
-  const loadedKey = await SullaSettingsModel.get('sullaN8nEncryptionKey', SullaSettingsModel.generateEncryptionKey());
-  await SullaSettingsModel.set('sullaN8nEncryptionKey', loadedKey, 'string');
-
-  // Generate API bearer token for the chat completions API
-  const sullaApiToken = await SullaSettingsModel.get('sullaApiToken');
-  if (!sullaApiToken) {
-    const generatedToken = SullaSettingsModel.generateEncryptionKey(48);
-    await SullaSettingsModel.set('sullaApiToken', generatedToken, 'string');
-    console.log('[FirstRunWelcome] Generated sullaApiToken');
-  }
-
-  // Save to SullaSettingsModel
-  // Note: the master password is NOT stored in settings — it's only used to derive the vault key.
-  // We store a flag so the system knows first-run credentials were set.
-  await SullaSettingsModel.set('primaryUserName', primaryUserName.value, 'string');
-  await SullaSettingsModel.set('sullaEmail', sullaEmail.value, 'string');
-  await SullaSettingsModel.set('sullaPassword', 'vault-protected', 'string');
-  await SullaSettingsModel.set('sullaSubscribeToUpdates', sullaSubscribeToUpdates.value, 'boolean');
-  await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
-
-  console.log('[FirstRunWelcome] Settings committed successfully');
-
-  // Set up the vault with the master password via IPC (main process handles safeStorage)
-  try {
-    const result = await ipcRenderer.invoke('vault:setup', { masterPassword: sullaPassword.value });
-    recoveryKey.value = result.recoveryKey;
-    console.log('[FirstRunWelcome] Vault setup complete');
-
-    // Show recovery key step
-    step.value = 'recovery';
-  } catch (err) {
-    console.error('[FirstRunWelcome] Vault setup failed:', err);
-    // Continue to the Sulla Cloud account anyway — vault can be set up later.
-    step.value = 'cloud';
-  }
-};
-
-const handleRecoveryAcknowledged = () => {
-  step.value = 'cloud';
-};
-
-async function changeEmail() {
-  if (!validateEmail()) {
-    cloudError.value = emailError.value;
-    return;
-  }
+async function handleAccountSubmit() {
+  if (!validateEmail()) return;
+  await SullaSettingsModel.set('primaryUserName', primaryUserName.value.trim(), 'string');
   await SullaSettingsModel.set('sullaEmail', sullaEmail.value.trim(), 'string');
-  editingEmail.value = false;
-  cloudAccountExists.value = false;
-  cloudError.value = '';
+  await SullaSettingsModel.set('sullaSubscribeToUpdates', sullaSubscribeToUpdates.value, 'boolean');
+  step.value = 'cloud';
+}
+
+function continueWithoutAccount() {
+  accountLinked.value = false;
+  cloudPassword.value = '';
+  step.value = 'vault';
 }
 
 async function handleCloudSubmit() {
-  if (cloudPassword.value.length < 8) {
-    cloudError.value = 'Password must be at least 8 characters.';
-    return;
-  }
-  cloudSubmitting.value = true;
-  cloudError.value = '';
+  if (cloudPassword.value.length < 8) { cloudError.value = 'Password must be at least 8 characters.'; return; }
+  cloudSubmitting.value = true; cloudError.value = '';
   try {
     const res = await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
-    if (!res.ok) {
-      cloudAccountExists.value = !!res.accountExists;
-      cloudError.value = res.error || 'Could not connect to Sulla Cloud.';
-      return;
-    }
+    if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
     cloudPassword.value = '';
+    accountLinked.value = true;
     await SullaSettingsModel.set('sullaCloudLinked', true, 'boolean');
-    step.value = 'sync';
-  } catch (err) {
-    cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.';
-  } finally {
-    cloudSubmitting.value = false;
-  }
+    step.value = 'vault';
+  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  finally { cloudSubmitting.value = false; }
+}
+
+async function handleVaultComplete() {
+  // The isolated vault owns the password and recovery key. Only its completion signal crosses this boundary.
+  await persistInstallSettings();
+  step.value = accountLinked.value ? 'sync' : 'account';
+  if (!accountLinked.value) await finishSetup(false);
+}
+
+async function persistInstallSettings() {
+  const servicePassword = await SullaSettingsModel.get('sullaServicePassword', SullaSettingsModel.generatePassword());
+  await SullaSettingsModel.set('sullaServicePassword', servicePassword, 'string');
+  const encryptionKey = await SullaSettingsModel.get('sullaN8nEncryptionKey', SullaSettingsModel.generateEncryptionKey());
+  await SullaSettingsModel.set('sullaN8nEncryptionKey', encryptionKey, 'string');
+  if (!await SullaSettingsModel.get('sullaApiToken')) await SullaSettingsModel.set('sullaApiToken', SullaSettingsModel.generateEncryptionKey(48), 'string');
+  // These flags are deliberately last: a failed or abandoned vault setup must resume first run.
+  await SullaSettingsModel.set('sullaPassword', 'vault-protected', 'string');
+  await SullaSettingsModel.set('firstRunCredentialsNeeded', false, 'boolean');
 }
 
 async function handleSyncChoices() {
-  try {
-    await ipcRenderer.invoke('sulla-cloud-connection:set-preferences', {
-      conversations: syncConversations.value,
-      vault:         syncVault.value,
-    });
-  } catch (err) {
-    console.warn('[FirstRunWelcome] Could not save sync choices:', err);
-  }
-  await finishSetup();
+  const patch: Record<string, boolean> = { enabled: syncEnabled.value };
+  for (const category of syncCategories.value) patch[category.key] = category.enabled;
+  try { await ipcRenderer.invoke('sulla-cloud-connection:set-preferences', patch); }
+  catch (err) { console.warn('[FirstRunWelcome] Could not save sync choices:', err); return; }
+  await finishSetup(true);
 }
 
-const finishSetup = async() => {
-  // Submit email subscription to worker if opted in
-  if (sullaSubscribeToUpdates.value && sullaEmail.value?.trim()) {
-    fetch('https://email-submission.merchantprotocol.workers.dev/', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({
-        email:  sullaEmail.value.trim(),
-        name:   primaryUserName.value?.trim() || '',
-        source: 'sulla-desktop',
-      }),
-    }).then((res) => {
-      if (!res.ok) {
-        console.warn('[FirstRunWelcome] Subscription request failed:', res.status);
-      } else {
-        console.log('[FirstRunWelcome] Subscription submitted successfully');
-      }
-    }).catch((err) => {
-      console.warn('[FirstRunWelcome] Subscription request error:', err);
-    });
+async function finishSetup(allowMarketing: boolean) {
+  if (allowMarketing && sullaSubscribeToUpdates.value && sullaEmail.value.trim()) {
+    void fetch('https://email-submission.merchantprotocol.workers.dev/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: sullaEmail.value.trim(), name: primaryUserName.value.trim(), source: 'sulla-desktop' }) }).catch(err => console.warn('[FirstRunWelcome] Subscription request error:', err));
   }
-
-  // Check if ready to trigger custom environment
-  if (await SullaSettingsModel.get('sullaEmail', false) &&
-      await SullaSettingsModel.get('sullaPassword', false)) {
-    console.log('[FirstRunWelcome] Triggering custom environment...');
-
-    sessionStorage.setItem('sulla-startup-splash-seen', 'true');
-    ipcRenderer.invoke('start-sulla-custom-env');
-  } else {
-    console.log('[FirstRunWelcome] Not ready to trigger custom environment yet');
-    console.log('[FirstRunWelcome] firstRunSullaNetworking:', await SullaSettingsModel.get('firstRunSullaNetworking'));
-    // Never log credential values — only whether they are present.
-    console.log('[FirstRunWelcome] sullaEmail set:', !!(await SullaSettingsModel.get('sullaEmail')));
-    console.log('[FirstRunWelcome] sullaPassword set:', !!(await SullaSettingsModel.get('sullaPassword')));
-  }
-
+  sessionStorage.setItem('sulla-startup-splash-seen', 'true');
+  await ipcRenderer.invoke('start-sulla-custom-env');
   emit('next');
-};
+}
 </script>
 
 <style lang="scss" scoped>
@@ -843,4 +457,9 @@ input:hover, select:hover {
 .theme-noir-light .max-w-lg.mx-0.p-6 input[type="checkbox"]::after {
   box-shadow: 0 2px 6px color-mix(in srgb, var(--nx-ink) 14%, transparent);
 }
+
+.vault-step { width: min(780px, calc(100vw - 5rem)); }
+.vault-step :deep(.vault-host) { height: 520px; border: 1px solid var(--border-default); border-radius: .5rem; overflow: hidden; }
+.sync-row { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .75rem; }
+.sync-row.disabled { opacity: .55; }
 </style>
