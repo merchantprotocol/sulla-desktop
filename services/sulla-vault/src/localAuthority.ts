@@ -1315,7 +1315,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
    * is re-encrypted. Only the trusted Desktop approval identity can call this.
    */
   async rewrapForAccountPassword(
-    serviceId: string, token: string, input: AccountPasswordRewrapRequest,
+    serviceId: string, token: string | undefined, input: AccountPasswordRewrapRequest,
   ): Promise<AccountPasswordRewrapResponse> {
     this.requireApprovalIdentity(serviceId, token);
     const kdf = input?.kdf;
@@ -1417,7 +1417,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
 
   /** Build a reset relay envelope only after the native approval prompt returned an explicit tap. */
   async wrapUserKeyForApprovedDevice(
-    serviceId: string, token: string, input: VaultDeviceApprovalWrapRequest,
+    serviceId: string, token: string | undefined, input: VaultDeviceApprovalWrapRequest,
   ): Promise<{ wrappedUserKey: Awaited<ReturnType<typeof transportWrap>> }> {
     this.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault access was not approved');
@@ -1434,7 +1434,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
 
   /** Replace the account recovery wrap while retaining the previous encrypted wrap as a restore point. */
   async rotateAccountRecoveryKey(
-    serviceId: string, token: string,
+    serviceId: string, token: string | undefined,
   ): Promise<{ recoveryKey: string; replacedExisting: boolean }> {
     this.requireApprovalIdentity(serviceId, token);
     const keys = this.requireKeys();
