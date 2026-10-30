@@ -87,7 +87,7 @@ const cloudCodeSent = ref(false);
 let cloudAttempt = 0;
 const sullaEmail = ref('');
 const primaryUserName = ref('');
-const sullaSubscribeToUpdates = ref(false);
+const sullaSubscribeToUpdates = ref(true);
 const emailError = ref('');
 const syncEnabled = ref(true);
 const syncError = ref('');
@@ -120,7 +120,7 @@ onMounted(async() => {
   const choices = state?.choices ?? {};
   sullaEmail.value = typeof choices.sullaEmail === 'string' ? choices.sullaEmail : '';
   primaryUserName.value = typeof choices.primaryUserName === 'string' ? choices.primaryUserName : '';
-  sullaSubscribeToUpdates.value = choices.sullaSubscribeToUpdates === true;
+  sullaSubscribeToUpdates.value = choices.sullaSubscribeToUpdates !== false;
 });
 
 async function handleAccountSubmit() {
