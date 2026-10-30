@@ -62,5 +62,7 @@ jobs:
           node-version-file: package.json
           cache: yarn
       - run: yarn install --frozen-lockfile --ignore-scripts
+      - name: Build shared vault crypto types
+        run: yarn --cwd packages/vault-crypto build
       - name: Build and run vault envelope security tests
         run: yarn --cwd services/sulla-vault test:envelope
