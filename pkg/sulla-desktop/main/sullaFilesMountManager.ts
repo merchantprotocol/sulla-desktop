@@ -11,9 +11,10 @@ import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/gue
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
 import { sullaFilesNativeSourceGrant, sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
+import { composeFilePath, composeProjectName, serviceContainerName } from '@pkg/utils/serviceNamespace';
 
 const console = Logging.background;
-const COMPOSE_FILE = '/tmp/sulla-docker-compose.yml';
+const COMPOSE_FILE = composeFilePath;
 const RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 const TOKEN_FILE = `${ RUNTIME_ROOT }/token`;
 const MOUNT_PATH = SULLA_FILES_GUEST_MOUNT_PATH;
@@ -207,7 +208,7 @@ export class SullaFilesMountManager extends EventEmitter {
       if (await traceAsync('mount: classify anchor', () => this.mountState(executor)) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
       await traceAsync('mount: refresh credentials', () => this.refreshCredentials(credentialGeneration));
       await traceAsync('mount: compose up adapter', () => executor.execCommand(
-        { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
+        { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', composeProjectName,
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
       ));
       await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor));
@@ -256,7 +257,7 @@ export class SullaFilesMountManager extends EventEmitter {
     const executor = this.executor;
     if (!executor) return;
     await executor.execCommand(
-      { root: true, expectFailure: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
+      { root: true, expectFailure: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', composeProjectName,
       'stop', '-t', '10', 'sulla_files_fuse',
     ).catch(() => undefined);
     // A daemon/container restart can leave more than one propagated FUSE
@@ -404,7 +405,7 @@ export class SullaFilesMountManager extends EventEmitter {
     try {
       const output = await executor.execCommand(
         { root: true, capture: true, expectFailure: true },
-        'docker', 'exec', 'sulla_files_fuse', 'cat', ADAPTER_STATUS_FILE,
+        'docker', 'exec', serviceContainerName('files_fuse'), 'cat', ADAPTER_STATUS_FILE,
       );
       const status = JSON.parse(output);
 

@@ -27,6 +27,7 @@
  *
  * Everything here is pure (strings and argv); callers run it in the guest.
  */
+import { serviceContainerName } from '@pkg/utils/serviceNamespace';
 
 export const AGENT_NETWORK = 'sulla-agents';
 /** Fixed Linux bridge name so the rules never depend on a Docker network ID. Max 15 characters. */
@@ -35,7 +36,7 @@ export const AGENT_BRIDGE = 'br-sulla-agents';
 export const THREAT_PROXY_PORT = 8890;
 /** UID/GID of the proxy process in services/sulla-threat-proxy/Dockerfile. */
 export const THREAT_PROXY_UID = 10010;
-export const THREAT_PROXY_CONTAINER = 'sulla_threat_proxy';
+export const THREAT_PROXY_CONTAINER = serviceContainerName('threat_proxy');
 /** Proxy state on the data disk: CA (private), verdict cache, config, blocklist, public CA. */
 export const THREAT_PROXY_STATE_DIR = '/mnt/data/var/lib/sulla/threat-proxy';
 export const THREAT_PROXY_CONTAINER_STATE_DIR = '/var/lib/sulla-threat-proxy';
@@ -158,7 +159,7 @@ export function ensureAgentNetworkCommand(): string[] {
 }
 
 /**
- * Agents also join `sulla_default` to reach Sulla services by name. The
+ * Agents also join the namespace's Compose network to reach services by name. The
  * default route must stay on `sulla-agents`, where the egress rules apply, so
  * the second network gets the lowest gateway priority.
  */

@@ -24,7 +24,7 @@ interface ContainerPort {
   Type:        string;
 }
 
-interface ContainerSummary { Names?: string[]; Ports?: ContainerPort[] }
+interface ContainerSummary { Names?: string[]; Ports?: ContainerPort[]; Labels?: Record<string, string> }
 
 /**
  * Makes published container ports reachable on the Mac. It follows Docker
@@ -120,7 +120,7 @@ export class SullaRuntimePortForwarder {
     for (const container of containers) {
       for (const port of container.Ports ?? []) {
         if (port.Type === 'tcp' && port.PublicPort) {
-          const service = this.serviceName(container.Names?.[0] ?? '', port.PrivatePort);
+          const service = this.serviceName(container.Labels?.['com.docker.compose.service'] ?? container.Names?.[0] ?? '', port.PrivatePort);
           const hostPort = await resolveServicePort(service, this.#servicePorts.get(service));
           wanted.set(hostPort, { guestPort: port.PublicPort, service });
         }
@@ -179,6 +179,15 @@ export class SullaRuntimePortForwarder {
   protected serviceName(containerName: string, privatePort: number): string {
     const clean = containerName.replace(/^\//, '').replace(/^sulla_/, '');
     const aliases: Record<string, string> = {
+      accounts: 'accounts',
+      vault: 'vault',
+      relay: 'relay',
+      tools: 'tools',
+      files: 'files',
+      sulla_accounts: 'accounts',
+      sulla_vault: 'vault',
+      sulla_relay: 'relay',
+      sulla_files: 'files',
       workflow_manager: 'workflows',
       python_runtime: 'runtime-python',
       shell_runtime: 'runtime-shell',

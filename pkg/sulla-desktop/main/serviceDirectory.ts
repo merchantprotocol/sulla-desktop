@@ -8,6 +8,7 @@ import net from 'node:net';
 import path from 'node:path';
 
 import paths from '@pkg/utils/paths';
+import { isDefaultServiceNamespace, serviceNamespace } from '@pkg/utils/serviceNamespace';
 
 export const SERVICE_DEFAULT_PORTS = Object.freeze({
   chat: 3000, command: 6107, terminal: 6108,
@@ -28,6 +29,16 @@ let loaded = false;
 let state: PortState = { version: 1, ports: {} };
 const logged = new Map<string, number>();
 
+function namespaceDefaultPort(service: keyof typeof SERVICE_DEFAULT_PORTS): number {
+  if (isDefaultServiceNamespace) return SERVICE_DEFAULT_PORTS[service];
+  // A namespace gets a deterministic 32-port lane. A real conflict still
+  // falls through to ephemeral allocation and becomes sticky in ports.json.
+  let hash = 2166136261;
+  for (const char of serviceNamespace) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  const lane = (hash >>> 0) % 800;
+  return 32_000 + lane * 32 + Object.keys(SERVICE_DEFAULT_PORTS).indexOf(service);
+}
+
 function logResolution(service: ServiceName, port: number, source: 'persisted' | 'default' | 'reassigned'): void {
   if (logged.get(String(service)) === port && source !== 'reassigned') return;
   logged.set(String(service), port);
@@ -44,12 +55,12 @@ function load(): void {
 }
 
 function persist(): void {
-  fs.mkdirSync(paths.appHome, { recursive: true });
+  fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
   const file = stateFile();
   const temp = `${ file }.${ process.pid }.tmp`;
   fs.writeFileSync(temp, `${ JSON.stringify(state, null, 2) }\n`, { mode: 0o600 });
   fs.renameSync(temp, file);
-  const envFile = path.join(paths.appHome, 'ports.env');
+  const envFile = path.join(path.dirname(file), 'ports.env');
   const envTemp = `${ envFile }.${ process.pid }.tmp`;
   const env = Object.entries(state.ports).sort(([a], [b]) => a.localeCompare(b))
     .map(([service, port]) => `SULLA_SERVICE_${ service.toUpperCase().replaceAll('-', '_') }_PORT=${ port }`).join('\n');
@@ -61,8 +72,9 @@ export function servicePort(service: ServiceName): number {
   load();
   const persisted = state.ports[service];
   if (Number.isInteger(persisted) && persisted > 0 && persisted < 65536) return persisted;
-  const fallback = SERVICE_DEFAULT_PORTS[service as keyof typeof SERVICE_DEFAULT_PORTS];
-  if (!fallback) throw new Error(`Unknown local service: ${ service }`);
+  const known = service as keyof typeof SERVICE_DEFAULT_PORTS;
+  if (!(known in SERVICE_DEFAULT_PORTS)) throw new Error(`Unknown local service: ${ service }`);
+  const fallback = namespaceDefaultPort(known);
   state.ports[service] = fallback;
   persist();
   logResolution(service, fallback, 'default');

@@ -20,6 +20,7 @@
  */
 import os from 'os';
 import path from 'path';
+import { namespacedAppPath } from './serviceNamespace';
 
 
 export interface Paths {
@@ -93,7 +94,7 @@ function getDefaultPaths(): Partial<Paths> {
 
   switch (process.platform) {
   case 'darwin': {
-    const appHome = path.join(home, 'Library', 'Application Support', 'sulla-desktop');
+    const appHome = namespacedAppPath(path.join(home, 'Library', 'Application Support', 'sulla-desktop'));
     // In a packaged app, process.resourcesPath points to Contents/Resources;
     // extraResources are nested under a 'resources' subdirectory there.
     // In dev, fall back to the project's resources directory.
@@ -103,16 +104,16 @@ function getDefaultPaths(): Partial<Paths> {
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.sulla-desktop-data'),
-      config:                     path.join(home, 'Library', 'Preferences', 'sulla-desktop'),
-      logs:                       path.join(home, 'Library', 'Logs', 'sulla-desktop'),
-      cache:                      path.join(home, 'Library', 'Caches', 'sulla-desktop'),
+      altAppHome:                 namespacedAppPath(path.join(home, '.sulla-desktop-data')),
+      config:                     namespacedAppPath(path.join(home, 'Library', 'Preferences', 'sulla-desktop')),
+      logs:                       namespacedAppPath(path.join(home, 'Library', 'Logs', 'sulla-desktop')),
+      cache:                      namespacedAppPath(path.join(home, 'Library', 'Caches', 'sulla-desktop')),
       resources,
-      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
+      integration:                path.join(namespacedAppPath(path.join(home, '.sulla-desktop-data')), 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
       deploymentProfileUser:      path.join(home, 'Library', 'Preferences'),
-      extensionRoot:              path.join(home, 'Library', 'Application Support', 'sulla-desktop', 'extensions'),
+      extensionRoot:              path.join(appHome, 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
@@ -121,23 +122,23 @@ function getDefaultPaths(): Partial<Paths> {
     const dataHome = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
     const configHome = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
     const cacheHome = process.env.XDG_CACHE_HOME || path.join(home, '.cache');
-    const appHome = path.join(dataHome, 'sulla-desktop');
+    const appHome = namespacedAppPath(path.join(dataHome, 'sulla-desktop'));
     const resources = process.resourcesPath
       ? path.join(process.resourcesPath, 'resources')
       : path.join(process.cwd(), 'resources');
 
     return {
       appHome,
-      altAppHome:                 path.join(home, '.sulla-desktop-data'),
-      config:                     path.join(configHome, 'sulla-desktop'),
-      logs:                       path.join(dataHome, 'sulla-desktop', 'logs'),
-      cache:                      path.join(cacheHome, 'sulla-desktop'),
+      altAppHome:                 namespacedAppPath(path.join(home, '.sulla-desktop-data')),
+      config:                     namespacedAppPath(path.join(configHome, 'sulla-desktop')),
+      logs:                       path.join(appHome, 'logs'),
+      cache:                      namespacedAppPath(path.join(cacheHome, 'sulla-desktop')),
       resources,
-      integration:                path.join(home, '.sulla-desktop-data', 'bin'),
+      integration:                path.join(namespacedAppPath(path.join(home, '.sulla-desktop-data')), 'bin'),
       deploymentProfileSystem:    '/etc/sulla-desktop',
       altDeploymentProfileSystem: '/usr/etc/sulla-desktop',
       deploymentProfileUser:      configHome,
-      extensionRoot:              path.join(dataHome, 'sulla-desktop', 'extensions'),
+      extensionRoot:              path.join(appHome, 'extensions'),
       snapshots:                  path.join(appHome, 'snapshots'),
       containerdShims:            path.join(appHome, 'containerd-shims'),
     };
@@ -154,13 +155,13 @@ function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
   const home = os.homedir();
 
   if (!pathsData.sullaHome) {
-    pathsData.sullaHome = path.join(home, 'sulla');
+    pathsData.sullaHome = namespacedAppPath(path.join(home, 'sulla'));
   }
   if (!pathsData.sullaConfig) {
-    pathsData.sullaConfig = path.join(home, '.sulla');
+    pathsData.sullaConfig = namespacedAppPath(path.join(home, '.sulla'));
   }
   if (!pathsData.sullaDesktopCodebase) {
-    pathsData.sullaDesktopCodebase = path.join(home, '.sulla-desktop');
+    pathsData.sullaDesktopCodebase = namespacedAppPath(path.join(home, '.sulla-desktop'));
   }
   if (!pathsData.sullaRuntime && pathsData.resources) {
     pathsData.sullaRuntime = process.env.SULLA_RUNTIME_BIN ||

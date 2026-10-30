@@ -9,6 +9,27 @@ stored in the vault, so first-run startup never waits for vault availability.
 An atomic `appHome/ports.env` projection is regenerated with every change for
 shell consumers that cannot call the catalog.
 
+## Instance namespace
+
+`SULLA_INSTANCE_NAMESPACE` is the one instance identity (default: `sulla`). A
+value such as `sulla-firstrun-test` changes, as one unit:
+
+- the Compose project, generated Compose file, container prefixes, default
+  network, and Compose-owned volume prefixes;
+- Desktop application/config/cache/log/Sulla paths, including that instance's
+  own `appHome/ports.json` and `ports.env`; and
+- the deterministic sticky-port lane used before conflict reassignment.
+
+Compose service keys do not change, so containers still address one another as
+`postgres:5432`, `redis:6379`, `sulla_vault:8787`, and so on inside their own
+namespace network. A first-run test is therefore the same code with only
+`SULLA_INSTANCE_NAMESPACE=sulla-firstrun-test` (plus its separate runtime dir
+when it uses a separate VM), not a numeric port-offset fork.
+
+When `SULLA_RUNTIME_DIR` points at another VM, that VM already has its own
+Docker daemon. Namespace isolation still matters for Mac-side paths and ports,
+and keeps the design safe if test and production ever share one VM.
+
 Main-process callers use `servicePort`, `serviceOrigin`, and
 `onServiceChange`. Renderers use `services:where`, `services:list`, and the
 `services:changed` push event. Agents and scripts use `sulla services/where`
@@ -32,8 +53,8 @@ they do not call back through published host ports.
   the directory. Cloud-facing URLs remain Cloud URLs; no VM guest port is
   exposed as a remote contract.
 - **First-run test instance:** PR #1743's numeric offset is intentionally not a
-  dependency. Once this lands, that instance should use its own appHome and
-  therefore its own `ports.json`.
+  dependency. It should set only its namespace and runtime directory; the
+  namespace supplies its app paths, `ports.json`, Compose resources and ports.
 
 The phase-two name-based HTTP gateway described in the project plan is not
 implemented here. `serviceOrigin` is the seam: a gateway can change origin

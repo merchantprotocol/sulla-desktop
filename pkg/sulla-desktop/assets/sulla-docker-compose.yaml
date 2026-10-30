@@ -6,7 +6,6 @@
 services:
   postgres:
     image: ghcr.io/merchantprotocol/sulla-postgres:latest
-    container_name: sulla_postgres
     ports:
       - "127.0.0.1::5432"
     environment:
@@ -62,7 +61,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: sulla_redis
     ports:
       - "127.0.0.1::6379"
     # Cache and coordination only: no persistence. maxmemory bounds growth;
@@ -82,7 +80,6 @@ services:
   # (backend/onDemandServices.ts); boot does not start them.
   python_runtime:
     image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
-    container_name: sulla_python_runtime
     ports:
       - "127.0.0.1::8080"
     volumes:
@@ -102,7 +99,6 @@ services:
 
   shell_runtime:
     image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
-    container_name: sulla_shell_runtime
     ports:
       - "127.0.0.1::8080"
     volumes:
@@ -121,7 +117,6 @@ services:
 
   node_runtime:
     image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
-    container_name: sulla_node_runtime
     ports:
       - "127.0.0.1::8080"
     volumes:
