@@ -85,7 +85,6 @@
 <script setup lang="ts">
 import { ref, provide, computed, onMounted } from 'vue';
 
-import FirstRunFirstAutomation from './FirstRunFirstAutomation.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
 import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWaiting from './FirstRunWaiting.vue';
@@ -101,13 +100,13 @@ import { RecursivePartial } from '@pkg/utils/typeUtils';
 const { isDark, toggleTheme } = useTheme();
 
 const currentStep = ref(0);
-// Guided setup, modeled on the TrueUp wizard: one clear question per screen,
-// ending in the user's first automation. The backend starts after step 0 and
-// installs in the background while the user answers the rest.
+// Guided setup, modeled on the TrueUp wizard: one clear question per screen.
+// The backend starts after step 0 and installs in the background while the
+// user answers the rest.
 // Step indexes are part of the main-process contract: reaching the final
-// "Finishing" screen (index 4) sets the wizardFinished condition in background.ts.
-const stepNames = ['Welcome', 'Account', 'Your AI', 'First automation', 'Finishing'];
-const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunFirstAutomation, FirstRunWaiting];
+// "Finishing" screen (index 3) sets the wizardFinished condition in background.ts.
+const stepNames = ['Welcome', 'Account', 'Your AI', 'Finishing'];
+const steps = [FirstRunResources, FirstRunWelcome, FirstRunRemoteModel, FirstRunWaiting];
 
 const settings = ref(defaultSettings);
 
@@ -210,7 +209,6 @@ async function runTestAutopilot(mode: 'mac-only' | 'cloud-fake') {
   }
   await clickButton('Continue');
   await clickButton("I'll do this later");
-  await clickButton("I'll explore on my own");
   console.log(`[FirstRunAutopilot] Finished ${ mode } renderer click-through`);
 }
 

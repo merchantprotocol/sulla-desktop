@@ -1552,11 +1552,11 @@ ipcMainProxy.handle('start-sulla-custom-env' as any, async() => {
   await firstRunCoordinator.setCondition('credentialsSet');
 });
 
-// User finished the last user-driven step (First automation) in the first-run
-// wizard. Index 4 is the "Finishing" screen — see stepNames in pages/FirstRun.vue.
+// User finished the last user-driven step (Your AI) in the first-run wizard.
+// Index 3 is the "Finishing" screen — see stepNames in pages/FirstRun.vue.
 ipcMainProxy.handle('first-run-wizard-step' as any, async(_event: any, step: any) => {
   console.log('[FirstRunCoordinator] Wizard reached step:', step);
-  if (step >= 4) {
+  if (step >= 3) {
     // Reaching Finishing means every user-driven screen is complete. AI may
     // be connected now or deferred; either way the wizard must not recur.
     updateFirstRunState({ onboardingComplete: true, step: 0 });
