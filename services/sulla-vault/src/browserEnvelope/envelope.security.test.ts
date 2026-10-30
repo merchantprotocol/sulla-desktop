@@ -15,7 +15,7 @@ import { createSyncEnvelope, EnvelopeError, loadSodium, type SyncBundle, type Sy
 import { bundleFields, itemRecordFields, NEVER_UPLOADED } from './exportBuilder.js';
 
 interface Half { bundle: SyncBundle; records: SyncRecord[]; head: SyncHead; plaintexts: Record<string, string> }
-const kat = JSON.parse(readFileSync(new URL('./vault-sync-v3-kat.json', import.meta.url), 'utf8')) as { password: string; desktop: Half; browser: Half };
+const kat = JSON.parse(readFileSync(new URL('../../src/browserEnvelope/vault-sync-v3-kat.json', import.meta.url), 'utf8')) as { password: string; desktop: Half; browser: Half };
 const accountKat = JSON.parse(readFileSync(new URL('../../../../tests/fixtures/account-auth-v1.json', import.meta.url), 'utf8')) as {
   recoveryCode: string; userKeyFingerprint: string; bundleV2: SyncBundle;
 };
