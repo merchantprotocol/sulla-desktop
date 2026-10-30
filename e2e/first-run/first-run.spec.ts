@@ -10,8 +10,21 @@ import { startFakeServer, type FakeMode } from './fakes';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 type Install = { app: ElectronApplication; page: Page; home: string; statePath: string; fake: Awaited<ReturnType<typeof startFakeServer>> };
-function diagnosticText(lines: string[], urls: string[]): string {
-  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Electron output:', ...lines.slice(-80)].join('\n');
+async function diagnosticText(home: string, lines: string[], urls: string[]): Promise<string> {
+  const logRoot = process.platform === 'darwin' ? path.join(home, 'Library/Logs/sulla-desktop') : path.join(home, '.local/share/sulla-desktop/logs');
+  const fileLines: string[] = [];
+  const visit = async(directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(candidate);
+      else if (entry.isFile()) {
+        const content = await fs.readFile(candidate, 'utf8').catch(() => '');
+        if (content) fileLines.push(`--- ${ path.relative(logRoot, candidate) } ---`, ...content.split(/\r?\n/).filter(Boolean));
+      }
+    }
+  };
+  await visit(logRoot);
+  return [`Windows: ${ urls.length ? urls.join(', ') : '(none)' }`, 'Electron stdout/stderr:', ...lines.slice(-80), 'Electron log files:', ...fileLines.slice(-80)].join('\n');
 }
 async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<string,string> = {}): Promise<Install> {
   home ||= await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-first-run-'));
@@ -45,7 +58,7 @@ async function launch(home?: string, mode: FakeMode = 'new-user', extra: Record<
     const statePath = process.platform === 'darwin' ? path.join(home, 'Library/Application Support/sulla-desktop/electron/first-run-state.json') : path.join(home, '.local/share/sulla-desktop/electron/first-run-state.json');
     return { app, page, home, statePath, fake };
   } catch (error) {
-    const detail = diagnosticText(output, urls);
+    const detail = await diagnosticText(home, output, urls);
     console.error(`::error title=Electron first-run window did not open::${ detail.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A') }`);
     await app.close().catch(() => {});
     await fake.close().catch(() => {});
