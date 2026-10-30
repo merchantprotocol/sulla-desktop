@@ -46,6 +46,7 @@
     if(run){const csp='<meta http-equiv="Content-Security-Policy" content="navigate-to \'none\'; form-action *;">';const head=/<head(?:\s[^>]*)?>/i.exec(value);value=head?value.slice(0,head.index+head[0].length)+csp+value.slice(head.index+head[0].length):csp+value}
     return value;
   }
+  function patchSource(source,from,to,replacement){return source.slice(0,from)+replacement+source.slice(to)}
   function sandboxFor(run){return run?'allow-scripts allow-forms allow-popups allow-modals':'allow-same-origin'}
 
   function mount(host, options={}) {
@@ -96,5 +97,5 @@
     updateSave(saveState);setPeers(peers);setView('builder');render();
     return {setSource(value){source=String(value??'');render();syncSource()},setSaveState:updateSave,setPeers,setReadOnly(value){readOnly=!!value;if(readOnly)editing=false;sourceEditor?.destroy();sourceEditor=null;render();if(view!=='builder')ensureSource()},destroy(){destroyed=true;sourceEditor?.destroy();host.innerHTML=''}};
   }
-  root.SullaHtmlBuilder={mount,version:VERSION,_test:{tokenize,sandboxFor,injectDocument}};
+  root.SullaHtmlBuilder={mount,version:VERSION,_test:{tokenize,patchSource,sandboxFor,injectDocument}};
 })(typeof globalThis!=='undefined'?globalThis:window);

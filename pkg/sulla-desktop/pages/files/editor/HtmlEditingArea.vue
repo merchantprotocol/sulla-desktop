@@ -4,51 +4,28 @@
   SPDX-License-Identifier: GPL-2.0-or-later
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
-<template>
-  <div class="html-area">
-    <div class="view-toggle" role="group" aria-label="HTML view">
-      <button type="button" :class="{ active: mode === 'preview' }" @click="mode = 'preview'">Preview</button>
-      <button type="button" :class="{ active: mode === 'source' }" @click="mode = 'source'">Source</button>
-    </div>
-    <iframe v-if="mode === 'preview'" class="preview" :srcdoc="modelValue" title="HTML preview" sandbox="allow-scripts" />
-    <div v-else ref="host" class="editing-area" />
-  </div>
-</template>
-
+<template><div ref="host" class="html-builder-host" /></template>
 <script setup lang="ts">
 import { html } from '@codemirror/lang-html';
-import type { EditorView } from '@codemirror/view';
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
-
+import { EditorView } from '@codemirror/view';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { createEditor, textPatch, type EditorCollaboration } from './codeMirror';
+import './html-builder/html-builder.css';
+import './html-builder/html-builder.js';
 
-const props = defineProps<{ modelValue:string; readOnly:boolean; live?:EditorCollaboration|null }>();
-const emit = defineEmits<{ 'update:modelValue':[value:string] }>();
-const mode = ref<'preview' | 'source'>('preview');
-const host = ref<HTMLElement>();
-let view:EditorView | undefined;
-let applying = false;
-
-function destroyEditor() { view?.destroy(); view = undefined }
-function build() {
-  destroyEditor();
-  if (!host.value) return;
-  view = createEditor(host.value, props.modelValue, props.readOnly, false, value => {
-    if (!applying) emit('update:modelValue', value);
-  }, [html()], props.live);
+type Peer={id:string;name:string;kind:'user'|'agent'};
+type Builder={setSource:(value:string)=>void;setSaveState:(value:string)=>void;setPeers:(value:Peer[])=>void;setReadOnly:(value:boolean)=>void;destroy:()=>void};
+type BuilderApi={mount:(host:HTMLElement,options:Record<string,unknown>)=>Builder};
+declare global { var SullaHtmlBuilder:BuilderApi }
+const props=defineProps<{modelValue:string;readOnly:boolean;live?:EditorCollaboration|null;fileName?:string;saveState?:string;peers?:Peer[];onBack?:()=>void;onRename?:(name:string)=>Promise<void>|void;onHistory?:()=>void;onShare?:()=>void;onSave?:()=>Promise<void>|void;assetBaseUrl?:string;onOpenInBrowser?:()=>void}>();
+const emit=defineEmits<{'update:modelValue':[value:string]}>();
+const host=ref<HTMLElement>();let builder:Builder|undefined;
+function sourceEditorFactory(parent:HTMLElement,{value,readOnly,onChange}:{value:string;readOnly:boolean;onChange:(value:string)=>void}){
+  const view=createEditor(parent,value,readOnly,false,onChange,[html()],props.live);
+  return{setValue(next:string){const before=view.state.doc.toString();if(before!==next)view.dispatch({changes:textPatch(before,next)})},getValue(){return view.state.doc.toString()},revealRange(from:number,to:number){view.dispatch({selection:{anchor:from,head:to},effects:EditorView.scrollIntoView(from,{y:'center'})});view.focus()},focus(){view.focus()},destroy(){view.destroy()}};
 }
-
-watch(mode, async value => { destroyEditor(); if (value === 'source') { await nextTick(); build() } });
-watch(() => props.live, () => { if (mode.value === 'source') build() });
-watch(() => props.modelValue, value => {
-  if (!view || view.state.doc.toString() === value) return;
-  applying = true;
-  view.dispatch({ changes: textPatch(view.state.doc.toString(), value) });
-  applying = false;
-});
-onBeforeUnmount(destroyEditor);
+function mount(){if(!host.value)return;builder=globalThis.SullaHtmlBuilder.mount(host.value,{source:props.modelValue,fileName:props.fileName,readOnly:props.readOnly,saveState:props.saveState,peers:props.peers,sourceEditorFactory,onChange:(value:string)=>emit('update:modelValue',value),onBack:props.onBack,onRename:props.onRename,onHistory:props.onHistory,onShare:props.onShare,onSave:props.onSave,assetBaseUrl:props.assetBaseUrl,onOpenInBrowser:props.onOpenInBrowser})}
+onMounted(mount);onBeforeUnmount(()=>builder?.destroy());
+watch(()=>props.modelValue,value=>builder?.setSource(value));watch(()=>props.readOnly,value=>builder?.setReadOnly(value));watch(()=>props.saveState,value=>builder?.setSaveState(value||'saved'));watch(()=>props.peers,value=>builder?.setPeers(value||[]));
 </script>
-
-<style scoped>
-.html-area{position:relative;min-height:520px}.view-toggle{display:flex;justify-content:flex-end;gap:2px;margin:-34px 0 22px}.view-toggle button{border:1px solid var(--nx-border,#dde4ee);padding:5px 12px;background:var(--nx-surface,#fff);color:var(--nx-text-secondary,#5b6878);font-size:12px}.view-toggle button:first-child{border-radius:8px 0 0 8px}.view-toggle button:last-child{margin-left:-3px;border-radius:0 8px 8px 0}.view-toggle button.active{position:relative;border-color:var(--nx-text-primary,#1a2332);background:var(--nx-text-primary,#1a2332);color:#fff}.preview{display:block;width:100%;min-height:600px;border:1px solid var(--nx-border,#dde4ee);border-radius:10px;background:#fff}.editing-area{min-height:520px}
-</style>
+<style scoped>.html-builder-host{position:absolute;inset:0;min-height:0}</style>
