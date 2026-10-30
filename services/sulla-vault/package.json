@@ -21,6 +21,7 @@
     "express": "5.2.1",
     "hash-wasm": "4.12.0",
     "jsonwebtoken": "9.0.3",
+    "libsodium-wrappers-sumo": "0.8.4",
     "pg": "8.18.0",
     "ws": "8.21.0",
     "yaml": "2.8.3"
