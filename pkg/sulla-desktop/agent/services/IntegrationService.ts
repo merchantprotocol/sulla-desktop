@@ -669,12 +669,13 @@ export class IntegrationService {
     clientSecret: string,
     accountId?: string,
     extraScopes?: string[],
+    persist = true,
   ): Promise<import('../integrations/oauth/OAuthProvider').OAuthTokenSet> {
     const { getOAuthService } = await import('./OAuthService');
     const oauthService = getOAuthService();
     return oauthService.startFlow(
       integrationId, providerId, clientId, clientSecret,
-      accountId || DEFAULT_ACCOUNT_ID, extraScopes || [],
+      accountId || DEFAULT_ACCOUNT_ID, extraScopes || [], persist,
     );
   }
 

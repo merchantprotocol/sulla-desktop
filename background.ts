@@ -1453,14 +1453,17 @@ ipcMainProxy.handle('first-run-ai:connected', async(_event, providerId: string) 
     throw new Error(`Unknown first-run AI provider: ${ providerId }`);
   }
   console.log(`[FirstRunCoordinator] AI provider connected: ${ providerId }`);
-  try {
-    const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+  const { hasPendingCredential } = await import('@pkg/main/firstRun/pendingCredentials');
+  if (!hasPendingCredential(providerId)) {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
 
-    await getIntegrationService().setActiveAccount(providerId, 'oauth');
-    await getModelProviderService().selectModel(providerId, modelId);
-  } catch (err) {
-    console.warn('[FirstRunCoordinator] Could not make the new sign-in primary:', err);
+      await getIntegrationService().setActiveAccount(providerId, 'oauth');
+      await getModelProviderService().selectModel(providerId, modelId);
+    } catch (err) {
+      console.warn('[FirstRunCoordinator] Could not make the new sign-in primary:', err);
+    }
   }
   await firstRunCoordinator.setCondition('aiConnected');
 });

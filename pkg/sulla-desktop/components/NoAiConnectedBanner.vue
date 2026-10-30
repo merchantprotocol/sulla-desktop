@@ -14,33 +14,54 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const visible = ref(false);
-const providerIds = ['claude-code', 'codex', 'grok', 'anthropic', 'openai'];
+const requestedIntegration = ref<string | null>(null);
+let openedGuidedConnect = false;
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function openVaultConnect(integrationId: string) {
+  window.dispatchEvent(new CustomEvent('sulla:open-secure-vault', {
+    detail: { integrationId, connect: true },
+  }));
+}
 
 async function refresh() {
-  try {
-    const service = getIntegrationService();
-    const accounts = await Promise.all(providerIds.map(id => service.getAccounts(id).catch(() => [])));
-
-    visible.value = !accounts.flat().some(account => account.connected);
-  } catch {
-    // A locked or still-starting vault is not evidence that the user has no model.
+  const status = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
+    .catch(() => ({ connected: false, loading: true }));
+  if (status.loading) {
     visible.value = false;
+    return;
+  }
+
+  const firstRun = await ipcRenderer.invoke('first-run-state:get' as any).catch(() => null);
+  const choice = firstRun?.choices?.aiApiProvider;
+  requestedIntegration.value = typeof choice === 'string' ? choice : null;
+  visible.value = !status.connected;
+
+  if (visible.value && requestedIntegration.value && !openedGuidedConnect) {
+    openedGuidedConnect = true;
+    openVaultConnect(requestedIntegration.value);
   }
 }
 
-function openModels() { openMainTab('models'); }
+function openModels() {
+  if (requestedIntegration.value) openVaultConnect(requestedIntegration.value);
+  else openMainTab('models');
+}
 function onModelChanged() { void refresh(); }
 
 onMounted(() => {
   void refresh();
+  refreshTimer = setInterval(refresh, 2_000);
   ipcRenderer.on('model-provider:state-changed', onModelChanged);
 });
-onBeforeUnmount(() => ipcRenderer.removeListener('model-provider:state-changed', onModelChanged));
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer);
+  ipcRenderer.removeListener('model-provider:state-changed', onModelChanged);
+});
 </script>
 
 <style scoped>

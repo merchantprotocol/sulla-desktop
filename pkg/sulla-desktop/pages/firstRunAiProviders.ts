@@ -58,15 +58,16 @@ export async function signInFirstRunAi(id: FirstRunAiProviderId): Promise<string
   try {
     if (id === 'claude-code') {
       // `claude setup-token` in the VM, driven over a PTY.
-      const result = await ipcRenderer.invoke('claude-oauth:start');
+      const result = await ipcRenderer.invoke('claude-oauth:start', { firstRun: true } as any);
 
       if (result?.error) return result.error;
-      if (!result?.token) return 'Sign-in finished without a token. Try again.';
+      if (!result?.success) return 'Sign-in finished without a token. Try again.';
     } else {
       const result = await ipcRenderer.invoke('integration-oauth:start', {
         integrationId: id,
         providerId:    id,
         accountId:     'oauth',
+        firstRun:      true,
       });
 
       if (!result?.success) return result?.error || 'Sign-in failed. Try again.';

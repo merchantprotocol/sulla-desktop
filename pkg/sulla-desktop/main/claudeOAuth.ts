@@ -27,6 +27,7 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
+import { queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -268,7 +269,7 @@ export function initClaudeOAuthEvents(): void {
   /**
    * Start the OAuth flow. Returns the captured token, or an error message.
    */
-  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent): Promise<{ token?: string; error?: string }> => {
+  ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<{ success?: boolean; token?: string; error?: string }> => {
     if (activeSession) killActiveSession();
 
     // Bail out early with a clear message if the VM isn't ready.
@@ -305,16 +306,26 @@ export function initClaudeOAuthEvents(): void {
         try { session.authWindow?.close() } catch { /* closed */ }
         if (activeSession === session) activeSession = null;
 
-        // Persist the token to /etc/claude-env so Claude Code picks it up now.
         if (result.token) {
-          injectTokenIntoVM(result.token).catch((err) => {
-            console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
-          });
-          persistTokenToVault(result.token).catch((err) => {
-            console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
-          });
+          if (options?.firstRun) {
+            // First run has no durable secret store. Keep the token in main
+            // memory until lane 1b's vault-ready hook flushes it.
+            queuePendingCredential({
+              integrationId: CLAUDE_INTEGRATION_ID,
+              accountId: CLAUDE_OAUTH_ACCOUNT_ID,
+              values: { oauth_token: result.token, api_key: '', account_label: 'Claude Code OAuth' },
+              activate: true,
+            });
+          } else {
+            injectTokenIntoVM(result.token).catch((err) => {
+              console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
+            });
+            persistTokenToVault(result.token).catch((err) => {
+              console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
+            });
+          }
         }
-        resolve(result);
+        resolve(options?.firstRun && result.token ? { success: true } : result);
       };
 
       const timeout = setTimeout(() => {
@@ -328,9 +339,11 @@ export function initClaudeOAuthEvents(): void {
         session.stdoutBuffer += clean;
 
         // Stream progress to the renderer (UI status line)
-        try {
-          event.sender.send('claude-oauth:progress', clean);
-        } catch { /* window closed */ }
+        if (!options?.firstRun) {
+          try {
+            event.sender.send('claude-oauth:progress', clean);
+          } catch { /* window closed */ }
+        }
 
         // Early exit on explicit OAuth error
         if (INVALID_CODE_PATTERN.test(session.stdoutBuffer)) {
