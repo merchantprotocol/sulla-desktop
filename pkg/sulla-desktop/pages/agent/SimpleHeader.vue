@@ -9,6 +9,12 @@
     <div class="relative flex grow basis-0 items-center">
       <WindowDragLogo :size="28" />
     </div>
+    <div
+      v-if="$slots.default"
+      class="sh-center flex flex-none items-center justify-center"
+    >
+      <slot />
+    </div>
     <div class="relative flex basis-0 justify-end gap-6 sm:gap-8">
       <div
         class="relative z-10"

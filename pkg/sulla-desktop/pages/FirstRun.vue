@@ -18,23 +18,23 @@
         :toggle-theme="toggleTheme"
         :on-stop="stopApp"
         :home-url="'#/FirstRun'"
-      />
-
-      <!-- Step bar: where you are, and what's left -->
-      <nav
-        class="fr-steps"
-        aria-label="Setup progress"
       >
-        <div
-          v-for="(name, index) in stepNames"
-          :key="name"
-          class="fr-step"
-          :class="{ 'is-active': index === currentStep, 'is-done': index < currentStep }"
+        <!-- Step bar: where you are, and what's left -->
+        <nav
+          class="fr-steps"
+          aria-label="Setup progress"
         >
-          <span class="fr-step-n">{{ index < currentStep ? '✓' : index + 1 }}</span>
-          <span class="fr-step-t">{{ name }}</span>
-        </div>
-      </nav>
+          <div
+            v-for="(name, index) in stepNames"
+            :key="name"
+            class="fr-step"
+            :class="{ 'is-active': index === currentStep, 'is-done': index < currentStep }"
+          >
+            <span class="fr-step-n">{{ index < currentStep ? '✓' : index + 1 }}</span>
+            <span class="fr-step-t">{{ name }}</span>
+          </div>
+        </nav>
+      </SimpleHeader>
 
       <div
         v-if="showSetupProgress"
@@ -54,7 +54,7 @@
       <div
         id="chat-scroll-container"
         ref="chatScrollContainer"
-        class="flex min-h-0 flex-1 overflow-hidden"
+        class="flex min-h-0 flex-1 overflow-y-auto"
       >
         <div class="fr-stage">
           <div
@@ -271,13 +271,9 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 .fr-steps {
   display: flex;
   justify-content: center;
-  gap: 6px 22px;
+  gap: 6px 18px;
   flex-wrap: wrap;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--border-default, #e2e8f0);
 }
-
-.dark .fr-steps { border-color: var(--border-default, #262d36); }
 
 .fr-step {
   display: flex;
@@ -349,60 +345,38 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
   max-width: 560px;
 }
 
-/* ---- stage + card ---- */
+/* ---- stage: the step sits directly on the page, centered ---- */
 .fr-stage {
   flex: 1;
   min-width: 0;
-  min-height: 0;
+  min-height: 100%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  align-items: stretch;
-  padding: clamp(12px, 3vh, 32px) 24px clamp(12px, 3vh, 32px);
+  padding: 0 16px;
 }
 
 .fr-card {
   width: 100%;
-  height: 100%;
-  min-height: 0;
   max-width: 760px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-surface, #fff);
-  border: 1px solid var(--border-default, #e2e8f0);
-  border-radius: 18px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 16px 40px -18px rgba(15, 23, 42, .22);
-  padding: 12px 20px 20px;
-}
-
-.dark .fr-card {
-  background: var(--bg-surface, #161b22);
-  border-color: var(--border-default, #262d36);
-  box-shadow: 0 16px 40px -18px rgba(0, 0, 0, .7);
 }
 
 .fr-card :deep(> div) {
   width: 100%;
-  height: 100%;
-  min-height: 0;
   max-width: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
-/* Step components use a flex column: only .fr-step-body scrolls while the
- * action footer remains visible at every work-area height. */
-.fr-card :deep(.ffa-actions),
-.fr-card :deep(.frw-actions),
-.fr-card :deep(.frm-actions),
-.fr-card :deep(.fr-account-actions) {
-  flex: none;
+/* No scroll box inside a step: if a step is taller than the window, the page
+ * scrolls as a whole. */
+.fr-card :deep(.fr-step-body) {
+  overflow: visible;
 }
-@media (max-height: 760px) {
-  .fr-steps { padding-block: 8px; }
-  .fr-setup { padding-block: 5px; }
-  .fr-card { padding-block: 8px 12px; }
-  .fr-card :deep(> div) { padding-block: 12px; }
+
+@media (max-width: 900px) {
+  .fr-step-t { display: none; }
 }
 
 /* Noir is opt-in: the first-run window uses the saved theme when one exists,
@@ -420,10 +394,6 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 
 .theme-noir .fr-steps {
   gap: 6px;
-  padding: 13px 22px;
-  border-color: var(--nx-hair);
-  background: rgb(from var(--nx-paper) calc(r + 2) calc(g + 3) calc(b + 2) / .48);
-  backdrop-filter: blur(16px);
 }
 
 .theme-noir .fr-step {
@@ -498,20 +468,11 @@ defineExpose({ isDark, toggleTheme, stepNames, currentStep, steps, next, showSet
 }
 
 .theme-noir .fr-stage {
-  align-items: center;
-  padding: 34px 28px 58px;
+  padding: 0 16px;
 }
 
 .theme-noir .fr-card {
   max-width: 820px;
-  padding: 12px 22px 22px;
-  border-color: var(--nx-hair);
-  border-radius: 24px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 4.5%, transparent), color-mix(in srgb, rgb(from var(--nx-accent-2) calc(r + 62) calc(g + 16) calc(b + 16)) 1.8%, transparent)),
-    color-mix(in srgb, var(--nx-surface) 78%, transparent);
-  box-shadow: inset 0 0 0 .5px var(--nx-hair), 0 30px 80px rgba(0, 0, 0, .48), 0 0 70px color-mix(in srgb, var(--nx-accent) 6%, transparent);
-  backdrop-filter: blur(22px);
 }
 
 .theme-noir .fr-pane-enter-active,
