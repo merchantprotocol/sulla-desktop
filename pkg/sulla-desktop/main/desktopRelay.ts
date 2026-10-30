@@ -68,6 +68,8 @@ const RECONNECT_MAX_MS = 5 * 60_000;
 // While the vault is locked, re-check this often (a cheap local status call)
 // so the relay reconnects promptly after unlock without exponential delay.
 const VAULT_LOCKED_RETRY_MS = 5_000;
+const OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY = (deviceName: string) =>
+  `Someone is signing in on ${ deviceName }. Open Sulla to see the code.`;
 // Heartbeat + watchdog tuned for Cloudflare Workers: the DO auto-responds to
 // "ping" with "pong" via setWebSocketAutoResponse without waking from
 // hibernation. A 20s ping interval + 45s silence watchdog keeps the pipe
@@ -544,7 +546,7 @@ export class DesktopRelayClient {
       const payload = { requestId: msg.requestId, code: msg.code!, expiresAt: msg.expiresAt, requestingDeviceId: msg.requestingDeviceId, requestingDeviceName: msg.requestingDeviceName ?? 'another device' };
       try {
         const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
-        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: `Code ${payload.code} for ${payload.requestingDeviceName}` }).show();
+        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
         }
