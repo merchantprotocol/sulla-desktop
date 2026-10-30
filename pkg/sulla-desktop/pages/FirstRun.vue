@@ -198,16 +198,13 @@ async function runTestAutopilot(mode: 'mac-only' | 'cloud-fake') {
   email.value = 'first-run-autopilot@example.invalid';
   email.dispatchEvent(new Event('input', { bubbles: true }));
   await clickButton('Continue');
-  if (mode === 'cloud-fake') {
-    const password = await waitForElement(() => document.querySelector<HTMLInputElement>('#cloudPassword') || undefined, 'fake Cloud password');
+  // Setup always creates or connects a Cloud account; there is no Mac-only path.
+  const password = await waitForElement(() => document.querySelector<HTMLInputElement>('#cloudPassword') || undefined, 'fake Cloud password');
 
-    password.value = 'not-a-real-password';
-    password.dispatchEvent(new Event('input', { bubbles: true }));
-    await clickButton('Create account and continue');
-  } else {
-    await clickButton('This Mac only, for now');
-  }
-  await clickButton('Continue');
+  password.value = 'not-a-real-password';
+  password.dispatchEvent(new Event('input', { bubbles: true }));
+  await clickButton('Create account and continue');
+  await clickButton('Sync everything');
   await clickButton("I'll do this later");
   console.log(`[FirstRunAutopilot] Finished ${ mode } renderer click-through`);
 }

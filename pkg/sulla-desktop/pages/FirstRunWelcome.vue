@@ -25,8 +25,7 @@
         <label class="flex items-center"><input v-model="sullaSubscribeToUpdates" type="checkbox" class="mr-2"><span class="text-sm label-text">Email me product updates and new automation ideas</span></label>
       </rd-fieldset>
       </div>
-      <div class="flex items-center justify-between mt-5 fr-account-actions">
-        <button type="button" class="link-btn" @click="continueWithoutAccount">Continue without an account</button>
+      <div class="flex items-center justify-end mt-5 fr-account-actions">
         <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary">Continue</button>
       </div>
     </form>
@@ -47,8 +46,7 @@
         <button type="button" class="link-btn mt-2" :disabled="cloudSubmitting" @click="verifyRecoveryCode">Verify code and continue</button>
       </div>
       </div>
-      <div class="flex items-center justify-between mt-5 fr-account-actions">
-        <button type="button" class="link-btn" @click="continueWithoutAccount">This Mac only, for now</button>
+      <div class="flex items-center justify-end mt-5 fr-account-actions">
         <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }" :disabled="cloudSubmitting">{{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Create account and continue') }}</button>
       </div>
     </form>
@@ -61,7 +59,6 @@
       </div>
       <div class="frs-actions fr-account-actions">
         <button type="button" class="px-8 py-3 rounded-md transition-colors font-semibold hover:opacity-90 btn-primary frs-sync-all" :disabled="syncSubmitting" @click="handleSyncChoices(true)">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Sync everything') }}</button>
-        <button type="button" class="link-btn" :disabled="syncSubmitting" @click="handleSyncChoices(false)">Keep it on this Mac only</button>
         <button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway</button>
         <p class="text-xs secondary-text frs-note">You can turn individual things off later in Settings.</p>
       </div>
@@ -129,21 +126,6 @@ async function handleAccountSubmit() {
   step.value = 'cloud';
 }
 
-async function continueWithoutAccount() {
-  cloudAttempt += 1;
-  cloudSubmitting.value = false;
-  cloudPassword.value = '';
-  await saveChoices({
-    accountLinked: false,
-    accountChoice: 'mac-only',
-    primaryUserName: primaryUserName.value.trim(),
-    sullaEmail: '',
-    sullaSubscribeToUpdates: false,
-    cloudPreferences: { enabled: false },
-  });
-  await finishSetup(true);
-}
-
 async function handleCloudSubmit() {
   if (!cloudPassword.value) { cloudError.value = 'Enter a password.'; return; }
   const attempt = ++cloudAttempt;
@@ -164,7 +146,7 @@ async function handleCloudSubmit() {
     cloudPassword.value = '';
     await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
     step.value = 'sync';
-  } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
   finally { if (attempt === cloudAttempt) cloudSubmitting.value = false; }
 }
 
@@ -174,7 +156,7 @@ async function sendRecoveryCode() {
     const res = await ipcRenderer.invoke('sulla-cloud:email-code-start', sullaEmail.value.trim());
     if (!res.ok) { cloudError.value = res.error || 'Could not send a sign-in code.'; return; }
     cloudCodeSent.value = true;
-  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
   finally { cloudSubmitting.value = false; }
 }
 
@@ -187,7 +169,7 @@ async function verifyRecoveryCode() {
     cloudPassword.value = ''; cloudCode.value = '';
     await saveChoices({ accountLinked: true, accountChoice: 'cloud' });
     step.value = 'sync';
-  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection and try again.'; }
   finally { cloudSubmitting.value = false; }
 }
 
