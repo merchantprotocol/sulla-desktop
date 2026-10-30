@@ -49,6 +49,13 @@ jobs:
       - run: corepack enable yarn
       - run: yarn install --immutable --ignore-platform --ignore-scripts
       - run: node node_modules/electron/install.js
+      # Electron's Linux setuid sandbox helper must be root-owned with mode 4755,
+      # or every launch aborts before the app starts. Keep the sandbox on.
+      - name: Configure Electron sandbox helper (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: Build unpackaged app
         shell: bash
         run: |
