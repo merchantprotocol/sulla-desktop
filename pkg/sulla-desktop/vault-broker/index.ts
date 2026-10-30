@@ -25,6 +25,9 @@ import type {
   SullaCloudSessionAdoptRequest,
   SullaCloudSessionResponse,
   SullaCloudDesktopRequest,
+  AccountPasswordRewrapRequest,
+  AccountPasswordRewrapResponse,
+  VaultDeviceApprovalWrapRequest,
 } from '../../../services/sulla-vault/src/contracts';
 
 export type {
@@ -490,6 +493,42 @@ export class LocalVaultApprovalClient {
 
   async clearSullaCloudSession(): Promise<{ cleared: number }> {
     return this.sullaCloudSession('DELETE') as Promise<{ cleared: number }>;
+  }
+
+  async rewrapForAccountPassword(request: AccountPasswordRewrapRequest): Promise<AccountPasswordRewrapResponse> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/account-wrap`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ identity.serviceToken }`,
+        'content-type': 'application/json',
+        'x-sulla-service-id': identity.serviceId,
+      },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json() as Promise<AccountPasswordRewrapResponse>;
+  }
+
+  async wrapUserKeyForApprovedDevice(request: VaultDeviceApprovalWrapRequest): Promise<{ wrappedUserKey: unknown }> {
+    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
+    const response = await this.transport(`${ this.endpoint }/v1/broker/sulla-cloud/device-approval-wrap`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${ identity.serviceToken }`,
+        'content-type': 'application/json',
+        'x-sulla-service-id': identity.serviceId,
+      },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const error = await errorBody(response);
+      throw new VaultBrokerError(error.error, error.message, response.status);
+    }
+    return response.json() as Promise<{ wrappedUserKey: unknown }>;
   }
 
   async sullaCloudRequest(request: SullaCloudDesktopRequest): Promise<BrokerExecuteResponse> {

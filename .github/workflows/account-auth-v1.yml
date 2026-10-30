@@ -6,11 +6,29 @@ on:
       - '.github/workflows/account-auth-v1.yml'
       - 'packages/vault-crypto/**'
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/recoveryKeychain.ts'
+      - 'pkg/sulla-desktop/main/cloud/vaultDeviceApproval.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudLifecycle.ts'
+      - 'pkg/sulla-desktop/vault-broker/index.ts'
+      - 'services/sulla-vault/src/browserEnvelope/**'
+      - 'services/sulla-vault/src/localAuthority.ts'
+      - 'services/sulla-vault/src/localAuthority.test.ts'
+      - 'services/sulla-vault/migrations/017_account_password_wrap.sql'
+      - 'tests/fixtures/account-auth-v1.json'
   push:
     branches: [main]
     paths:
       - 'packages/vault-crypto/**'
       - 'pkg/sulla-desktop/main/sullaCloudAuth.ts'
+      - 'pkg/sulla-desktop/main/recoveryKeychain.ts'
+      - 'pkg/sulla-desktop/main/cloud/vaultDeviceApproval.ts'
+      - 'pkg/sulla-desktop/main/cloud/cloudLifecycle.ts'
+      - 'pkg/sulla-desktop/vault-broker/index.ts'
+      - 'services/sulla-vault/src/browserEnvelope/**'
+      - 'services/sulla-vault/src/localAuthority.ts'
+      - 'services/sulla-vault/src/localAuthority.test.ts'
+      - 'services/sulla-vault/migrations/017_account_password_wrap.sql'
+      - 'tests/fixtures/account-auth-v1.json'
 permissions:
   contents: read
 jobs:
@@ -32,3 +50,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Build and run vault crypto security tests
         run: npm run test:security
+  vault-envelope:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version-file: package.json
+          cache: yarn
+      - run: yarn install --immutable
+      - name: Build and run vault envelope security tests
+        run: yarn --cwd services/sulla-vault test:envelope

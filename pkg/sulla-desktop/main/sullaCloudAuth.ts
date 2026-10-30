@@ -39,6 +39,7 @@ import { deriveAccountAuthHash, deriveMasterKey } from '../../../packages/vault-
 
 import { getDesktopRelayClient } from './desktopRelay';
 import { DevicesCloudApi } from './devicesCloudApi';
+import { saveRecoveryKeyToMacKeychain } from './recoveryKeychain';
 import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
@@ -60,11 +61,16 @@ interface DerivedAccountCredential {
 }
 
 let pendingCloudMasterKey: Uint8Array | undefined;
+let pendingCloudAccountKdf: AccountKdf | undefined;
+let pendingCloudUserId: string | undefined;
 let quitCleanupInstalled = false;
+let accountWrapFlushHookInstalled = false;
 
 function zeroPendingCloudMasterKey(): void {
   pendingCloudMasterKey?.fill(0);
   pendingCloudMasterKey = undefined;
+  pendingCloudAccountKdf = undefined;
+  pendingCloudUserId = undefined;
 }
 
 /**
@@ -81,12 +87,34 @@ export function clearPendingCloudMasterKey(): void {
   zeroPendingCloudMasterKey();
 }
 
-function retainCloudMasterKey(key: Uint8Array): void {
+function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string): void {
   zeroPendingCloudMasterKey();
   pendingCloudMasterKey = key;
+  pendingCloudAccountKdf = kdf;
+  pendingCloudUserId = userId;
   if (!quitCleanupInstalled) {
     quitCleanupInstalled = true;
     process.once('exit', zeroPendingCloudMasterKey);
+  }
+}
+
+async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ recoveryKey?: string }> {
+  const kdf = pendingCloudAccountKdf;
+  const key = takePendingCloudMasterKey();
+  pendingCloudAccountKdf = undefined;
+  pendingCloudUserId = undefined;
+  if (!key || !kdf || !userId || !usesContainerVaultAuthority()) {
+    key?.fill(0);
+    return {};
+  }
+  try {
+    const client = getConfiguredApprovalClient();
+    if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
+    const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(key).toString('base64url'), kdf });
+    if (result.recoveryKey) await saveRecoveryKeyToMacKeychain(userId, result.recoveryKey);
+    return { recoveryKey: result.recoveryKey };
+  } finally {
+    key.fill(0);
   }
 }
 
@@ -540,6 +568,7 @@ interface PasswordAuthResponse {
   httpStatus?: number;
   data?:       VerifyResponse;
   masterKey?:  Uint8Array;
+  kdf?:        AccountKdf;
 }
 
 async function emailLogin(email: string, password: string): Promise<PasswordAuthResponse> {
@@ -560,7 +589,7 @@ async function emailLogin(email: string, password: string): Promise<PasswordAuth
       const response = await res.json().catch(() => ({})) as { error?: string };
       return { ok: false, error: response.error || `HTTP ${ res.status }`, httpStatus: res.status };
     }
-    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey };
+    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey, kdf: credential.kdf };
   } catch (error) {
     credential.masterKey.fill(0);
     throw error;
@@ -586,7 +615,7 @@ async function emailRegister(email: string, password: string, name?: string): Pr
       const body = await res.json().catch(() => ({})) as { error?: string };
       return { ok: false, error: body.error || `HTTP ${ res.status }`, httpStatus: res.status };
     }
-    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey };
+    return { ok: true, data: await res.json() as VerifyResponse, masterKey: credential.masterKey, kdf: credential.kdf };
   } catch (error) {
     credential.masterKey.fill(0);
     throw error;
@@ -776,6 +805,21 @@ export async function getCurrentUserId(): Promise<string> {
 export function initSullaCloudAuthEvents(): void {
   applyFirstRunChoicesWhenReady();
   startPendingCredentialFlush();
+  if (!accountWrapFlushHookInstalled) {
+    accountWrapFlushHookInstalled = true;
+    const lifecycle = getServiceLifecycleManager();
+    const flushWhenReady = () => {
+      if (!pendingCloudMasterKey || !getFirstRunState().onboardingComplete || !lifecycle.isVaultUnlocked() ||
+          !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) return;
+      void flushAccountPasswordWrap().catch(error => {
+        console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
+      });
+    };
+    lifecycle.on('vault:state', flushWhenReady);
+    lifecycle.on('service:ready', (name: string) => { if (name === 'vault') flushWhenReady() });
+    const retry = setInterval(flushWhenReady, 5_000);
+    retry.unref?.();
+  }
   const ipcMainProxy = getIpcMainProxy(console);
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
@@ -904,8 +948,12 @@ export function initSullaCloudAuthEvents(): void {
     if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
-    retainCloudMasterKey(result.masterKey);
-    return completeSignIn(result.data);
+    retainCloudMasterKey(result.masterKey, result.kdf!, (result.data.userId ?? result.data.contractor.id));
+    const signedIn = await completeSignIn(result.data);
+    if (signedIn.ok) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
+      console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
+    });
+    return signedIn;
   });
 
   ipcMainProxy.handle('sulla-cloud:email-code-start', async(_event: unknown, email: string) => {
@@ -956,12 +1004,14 @@ export function initSullaCloudAuthEvents(): void {
     }
     let data: VerifyResponse;
     let masterKey: Uint8Array;
+    let accountKdf: AccountKdf;
     let isNewUser: boolean;
     try {
       const created = await emailRegister(e, password, name?.trim() || undefined);
       if (created.ok && created.data) {
         data = created.data;
         masterKey = created.masterKey!;
+        accountKdf = created.kdf!;
         isNewUser = true;
       } else if (created.httpStatus === 409) {
         const login = await emailLogin(e, password);
@@ -970,6 +1020,7 @@ export function initSullaCloudAuthEvents(): void {
         }
         data = login.data;
         masterKey = login.masterKey!;
+        accountKdf = login.kdf!;
         isNewUser = false;
       } else {
         return { ok: false, error: created.error || 'Could not create your Sulla Cloud account.', status: await buildStatus().catch(() => ({} as any)) };
@@ -977,10 +1028,13 @@ export function initSullaCloudAuthEvents(): void {
     } catch {
       return { ok: false, error: 'Could not reach Sulla Cloud. Check your connection and try again.', status: await buildStatus().catch(() => ({} as any)) };
     }
-    retainCloudMasterKey(masterKey!);
+    retainCloudMasterKey(masterKey!, accountKdf!, (data.userId ?? data.contractor.id));
     const signedIn = shouldKeepSessionInMemory()
       ? await completeFirstRunSignIn(data)
       : await completeSignInWhenReady(data, 'Sulla is still starting up. Wait a minute, then try again.');
+    if (signedIn.ok && !shouldKeepSessionInMemory()) await flushAccountPasswordWrap((data.userId ?? data.contractor.id)).catch(error => {
+      console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
+    });
     return { ...signedIn, isNewUser };
   });
 
@@ -993,8 +1047,12 @@ export function initSullaCloudAuthEvents(): void {
     if (!result.ok || !result.data || !result.masterKey) {
       return { ok: false, error: result.error, status: await buildStatus(result.error) };
     }
-    retainCloudMasterKey(result.masterKey);
-    return completeSignIn(result.data);
+    retainCloudMasterKey(result.masterKey, result.kdf!, (result.data.userId ?? result.data.contractor.id));
+    const signedIn = await completeSignIn(result.data);
+    if (signedIn.ok) await flushAccountPasswordWrap((result.data.userId ?? result.data.contractor.id)).catch(error => {
+      console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
+    });
+    return signedIn;
   });
 
   ipcMainProxy.handle('sulla-cloud:apple-sign-in', async(_event: unknown, identityToken: string, fullName?: string, email?: string): Promise<AuthResult> => {
