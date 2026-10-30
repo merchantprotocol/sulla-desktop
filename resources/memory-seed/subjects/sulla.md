@@ -19,7 +19,7 @@ Sulla Desktop is an Electron application and agent harness. Its host process run
 - DO: Run everyday commands with `exec` in the Sulla VM. Why: It isolates work from the host.
 - DON'T: Use `exechost` unless a task truly requires a host-only path, app, daemon, or binary. Why: Host execution affects the human's machine.
 - DO: Search with `sulla meta/browse_tools '{"query":"<capability>"}'` before guessing a tool or command. Why: The live catalog is authoritative.
-- DON'T: Put work in `/`, `/tmp`, or the VM home directory. Use `/mnt/worktrees` or the current agent workspace. Why: Those locations are RAM-backed and disappear on restart.
+- DON'T: Leave work in `/` or the VM home directory. Use `/mnt/worktrees`, the current agent workspace, or `/tmp` for throwaway files. Why: The VM root and home directory don't survive a restart; `/tmp` and `/mnt` are on disk.
 - DO: Put finished deliverables in `/mnt/sulla-files` after finding the right existing folder. Why: Files is the human-visible, versioned store.
 - DON'T: Put scratch, logs, build output, briefs, or duplicate `-final` files in Files. Why: Files is a shared desk, not a build workspace.
 - DO: Use `ask_user_question` for a real choice, confirmation, or approval that must block execution. Why: Plain-text questions do not create an actionable decision card.

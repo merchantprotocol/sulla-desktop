@@ -3,11 +3,11 @@ slug: sulla-vm
 kind: system
 name: Sulla VM
 parent: sulla
-aliases: [VM, Lima, exec, exechost, /mnt/worktrees, guest]
+aliases: [VM, Sulla runtime, exec, exechost, /mnt/worktrees, guest]
 ---
 
 ## Overview
-The Sulla VM is the isolated Linux guest where agent shell commands run. Its root filesystem, `/tmp`, and guest home are RAM-backed. Persistent work belongs under `/mnt/data`, exposed as `/mnt/worktrees` for development and scratch. Managed human files appear at `/mnt/sulla-files`; the host home and external volumes are not mounted. `exechost` is a separate, last-resort host escape hatch controlled by Administrative Access.
+The Sulla VM is the isolated Linux guest, run by Sulla's own macOS runtime, where agent shell commands run. `/tmp` is on disk. The guest root filesystem and home directory don't survive a restart. Persistent work belongs under `/mnt/data`, exposed as `/mnt/worktrees` for development and scratch. Managed human files appear at `/mnt/sulla-files`; the host home and external volumes are not mounted. `exechost` is a separate, last-resort host escape hatch controlled by Administrative Access.
 
 ## Facts
 - The VM keeps persistent agent worktrees at `/mnt/worktrees`, backed by `/mnt/data/worktrees`.
@@ -20,4 +20,4 @@ The Sulla VM is the isolated Linux guest where agent shell commands run. Its roo
 - DO: Use `/mnt/worktrees/<repo>-<branch>` for code and `/mnt/worktrees/_scratch/<job-id>/` for scratch. Delete scratch when finished.
 - DON'T: Assume the host home is mounted or that a host path is valid in the VM.
 - DON'T: Use AppleScript to open Terminal for shell commands. Use VM `exec`, or `exechost` only for a verified host-only need.
-- DO: Treat restarts as destructive to RAM-backed work and active agents. Preserve important work on persistent storage first.
+- DO: Treat restarts as destructive to work outside `/mnt` and `/tmp`, and to active agents. Preserve important work on persistent storage first.

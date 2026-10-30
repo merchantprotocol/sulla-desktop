@@ -24,7 +24,7 @@ For visual content (reports, statistics, dashboards, charts, tables, widgets): w
 
 Available CSS variables: \`--bg\`, \`--surface-1\` through \`--surface-3\`, \`--text\`, \`--text-muted\`, \`--text-dim\`, \`--accent\` (steel blue #5096b3 — primary brand color), \`--accent-hover\`, \`--accent-dim\`, \`--accent-border\`, \`--border\`, \`--border-muted\`, \`--info\`, \`--success\`, \`--warning\`, \`--danger\`. Do NOT use \`--green\` or \`--green-bright\` as accent colors — green is reserved for success/status only.
 Fonts: \`var(--font-display)\` (Playfair Display for headlines), \`var(--font-mono)\` (JetBrains Mono for body/code), \`var(--font-body)\` (system sans for long text).
-Aesthetic: dark mode only, steel blue accent on dark backgrounds, noir cinematic feel. Use CSS variables — don't hardcode colors. Primary accent is \`--accent\` (steel blue), not green.
+Aesthetic: follow the live app theme through these CSS variables; the human picks light or dark, so never force dark mode, noir or a black background. Use CSS variables — don't hardcode colors. Primary accent is \`--accent\`, not green. These variables exist only inside Sulla chat: for mockups, websites and standalone pages, never reuse them or the chat look — default to a bright, light design unless an approved design says otherwise.
 
 For notifications: use \`notify_user\` via the Tools API when the user is not looking at the chat.
 For simple text: use markdown.`;
@@ -37,7 +37,7 @@ For simple text: use markdown.`;
  */
 export function buildEnvironmentDynamic(ctx: PromptBuildContext): string {
   const installedExtensions = ctx.templateVars['{{installed_extensions}}'] || '';
-  const folderMap = ctx.subconsciousRecallMode === 'v7' ? '' : (ctx.templateVars['{{folder_map}}'] || '');
+  const folderMap = ctx.templateVars['{{folder_map}}'] || '';
   return [folderMap, installedExtensions].filter(Boolean).join('\n\n');
 }
 
@@ -48,7 +48,7 @@ export function buildEnvironmentSection(ctx: PromptBuildContext): PromptSection 
   // default. The runtime-generated tail (installed extensions, etc.) is always
   // appended after it — this is why `environment` is flagged is_generated and
   // the builder does not blindly replace it.
-  const dbStatic = ctx.subconsciousRecallMode === 'v7' ? undefined : ctx.dbSections?.get('environment')?.content;
+  const dbStatic = ctx.dbSections?.get('environment')?.content;
   const staticPart = dbStatic && dbStatic.trim() ? dbStatic : ENVIRONMENT_STATIC_PREAMBLE;
 
   const dynamic = buildEnvironmentDynamic(ctx);
