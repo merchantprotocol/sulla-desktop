@@ -31,6 +31,16 @@ test('account auth derivation matches the shared ACCOUNT-AUTH-V1 known-answer ve
     { memoryBytes: 67_108_864, operations: 3 },
   );
   try {
+    await sodium.ready;
+    const fingerprint = sodium.crypto_generichash(
+      32,
+      new TextEncoder().encode('sulla-account-auth-kat-master-key-fingerprint-v1'),
+      master.key,
+    );
+    assert.equal(
+      sodium.to_base64(fingerprint, sodium.base64_variants.URLSAFE_NO_PADDING),
+      'OXIRUUvyWzZ4_U7PKf9Vt3x17RHT6iItB744RnT1nMU',
+    );
     assert.equal(await deriveAccountAuthHash(master.key), 'ib7ZZX_sM-TmLPJgvs2rUYxS6GG_gCvmF_9Gm_6W108');
   } finally {
     master.key.fill(0);
