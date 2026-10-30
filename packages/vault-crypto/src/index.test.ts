@@ -6,6 +6,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import sodium from 'libsodium-wrappers-sumo';
+
 import {
   createUserKey,
   createUserKeyPair,
@@ -21,7 +23,6 @@ import {
   unwrapUserKey,
   wrapOrgKeyForMember,
 } from './index.js';
-
 
 test('account auth derivation matches the shared ACCOUNT-AUTH-V1 known-answer vector', async() => {
   const master = await deriveMasterKey(
