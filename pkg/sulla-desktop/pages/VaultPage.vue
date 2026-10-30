@@ -12,8 +12,8 @@
     aria-label="Password Manager"
   >
     <div v-if="starting" class="vault-state">
-      <strong>Vault is starting…</strong>
-      <span>Waiting for the secure vault service to come up. This retries automatically.</span>
+      <strong>Getting your vault ready…</strong>
+      <span>The secure vault is still starting. This retries automatically.</span>
     </div>
     <div v-else-if="error" class="vault-state">
       <strong>Vault unavailable</strong>

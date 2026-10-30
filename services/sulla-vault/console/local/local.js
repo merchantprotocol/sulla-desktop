@@ -7,6 +7,8 @@
   'use strict';
 
   let csrf = '';
+  let onboardingCreatesVault = false;
+  let pendingRecoveryCode = '';
   let items = [];
   let selectedId = '';
   let category = 'all';
@@ -531,30 +533,56 @@
       return;
     }
     setPhase(session.phase);
-    if (session.phase === 'unlocked') { await load(); await openIntegrationHint(); } else {
-      byId('unlock-title').textContent = onboarding ? 'Create your vault password' : (session.setupRequired ? 'Create your vault password' : 'Unlock your vault');
-      byId('password').autocomplete = onboarding || session.setupRequired ? 'new-password' : 'current-password';
-      byId('password-confirm-label').hidden = !onboarding;
-      byId('password-confirm').required = onboarding;
+    onboardingCreatesVault = onboarding && session.setupRequired === true;
+    if (session.phase === 'unlocked') {
+      if (onboarding && !onboardingCreatesVault) { location.href = '/vault/desktop/onboarding-complete'; return; }
+      await load(); await openIntegrationHint();
+    } else {
+      byId('unlock-title').textContent = session.setupRequired ? 'Create your vault password' : 'Unlock your vault';
+      byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password';
+      byId('password-confirm-label').hidden = !onboardingCreatesVault;
+      byId('password-confirm').required = onboardingCreatesVault;
     }
   };
 
   byId('cloud-restore-form').onsubmit = async event => { event.preventDefault(); const password = byId('cloud-restore-password'); byId('cloud-restore-error').textContent = ''; byId('cloud-restore-status').textContent = 'Checking encrypted Cloud vault…'; try { await api('/v1/human/files/cloud-escrow/unlock', { method: 'POST', body: JSON.stringify({ password: password.value }) }); password.value = ''; byId('cloud-restore-status').textContent = 'Cloud vault unlocked. Return to Files and continue the restore.'; } catch (error) { password.value = ''; byId('cloud-restore-status').textContent = ''; byId('cloud-restore-error').textContent = error.message; } };
 
+  const configureOnboardingRecovery = async() => {
+    byId('onboarding-recovery').hidden = false;
+    byId('onboarding-recovery-code').textContent = '';
+    byId('onboarding-recovery-error').textContent = '';
+    byId('onboarding-recovery-retry').hidden = true;
+    byId('onboarding-recovery-copy').disabled = true;
+    byId('onboarding-recovery-download').disabled = true;
+    byId('onboarding-recovery-saved').disabled = true;
+    byId('onboarding-recovery-continue').disabled = true;
+    try {
+      await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode: pendingRecoveryCode }) });
+      byId('onboarding-recovery-code').textContent = pendingRecoveryCode;
+      byId('onboarding-recovery-copy').disabled = false;
+      byId('onboarding-recovery-download').disabled = false;
+      byId('onboarding-recovery-saved').disabled = false;
+      byId('onboarding-recovery').hidden = false;
+    } catch (error) {
+      byId('onboarding-recovery-error').textContent = `Your vault was created, but its recovery key was not saved: ${error.message}`;
+      byId('onboarding-recovery-retry').hidden = false;
+    }
+  };
   byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; try {
     const password = byId('password').value;
-    if (onboarding && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
+    if (onboardingCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
     const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password }) });
     csrf = result.csrf; byId('password').value = ''; byId('password-confirm').value = ''; setPhase('unlocked');
-    if (onboarding) {
+    if (onboardingCreatesVault) {
       const bytes = crypto.getRandomValues(new Uint8Array(32));
-      const recoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0);
-      await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode }) });
+      pendingRecoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0);
       byId('vault').hidden = true; byId('unlock').hidden = false; byId('unlock-form').hidden = true;
       byId('unlock-title').textContent = 'Vault created'; byId('unlock-help').textContent = 'Your vault is encrypted and its unlock cache is protected by this Mac.';
-      byId('onboarding-recovery-code').textContent = recoveryCode; byId('onboarding-recovery').hidden = false;
-    } else { await load(); await openIntegrationHint(); }
+      await configureOnboardingRecovery();
+    } else if (onboarding) { location.href = '/vault/desktop/onboarding-complete'; }
+    else { await load(); await openIntegrationHint(); }
   } catch (error) { byId('unlock-error').textContent = error.message; } };
+  byId('onboarding-recovery-retry').onclick = () => { void configureOnboardingRecovery(); };
   byId('onboarding-recovery-saved').onchange = event => { byId('onboarding-recovery-continue').disabled = !event.target.checked; };
   byId('onboarding-recovery-copy').onclick = async() => { try { await navigator.clipboard.writeText(byId('onboarding-recovery-code').textContent); message('Recovery key copied.'); } catch { byId('onboarding-recovery-error').textContent = 'Could not copy. Select the key and copy it manually.'; } };
   byId('onboarding-recovery-download').onclick = () => { const blob = new Blob([byId('onboarding-recovery-code').textContent + '\n'], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'sulla-vault-recovery-key.txt'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); };

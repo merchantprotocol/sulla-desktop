@@ -38,7 +38,7 @@
         <p v-if="cloudError" class="text-sm mt-1 error-text">{{ cloudError }}</p>
       </div>
       <div class="flex items-center justify-between mt-5">
-        <button type="button" class="link-btn" :disabled="cloudSubmitting" @click="continueWithoutAccount">This Mac only, for now</button>
+        <button type="button" class="link-btn" @click="continueWithoutAccount">This Mac only, for now</button>
         <button type="submit" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :class="{ 'opacity-50 cursor-not-allowed': cloudSubmitting }" :disabled="cloudSubmitting">{{ cloudSubmitting ? 'Connecting…' : (cloudAccountExists ? 'Sign in and continue' : 'Create account and continue') }}</button>
       </div>
     </form>
@@ -56,7 +56,8 @@
         <label class="sync-row"><input v-model="syncEnabled" type="checkbox"><span><strong>Sync this Sulla</strong> — master switch</span></label>
         <label v-for="category in syncCategories" :key="category.key" class="sync-row" :class="{ disabled: !syncEnabled }"><input v-model="category.enabled" type="checkbox" :disabled="!syncEnabled"><span><strong>{{ category.label }}</strong> — {{ category.description }}</span></label>
       </rd-fieldset>
-      <div class="flex justify-end mt-5"><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" @click="handleSyncChoices">Continue</button></div>
+      <p v-if="syncError" class="text-sm mt-1 error-text">{{ syncError }}</p>
+      <div class="flex items-center justify-end gap-4 mt-5"><button v-if="syncError" type="button" class="link-btn" @click="finishSetup(true)">Continue anyway (change later in Settings)</button><button type="button" class="px-6 py-2 rounded-md transition-colors font-medium hover:opacity-90 btn-primary" :disabled="syncSubmitting" @click="handleSyncChoices">{{ syncSubmitting ? 'Saving…' : (syncError ? 'Retry' : 'Continue') }}</button></div>
     </div>
   </div>
 </template>
@@ -76,12 +77,15 @@ const cloudPassword = ref('');
 const cloudError = ref('');
 const cloudSubmitting = ref(false);
 const cloudAccountExists = ref(false);
+let cloudAttempt = 0;
 const sullaEmail = ref('');
 const primaryUserName = ref('');
 const sullaSubscribeToUpdates = ref(false);
 const emailError = ref('');
 const accountLinked = ref(false);
 const syncEnabled = ref(true);
+const syncError = ref('');
+const syncSubmitting = ref(false);
 const syncCategories = ref([
   { key: 'conversations', label: 'Conversations', description: 'continue chats on your other devices', enabled: true },
   { key: 'files', label: 'Files', description: 'make your Sulla Files available everywhere', enabled: true },
@@ -121,6 +125,8 @@ async function handleAccountSubmit() {
 }
 
 function continueWithoutAccount() {
+  cloudAttempt += 1;
+  cloudSubmitting.value = false;
   accountLinked.value = false;
   cloudPassword.value = '';
   step.value = 'vault';
@@ -128,23 +134,25 @@ function continueWithoutAccount() {
 
 async function handleCloudSubmit() {
   if (cloudPassword.value.length < 8) { cloudError.value = 'Password must be at least 8 characters.'; return; }
+  const attempt = ++cloudAttempt;
   cloudSubmitting.value = true; cloudError.value = '';
   try {
     const res = await ipcRenderer.invoke('sulla-cloud:email-continue', sullaEmail.value.trim(), cloudPassword.value, primaryUserName.value.trim() || undefined);
+    if (attempt !== cloudAttempt) return;
     if (!res.ok) { cloudAccountExists.value = !!res.accountExists; cloudError.value = res.error || 'Could not connect to Sulla Cloud.'; return; }
     cloudPassword.value = '';
     accountLinked.value = true;
     await SullaSettingsModel.set('sullaCloudLinked', true, 'boolean');
     step.value = 'vault';
-  } catch { cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
-  finally { cloudSubmitting.value = false; }
+  } catch { if (attempt === cloudAttempt) cloudError.value = 'Could not reach Sulla Cloud. Check your connection or choose This Mac only.'; }
+  finally { if (attempt === cloudAttempt) cloudSubmitting.value = false; }
 }
 
 async function handleVaultComplete() {
   // The isolated vault owns the password and recovery key. Only its completion signal crosses this boundary.
   await persistInstallSettings();
-  step.value = accountLinked.value ? 'sync' : 'account';
-  if (!accountLinked.value) await finishSetup(false);
+  if (accountLinked.value) step.value = 'sync';
+  else await finishSetup(false);
 }
 
 async function persistInstallSettings() {
@@ -159,10 +167,18 @@ async function persistInstallSettings() {
 }
 
 async function handleSyncChoices() {
+  syncSubmitting.value = true;
+  syncError.value = '';
   const patch: Record<string, boolean> = { enabled: syncEnabled.value };
   for (const category of syncCategories.value) patch[category.key] = category.enabled;
   try { await ipcRenderer.invoke('sulla-cloud-connection:set-preferences', patch); }
-  catch (err) { console.warn('[FirstRunWelcome] Could not save sync choices:', err); return; }
+  catch (err) {
+    console.warn('[FirstRunWelcome] Could not save sync choices:', err);
+    syncError.value = 'We could not save your sync choices. Retry, or continue and change them later in Settings.';
+    syncSubmitting.value = false;
+    return;
+  }
+  syncSubmitting.value = false;
   await finishSetup(true);
 }
 
