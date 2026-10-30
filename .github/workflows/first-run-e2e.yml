@@ -66,7 +66,7 @@ jobs:
           args=(--repeat "$REPEAT")
           [[ -n "$GREP" ]] && args+=(--grep "$GREP")
           xvfb-run --auto-servernum yarn e2e:first-run "${args[@]}" 2>&1 | tee first-run-e2e.log || {
-            detail=$(tail -n 80 first-run-e2e.log | tail -c 5000 | tr -d '\r' | sed 's/%/%25/g;s/\r/%0D/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            detail=$({ head -n 50 first-run-e2e.log | head -c 2400; echo '--- final 50 lines ---'; tail -n 50 first-run-e2e.log | tail -c 2400; } | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
             echo "::error title=First-run simulator failed::${detail}"
             exit 1
           }
