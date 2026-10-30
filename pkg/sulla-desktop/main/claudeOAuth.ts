@@ -31,6 +31,7 @@ import { queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import * as window from '@pkg/window';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
 const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
@@ -117,6 +118,27 @@ async function injectTokenIntoVM(token: string): Promise<void> {
     console.log('[ClaudeOAuth] Token injected into VM at /etc/claude-env');
   } finally {
     fs.promises.unlink(tmpPath).catch(() => { /* ignore */ });
+  }
+}
+
+async function injectTokenIntoVMWhenReady(token: string): Promise<void> {
+  for (;;) {
+    if (await isVMRunning()) {
+      try {
+        await injectTokenIntoVM(token);
+        return;
+      } catch (error) {
+        console.warn('[ClaudeOAuth] VM token injection is not ready yet:', (error as Error).message);
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+  }
+}
+
+function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+    throw new Error('Claude OAuth is only available from a trusted Sulla window');
   }
 }
 
@@ -270,6 +292,7 @@ export function initClaudeOAuthEvents(): void {
    * Start the OAuth flow. Returns the captured token, or an error message.
    */
   ipcMainProxy.handle('claude-oauth:start', async(event: Electron.IpcMainInvokeEvent, options?: { firstRun?: boolean }): Promise<{ success?: boolean; token?: string; error?: string }> => {
+    assertFirstRunOrMainSender(event);
     if (activeSession) killActiveSession();
 
     // Bail out early with a clear message if the VM isn't ready.
@@ -307,6 +330,7 @@ export function initClaudeOAuthEvents(): void {
         if (activeSession === session) activeSession = null;
 
         if (result.token) {
+          void injectTokenIntoVMWhenReady(result.token);
           if (options?.firstRun) {
             // First run has no durable secret store. Keep the token in main
             // memory until lane 1b's vault-ready hook flushes it.
@@ -317,9 +341,6 @@ export function initClaudeOAuthEvents(): void {
               activate: true,
             });
           } else {
-            injectTokenIntoVM(result.token).catch((err) => {
-              console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
-            });
             persistTokenToVault(result.token).catch((err) => {
               console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
             });

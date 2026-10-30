@@ -1435,12 +1435,23 @@ ipcMainProxy.handle('startup/retry' as any, (event) => {
   return { started: true };
 });
 
+function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
+  const sender = Electron.BrowserWindow.fromWebContents(event.sender);
+  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+    throw new Error('First-run AI state is only available from a trusted Sulla window');
+  }
+}
+
 // Finishing screen asks whether the VM + database are up so it can sign in.
-ipcMainProxy.handle('first-run-ai:status', () => ({ ready: firstRunAiSignInReady }));
+ipcMainProxy.handle('first-run-ai:status', (event) => {
+  assertFirstRunOrMainSender(event);
+  return { ready: firstRunAiSignInReady };
+});
 
 // Finishing screen signed the user in to their AI provider. Make that
 // sign-in the active account and the primary model, then let the wizard close.
-ipcMainProxy.handle('first-run-ai:connected', async(_event, providerId: string) => {
+ipcMainProxy.handle('first-run-ai:connected', async(event, providerId: string) => {
+  assertFirstRunOrMainSender(event);
   const { GROK_SUBSCRIPTION_DEFAULT_MODEL } = await import('@pkg/agent/languagemodels/GrokService');
   const defaultModels: Record<string, string> = {
     'claude-code': 'claude-code', // CLI default

@@ -19,14 +19,24 @@
  * YAML/OAuth-manifest provider.
  */
 
+import { BrowserWindow } from 'electron';
+
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import * as window from '@pkg/window';
 
 const console = Logging.background;
 
 const LOG_PREFIX = '[IntegrationOAuth]';
+function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
+  const sender = BrowserWindow.fromWebContents(event.sender);
+  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+    throw new Error('AI connection is only available from a trusted Sulla window');
+  }
+}
+
 export function initIntegrationOAuthEvents(): void {
   const ipcMainProxy = getIpcMainProxy(console);
 
@@ -37,7 +47,7 @@ export function initIntegrationOAuthEvents(): void {
    * integration connected.
    */
   ipcMainProxy.handle('integration-oauth:start', async(
-    _event: unknown,
+    event: Electron.IpcMainInvokeEvent,
     payload: {
       integrationId: string;
       providerId:    string;
@@ -49,6 +59,7 @@ export function initIntegrationOAuthEvents(): void {
     },
   ): Promise<{ success: boolean; error?: string }> => {
     try {
+      if (payload.firstRun) assertFirstRunOrMainSender(event);
       const integrationService = getIntegrationService();
 
       const tokens = await integrationService.startOAuthFlow(
@@ -82,7 +93,8 @@ export function initIntegrationOAuthEvents(): void {
     }
   });
 
-  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
+  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
+    assertFirstRunOrMainSender(event);
     const pending = pendingIntegrationIds();
     try {
       const service = getIntegrationService();
