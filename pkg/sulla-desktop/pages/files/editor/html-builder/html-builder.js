@@ -147,12 +147,8 @@
       value = head ? value.slice(0, head.index + head[0].length) + tag + value.slice(head.index + head[0].length) :
         tag + value;
     }
-    if (run) {
-      const csp = '<meta http-equiv="Content-Security-Policy" content="navigate-to \'none\';">';
-      const head = /<head(?:\s[^>]*)?>/i.exec(value);
-      value = head ? value.slice(0, head.index + head[0].length) + csp + value.slice(head.index + head[0].length) :
-        csp + value;
-    }
+    // Run mode needs no extra meta: the sandbox (no allow-top-navigation, no
+    // allow-same-origin) is what keeps the page away from the app.
     return value;
   }
 
@@ -162,6 +158,37 @@
 
   function sandboxFor(run) {
     return run ? 'allow-scripts allow-forms allow-popups allow-modals' : 'allow-same-origin';
+  }
+
+  // Which frame policy to use. Hosts with a strict CSP (Sulla Cloud's vault
+  // origin) pass canRunScripts: false, so "editing off" is a read-only,
+  // script-free preview instead of a run mode that would silently do nothing.
+  function previewPolicy(editing, canRunScripts) {
+    const run = !editing && canRunScripts !== false;
+    return { run, sandbox: sandboxFor(run) };
+  }
+
+  // Strict-CSP hosts (style-src without 'unsafe-inline') block <style> and
+  // style="" inside srcdoc frames. CSSOM is not governed by style-src, so
+  // re-apply the page's own styles through constructed sheets and
+  // element.style. Only used for same-origin (non-run) frames.
+  function applyCssomStyles(d) {
+    const win = d && d.defaultView;
+    if (!win || typeof win.CSSStyleSheet !== 'function' || !('adoptedStyleSheets' in d)) return;
+    const sheets = [];
+    d.querySelectorAll('style').forEach(node => {
+      try {
+        const sheet = new win.CSSStyleSheet();
+        sheet.replaceSync(node.textContent || '');
+        sheets.push(sheet);
+      } catch (_) {
+        // A sheet the browser can't parse is skipped, same as in a normal page.
+      }
+    });
+    d.adoptedStyleSheets = sheets;
+    d.querySelectorAll('[style]').forEach(el => {
+      el.style.cssText = el.getAttribute('style') || '';
+    });
   }
 
   function mount(host, options = {}) {
@@ -351,8 +378,11 @@
       } catch (_) {
         runKeep = 0;
       }
-      frame.setAttribute('sandbox', sandboxFor(!editing));
-      frame.srcdoc = injectDocument(src, !editing, options.assetBaseUrl);
+      const policy = previewPolicy(editing, options.canRunScripts);
+      frame.setAttribute('sandbox', policy.sandbox);
+      frame.srcdoc = injectDocument(src, policy.run, options.assetBaseUrl);
+      const badge = host.querySelector('.shb-wb-url b');
+      if (badge) badge.textContent = policy.run ? 'Scripts running · sandboxed' : 'Preview · scripts don’t run here';
     }
     addEventListener('message', e => {
       if (e.data && e.data.sullaPreviewLink != null) {
@@ -383,6 +413,7 @@
       render();
       localStorage.setItem('sulla.htmlEditor.editing', on ? '1' : '0');
       toast(on ? 'Editing on · scripts paused while you edit' :
+        options.canRunScripts === false ? 'Editing off · read-only preview, scripts don’t run here' :
         'Editing off · the page runs like a browser, scripts on')
     }
     const LOCKED = ['Edit', 'Insert', 'Format', 'Inspect'];
@@ -393,6 +424,8 @@
     };
     if ($('pOpen')) $('pOpen').onclick = () => options.onOpenInBrowser();
     frame.addEventListener('load', () => {
+      const run = previewPolicy(editing, options.canRunScripts).run;
+      if (!run && options.styleMode === 'cssom') applyCssomStyles(doc());
       if (!editing) return;
       const d = doc();
       if (runKeep) frame.contentWindow.scrollTo(0, runKeep);
@@ -2115,6 +2148,8 @@
       tokenize,
       patchSource,
       sandboxFor,
+      previewPolicy,
+      applyCssomStyles,
       injectDocument
     }
   };

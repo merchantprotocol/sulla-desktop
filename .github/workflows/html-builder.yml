@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Runs the shared HTML editor invariants (source fidelity, element mapping,
+# iframe security policy) on every PR that touches the editor. The core is
+# vendored into Sulla Cloud, so a regression here ships to both apps.
+name: HTML editor
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/html-builder.yml'
+      - 'pkg/sulla-desktop/pages/files/editor/html-builder/**'
+      - 'pkg/sulla-desktop/pages/files/editor/HtmlEditingArea.vue'
+      - 'pkg/sulla-desktop/pages/files/editor/__tests__/htmlBuilder.test.ts'
+  push:
+    branches: [main]
+    paths:
+      - 'pkg/sulla-desktop/pages/files/editor/html-builder/**'
+      - 'pkg/sulla-desktop/pages/files/editor/__tests__/htmlBuilder.test.ts'
+permissions:
+  contents: read
+jobs:
+  invariants:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+      with:
+        node-version-file: package.json
+    - name: Install JavaScript dependencies
+      run: |
+        corepack enable yarn
+        yarn install --immutable --ignore-platform --ignore-scripts
+    - name: Syntax-check the dependency-free core
+      run: node --check pkg/sulla-desktop/pages/files/editor/html-builder/html-builder.js
+    - name: HTML editor invariants
+      run: yarn test:unit:jest --runInBand pkg/sulla-desktop/pages/files/editor/__tests__/htmlBuilder.test.ts
