@@ -325,11 +325,12 @@ export function createApp(db: Database, config: VaultConfig, options: { localAut
         sealedLegacyVmk: typeof request.body.sealedLegacyVmk === 'string' ? request.body.sealedLegacyVmk : undefined,
       }));
     });
-    app.get('/v1/desktop/status', (request, response) => {
+    app.get('/v1/desktop/status', async(request, response) => {
       const identity = serviceIdentity(request);
       localAuthority.requireControlIdentity(identity.serviceId, identity.token);
       const status = localAuthority.status();
-      response.json({ ...status, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
+      const setupRequired = !status.unlocked && await localAuthority.isSetupRequired();
+      response.json({ ...status, setup: { required: setupRequired }, migration: { required: status.state === 'migration_required', error: status.state === 'migration_failed' ? 'migration_failed' : undefined } });
     });
     app.post('/v1/desktop/lock', async(request, response) => {
       const identity = serviceIdentity(request);

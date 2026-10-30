@@ -1318,8 +1318,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     serviceId: string, token: string, input: AccountPasswordRewrapRequest,
   ): Promise<AccountPasswordRewrapResponse> {
     this.requireApprovalIdentity(serviceId, token);
-    const keys = this.requireKeys();
-    const generation = this.generation;
     const kdf = input?.kdf;
     if (kdf?.alg !== 'argon2id13' || !/^[A-Za-z0-9_-]{22}$/.test(kdf.salt) ||
         kdf.memoryBytes !== 67_108_864 || kdf.ops !== 3) {
@@ -1330,6 +1328,27 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       masterKey.fill(0);
       throw new LocalVaultError('invalid_unlock_material', 400, 'Account master key is invalid');
     }
+    // Fresh install: no vault exists yet. Create it from the signed-in Cloud
+    // account key, so the Cloud password is the vault password from the start
+    // and the person is never asked to invent a second one. An existing vault
+    // must already be unlocked; this never replaces one.
+    if (!this.keys) {
+      const created = await this.runSecurityOperation(async() => {
+        if (this.keys) return false;
+        if (!await this.isSetupRequired()) return null;
+        await this.activateMasterKey(Uint8Array.from(masterKey), undefined, {
+          authority: 'container', version: 1,
+          password: { salt: kdf.salt, parameters: { memoryBytes: kdf.memoryBytes, operations: kdf.ops } },
+        });
+        return true;
+      });
+      if (created === null) {
+        masterKey.fill(0);
+        throw new LocalVaultError('vault_locked', 423, 'Unlock the vault before moving it to the account password');
+      }
+    }
+    const keys = this.requireKeys();
+    const generation = this.generation;
     let recoveryKey: Buffer | undefined;
     let recoveryMasterKey: Uint8Array | undefined;
     try {

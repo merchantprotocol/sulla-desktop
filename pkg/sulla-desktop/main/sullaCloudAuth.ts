@@ -828,12 +828,23 @@ export function initSullaCloudAuthEvents(): void {
   if (!accountWrapFlushHookInstalled) {
     accountWrapFlushHookInstalled = true;
     const lifecycle = getServiceLifecycleManager();
+    let flushing = false;
     const flushWhenReady = () => {
-      if (!pendingCloudMasterKey || !getFirstRunState().onboardingComplete || !lifecycle.isVaultUnlocked() ||
+      if (flushing || !pendingCloudMasterKey || !getFirstRunState().onboardingComplete ||
           !lifecycle.serviceStatuses().some(({ name, status }) => name === 'vault' && status === 'ready')) return;
-      void flushAccountPasswordWrap().catch(error => {
+      flushing = true;
+      void (async() => {
+        // An unlocked vault moves to the account password; a vault that does
+        // not exist yet (fresh install) is created from the account key.
+        if (!lifecycle.isVaultUnlocked()) {
+          const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
+          const status = await getDesktopVaultClient().status();
+          if (!status.setup?.required) return;
+        }
+        await flushAccountPasswordWrap();
+      })().catch(error => {
         console.warn('[SullaCloudAuth] Account-password vault migration is pending:', error instanceof Error ? error.message : String(error));
-      });
+      }).finally(() => { flushing = false });
     };
     lifecycle.on('vault:state', flushWhenReady);
     lifecycle.on('service:ready', (name: string) => { if (name === 'vault') flushWhenReady() });
