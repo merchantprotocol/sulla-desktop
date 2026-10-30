@@ -196,6 +196,7 @@ export class OAuthService {
     console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
 
     let authWindow: BrowserWindow | null = null;
+    let codeSource: Promise<{ code: string }> = codePromise;
 
     try {
       if (!effectiveClientId && cfg.registrationEndpoint) {
@@ -227,7 +228,33 @@ export class OAuthService {
         // ~/.codex/auth.json) — an external browser would finish the handshake
         // outside Sulla and the in-VM tool would never see the credentials.
         console.log(`${ LOG_PREFIX } Opening embedded auth window for ${ cfg.name }...`);
-        authWindow = this.openEmbeddedAuthWindow(authorizeUrl, cfg.name);
+        // Read the code straight off the redirect inside our own window. The
+        // localhost server stays as the fallback, but the hop through
+        // localhost can miss (localhost resolving to ::1 while the server is
+        // on 127.0.0.1), and the user then only sees a 5-minute timeout.
+        let deliver!: (result: { code: string }) => void;
+        let fail!: (err: Error) => void;
+        const intercepted = new Promise<{ code: string }>((resolve, reject) => { deliver = resolve; fail = reject });
+        const expected = new URL(redirectUri);
+        authWindow = this.openEmbeddedAuthWindow(authorizeUrl, cfg.name, (target) => {
+          let url: URL;
+          try { url = new URL(target) } catch { return false }
+          const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+          if (!loopback || url.port !== expected.port || url.pathname !== expected.pathname) return false;
+          const error = url.searchParams.get('error');
+          if (error) {
+            fail(new Error(`OAuth error: ${ url.searchParams.get('error_description') || error }`));
+            return true;
+          }
+          const code = url.searchParams.get('code');
+          if (!code || url.searchParams.get('state') !== state) return false;
+          console.log(`${ LOG_PREFIX } Intercepted callback in the auth window`);
+          deliver({ code });
+          return true;
+        });
+        intercepted.catch(() => { /* surfaced through the race below */ });
+        codePromise.catch(() => { /* superseded once the window delivers */ });
+        codeSource = Promise.race([codePromise, intercepted]);
       } else {
         console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
         await shell.openExternal(authorizeUrl);
@@ -236,7 +263,8 @@ export class OAuthService {
       // Wait for the user to complete authorization. The localhost callback
       // server captures the code regardless of which browser rendered the page;
       // when we own the window, also treat the user closing it as a cancel.
-      const { code } = await this.awaitAuthorizationCode(codePromise, authWindow);
+      const { code } = await this.awaitAuthorizationCode(codeSource, authWindow);
+      shutdown(); // free the fixed callback port as soon as the code is in hand
       console.log(`${ LOG_PREFIX } Received authorization code`);
 
       // Exchange code for tokens
@@ -294,7 +322,7 @@ export class OAuthService {
   // ── Embedded auth window (in-app browser) ─────────────────────
 
   /** Open the authorize URL in a Sulla-owned Electron window. */
-  private openEmbeddedAuthWindow(url: string, providerName: string): BrowserWindow {
+  private openEmbeddedAuthWindow(url: string, providerName: string, onUrl?: (url: string) => boolean): BrowserWindow {
     // Contained: no hand-offs to other apps, popups stay in Sulla, and the
     // code can only come back through our localhost callback server.
     const win = createContainedAuthWindow({
@@ -303,6 +331,7 @@ export class OAuthService {
       title:     `Sign in — ${ providerName }`,
       partition: 'persist:integration-oauth',
       logPrefix: LOG_PREFIX,
+      onUrl,
     });
     win.loadURL(url).catch((err) => {
       console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);

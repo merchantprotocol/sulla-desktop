@@ -158,6 +158,15 @@ export async function startOAuthCallbackServer(
     });
   });
 
+  // A 'localhost' redirect may resolve to ::1 first, so also accept the
+  // callback on IPv6 loopback. Best effort: a host without IPv6 still has
+  // the 127.0.0.1 listener.
+  const v6Server = opts.useLocalhostHostname ? http.createServer((req, res) => server.emit('request', req, res)) : null;
+  if (v6Server) {
+    v6Server.on('error', (err) => console.warn(`[OAuthCallbackServer] IPv6 loopback listener unavailable: ${ err.message }`));
+    v6Server.listen((server.address() as { port: number }).port, '::1');
+  }
+
   // Post-listen errors surface through the flow promise.
   server.on('error', (err) => {
     rejectFn(new Error(`OAuth callback server error: ${ err.message }`));
@@ -177,6 +186,9 @@ export async function startOAuthCallbackServer(
     clearTimeout(timeoutHandle);
     try {
       server.close();
+    } catch { /* already closed */ }
+    try {
+      v6Server?.close();
     } catch { /* already closed */ }
   }
 
