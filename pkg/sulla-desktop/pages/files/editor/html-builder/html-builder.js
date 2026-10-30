@@ -273,6 +273,12 @@
     const $ = id => host.querySelector(`#${id}`);
     const frame = $('frame');
     let src = String(options.source ?? '');
+    // Source editors (the textarea, CodeMirror) hand text back with "\n" line
+    // endings. Keep the file's own style so a source edit never rewrites every
+    // line ending of a CRLF file.
+    const eolOf = text => /\r\n/.test(text) && !/(^|[^\r])\n/.test(text) ? '\r\n' : '\n';
+    let eol = eolOf(src);
+    const fromSourceEditor = text => eol === '\r\n' ? String(text).replace(/\r?\n/g, '\r\n') : String(text);
     let hov = null;
     let sel = null;
     let runKeep = 0;
@@ -600,7 +606,7 @@
 
     function afterChange(reload) {
       $('ta').value = src;
-      if (externalSourceEditor && externalSourceEditor.getValue() !== src) externalSourceEditor.setValue(src);
+      if (externalSourceEditor && fromSourceEditor(externalSourceEditor.getValue()) !== src) externalSourceEditor.setValue(src);
       renderCode();
       dirty();
       options.onChange?.(src);
@@ -1381,7 +1387,7 @@
       }
     }
 
-    $('ta').addEventListener('input', () => setSrc($('ta').value, {
+    $('ta').addEventListener('input', () => setSrc(fromSourceEditor($('ta').value), {
       merge: true
     }));
     $('ta').addEventListener('keydown', e => {
@@ -1389,7 +1395,7 @@
         e.preventDefault();
         const t = $('ta');
         t.setRangeText('  ', t.selectionStart, t.selectionEnd, 'end');
-        setSrc(t.value, {
+        setSrc(fromSourceEditor(t.value), {
           merge: true
         })
       }
@@ -2080,7 +2086,7 @@
         value: src,
         readOnly: Boolean(options.readOnly || !editing),
         onChange(value) {
-          setSrc(String(value), {
+          setSrc(fromSourceEditor(value), {
             merge: true,
             label: 'Source edit'
           });
@@ -2106,8 +2112,9 @@
     const api = {
       setSource(value) {
         src = String(value ?? '');
+        eol = eolOf(src);
         $('ta').value = src;
-        if (externalSourceEditor && externalSourceEditor.getValue() !== src) externalSourceEditor.setValue(src);
+        if (externalSourceEditor && fromSourceEditor(externalSourceEditor.getValue()) !== src) externalSourceEditor.setValue(src);
         renderCode();
         render();
       },
